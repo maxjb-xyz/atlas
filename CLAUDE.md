@@ -1,6 +1,8 @@
 # Atlas
 
-Read [VISION.md](VISION.md) first: it's the founding brief, and every change must agree with it or change it in its own commit. The current milestone is M0 ([docs/M0.md](docs/M0.md)).
+Read [VISION.md](VISION.md) first: it's the founding brief, and every change must agree with it or change it in its own commit. M0 is done ([docs/M0.md](docs/M0.md)); the current milestone is M1, and [docs/HANDOFF-M1.md](docs/HANDOFF-M1.md) has where things stand and the plan.
+
+A milestone is done when its smoke test passes on the owner's real deployment (VISION rule 7), not after a week of use. Write the smoke test before building, and keep earlier milestones' smoke tests as regression lists.
 
 ## Layout
 
@@ -22,6 +24,7 @@ Read [VISION.md](VISION.md) first: it's the founding brief, and every change mus
 - Every run ends in exactly one saved state: replied, deferred or failed.
 - No behavior flags. Settings are for people, and each one has a place in the app.
 - Tests use fake brains and calendars through `seams` in `core/src/agent.ts`; never call a real provider from tests.
+- Make failures explain themselves: keep the HTTP status, the host and the provider's own words in errors and Worker logs. Most bugs only show on the real deployment, and a generic message costs a round trip with the owner.
 - House style for docs, comments and UI copy: plain sentences, sentence case, no em dashes, they/them for people whose pronouns we don't know.
 
 Old Atlas is at [atlas-legacy](https://github.com/maxjb-xyz/atlas-legacy) for reference: ideas carry over, code doesn't.
