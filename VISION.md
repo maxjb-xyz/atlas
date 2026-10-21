@@ -63,7 +63,7 @@ These rules bind as firmly as the architecture does.
 4. **The core has a size limit.** The target is under 25k lines of TypeScript for the core runtime, not counting UI and extensions. Going over means something has to go.
 5. **No behavior flags.** Settings exist for people. Flags that switch between two implementations of the same behavior are not allowed.
 6. **Everything has a screen.** Every concept can be seen, changed and undone in the app. Talking to Atlas is a shortcut, never the only way. After the one-click deploy, nothing needs a terminal.
-7. **Done means lived with.** A milestone is done when the owner has used it for a week and the day-in-the-life scenarios pass on the real deployment. Green tests are required but not enough.
+7. **Done means it works on the real deployment.** A milestone is done when its smoke test passes on the owner's real deployment: a short list of day-in-the-life checks, run by hand, that covers every surface and failure path the milestone adds. Green tests are required but not enough. The owner keeps living with each milestone while the next one is built, and anything that feels wrong becomes a fix. (Changed 2026-10-21, after M0: a smoke test replaced a week of use, so milestones aren't held up waiting.)
 8. **Use standards instead of inventing.** SKILL.md, MCP and MCP Apps, ACP, OAuth, open formats. Invent only where no standard exists.
 9. **Wrong guesses should be cheap.** Anything Atlas infers (areas, tags, importance) only changes convenience. Anything with consequences is an explicit setting.
 10. **Rule of cool, with taste.** Atlas should feel like the future: fast, alive, beautiful. Motion and look are part of the product, held to a performance budget (§21.8).
@@ -1074,7 +1074,7 @@ Ideas and know-how carry over, not code. [atlas-legacy](https://github.com/maxjb
 
 ## 25. Build order
 
-Each milestone ends with a week of the owner living with it, and its day-in-the-life scenarios passing on the real deployment. Voice and UI polish continue in every milestone after M0.
+Each milestone ends with its smoke test passing on the real deployment (rule 7). Voice and UI polish continue in every milestone after M0.
 
 | # | Milestone | What it proves |
 |---|---|---|
@@ -1096,6 +1096,7 @@ Each milestone ends with a week of the owner living with it, and its day-in-the-
 - **UI:** v1 is locked (§21, [docs/ui/](docs/ui/README.md)).
 - **Brains:** the owner's setup in §18. ChatGPT plan sign-in and Workers AI are first-class providers.
 - **Voice out:** ElevenLabs `eleven_v4_turbo`.
+- **Done (rule 7):** a smoke test on the real deployment, not a week of use.
 
 **Still open:**
 1. **Repo visibility.** Proposed: private until launch.
