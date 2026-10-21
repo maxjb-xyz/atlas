@@ -66,7 +66,7 @@ These rules bind as firmly as the architecture does.
 7. **Done means lived with.** A milestone is done when the owner has used it for a week and the day-in-the-life scenarios pass on the real deployment. Green tests are required but not enough.
 8. **Use standards instead of inventing.** SKILL.md, MCP and MCP Apps, ACP, OAuth, open formats. Invent only where no standard exists.
 9. **Wrong guesses should be cheap.** Anything Atlas infers (areas, tags, importance) only changes convenience. Anything with consequences is an explicit setting.
-10. **Rule of cool, with taste.** Atlas should feel like the future: fast, alive, beautiful. Motion and look are part of the product, held to a performance budget (§21.7).
+10. **Rule of cool, with taste.** Atlas should feel like the future: fast, alive, beautiful. Motion and look are part of the product, held to a performance budget (§21.8).
 
 **House style** for docs and UI copy: plain sentences, sentence case, no em dashes, and they/them for anyone whose pronouns we don't know.
 
@@ -803,7 +803,7 @@ UI v1 was locked on Oct 21, 2026. The screens, screenshots and source are in [`d
 | **Inbox** | Everything waiting on you: approvals (§12.2), questions Atlas can't answer alone, finished work to review, and what faces handed to you. The badge is the count, and empty is the goal. |
 | **Agenda** | Everything on a clock: events, reminders, due dates, Atlas's promises (marked with the diamond), and scheduled automation runs. |
 | **Automations** | What Atlas does on its own or when asked (§13). It has Run buttons, filters by trigger, a flow view per automation, and Atlas's suggestions. It's a separate page because many automations never run on a clock. |
-| **Library** | Everything Atlas knows (§5.5): people, places, areas, collections, memory (journal, portrait, "Not sure about these") and files. Recently learned facts each have a Correct link. |
+| **Library** | Everything Atlas knows (§5.5): people, places, areas, collections, memory (journal, portrait, "Not sure about these"), files, and the pages and files Atlas makes (§21.7). Recently learned facts each have a Correct link. |
 | **History** | The log (§4.2): what Atlas, faces, jobs and automations did, each with a receipt (who asked, what changed, what was checked, powers, brain and cost) and Undo. |
 
 **Atlas settings** has these sections:
@@ -864,7 +864,49 @@ The stage uses a fixed set of well-built views. Each has a typed contract that t
   - small sandboxed apps for real interactivity, with no network access and their data passed in;
   - MCP Apps from installed tools, which also render here.
 
-### 21.7 Look and motion: the rule of cool
+### 21.7 Pages and files: things Atlas makes
+
+> **Needs refinement.** This is the agreed direction, not a finished design. The open points are at the end of this section and in §26.
+
+Atlas makes things you keep: a shoot plan, a trip itinerary, a quote, a study guide, a small checklist app. **A page is a stage view you keep.** It has a name and versions, you can share it, and it can stay live.
+
+- **Built in, but thin.** Atlas makes and keeps its own pages and files. Google Docs, Notion and Drive are places it can publish to, not where its work lives. Atlas is not a Google Docs competitor.
+- **Living pages.** A page is built from records and stage views, so it can stay current. For example, the Riverside shoot plan updates itself when the weather, a location or the gear quote changes, and Atlas says what changed. An automation can also refresh a page on a schedule.
+- **Four kinds:**
+
+  | Kind | Examples | Built from | Tentative timing |
+  |---|---|---|---|
+  | Living pages | A shoot plan, a trip plan, a weekly report, a study guide | Stage views plus text, with versions | M1 to M2: a "Keep" button on any stage view |
+  | Files | A quote PDF, an invoice, a Word doc, a spreadsheet | Generated in the Sandbox, stored in R2 | M3 |
+  | Small apps | A shot-list checklist, a budget calculator | Sandboxed, with no network access and their data passed in (§21.6) | M3 |
+  | Decks | A pitch deck | Exported to Google Slides through a connection at first | Later |
+
+- **In the app** there's no new place:
+  - pages and files live in Library, next to files;
+  - they open on the stage;
+  - the console shows a receipt ("Made: Riverside shoot plan · Open");
+  - every version is in History.
+- **Sharing goes through the outbox (§4.4).** A share link or an attachment passes the same checks as a message. Sharing outside Atlas waits in Inbox for your OK until you've given Atlas trust for that kind of share. A face can hand out a page or file within its area's sharing settings (§7.2).
+- **Connections are destinations.**
+  - Docs other people edit with you belong in their tool: a team wiki, a shared proposal, a spreadsheet your editor works in.
+  - Atlas publishes there, and that copy becomes the original. From then on, Atlas reads it from there and doesn't sync both ways.
+  - "Send it as a Word doc" doesn't need a connection: Atlas builds the file.
+- **Guardrails:**
+  - **Editing is just you and Atlas,** with an off-the-shelf editor and comments that go to Atlas. There's no real-time collaborative editing.
+  - **Web pages and PDF come first.** Polished Word and PowerPoint output is hard, so it comes later.
+  - **Small apps stay sandboxed.** Anything someone else edits on a shared page is information, never instructions (§7.2).
+  - **Pages and files are included in export** (§23.4).
+
+**To refine:**
+1. **The name.** "Artifacts" collides with Cloudflare Artifacts, which we already use for repos (§19.1). The working names are pages and files.
+2. **Where versions are stored:** Durable Object history, or Cloudflare Artifacts' git-style versions (still a preview).
+3. **The page format:** Markdown with embedded stage views, or a block format.
+4. **The editor,** and how much editing Atlas offers.
+5. **Office formats:** which ones, and how polished they need to be.
+6. **Live updates:** how a page decides what to refresh, and how changes are shown to you.
+7. **The UI:** a page screen in the UI v1 style, and how Library lists pages and files.
+
+### 21.8 Look and motion: the rule of cool
 
 Atlas should feel like the future: alive, fast, a little magical.
 
@@ -899,7 +941,7 @@ Atlas should feel like the future: alive, fast, a little magical.
   - no motion that delays information.
 - **The bar.** Every screen gets a design pass before it ships, and the app is judged in motion, not from screenshots.
 
-### 21.8 Themes
+### 21.9 Themes
 
 - **Everything is a theme value:** every color, font, corner radius, density, shadow and motion setting.
 - **Built-in themes:**
@@ -912,7 +954,7 @@ Atlas should feel like the future: alive, fast, a little magical.
 - **Custom themes** are a small file you can share. Atlas can make one for you, with a live preview.
 - **Every view works in every theme,** and each release runs an automatic contrast check.
 
-### 21.9 Surfaces
+### 21.10 Surfaces
 
 - **Web app first,** installable to your home screen, with push notifications.
 - **Desktop app** (Tauri): the same app, plus a node and a voice overlay you open with a hotkey.
@@ -1062,6 +1104,7 @@ Each milestone ends with a week of the owner living with it, and its day-in-the-
 4. **License.** MIT, like Hermes and OpenClaw, or Apache-2.0.
 5. **Default phone provider.** Telnyx (what old Atlas used) or Twilio.
 6. **Name.** OpenAI ships a browser called "ChatGPT Atlas" (October 2025). Decide before the public launch whether that matters.
+7. **Pages and files (§21.7) need refinement:** the name, where versions are stored, the page format, the editor, office formats, live updates, and the UI.
 
 ---
 

@@ -244,6 +244,7 @@ Hermes-style profiles split memory and settings, and you switch between them. At
 - **Detail pages:** a person, a place, an area, a collection, Memory (journal and portrait), Files.
 - **Faces:** each face's screen and its "talk to it as a stranger" test.
 - **The other settings sections:** Look & themes, Connections, Devices, Vault, Members, Permissions, Notifications.
+- **Pages and files Atlas makes** ([VISION §21.7](../../VISION.md#217-pages-and-files-things-atlas-makes)): a page screen, and how Library lists pages and files. The design itself still needs refinement.
 - **Empty, loading, error and offline states.**
 - **Themes beyond Dark and Light:** Terminal, Midnight, High contrast.
 
