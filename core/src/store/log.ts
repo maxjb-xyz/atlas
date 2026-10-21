@@ -22,8 +22,15 @@ export type LogKind =
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */
 export interface Receipt {
   text: string;
-  undo?: { kind: "reminder.cancel"; id: string };
+  undo?: Undo;
 }
+
+/** What Undo on a receipt does. `history` names the correction to roll back. */
+export type Undo =
+  | { kind: "reminder.cancel"; id: string }
+  | { kind: "record.forget"; id: string }
+  | { kind: "record.restore"; id: string }
+  | { kind: "record.revert"; id: string; history: number };
 
 export interface LogRow {
   seq: number;
@@ -124,7 +131,7 @@ export function isThreadRow(row: LogRow): boolean {
   if (row.kind === "tool.result") return row.body.receipt != null;
   if (row.kind === "run.end") return row.body.state === "failed";
   // An undo from a receipt shows as its own line, so the thread tells the truth.
-  if (row.kind === "agenda.change") return row.body.undo_of != null;
+  if (row.kind === "agenda.change" || row.kind === "record.change") return row.body.undo_of != null;
   return false;
 }
 
@@ -135,6 +142,7 @@ export const THREAD_KINDS: LogKind[] = [
   "brain.fallback",
   "run.end",
   "agenda.change",
+  "record.change",
   "voice.problem",
 ];
 

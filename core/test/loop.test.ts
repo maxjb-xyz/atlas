@@ -52,6 +52,8 @@ function setup(sql: Sql, steps: Step[], opts: Partial<RunSpec> = {}, extraBrains
       schedule: async (item) => void scheduled.push(item.id),
       unschedule: async () => {},
     },
+    embed: null,
+    source_log_id: null,
   };
   const runId = startRun(sql, { actor: "owner", trigger: "message", surface: "app", role: "main" });
   const events: LoopEvent[] = [];
@@ -265,9 +267,9 @@ describe("the store", () => {
   it("keeps the old value when a record is corrected", () =>
     withSql((sql) => {
       const r = createRecord(sql, { type: "person", name: "Jordan Lee", fields: { phone: "555-0100" }, source: { via: "chat" } });
-      const fixed = correctRecord(sql, r.id, { phone: "555-0199", nickname: null }, "owner corrected it", { via: "owner" });
+      const fixed = correctRecord(sql, r.id, { fields: { phone: "555-0199", nickname: null } }, "owner corrected it", { via: "owner" });
       expect(fixed.fields).toEqual({ phone: "555-0199" });
-      expect(recordHistory(sql, r.id)).toMatchObject([{ fields: { phone: "555-0100" }, reason: "owner corrected it" }]);
+      expect(recordHistory(sql, r.id)).toMatchObject([{ name: "Jordan Lee", fields: { phone: "555-0100" }, reason: "owner corrected it" }]);
     }));
 
   it("fills in default settings and validates patches", () =>

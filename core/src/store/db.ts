@@ -95,6 +95,36 @@ const MIGRATIONS: string[] = [
     SELECT name, value, updated_at FROM secrets WHERE name IN ('icloud_calendars', 'icloud_refused', 'chatgpt_client');
   DELETE FROM secrets WHERE name IN ('icloud_calendars', 'icloud_refused', 'chatgpt_client');
   `,
+  // M1: memory (§5). Records can be forgotten and linked, and messages and
+  // records are indexed for recall by keyword (full-text) and by meaning
+  // (embeddings kept beside the text).
+  `
+  ALTER TABLE records ADD COLUMN state TEXT NOT NULL DEFAULT 'active';
+  ALTER TABLE records ADD COLUMN recalled INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE record_history ADD COLUMN name TEXT;
+
+  CREATE TABLE links (
+    from_id TEXT NOT NULL,
+    to_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (from_id, to_id, kind)
+  );
+  CREATE INDEX links_to ON links(to_id);
+
+  CREATE TABLE memory (
+    ref TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    model TEXT,
+    vec BLOB
+  );
+  CREATE INDEX memory_at ON memory(at);
+  CREATE INDEX memory_model ON memory(model);
+
+  CREATE VIRTUAL TABLE memory_fts USING fts5(ref UNINDEXED, text, tokenize = 'porter unicode61');
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

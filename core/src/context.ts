@@ -1,22 +1,24 @@
 // What every run sees (§5.2): a stable block that can be cached (the
 // character and standing facts about the owner), then a small fresh block
 // (now, open reminders, the surface), then the recent thread from the log.
+// Everything else comes from recall, on demand.
 
 import type { Message } from "./brains/types";
 import { character, TEXT_PROFILE, VOICE_PROFILE } from "./character";
 import { upcoming } from "./store/agenda";
 import type { Sql } from "./store/db";
+import { type AtlasRecord, standingFacts } from "./store/records";
 import { type LogRow, recent } from "./store/log";
 import type { Settings } from "./store/settings";
 import type { Surface } from "./store/log";
 import { isoLocal, longLocal } from "./time";
 
-/** How many recent messages a run sees. Compaction and recall arrive in M1. */
+/** How many recent messages a run sees. Older ones are found with recall. */
 export const HISTORY_MESSAGES = 40;
 
 export function systemPrompt(opts: { settings: Settings; tz: string; now: Date; surface: Surface; sql: Sql; extra?: string }): string {
   const { settings, tz, now, surface, sql } = opts;
-  const stable = character(settings.assistant_name, settings.owner_name);
+  const stable = [character(settings.assistant_name, settings.owner_name), facts(sql, settings.owner_name)].filter(Boolean).join("\n\n");
 
   const reminders = upcoming(sql, 15)
     .filter((i) => i.kind === "reminder")
@@ -31,6 +33,25 @@ export function systemPrompt(opts: { settings: Settings; tz: string; now: Date; 
     .join("\n\n");
 
   return `${stable}\n\n---\n\n${fresh}`;
+}
+
+/**
+ * Standing facts about the owner, with ids so Atlas can correct one. Oldest
+ * first, so new facts add to the end and the cached start stays the same.
+ */
+function facts(sql: Sql, ownerName: string): string {
+  const lines = standingFacts(sql).map(factLine).filter(Boolean);
+  if (!lines.length) return "";
+  const owner = ownerName.trim() || "the owner";
+  return `What you know about ${owner} for good (use it quietly; pass the id to remember or forget to change one):\n${lines.join("\n")}`;
+}
+
+function factLine(r: AtlasRecord): string {
+  const { fact, is_owner: _owner, ...details } = r.fields;
+  const parts = [typeof fact === "string" ? fact : r.type === "person" ? "" : r.name];
+  for (const [k, v] of Object.entries(details)) parts.push(`${k.replace(/_/g, " ")}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
+  const text = parts.filter(Boolean).join("; ");
+  return text ? `- ${text} (id ${r.id})` : "";
 }
 
 /**

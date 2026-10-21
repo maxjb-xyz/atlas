@@ -11,7 +11,9 @@ export type StateName =
   /** Set when iCloud refuses the password; Atlas stops asking until the owner reconnects. */
   | "icloud_refused"
   /** This deployment's ChatGPT client: host id, signed-in email, the plan's models and the last ID token as a sign-in hint. */
-  | "chatgpt_client";
+  | "chatgpt_client"
+  /** The last log row the memory index has seen. */
+  | "memory_seq";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

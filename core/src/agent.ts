@@ -8,6 +8,8 @@ import { CalendarSense } from "./agent/calendar";
 import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
 import { seams } from "./agent/seams";
 import { liveTest, settingsView } from "./agent/settings";
+import { undoReceipt } from "./agent/undo";
+import { EMBED_BATCH, type Embedder, workersAIEmbedder } from "./brains/embed";
 import { BrainRouter } from "./brains/router";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
@@ -16,13 +18,15 @@ import { history, systemPrompt, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
 import { Outbox, StreamScrubber } from "./outbox";
 import { ClientMessage, type ServerMessage, type SettingsView } from "./protocol";
-import { type AgendaItem, due, finish, getItem, lease, setScheduleId, upcoming } from "./store/agenda";
+import { type AgendaItem, due, finish, lease, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, type Sql } from "./store/db";
-import { append, forRun, get as getRow, type LogRow, type Surface, thread } from "./store/log";
+import { type Actor, append, forRun, get as getRow, type LogRow, type Surface, thread } from "./store/log";
+import { indexNewMessages, setVector, unembedded } from "./store/memory";
 import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
 import { type BrainChoice, getSecret, readSettings, setSecret, writeSettings } from "./store/settings";
 import { isValidZone, shortLocal, zoneOf } from "./time";
 import { calendarRead } from "./tools/calendar";
+import { memoryTools, recall } from "./tools/memory";
 import { reminderTools } from "./tools/reminders";
 import type { Tool, ToolContext } from "./tools/types";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
@@ -32,7 +36,15 @@ export { seams };
 /** The one owner in M0. Members get their own agents in M5. */
 export const OWNER = "owner";
 
-const TOOLS: Tool[] = [calendarRead, ...reminderTools];
+/**
+ * What each kind of run can reach. Runs Atlas starts itself (the clock, and
+ * later automations and helpers) can't save facts about the owner (§5.4).
+ */
+const TOOLS: Record<Actor, Tool[]> = {
+  owner: [calendarRead, ...reminderTools, ...memoryTools],
+  atlas: [calendarRead, ...reminderTools, recall],
+  system: [],
+};
 
 /** How long a brain gets to start answering before the next one is tried. */
 const FIRST_EVENT_MS = { main: 25_000, voice: 6_000 };
@@ -41,6 +53,10 @@ const VoiceAgent = withVoice(Agent<Env>, { audioFormat: AUDIO.format, sampleRate
 
 interface ConverseOpts {
   runId: string;
+  /** Who this run is talking with (§4.1): the owner, or Atlas itself for the clock. */
+  actor: Actor;
+  /** The owner's message that started the run, when there is one. */
+  sourceLogId: string | null;
   surface: Surface;
   role: "main" | "voice";
   /** The owner's new message, or the clock's note for a run Atlas starts. */
@@ -90,6 +106,7 @@ export class PersonAgent extends VoiceAgent {
     this.#refreshVoice();
     // Anything that came due while the agent was asleep runs now.
     for (const item of due(this.#sql, Date.now())) void this.onAgendaDue({ id: item.id });
+    this.#tendMemory();
   }
 
   /** Connections in a live voice call. The snapshot goes out on atlas.hello, once the app is listening. */
@@ -185,6 +202,8 @@ export class PersonAgent extends VoiceAgent {
         const scrubber = new StreamScrubber(this.#outbox.secrets());
         const res = await this.#converse({
           runId,
+          actor: "owner",
+          sourceLogId: inRow.id,
           surface: "app",
           role: "main",
           input: text,
@@ -221,6 +240,8 @@ export class PersonAgent extends VoiceAgent {
       async () => {
         const res = await this.#converse({
           runId,
+          actor: "owner",
+          sourceLogId: inRow.id,
           surface: "voice",
           role: "voice",
           input: transcript,
@@ -327,6 +348,8 @@ export class PersonAgent extends VoiceAgent {
     const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
     const res: LoopResult = await this.#converse({
       runId,
+      actor: "atlas",
+      sourceLogId: null,
       surface: "none",
       role: "main",
       input: note,
@@ -402,7 +425,16 @@ export class PersonAgent extends VoiceAgent {
         sql: this.#sql,
         router: this.#router,
         chain: settings.brains[o.role],
-        toolContext: { sql: this.#sql, settings, tz, now, calendar: this.#calendar.source(settings), clock: this.#clock },
+        toolContext: {
+          sql: this.#sql,
+          settings,
+          tz,
+          now,
+          calendar: this.#calendar.source(settings),
+          clock: this.#clock,
+          embed: this.#embedder(),
+          source_log_id: o.sourceLogId,
+        },
       },
       {
         runId: o.runId,
@@ -410,7 +442,7 @@ export class PersonAgent extends VoiceAgent {
         surface: o.surface,
         system: systemPrompt({ settings, tz, now, surface: o.surface, sql: this.#sql }),
         messages,
-        tools: TOOLS,
+        tools: TOOLS[o.actor],
         budget: o.budget,
         signal: o.signal,
         joiner: o.surface === "voice" ? " " : "\n\n",
@@ -454,6 +486,54 @@ export class PersonAgent extends VoiceAgent {
     const end = this.#sql.exec<{ id: string }>(`SELECT id FROM log WHERE run_id = ? AND kind = 'run.end'`, runId).toArray()[0];
     if (res.state === "failed" && end) this.#broadcast({ type: "atlas.rows", rows: [getRow(this.#sql, end.id)!] });
     this.#broadcast({ type: "atlas.run", run_id: runId, state: res.state, surface: channel });
+    void this.#tendMemory();
+  }
+
+  // --- memory upkeep -----------------------------------------------------------
+
+  #embedder(): Embedder | null {
+    if (seams.embed !== undefined) return seams.embed;
+    return workersAIEmbedder(this.env.AI as never);
+  }
+
+  #tending: Promise<void> = Promise.resolve();
+  #tendQueued = false;
+
+  /**
+   * Adds new messages to the memory index and embeds whatever still needs it.
+   * Runs after each run ends, in the background, so memory never slows a
+   * reply. One pass at a time, with at most one more queued behind it.
+   */
+  #tendMemory(): Promise<void> {
+    if (this.#tendQueued) return this.#tending;
+    this.#tendQueued = true;
+    this.#tending = this.#tending.then(() => {
+      this.#tendQueued = false;
+      return this.keepAliveWhile(() => this.#tend());
+    });
+    return this.#tending;
+  }
+
+  async #tend(): Promise<void> {
+    try {
+      while (indexNewMessages(this.#sql) > 0);
+      const embedder = this.#embedder();
+      if (!embedder) return;
+      for (let i = 0; i < 100; i++) {
+        const todo = unembedded(this.#sql, embedder.model, EMBED_BATCH);
+        if (!todo.length) break;
+        const vecs = await embedder.embed(todo.map((t) => t.text));
+        for (const [j, t] of todo.entries()) setVector(this.#sql, t.ref, embedder.model, vecs[j]!);
+      }
+    } catch (err) {
+      // Recall still works by keyword and time; this says why meaning search lags.
+      console.error(JSON.stringify({ at: "memory.embed", error: err instanceof Error ? err.message : String(err) }));
+    }
+  }
+
+  /** For tests: waits until the memory index has caught up. */
+  async apiSettleMemory(): Promise<void> {
+    await this.#tendMemory();
   }
 
   /** Streams a run's progress to every open app. */
@@ -484,6 +564,8 @@ export class PersonAgent extends VoiceAgent {
         async () => {
           const r = await this.#converse({
             runId,
+            actor: "owner",
+            sourceLogId: inRow.id,
             surface: "api",
             role: "main",
             input: text,
@@ -555,26 +637,13 @@ export class PersonAgent extends VoiceAgent {
   // --- undo and live checks ---------------------------------------------------
 
   async #undo(logId: string, connection: Connection): Promise<void> {
-    const row = getRow(this.#sql, logId);
-    const undo = (row?.body.receipt as { undo?: { kind: string; id: string } } | undefined)?.undo;
-    if (!row || !undo) {
-      this.#send(connection, { type: "atlas.error", message: "There's nothing to undo there." });
+    const out = await undoReceipt(this.#sql, logId, this.#clock);
+    if (!out.ok) {
+      this.#send(connection, { type: "atlas.error", message: out.message });
       return;
     }
-    if (undo.kind === "reminder.cancel") {
-      const item = getItem(this.#sql, undo.id);
-      if (!item || item.state !== "scheduled") {
-        this.#send(connection, { type: "atlas.error", message: "That reminder already went off or was cancelled." });
-        return;
-      }
-      await this.#clock.unschedule(item);
-      finish(this.#sql, item.id, "cancelled", row.run_id, { by: "owner", undo_of: logId });
-      const undone = this.#sql
-        .exec<{ id: string }>(`SELECT id FROM log WHERE kind = 'agenda.change' AND json_extract(body, '$.undo_of') = ?`, logId)
-        .one();
-      this.#broadcast({ type: "atlas.rows", rows: [getRow(this.#sql, undone.id)!] });
-      this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
-    }
+    this.#broadcast({ type: "atlas.rows", rows: [out.row] });
+    if (out.agenda) this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
   }
 
   async #test(connection: Connection, msg: Extract<ClientMessage, { type: "atlas.test" }>): Promise<void> {

@@ -44,7 +44,7 @@ export function Thread({ atlas, name }: { atlas: Atlas; name: string }) {
   }
 
   const liveRuns = Object.entries(live);
-  const undone = new Set(rows.filter((r) => r.kind === "agenda.change" && r.body.undo_of).map((r) => String(r.body.undo_of)));
+  const undone = new Set(rows.filter((r) => r.body.undo_of).map((r) => String(r.body.undo_of)));
   const empty = loaded && rows.length === 0 && pending.length === 0 && liveRuns.length === 0;
 
   return (
@@ -54,7 +54,9 @@ export function Thread({ atlas, name }: { atlas: Atlas; name: string }) {
         <div className="hello">
           <Mark size={44} />
           <h2 className="disp">Hi, I'm {name}.</h2>
-          <p className="muted">Ask about your calendar, or tell me what to remind you of. Press Space to talk.</p>
+          <p className="muted">
+            Ask about your calendar, tell me what to remind you of, or tell me something to remember. Press Space to talk.
+          </p>
         </div>
       )}
       {rows.map((r) => (
@@ -137,6 +139,17 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
       );
     case "agenda.change":
       return <p className="note">You undid it: {str(b.title)}. Atlas won't remind you.</p>;
+    case "record.change":
+      return (
+        <p className="note">
+          You undid it.{" "}
+          {b.change === "forgotten"
+            ? `Atlas forgot: ${str(b.name)}.`
+            : b.change === "restored"
+              ? `Atlas remembers ${str(b.name)} again.`
+              : `${str(b.name)} is back to what it was.`}
+        </p>
+      );
     case "run.end":
       return <p className="note fail">Didn't finish. {str(b.error) || "The run failed."}</p>;
     default:

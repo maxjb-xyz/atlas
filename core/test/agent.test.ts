@@ -5,7 +5,7 @@ import type { ServerMessage } from "../src/protocol";
 import { CalendarError } from "../src/calendar/types";
 import { getItem } from "../src/store/agenda";
 import type { LogRow } from "../src/store/log";
-import { call, collect, env, fakeCalendar, fakeOpenAI, say, scripted, SECRET, type Step } from "./helpers";
+import { call, collect, env, fakeCalendar, fakeEmbedder, fakeOpenAI, say, scripted, SECRET, type Step } from "./helpers";
 
 const ORIGIN = "http://atlas.test";
 const auth = { authorization: `Bearer ${SECRET}` };
@@ -66,11 +66,13 @@ function brains(main: Step[], voice: Step[] = []) {
 
 beforeEach(() => {
   seams.calendar = fakeCalendar([]);
+  seams.embed = fakeEmbedder();
 });
 afterEach(() => {
   seams.fetch = null;
   seams.makeBrain = null;
   seams.calendar = undefined;
+  seams.embed = undefined;
 });
 
 describe("sign-in", () => {
@@ -168,6 +170,73 @@ describe("the thread", () => {
     expect(rowsOf(delivered, "message.out")[0]!.body.text).toBe("Reminder: Take the bread out");
     const item = await runInDurableObject(owner(), (_i: PersonAgent, state) => getItem(state.storage.sql, id));
     expect(item!.state).toBe("done");
+    s.ws.close();
+  });
+
+  it("notes a fact with a chip, uses it next time, and undoes it from the chip", async () => {
+    const { main } = brains([
+      call("remember", { type: "preference", name: "Diet", fact: "The owner is vegetarian." }),
+      say("Noted."),
+      say("How about the Thai place?"),
+      say("Sure."),
+    ]);
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "America/New_York" });
+    await s.next("atlas.snapshot");
+    s.send({ type: "atlas.say", text: "I'm vegetarian", client_id: "m1" });
+    const chipMsg = await s.next("atlas.rows", (m) => rowsOf(m, "tool.result").length > 0);
+    const chip = rowsOf(chipMsg, "tool.result")[0]!;
+    expect(chip.body.receipt).toMatchObject({ text: "Noted · The owner is vegetarian.", undo: { kind: "record.forget" } });
+    await s.next("atlas.run", (m) => m.state === "replied");
+
+    // The next run has it in view, without being asked.
+    s.send({ type: "atlas.say", text: "dinner Friday?", client_id: "m2" });
+    await s.next("atlas.run", (m) => m.state === "replied" && m.run_id !== chip.run_id);
+    expect(main.requests[2]!.system).toContain("- The owner is vegetarian. (id rec_");
+    expect(main.requests[2]!.tools.map((t) => t.name)).toEqual(expect.arrayContaining(["remember", "forget", "recall"]));
+
+    // Undo from the chip forgets it, and the thread says so.
+    s.send({ type: "atlas.undo", log_id: chip.id });
+    const undone = await s.next("atlas.rows", (m) => rowsOf(m, "record.change").length > 0);
+    expect(rowsOf(undone, "record.change")[0]!.body).toMatchObject({ change: "forgotten", by: "owner", undo_of: chip.id });
+    s.send({ type: "atlas.undo", log_id: chip.id });
+    expect((await s.next("atlas.error")).message).toBe("That's already undone.");
+    s.send({ type: "atlas.say", text: "ok", client_id: "m3" });
+    await s.next("atlas.run", (m) => m.state === "replied" && m.client_id === undefined && main.requests.length === 4);
+    expect(main.requests[3]!.system).not.toContain("vegetarian");
+
+    // The thread and the memory index both caught up.
+    await runInDurableObject(owner(), (agent: PersonAgent) => agent.apiSettleMemory());
+    const indexed = await runInDurableObject(
+      owner(),
+      (_i: PersonAgent, state) =>
+        state.storage.sql.exec<{ n: number }>(`SELECT count(*) AS n FROM memory WHERE kind = 'message' AND model = 'fake-embed'`).one().n,
+    );
+    expect(indexed).toBeGreaterThan(0);
+    s.ws.close();
+  });
+
+  it("doesn't let the clock's own runs save facts about the owner", async () => {
+    const { main } = brains([
+      call("reminder_create", { text: "Water plants", at: "2099-01-01T09:00" }),
+      say("Set."),
+      say("Time to water the plants."),
+    ]);
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "America/New_York" });
+    await s.next("atlas.snapshot");
+    s.send({ type: "atlas.say", text: "remind me", client_id: "k1" });
+    const receiptMsg = await s.next("atlas.rows", (m) => rowsOf(m, "tool.result").length > 0);
+    await s.next("atlas.run", (m) => m.state === "replied");
+    const id = (rowsOf(receiptMsg, "tool.result")[0]!.body.receipt as { undo: { id: string } }).undo.id;
+    await runInDurableObject(owner(), async (agent: PersonAgent, state) => {
+      state.storage.sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1000, id);
+      await agent.onAgendaDue({ id });
+    });
+    const tools = main.requests[2]!.tools.map((t) => t.name);
+    expect(tools).toContain("recall");
+    expect(tools).not.toContain("remember");
+    expect(tools).not.toContain("forget");
     s.ws.close();
   });
 

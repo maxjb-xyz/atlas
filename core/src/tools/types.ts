@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import type { ToolSpec } from "../brains/types";
+import type { Embedder } from "../brains/embed";
 import type { CalendarSource } from "../calendar/types";
 import type { AgendaItem } from "../store/agenda";
 import type { Sql } from "../store/db";
@@ -21,6 +22,10 @@ export interface ToolContext {
   now: Date;
   /** The calendar sense, or null when it isn't connected. */
   calendar: CalendarSource | null;
+  /** The `embed` role, for meaning search; null when there isn't one. */
+  embed: Embedder | null;
+  /** The owner's message that started this run, so saved records can point back to it. */
+  source_log_id: string | null;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
   clock: {
     schedule(item: AgendaItem): Promise<void>;
