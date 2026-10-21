@@ -80,7 +80,8 @@ class CalDavClient {
   #auth: string;
 
   constructor(creds: ICloudCredentials, fetchFn: typeof fetch) {
-    this.#fetch = fetchFn;
+    // Called as a plain function: the Workers runtime's fetch throws "Illegal invocation" if called as a method of another object.
+    this.#fetch = (input, init) => fetchFn(input, init);
     this.#auth = basicAuth(creds);
   }
 

@@ -224,4 +224,15 @@ describe("icloudCalendar", () => {
     expect(davTime(new Date("2026-10-22T14:05:09.123Z"))).toBe("20261022T140509Z");
     expect(calendarQuery(WEEK)).toContain('name="VEVENT"');
   });
+
+  it("calls fetch as a plain function, as the Workers runtime requires", async () => {
+    // Like Workers' own fetch: called as a method of another object, it throws.
+    const strict = function (this: unknown) {
+      if (this !== undefined && this !== globalThis)
+        throw new TypeError("Illegal invocation: function called with incorrect `this` reference.");
+      return Promise.resolve(new Response("", { status: 401 }));
+    } as unknown as typeof fetch;
+    const cal = icloudCalendar({ username: "max@icloud.com", app_password: "abcd-efgh-ijkl-mnop" }, { fetch: strict });
+    await expect(cal.check()).rejects.toMatchObject({ code: "auth" });
+  });
 });
