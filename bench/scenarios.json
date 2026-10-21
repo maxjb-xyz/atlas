@@ -1,0 +1,15 @@
+{
+  "_about": "Spoken prompts for the M0 voice benchmark (VISION §11.2, §25). no_lookup: Atlas can answer from what it knows. lookup: it has to check a tool first. Edit freely; ids name the cached audio files.",
+  "scenarios": [
+    { "id": "greet", "kind": "no_lookup", "text": "Hey Atlas, how's it going?" },
+    { "id": "pick", "kind": "no_lookup", "text": "Should I have coffee or tea this afternoon?" },
+    { "id": "math", "kind": "no_lookup", "text": "What's two hundred times thirty five?" },
+    { "id": "fact", "kind": "no_lookup", "text": "Tell me one interesting thing about octopuses." },
+    { "id": "short", "kind": "no_lookup", "text": "Give me a one line pep talk." },
+    { "id": "tomorrow", "kind": "lookup", "text": "What's on my calendar tomorrow?" },
+    { "id": "afternoon", "kind": "lookup", "text": "Do I have anything this afternoon?" },
+    { "id": "next", "kind": "lookup", "text": "When's my next meeting?" },
+    { "id": "remind", "kind": "lookup", "text": "Remind me to stretch in twenty minutes." },
+    { "id": "reminders", "kind": "lookup", "text": "What reminders do I have coming up?" }
+  ]
+}

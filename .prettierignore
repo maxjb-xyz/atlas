@@ -1,0 +1,5 @@
+node_modules
+dist
+docs/ui/source
+*.md
+package-lock.json

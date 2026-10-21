@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <response>
+    <href>/123456789/calendars/home/standup.ics</href>
+    <propstat>
+      <prop><getetag>"e-7255"</getetag><C:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Apple Inc.//iCloud//EN
+BEGIN:VEVENT
+UID:standup-1@icloud.com
+RECURRENCE-ID:20261019T140000Z
+DTSTART:20261019T140000Z
+DTEND:20261019T143000Z
+SUMMARY:Standup
+END:VEVENT
+BEGIN:VEVENT
+UID:standup-1@icloud.com
+RECURRENCE-ID:20261026T140000Z
+DTSTART:20261026T140000Z
+DTEND:20261026T143000Z
+SUMMARY:Standup
+END:VEVENT
+END:VCALENDAR
+</C:calendar-data></prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+  <response>
+    <href>/123456789/calendars/home/trip.ics</href>
+    <propstat>
+      <prop><getetag>"e-653"</getetag><C:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:trip-7
+DTSTART;VALUE=DATE:20261023
+DTEND;VALUE=DATE:20261025
+SUMMARY:Trip to Austin
+LOCATION:Austin\, TX
+END:VEVENT
+END:VCALENDAR
+</C:calendar-data></prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+  <response>
+    <href>/123456789/calendars/home/gone.ics</href>
+    <propstat>
+      <prop><getetag>"e-4309"</getetag><C:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:gone-1
+DTSTART:20261021T180000Z
+DTEND:20261021T190000Z
+SUMMARY:Cancelled dinner
+STATUS:CANCELLED
+END:VEVENT
+END:VCALENDAR
+</C:calendar-data></prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+  <response>
+    <href>/123456789/calendars/home/dentist.ics</href>
+    <propstat>
+      <prop><getetag>"e-5797"</getetag><C:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:dentist-2
+DTSTART:20261022T150000Z
+DTEND:20261022T160000Z
+SUMMARY:Dentist
+DESCRIPTION:Bring the insurance card\nand the form\; ask about the
+  crown
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:Alarm text
+TRIGGER:-PT15M
+END:VALARM
+END:VEVENT
+END:VCALENDAR
+</C:calendar-data></prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+</multistatus>

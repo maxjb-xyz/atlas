@@ -1,0 +1,22 @@
+// Atlas: one Worker, one person agent per owner (a Durable Object with its own
+// SQLite). The app is served from ../app/dist. Owner step after deploy:
+// `npx wrangler secret put ATLAS_OWNER_SECRET` (see docs/M0.md).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "atlas",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "ai": { "binding": "AI" },
+  "assets": {
+    "directory": "../app/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/agents/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "PersonAgent", "class_name": "PersonAgent" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PersonAgent"] }],
+  "observability": { "enabled": true }
+}
