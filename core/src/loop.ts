@@ -196,16 +196,18 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
           produced = true;
           stepText += ev.text;
           io.say(ev.text);
-        } else if (ev.type === "tool_start") {
-          const status = io.tools.find((t) => t.name === ev.name)?.status;
+        } else if (ev.type === "tool_start" || ev.type === "tool_call") {
+          // The status line goes out at the first sign of a lookup: some
+          // providers announce a tool call early, others only send it whole.
+          const name = ev.type === "tool_start" ? ev.name : ev.call.name;
+          const status = io.tools.find((t) => t.name === name)?.status;
           if (status && !statusSaid) {
             statusSaid = true;
             const speakable = !stepText && !io.alreadySaid();
             if (speakable) produced = true;
             io.emit({ type: "status", text: status, speakable });
           }
-        } else if (ev.type === "tool_call") {
-          calls.push(ev.call);
+          if (ev.type === "tool_call") calls.push(ev.call);
         } else if (ev.type === "done") {
           usage = ev.usage;
         }

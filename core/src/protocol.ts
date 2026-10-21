@@ -56,7 +56,11 @@ export type ClientMessage = z.infer<typeof ClientMessage>;
 /** Settings as the app sees them: values, plus whether each secret is set (never the secret). */
 export interface SettingsView {
   settings: import("./store/settings").Settings;
-  secrets: { elevenlabs_api_key: boolean; icloud: { username: string } | null };
+  secrets: {
+    elevenlabs_api_key: boolean;
+    /** `refused` says when and why iCloud refused the password; Atlas doesn't ask iCloud again until the owner reconnects. */
+    icloud: { username: string; refused: { at: number; message: string } | null } | null;
+  };
   chatgpt: ChatGPTView;
   /** Provider health, by "provider:model". */
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;

@@ -187,6 +187,21 @@ describe("the loop", () => {
       expect(res.text).toBe("You're free.");
     }));
 
+  it("still gives the status line when the brain only sends the whole tool call", () =>
+    withSql(async (sql) => {
+      const whole = [
+        { type: "tool_call" as const, call: { id: "c1", name: "calendar_read", input: {} } },
+        { type: "done" as const, finish: "tool_calls" as const },
+      ];
+      const t = setup(sql, [whole, say("You're free.")], { surface: "voice", joiner: " " });
+      await t.run();
+      expect(t.events.find((e) => e.type === "status" && e.text)).toEqual({
+        type: "status",
+        text: "Checking your calendar.",
+        speakable: true,
+      });
+    }));
+
   it("doesn't speak a status line once Atlas has said something", () =>
     withSql(async (sql) => {
       const t = setup(sql, [[{ type: "text", text: "Let me look." }, ...call("calendar_read", {})], say("You're free.")], {

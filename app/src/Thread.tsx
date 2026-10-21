@@ -149,7 +149,12 @@ const secs = (ms: unknown) => (typeof ms === "number" ? `${(ms / 1000).toFixed(1
 /** For spoken replies: when the status line and the answer were ready after you stopped talking. */
 function Timing({ timing }: { timing: unknown }) {
   if (!timing || typeof timing !== "object") return null;
-  const t = timing as { status_ms?: unknown; answer_ms?: unknown };
-  const parts = [secs(t.status_ms) && `status ${secs(t.status_ms)}`, secs(t.answer_ms) && `answer ${secs(t.answer_ms)}`].filter(Boolean);
+  const t = timing as { status_ms?: unknown; answer_ms?: unknown; tools?: unknown };
+  const tools = Array.isArray(t.tools) ? t.tools.map(String) : null;
+  const parts = [
+    secs(t.status_ms) && `status ${secs(t.status_ms)}`,
+    secs(t.answer_ms) && `answer ${secs(t.answer_ms)}`,
+    tools && (tools.length ? tools.join(", ") : "no lookup"),
+  ].filter(Boolean);
   return parts.length ? <span className="tag">{parts.join(" · ")}</span> : null;
 }

@@ -93,7 +93,16 @@ export function writeSettings(sql: Sql, patch: SettingsPatch): string[] {
 // M0 keeps a handful of keys in the agent's own storage (encrypted at rest by
 // Cloudflare). The vault (§15) replaces this in M3.
 
-export type SecretName = "elevenlabs_api_key" | "icloud" | "chatgpt_tokens" | "chatgpt_login" | "chatgpt_client";
+export type SecretName =
+  | "elevenlabs_api_key"
+  | "icloud"
+  /** The iCloud calendar list, kept between wakes. */
+  | "icloud_calendars"
+  /** Set when iCloud refuses the password; Atlas stops asking until the owner reconnects. */
+  | "icloud_refused"
+  | "chatgpt_tokens"
+  | "chatgpt_login"
+  | "chatgpt_client";
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];

@@ -68,7 +68,7 @@ export interface Delivery {
   usage?: unknown;
   trigger?: string;
   /** For spoken replies: when the status line and the answer were ready. */
-  timing?: Record<string, number | null>;
+  timing?: Record<string, unknown>;
 }
 
 /** The live ends of each channel. The agent provides them. */

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { calendarQuery, cleanCredentials, davTime, icloudCalendar } from "../src/calendar/caldav";
+import { calendarQuery, cleanCredentials, davTime, icloudCalendar, type RememberedCalendars } from "../src/calendar/caldav";
 import { parseDuration, parseEvents, resolveZone, unfold, zonedToUtc } from "../src/calendar/ical";
 import { CalendarError } from "../src/calendar/types";
 import { multistatus, parseXml, find } from "../src/calendar/xml";
@@ -264,5 +264,38 @@ describe("icloudCalendar", () => {
       .catch((e: unknown) => e as CalendarError);
     expect(b).toMatchObject({ code: "protocol" });
     expect((b as CalendarError).message).toBe("iCloud refused the request at caldav.icloud.com (HTTP 403: Forbidden for this account).");
+  });
+
+  it("remembers the calendar list between wakes, reads two calendars at a time, and reuses a fresh answer", async () => {
+    const { fetchFn, seen } = fakeICloud();
+    let inFlight = 0;
+    let most = 0;
+    const counted = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      try {
+        return await fetchFn(input, init);
+      } finally {
+        inFlight -= 1;
+      }
+    }) as typeof fetch;
+    let stored: RememberedCalendars | null = null;
+    const remember = { load: () => stored, save: (c: RememberedCalendars | null) => (stored = c) };
+
+    await icloudCalendar(CREDS, { fetch: counted, remember }).list(WEEK);
+    expect(stored!.calendars.length).toBeGreaterThan(1);
+    expect(most).toBeLessThanOrEqual(2);
+
+    // A new instance (the agent woke up) skips discovery.
+    seen.length = 0;
+    const woke = icloudCalendar(CREDS, { fetch: counted, remember });
+    await woke.list(WEEK);
+    expect(seen.some((r) => r.method === "PROPFIND")).toBe(false);
+
+    // The same question asked again at once (twice in one reply) doesn't ask iCloud again.
+    const before = seen.length;
+    await woke.list(WEEK);
+    expect(seen.length).toBe(before);
   });
 });

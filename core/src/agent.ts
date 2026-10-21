@@ -19,7 +19,7 @@ import {
 } from "./brains/chatgpt-auth";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
-import { cleanCredentials, icloudCalendar } from "./calendar/caldav";
+import { cleanCredentials, icloudCalendar, type RememberedCalendars } from "./calendar/caldav";
 import { CalendarError, type CalendarSource, type ICloudCredentials } from "./calendar/types";
 import { history, systemPrompt, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
@@ -27,7 +27,7 @@ import { Outbox, StreamScrubber } from "./outbox";
 import { type ChatGPTView, ClientMessage, type ServerMessage, type SettingsView } from "./protocol";
 import { type AgendaItem, due, finish, getItem, lease, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, type Sql } from "./store/db";
-import { append, get as getRow, type LogRow, type Surface, thread } from "./store/log";
+import { append, forRun, get as getRow, type LogRow, type Surface, thread } from "./store/log";
 import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
 import {
   type BrainChoice,
@@ -158,7 +158,12 @@ export class PersonAgent extends VoiceAgent {
           msg.secret.name === "icloud" && msg.secret.value ? cleanCredentials(msg.secret.value) : msg.secret.value,
         );
         append(this.#sql, { actor: "owner", kind: "settings.change", body: { secret: msg.secret.name, set: msg.secret.value !== null } });
-        if (msg.secret.name === "icloud") this.#calendar = null;
+        if (msg.secret.name === "icloud") {
+          // New credentials: start fresh, and let Atlas ask iCloud again.
+          this.#calendar = null;
+          setSecret(this.#sql, "icloud_refused", null);
+          setSecret(this.#sql, "icloud_calendars", null);
+        }
         this.#refreshVoice();
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
@@ -261,7 +266,10 @@ export class PersonAgent extends VoiceAgent {
         spoken.push(scrubber.flush());
         spoken.close();
         // When the status line and the answer were ready, counted from the end of the owner's turn.
-        const timing = { status_ms: statusMs, answer_ms: answerMs };
+        const tools = forRun(this.#sql, runId)
+          .filter((r) => r.kind === "tool.call")
+          .map((r) => String(r.body.name));
+        const timing = { status_ms: statusMs, answer_ms: answerMs, tools };
         const said = { ...res, text: `${statusLine}${res.text}`.trim(), timing };
         append(this.#sql, {
           actor: "system",
@@ -437,7 +445,7 @@ export class PersonAgent extends VoiceAgent {
   async #finishRun(
     runId: string,
     channel: Surface,
-    res: LoopResult & { timing?: Record<string, number | null> },
+    res: LoopResult & { timing?: Record<string, unknown> },
     streamed: boolean,
     trigger?: string,
   ): Promise<void> {
@@ -559,21 +567,62 @@ export class PersonAgent extends VoiceAgent {
   }
 
   #calendarSource(settings: Settings): CalendarSource | null {
-    if (seams.calendar !== undefined) return seams.calendar;
+    if (seams.calendar !== undefined) return seams.calendar ? this.#guarded(seams.calendar, settings) : null;
     const creds = getSecret<ICloudCredentials>(this.#sql, "icloud");
     if (!creds) return null;
     const key = `${creds.username}|${creds.app_password.length}|${settings.calendar.hidden.join(",")}|${settings.timezone}`;
     if (this.#calendar?.key !== key) {
-      this.#calendar = {
-        key,
-        source: icloudCalendar(creds, {
-          hidden: settings.calendar.hidden,
-          timezone: this.#tz(settings),
-          ...(seams.fetch ? { fetch: seams.fetch } : {}),
-        }),
-      };
+      const source = icloudCalendar(creds, {
+        hidden: settings.calendar.hidden,
+        timezone: this.#tz(settings),
+        remember: {
+          load: () => getSecret<RememberedCalendars>(this.#sql, "icloud_calendars"),
+          save: (cals) => setSecret(this.#sql, "icloud_calendars", cals),
+        },
+        ...(seams.fetch ? { fetch: seams.fetch } : {}),
+      });
+      this.#calendar = { key, source: this.#guarded(source, settings) };
     }
     return this.#calendar.source;
+  }
+
+  /**
+   * After iCloud refuses the password, Atlas stops asking until the owner
+   * reconnects. Retrying a refused login (the brain can call the calendar
+   * several times in one reply) is how Apple accounts get locked.
+   */
+  #guarded(source: CalendarSource, settings: Settings): CalendarSource {
+    const refused = (err: unknown) => {
+      if (err instanceof CalendarError && err.code === "auth") {
+        setSecret(this.#sql, "icloud_refused", { at: Date.now(), message: err.message });
+        append(this.#sql, { actor: "system", kind: "settings.change", body: { icloud: "refused", message: err.message } });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+      }
+      return err;
+    };
+    return {
+      list: async (range) => {
+        const stopped = getSecret<{ at: number; message: string }>(this.#sql, "icloud_refused");
+        if (stopped) {
+          throw new CalendarError(
+            `iCloud refused the Apple ID and app-specific password at ${shortLocal(new Date(stopped.at), this.#tz(settings))}, so Atlas stopped asking, to keep Apple from locking the account. Reconnect in Settings → Calendar.`,
+            "auth",
+          );
+        }
+        return source.list(range).catch((err: unknown) => {
+          throw refused(err);
+        });
+      },
+      // The owner pressing Test is always one fresh try.
+      check: async () => {
+        const c = await source.check().catch((err: unknown) => {
+          throw refused(err);
+        });
+        setSecret(this.#sql, "icloud_refused", null);
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return c;
+      },
+    };
   }
 
   #makeBrain(choice: BrainChoice): Brain | null {
@@ -693,7 +742,7 @@ export class PersonAgent extends VoiceAgent {
       settings: readSettings(this.#sql),
       secrets: {
         elevenlabs_api_key: Boolean(getSecret(this.#sql, "elevenlabs_api_key")),
-        icloud: icloud ? { username: icloud.username } : null,
+        icloud: icloud ? { username: icloud.username, refused: getSecret(this.#sql, "icloud_refused") } : null,
       },
       chatgpt: this.#chatgptView(),
       health: this.#router.snapshot(),

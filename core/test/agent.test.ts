@@ -184,12 +184,46 @@ describe("the thread", () => {
       type: "atlas.secret.set",
       secret: { name: "icloud", value: { username: " owner@icloud.com ", app_password: "abcd efgh ijkl mnop" } },
     });
-    expect((await s.next("atlas.view")).view.secrets.icloud).toEqual({ username: "owner@icloud.com" });
+    expect((await s.next("atlas.view")).view.secrets.icloud).toEqual({ username: "owner@icloud.com", refused: null });
     s.send({ type: "atlas.test", what: "calendar", ref: "cal" });
     const res = await s.next("atlas.test.result", (m) => m.ref === "cal");
     expect(res.ok).toBe(false);
     expect(res.message).toContain("signing in as owner@icloud.com with a 16-character password not in Apple's");
     expect(res.message).not.toContain("abcdefghijklmnop");
+    s.ws.close();
+  });
+
+  it("stops asking iCloud after it refuses the password, until the owner reconnects", async () => {
+    let asked = 0;
+    seams.calendar = {
+      list: async () => {
+        asked += 1;
+        throw new CalendarError("iCloud didn't accept the Apple ID and app-specific password.", "auth");
+      },
+      check: async () => ({ calendars: [], events_next_30_days: 0 }),
+    };
+    brains([call("calendar_read", {}, "c1"), call("calendar_read", {}, "c2"), say("iCloud refused the password.")]);
+    const s = await connect();
+    s.send({
+      type: "atlas.secret.set",
+      secret: { name: "icloud", value: { username: "owner@icloud.com", app_password: "abcd-efgh-ijkl-mnop" } },
+    });
+    await s.next("atlas.view");
+    s.send({ type: "atlas.say", text: "what's on today?", client_id: "c9" });
+    const refused = await s.next("atlas.view", (m) => Boolean(m.view.secrets.icloud?.refused));
+    expect(refused.view.secrets.icloud!.refused!.message).toContain("didn't accept");
+    await s.next("atlas.run", (m) => m.state === "replied");
+    expect(asked).toBe(1); // the brain asked twice; iCloud was only asked once
+
+    // Reconnecting lets Atlas ask again.
+    s.send({
+      type: "atlas.secret.set",
+      secret: { name: "icloud", value: { username: "owner@icloud.com", app_password: "wxyz-wxyz-wxyz-wxyz" } },
+    });
+    const fresh = await s.next("atlas.view", (m) => m.view.secrets.icloud?.refused === null);
+    expect(fresh.view.secrets.icloud!.username).toBe("owner@icloud.com");
+    s.send({ type: "atlas.secret.set", secret: { name: "icloud", value: null } });
+    await s.next("atlas.view");
     s.ws.close();
   });
 
