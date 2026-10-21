@@ -103,6 +103,7 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
             <span className="lab when">
               {voiceTag}
               {b.interrupted ? <span className="tag">Interrupted</span> : null}
+              <Timing timing={b.timing} />
               {time(row.at)}
             </span>
           </div>
@@ -126,6 +127,8 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
         </div>
       );
     }
+    case "voice.problem":
+      return <p className="note fail">{str(b.message)}</p>;
     case "brain.fallback":
       return (
         <p className="note">
@@ -139,4 +142,14 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
     default:
       return null;
   }
+}
+
+const secs = (ms: unknown) => (typeof ms === "number" ? `${(ms / 1000).toFixed(1)} s` : null);
+
+/** For spoken replies: when the status line and the answer were ready after you stopped talking. */
+function Timing({ timing }: { timing: unknown }) {
+  if (!timing || typeof timing !== "object") return null;
+  const t = timing as { status_ms?: unknown; answer_ms?: unknown };
+  const parts = [secs(t.status_ms) && `status ${secs(t.status_ms)}`, secs(t.answer_ms) && `answer ${secs(t.answer_ms)}`].filter(Boolean);
+  return parts.length ? <span className="tag">{parts.join(" · ")}</span> : null;
 }

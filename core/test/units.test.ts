@@ -5,7 +5,7 @@ import { BrainRouter } from "../src/brains/router";
 import { BrainError } from "../src/brains/types";
 import { readWorkersAIStream, toChatMessages } from "../src/brains/workers-ai";
 import { scrub, StreamScrubber } from "../src/outbox";
-import { auraPcm, wholeSamples } from "../src/voice/providers";
+import { auraPcm, elevenLabsPcm, wholeSamples } from "../src/voice/providers";
 import { isoLocal, parseWhen, shortLocal, startOfLocalDay, addLocalDays } from "../src/time";
 import { checkSession, makeSession } from "../src/auth";
 import { collect, fakeOpenAI, scripted, sse } from "./helpers";
@@ -361,5 +361,53 @@ describe("voice out", () => {
     const out = await collect(auraPcm(ai).synthesizeStream("hi"));
     expect(asked).toMatchObject({ text: "hi", encoding: "linear16", container: "none", sample_rate: 24000 });
     expect(out.reduce((n, b) => n + b.byteLength, 0)).toBe(10);
+  });
+
+  it("runs at most two ElevenLabs requests at once, keeping every sentence", async () => {
+    let inFlight = 0;
+    let most = 0;
+    const f = (async () => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((r) => setTimeout(r, 20));
+      inFlight -= 1;
+      return new Response(bytes(8));
+    }) as unknown as typeof fetch;
+    const tts = elevenLabsPcm({ apiKey: "k", voiceId: "v", modelId: "m", fetch: f });
+    const sentences = await Promise.all(["One.", "Two.", "Three.", "Four."].map((t) => collect(tts.synthesizeStream(t))));
+    expect(most).toBe(2);
+    expect(sentences.map((a) => a.reduce((n, b) => n + b.byteLength, 0))).toEqual([8, 8, 8, 8]);
+  });
+
+  it("retries a refused sentence, and reports one it still can't speak", async () => {
+    const problems: string[] = [];
+    let n = 0;
+    const flaky = (async () =>
+      ++n < 3
+        ? Response.json({ detail: "too_many_concurrent_requests" }, { status: 429 })
+        : new Response(bytes(4))) as unknown as typeof fetch;
+    const ok = elevenLabsPcm({
+      apiKey: "k",
+      voiceId: "v",
+      modelId: "m",
+      fetch: flaky,
+      retryDelayMs: 1,
+      onProblem: (m) => problems.push(m),
+    });
+    expect((await collect(ok.synthesizeStream("Hi there."))).length).toBe(1);
+    expect(problems).toEqual([]);
+
+    const down = (async () => Response.json({ detail: "quota_exceeded" }, { status: 401 })) as unknown as typeof fetch;
+    const bad = elevenLabsPcm({
+      apiKey: "k",
+      voiceId: "v",
+      modelId: "m",
+      fetch: down,
+      retryDelayMs: 1,
+      onProblem: (m) => problems.push(m),
+    });
+    expect(await collect(bad.synthesizeStream("Hi there."))).toEqual([]);
+    expect(problems[0]).toContain("HTTP 401");
+    expect(problems[0]).toContain("quota_exceeded");
   });
 });

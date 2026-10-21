@@ -16,6 +16,7 @@ export type LogKind =
   | "run.end"
   | "brain.fallback"
   | "voice.metrics"
+  | "voice.problem"
   | "settings.change";
 
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */
@@ -119,7 +120,7 @@ export function forRun(sql: Sql, runId: string): LogRow[] {
 
 /** What the thread shows: messages, receipts, fallbacks and failed runs. */
 export function isThreadRow(row: LogRow): boolean {
-  if (row.kind === "message.in" || row.kind === "message.out" || row.kind === "brain.fallback") return true;
+  if (row.kind === "message.in" || row.kind === "message.out" || row.kind === "brain.fallback" || row.kind === "voice.problem") return true;
   if (row.kind === "tool.result") return row.body.receipt != null;
   if (row.kind === "run.end") return row.body.state === "failed";
   // An undo from a receipt shows as its own line, so the thread tells the truth.
@@ -127,7 +128,15 @@ export function isThreadRow(row: LogRow): boolean {
   return false;
 }
 
-export const THREAD_KINDS: LogKind[] = ["message.in", "message.out", "tool.result", "brain.fallback", "run.end", "agenda.change"];
+export const THREAD_KINDS: LogKind[] = [
+  "message.in",
+  "message.out",
+  "tool.result",
+  "brain.fallback",
+  "run.end",
+  "agenda.change",
+  "voice.problem",
+];
 
 export function thread(sql: Sql, limit: number, beforeSeq?: number): LogRow[] {
   // Over-fetch, since some tool.result and run.end rows aren't shown.

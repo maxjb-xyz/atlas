@@ -290,6 +290,8 @@ describe("voice", () => {
     expect(b.voice.requests[0]!.tools.map((t) => t.name)).toContain("calendar_read");
 
     const saved = await s.next("atlas.rows", (m) => rowsOf(m, "message.out").length > 0);
+    const timing = rowsOf(saved, "message.out")[0]!.body.timing as { status_ms: number; answer_ms: number };
+    expect(timing.status_ms).toBeLessThanOrEqual(timing.answer_ms);
     expect(rowsOf(saved, "message.out")[0]).toMatchObject({
       surface: "voice",
       body: { text: "Checking your calendar. You're free all afternoon." },

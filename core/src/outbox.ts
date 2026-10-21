@@ -67,6 +67,8 @@ export interface Delivery {
   interrupted?: boolean;
   usage?: unknown;
   trigger?: string;
+  /** For spoken replies: when the status line and the answer were ready. */
+  timing?: Record<string, number | null>;
 }
 
 /** The live ends of each channel. The agent provides them. */
@@ -110,6 +112,7 @@ export class Outbox {
         ...(d.interrupted ? { interrupted: true } : {}),
         ...(d.usage ? { usage: d.usage as never } : {}),
         ...(d.trigger ? { trigger: d.trigger } : {}),
+        ...(d.timing ? { timing: d.timing as never } : {}),
       },
     });
     this.channels.broadcast([row]);

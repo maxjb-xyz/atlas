@@ -1,7 +1,7 @@
 // Speech in and out (§11.4). Voice is a mode of the same Atlas: these only
 // turn audio into text and text into audio. The mind is the same loop.
 
-import { ElevenLabsSTT, ElevenLabsTTS } from "@cloudflare/voice-elevenlabs";
+import { ElevenLabsSTT } from "@cloudflare/voice-elevenlabs";
 import { type StreamingTTSProvider, type TTSProvider, type Transcriber, WorkersAIFluxSTT } from "agents/voice";
 import type { Settings } from "../store/settings";
 
@@ -30,17 +30,134 @@ export function makeTranscriber(ai: Ai, settings: Settings, elevenKey: string | 
 /** Workers AI's voice, used when ElevenLabs isn't set up, so voice works on a fresh deploy. */
 export const FALLBACK_TTS_MODEL = "@cf/deepgram/aura-2-en";
 
-export function makeTTS(ai: Ai, settings: Settings, elevenKey: string | null): Voice {
+/** Told when a sentence couldn't be spoken, so the thread can say so instead of skipping it silently. */
+export type OnProblem = (message: string) => void;
+
+export function makeTTS(ai: Ai, settings: Settings, elevenKey: string | null, onProblem: OnProblem = () => {}): Voice {
   if (settings.voice.speech_out === "elevenlabs" && elevenKey) {
-    const tts = new ElevenLabsTTS({
+    const tts = elevenLabsPcm({
       apiKey: elevenKey,
       voiceId: settings.voice.elevenlabs_voice_id,
       modelId: settings.voice.elevenlabs_model,
-      outputFormat: `pcm_${AUDIO.sampleRate}`,
+      onProblem,
     });
     return wholeSamples(tts, `elevenlabs:${settings.voice.elevenlabs_model}`);
   }
   return wholeSamples(auraPcm(ai), `workers-ai:${FALLBACK_TTS_MODEL}`);
+}
+
+/**
+ * The voice pipeline starts speech for every sentence of a reply at once.
+ * ElevenLabs caps requests running at the same time per plan, and refuses the
+ * rest, so at most this many run together. Sentence order is kept by the pipeline.
+ */
+export const MAX_PARALLEL_SPEECH = 2;
+const RETRIES = 3;
+
+function slots(n: number) {
+  let free = n;
+  const waiting: Array<() => void> = [];
+  return {
+    async take(): Promise<void> {
+      if (free > 0) {
+        free -= 1;
+        return;
+      }
+      await new Promise<void>((r) => waiting.push(r));
+    },
+    give(): void {
+      const next = waiting.shift();
+      if (next) next();
+      else free += 1;
+    },
+  };
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * ElevenLabs speech as streamed raw PCM. Atlas calls the API itself rather
+ * than through the voice package's provider, which drops a refused sentence
+ * without a word: here a refusal is retried, and a sentence that still can't
+ * be spoken is reported.
+ */
+export function elevenLabsPcm(o: {
+  apiKey: string;
+  voiceId: string;
+  modelId: string;
+  onProblem?: OnProblem;
+  fetch?: typeof fetch;
+  retryDelayMs?: number;
+}): TTSProvider & StreamingTTSProvider {
+  const f = o.fetch ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(o.voiceId)}/stream?output_format=pcm_${AUDIO.sampleRate}`;
+  const gate = slots(MAX_PARALLEL_SPEECH);
+
+  async function open(text: string, signal?: AbortSignal): Promise<Response | null> {
+    for (let attempt = 0; ; attempt++) {
+      let res: Response;
+      try {
+        res = await f(url, {
+          method: "POST",
+          headers: { "content-type": "application/json", "xi-api-key": o.apiKey },
+          body: JSON.stringify({ text, model_id: o.modelId }),
+          signal,
+        });
+      } catch (err) {
+        if (signal?.aborted) return null;
+        if (attempt < RETRIES) {
+          await sleep((o.retryDelayMs ?? 300) * (attempt + 1));
+          continue;
+        }
+        o.onProblem?.(`ElevenLabs couldn't be reached for a sentence (${err instanceof Error ? err.message : String(err)}).`);
+        return null;
+      }
+      if (res.ok && res.body) return res;
+      const said = (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 160);
+      if ((res.status === 429 || res.status >= 500) && attempt < RETRIES && !signal?.aborted) {
+        await sleep((o.retryDelayMs ?? 300) * (attempt + 1));
+        continue;
+      }
+      if (!signal?.aborted) o.onProblem?.(`ElevenLabs didn't speak a sentence (HTTP ${res.status}${said ? `: ${said}` : ""}).`);
+      return null;
+    }
+  }
+
+  async function* stream(text: string, signal?: AbortSignal): AsyncGenerator<ArrayBuffer> {
+    await gate.take();
+    try {
+      const res = await open(text, signal);
+      if (!res?.body) return;
+      const reader = res.body.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) return;
+          if (value?.byteLength) yield value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer;
+        }
+      } finally {
+        reader.cancel().catch(() => {});
+      }
+    } finally {
+      gate.give();
+    }
+  }
+
+  return {
+    synthesizeStream: stream,
+    async synthesize(text, signal) {
+      const parts: Uint8Array[] = [];
+      for await (const chunk of stream(text, signal)) parts.push(new Uint8Array(chunk));
+      if (!parts.length) return null;
+      const out = new Uint8Array(parts.reduce((n, p) => n + p.byteLength, 0));
+      let at = 0;
+      for (const p of parts) {
+        out.set(p, at);
+        at += p.byteLength;
+      }
+      return out.buffer;
+    },
+  };
 }
 
 interface AiLike {

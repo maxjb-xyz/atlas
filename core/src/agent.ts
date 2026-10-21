@@ -230,7 +230,10 @@ export class PersonAgent extends VoiceAgent {
     const spoken = new Speech();
     const started = Date.now();
     let firstWordsMs: number | null = null;
+    let statusMs: number | null = null;
+    let answerMs: number | null = null;
     let statusLine = "";
+    this.#voiceRun = runId;
     const scrubber = new StreamScrubber(this.#outbox.secrets());
 
     void this.#inLine(
@@ -246,6 +249,8 @@ export class PersonAgent extends VoiceAgent {
           emit: (e) => {
             if (e.type === "text" || (e.type === "status" && e.speakable && e.text)) {
               firstWordsMs ??= Date.now() - started;
+              if (e.type === "status") statusMs ??= Date.now() - started;
+              else answerMs ??= Date.now() - started;
               const words = e.type === "text" ? e.text : `${e.text} `;
               if (e.type === "status") statusLine = words;
               spoken.push(scrubber.push(words));
@@ -255,7 +260,9 @@ export class PersonAgent extends VoiceAgent {
         });
         spoken.push(scrubber.flush());
         spoken.close();
-        const said = { ...res, text: `${statusLine}${res.text}`.trim() };
+        // When the status line and the answer were ready, counted from the end of the owner's turn.
+        const timing = { status_ms: statusMs, answer_ms: answerMs };
+        const said = { ...res, text: `${statusLine}${res.text}`.trim(), timing };
         append(this.#sql, {
           actor: "system",
           kind: "voice.metrics",
@@ -263,6 +270,7 @@ export class PersonAgent extends VoiceAgent {
           surface: "voice",
           body: {
             first_words_ms: firstWordsMs,
+            ...timing,
             total_ms: Date.now() - started,
             brain: res.brain,
             tts: this.tts ? ((this.tts as { label?: string }).label ?? null) : null,
@@ -297,8 +305,20 @@ export class PersonAgent extends VoiceAgent {
     this.#inCall.delete(connection.id);
   }
 
+  /** The voice run in progress, so a sentence that couldn't be spoken is noted against it. */
+  #voiceRun: string | null = null;
+
   #refreshVoice(): void {
-    this.tts = makeTTS(this.env.AI, readSettings(this.#sql), getSecret<string>(this.#sql, "elevenlabs_api_key"));
+    this.tts = makeTTS(this.env.AI, readSettings(this.#sql), getSecret<string>(this.#sql, "elevenlabs_api_key"), (message) => {
+      const row = append(this.#sql, {
+        actor: "system",
+        kind: "voice.problem",
+        run_id: this.#voiceRun,
+        surface: "voice",
+        body: { message },
+      });
+      this.#broadcast({ type: "atlas.rows", rows: [row] });
+    });
   }
 
   // --- the clock -------------------------------------------------------------
@@ -414,7 +434,13 @@ export class PersonAgent extends VoiceAgent {
   }
 
   /** Saves the answer through the outbox and closes the run with its one final state. */
-  async #finishRun(runId: string, channel: Surface, res: LoopResult, streamed: boolean, trigger?: string): Promise<void> {
+  async #finishRun(
+    runId: string,
+    channel: Surface,
+    res: LoopResult & { timing?: Record<string, number | null> },
+    streamed: boolean,
+    trigger?: string,
+  ): Promise<void> {
     if (res.text.trim()) {
       await this.#outbox.deliver(
         {
@@ -426,6 +452,7 @@ export class PersonAgent extends VoiceAgent {
           interrupted: res.interrupted,
           usage: res.usage,
           trigger,
+          timing: res.timing,
         },
         { alreadyStreamed: streamed },
       );
@@ -499,7 +526,7 @@ export class PersonAgent extends VoiceAgent {
   async apiRunsSince(seq: number): Promise<LogRow[]> {
     return this.#sql
       .exec<{ id: string }>(
-        `SELECT id FROM log WHERE seq > ? AND kind IN ('message.in','message.out','tool.call','tool.result','voice.metrics','run.end','brain.fallback') ORDER BY seq LIMIT 500`,
+        `SELECT id FROM log WHERE seq > ? AND kind IN ('message.in','message.out','tool.call','tool.result','voice.metrics','voice.problem','run.end','brain.fallback') ORDER BY seq LIMIT 500`,
         seq,
       )
       .toArray()
