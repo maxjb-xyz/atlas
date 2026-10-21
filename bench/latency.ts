@@ -27,7 +27,7 @@ interface Scenario {
   text: string;
 }
 interface BrainChoice {
-  provider: "codex" | "workers-ai";
+  provider: "chatgpt" | "workers-ai";
   model: string;
 }
 interface Config {
@@ -272,7 +272,13 @@ async function main() {
   const configs: Config[] = [];
   if (flag("sweep")) {
     const c = JSON.parse(await readFile(join(here, "candidates.json"), "utf8")) as { voice: BrainChoice[]; speech_in: string[] };
-    for (const speech_in of c.speech_in) for (const v of c.voice) configs.push({ voice: [v], speech_in });
+    const current = [...original.brains.main, ...original.brains.voice].find((b) => b.provider === "chatgpt")?.model ?? "";
+    for (const speech_in of c.speech_in) {
+      for (const v of c.voice) {
+        const model = v.provider === "chatgpt" && !v.model ? current : v.model;
+        if (model) configs.push({ voice: [{ ...v, model }], speech_in });
+      }
+    }
   } else {
     configs.push({ voice: original.brains.voice, speech_in: String(original.voice.speech_in) });
   }

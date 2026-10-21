@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { CodexView, SettingsView } from "../../core/src/protocol";
+import type { ChatGPTView, SettingsView } from "../../core/src/protocol";
 import type { BrainChoice, Settings as SettingsT } from "../../core/src/store/settings";
 import type { Atlas, TestResult } from "./connection";
 
@@ -40,7 +40,7 @@ export function Settings({ atlas, onSignOut }: { atlas: Atlas; onSignOut: () => 
       </Section>
 
       <Section title="Brains">
-        <Codex codex={view.codex} atlas={atlas} />
+        <ChatGPT chatgpt={view.chatgpt} atlas={atlas} />
         {(["main", "voice"] as Role[]).map((role) => (
           <Chain
             key={role}
@@ -276,50 +276,79 @@ function ICloud({ view, atlas }: { view: SettingsView; atlas: Atlas }) {
   );
 }
 
-function Codex({ codex, atlas }: { codex: CodexView; atlas: Atlas }) {
+function ChatGPT({ chatgpt, atlas }: { chatgpt: ChatGPTView; atlas: Atlas }) {
+  const [landed, setLanded] = useState("");
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    if (codex.state !== "pending") return;
+    if (chatgpt.state !== "pending") return;
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [codex.state]);
+  }, [chatgpt.state]);
+  useEffect(() => {
+    if (chatgpt.state !== "pending") setLanded("");
+  }, [chatgpt.state]);
 
   return (
-    <div className="codex">
-      <div className="codex-head">
+    <div className="signin">
+      <div className="signin-head">
         <span>ChatGPT</span>
-        {codex.state === "signed_in" && (
+        {chatgpt.state === "signed_in" && (
           <span className="muted">
-            Signed in{codex.email ? ` as ${codex.email}` : ""}
-            {codex.plan ? ` · ${codex.plan}` : ""}
+            Signed in{chatgpt.email ? ` as ${chatgpt.email}` : ""} · {chatgpt.models.length} models on your plan
           </span>
         )}
-        {codex.state === "signed_out" && <span className="muted">Not signed in</span>}
+        {(chatgpt.state === "signed_out" || chatgpt.state === "error") && <span className="muted">Not signed in</span>}
         <span className="grow" />
-        {codex.state === "signed_in" ? (
-          <button className="btn" onClick={() => atlas.send({ type: "atlas.codex.signout" })}>
+        {chatgpt.state === "signed_in" && (
+          <button className="btn" onClick={() => atlas.send({ type: "atlas.chatgpt.signout" })}>
             Sign out
           </button>
-        ) : (
-          <button className="btn" onClick={() => atlas.send({ type: "atlas.codex.start" })}>
-            {codex.state === "pending" ? "Get a new code" : "Sign in with ChatGPT"}
+        )}
+        {(chatgpt.state === "signed_out" || chatgpt.state === "error") && (
+          <button className="btn" onClick={() => atlas.send({ type: "atlas.chatgpt.start" })}>
+            Sign in with ChatGPT
+          </button>
+        )}
+        {chatgpt.state === "pending" && (
+          <button className="link" onClick={() => atlas.send({ type: "atlas.chatgpt.cancel" })}>
+            Cancel
           </button>
         )}
       </div>
-      {codex.state === "pending" && (
+      {chatgpt.state === "pending" && (
         <div className="code-box">
-          <p className="muted small">
-            Open{" "}
-            <a href={codex.verification_url} target="_blank" rel="noreferrer">
-              {codex.verification_url}
+          <p className="small">
+            1.{" "}
+            <a href={chatgpt.authorize_url} target="_blank" rel="noreferrer">
+              Open ChatGPT sign-in
             </a>{" "}
-            and enter this code.
+            and allow Atlas to use your plan.
           </p>
-          <p className="code">{codex.user_code}</p>
-          <p className="lab">Expires in {countdown(codex.expires_at - now)}</p>
+          <p className="small">
+            2. Your browser then lands on a page that won't load, at 127.0.0.1. That's expected. Copy that page's address and paste it here.
+          </p>
+          <form
+            className="paste"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (landed.trim()) atlas.send({ type: "atlas.chatgpt.finish", url: landed.trim() });
+            }}
+          >
+            <input
+              className="mono"
+              placeholder="http://127.0.0.1:1455/auth/callback?code=…"
+              value={landed}
+              onChange={(e) => setLanded(e.target.value)}
+            />
+            <button className="btn" type="submit" disabled={!landed.trim()}>
+              Finish
+            </button>
+          </form>
+          <p className="lab">Expires in {countdown(chatgpt.expires_at - now)}</p>
+          {chatgpt.error && <p className="err small">{chatgpt.error}</p>}
         </div>
       )}
-      {codex.state === "error" && <p className="err small">{codex.message}</p>}
+      {chatgpt.state === "error" && <p className="err small">{chatgpt.message}</p>}
     </div>
   );
 }
@@ -352,6 +381,13 @@ function Chain({
   };
   return (
     <div className="chain">
+      {view.chatgpt.state === "signed_in" && (
+        <datalist id="chatgpt-models">
+          {view.chatgpt.models.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
+      )}
       <p className="lab">{role === "main" ? "Main, in order" : "Voice, in order"}</p>
       {chain.map((b, i) => {
         const h = view.health[`${b.provider}:${b.model}`];
@@ -360,10 +396,15 @@ function Chain({
           <div key={i} className="brain">
             <i className={`dot ${h ? (h.ok ? "good" : "bad") : ""}`} title={h?.reason ?? (h ? "Healthy" : "Not checked yet")} />
             <select value={b.provider} onChange={(e) => set(i, { ...b, provider: e.target.value as BrainChoice["provider"] })}>
-              <option value="codex">ChatGPT</option>
+              <option value="chatgpt">ChatGPT</option>
               <option value="workers-ai">Workers AI</option>
             </select>
-            <input className="mono" value={b.model} onChange={(e) => set(i, { ...b, model: e.target.value })} />
+            <input
+              className="mono"
+              value={b.model}
+              list={b.provider === "chatgpt" ? "chatgpt-models" : undefined}
+              onChange={(e) => set(i, { ...b, model: e.target.value })}
+            />
             <div className="brain-tools">
               <button className="icon" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)}>
                 ↑

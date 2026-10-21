@@ -4,7 +4,7 @@ import { type PersonAgent, seams } from "../src/agent";
 import type { ServerMessage } from "../src/protocol";
 import { getItem } from "../src/store/agenda";
 import type { LogRow } from "../src/store/log";
-import { call, collect, env, fakeCalendar, say, scripted, SECRET, type Step } from "./helpers";
+import { call, collect, env, fakeCalendar, fakeOpenAI, say, scripted, SECRET, type Step } from "./helpers";
 
 const ORIGIN = "http://atlas.test";
 const auth = { authorization: `Bearer ${SECRET}` };
@@ -57,9 +57,9 @@ const owner = () => env.PersonAgent.get(env.PersonAgent.idFromName("owner"));
 const rowsOf = (m: Extract<ServerMessage, { type: "atlas.rows" }>, kind: string): LogRow[] => m.rows.filter((r) => r.kind === kind);
 
 function brains(main: Step[], voice: Step[] = []) {
-  const m = scripted(main, "codex", "gpt-5.5");
+  const m = scripted(main, "chatgpt", "gpt-5.5");
   const v = scripted(voice, "workers-ai", "@cf/moonshotai/kimi-k2.6");
-  seams.makeBrain = (c) => (c.provider === "codex" ? m.brain : v.brain);
+  seams.makeBrain = (c) => (c.provider === "chatgpt" ? m.brain : v.brain);
   return { main: m, voice: v };
 }
 
@@ -67,6 +67,7 @@ beforeEach(() => {
   seams.calendar = fakeCalendar([]);
 });
 afterEach(() => {
+  seams.fetch = null;
   seams.makeBrain = null;
   seams.calendar = undefined;
 });
@@ -114,7 +115,11 @@ describe("the thread", () => {
     await s.next("atlas.status", (m) => m.text === "Checking your calendar.");
     await s.next("atlas.delta", (m) => m.text.includes("Nothing"));
     const out = await s.next("atlas.rows", (m) => rowsOf(m, "message.out").length > 0);
-    expect(rowsOf(out, "message.out")[0]!.body).toMatchObject({ text: "Nothing on today.", channel: "app", brain: { provider: "codex" } });
+    expect(rowsOf(out, "message.out")[0]!.body).toMatchObject({
+      text: "Nothing on today.",
+      channel: "app",
+      brain: { provider: "chatgpt" },
+    });
     await s.next("atlas.run", (m) => m.state === "replied");
 
     // A refresh shows the same saved truth.
@@ -178,6 +183,31 @@ describe("the thread", () => {
   });
 });
 
+describe("sign in with chatgpt", () => {
+  it("signs in from the pasted address and points the chains at a model the account has", async () => {
+    const openai = await fakeOpenAI();
+    seams.fetch = openai.f;
+    const s = await connect();
+    s.send({ type: "atlas.chatgpt.start" });
+    const pending = await s.next("atlas.view", (m) => m.view.chatgpt.state === "pending");
+    const url = new URL((pending.view.chatgpt as { authorize_url: string }).authorize_url);
+    openai.setNonce(url.searchParams.get("nonce")!);
+    const landed = `http://127.0.0.1:1455/auth/callback?code=c1&state=${url.searchParams.get("state")}&client_id=oaiapp_123`;
+    s.send({ type: "atlas.chatgpt.finish", url: landed });
+    const done = await s.next("atlas.view", (m) => m.view.chatgpt.state === "signed_in");
+    expect(done.view.chatgpt).toMatchObject({ email: "max@example.com", models: ["gpt-6.1-sol"] });
+    expect(done.view.settings.brains.main[0]).toEqual({ provider: "chatgpt", model: "gpt-6.1-sol" });
+    expect(JSON.stringify(done.view)).not.toContain("rt2");
+
+    // Signing in again reuses the client id OpenAI issued.
+    s.send({ type: "atlas.chatgpt.start" });
+    const again = await s.next("atlas.view", (m) => m.view.chatgpt.state === "pending");
+    expect(new URL((again.view.chatgpt as { authorize_url: string }).authorize_url).searchParams.get("client_id")).toBe("oaiapp_123");
+    s.send({ type: "atlas.chatgpt.cancel" });
+    s.ws.close();
+  });
+});
+
 describe("voice", () => {
   it("is the same mind: same log, same tools, and a status line before a lookup", async () => {
     const b = brains([], [call("calendar_read", {}), say("You're free all afternoon.")]);
@@ -210,7 +240,7 @@ describe("the HTTP API", () => {
   it("runs a text turn for the benchmark", async () => {
     brains([say("Hello from the API.")]);
     const res = await SELF.fetch(`${ORIGIN}/api/turn`, { method: "POST", headers: auth, body: JSON.stringify({ text: "hi" }) });
-    expect(await res.json()).toMatchObject({ state: "replied", reply: "Hello from the API.", brain: "codex:gpt-5.5" });
+    expect(await res.json()).toMatchObject({ state: "replied", reply: "Hello from the API.", brain: "chatgpt:gpt-5.5" });
     const log = (await (await SELF.fetch(`${ORIGIN}/api/log?since=0`, { headers: auth })).json()) as { rows: LogRow[] };
     expect(log.rows.map((r) => r.kind)).toEqual(expect.arrayContaining(["message.in", "message.out", "run.end"]));
   });

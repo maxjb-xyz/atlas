@@ -32,9 +32,11 @@ export const ClientMessage = z.discriminatedUnion("type", [
       }),
     ]),
   }),
-  /** Start "Sign in with ChatGPT" (device code). */
-  z.object({ type: z.literal("atlas.codex.start") }),
-  z.object({ type: z.literal("atlas.codex.signout") }),
+  /** "Sign in with ChatGPT": start, then paste the address the browser landed on. */
+  z.object({ type: z.literal("atlas.chatgpt.start") }),
+  z.object({ type: z.literal("atlas.chatgpt.finish"), url: z.string().min(1).max(8000) }),
+  z.object({ type: z.literal("atlas.chatgpt.cancel") }),
+  z.object({ type: z.literal("atlas.chatgpt.signout") }),
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
@@ -55,15 +57,16 @@ export type ClientMessage = z.infer<typeof ClientMessage>;
 export interface SettingsView {
   settings: import("./store/settings").Settings;
   secrets: { elevenlabs_api_key: boolean; icloud: { username: string } | null };
-  codex: CodexView;
+  chatgpt: ChatGPTView;
   /** Provider health, by "provider:model". */
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
 }
 
-export type CodexView =
+export type ChatGPTView =
   | { state: "signed_out" }
-  | { state: "pending"; verification_url: string; user_code: string; expires_at: number }
-  | { state: "signed_in"; email: string | null; plan: string | null }
+  /** Waiting for the owner to sign in at `authorize_url` and paste back where they landed. */
+  | { state: "pending"; authorize_url: string; expires_at: number; error?: string }
+  | { state: "signed_in"; email: string | null; models: string[] }
   | { state: "error"; message: string };
 
 export type RunState = "running" | "replied" | "deferred" | "failed";

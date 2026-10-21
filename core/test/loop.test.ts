@@ -27,7 +27,7 @@ const TZ = "America/New_York";
 const NOW = new Date("2026-10-21T20:00:00Z"); // 4 PM in New York
 
 function setup(sql: Sql, steps: Step[], opts: Partial<RunSpec> = {}, extraBrains: Step[][] = []) {
-  const main = scripted(steps, "codex", "main");
+  const main = scripted(steps, "chatgpt", "main");
   const others = extraBrains.map((s, i) => scripted(s, "workers-ai", `backup${i}`));
   const brains = [main, ...others];
   const router = new BrainRouter((c) => brains.find((b) => b.brain.model === c.model)?.brain ?? null);
@@ -79,7 +79,7 @@ describe("the loop", () => {
         state: "replied",
         text: "Hey. What's up?",
         steps: 1,
-        brain: { provider: "codex", model: "main" },
+        brain: { provider: "chatgpt", model: "main" },
         fallback: false,
       });
       expect(t.main.requests[0]!.tools.map((x) => x.name)).toEqual([
@@ -137,11 +137,11 @@ describe("the loop", () => {
       expect(res).toMatchObject({ state: "replied", text: "Answer from the backup.", fallback: true, brain: { model: "backup0" } });
       const row = t.events.find((e) => e.type === "row");
       expect(row?.type === "row" && row.row.body).toMatchObject({
-        from: "codex:main",
+        from: "chatgpt:main",
         to: "workers-ai:backup0",
         reason: "ChatGPT: HTTP 503",
       });
-      expect(t.router.snapshot()["codex:main"]!.ok).toBe(false);
+      expect(t.router.snapshot()["chatgpt:main"]!.ok).toBe(false);
     }));
 
   it("moves on when a brain is silent too long", () =>
@@ -160,7 +160,7 @@ describe("the loop", () => {
       const t = setup(sql, [new BrainError("down")], {}, [[new BrainError("also down")]]);
       const res = await t.run();
       expect(res.state).toBe("failed");
-      expect(res.error).toContain("codex:main: down");
+      expect(res.error).toContain("chatgpt:main: down");
       expect(res.error).toContain("workers-ai:backup0: also down");
     }));
 
@@ -246,7 +246,7 @@ describe("the store", () => {
     withSql((sql) => {
       const s = readSettings(sql);
       expect(s.assistant_name).toBe("Atlas");
-      expect(s.brains.main[0]).toEqual({ provider: "codex", model: "gpt-5.5" });
+      expect(s.brains.main[0]).toEqual({ provider: "chatgpt", model: "gpt-5.5" });
       expect(s.voice.elevenlabs_model).toBe("eleven_v4_turbo");
       writeSettings(sql, { owner_name: "Max" });
       expect(readSettings(sql).owner_name).toBe("Max");
