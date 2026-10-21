@@ -4,55 +4,33 @@
 
 import { Agent, type Connection, type WSMessage } from "agents";
 import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } from "agents/voice";
+import { CalendarSense } from "./agent/calendar";
+import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
+import { seams } from "./agent/seams";
+import { liveTest, settingsView } from "./agent/settings";
 import { BrainRouter } from "./brains/router";
-import { type ChatGPTAccess, chatgptBrain } from "./brains/chatgpt";
-import {
-  ChatGPTAuthError,
-  type ChatGPTClient,
-  type ChatGPTLogin,
-  type ChatGPTTokens,
-  finishLogin,
-  listModels,
-  newClient,
-  refreshTokens,
-  startLogin,
-} from "./brains/chatgpt-auth";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
-import { cleanCredentials, icloudCalendar, type RememberedCalendars } from "./calendar/caldav";
-import { CalendarError, type CalendarSource, type ICloudCredentials } from "./calendar/types";
+import { cleanCredentials } from "./calendar/caldav";
 import { history, systemPrompt, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
 import { Outbox, StreamScrubber } from "./outbox";
-import { type ChatGPTView, ClientMessage, type ServerMessage, type SettingsView } from "./protocol";
+import { ClientMessage, type ServerMessage, type SettingsView } from "./protocol";
 import { type AgendaItem, due, finish, getItem, lease, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, type Sql } from "./store/db";
 import { append, forRun, get as getRow, type LogRow, type Surface, thread } from "./store/log";
 import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
-import {
-  type BrainChoice,
-  DEFAULT_CHATGPT_MODEL,
-  getSecret,
-  readSettings,
-  type Settings,
-  setSecret,
-  writeSettings,
-} from "./store/settings";
-import { isValidZone, shortLocal } from "./time";
+import { type BrainChoice, getSecret, readSettings, setSecret, writeSettings } from "./store/settings";
+import { isValidZone, shortLocal, zoneOf } from "./time";
 import { calendarRead } from "./tools/calendar";
 import { reminderTools } from "./tools/reminders";
 import type { Tool, ToolContext } from "./tools/types";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 
+export { seams };
+
 /** The one owner in M0. Members get their own agents in M5. */
 export const OWNER = "owner";
-
-/** Test seams: fake brains and calendar instead of real providers. Only the tests set these. */
-export const seams: {
-  makeBrain: ((choice: BrainChoice) => Brain | null) | null;
-  calendar: CalendarSource | null | undefined;
-  fetch: typeof fetch | null;
-} = { makeBrain: null, calendar: undefined, fetch: null };
 
 const TOOLS: Tool[] = [calendarRead, ...reminderTools];
 
@@ -77,11 +55,10 @@ interface ConverseOpts {
 export class PersonAgent extends VoiceAgent {
   #router = new BrainRouter((c) => this.#makeBrain(c));
   #outbox!: Outbox;
-  #calendar: { key: string; source: CalendarSource } | null = null;
+  #calendar!: CalendarSense;
+  #chatgpt!: ChatGPTSignIn;
   /** Runs go one at a time, so each one sees the last one's answer. */
   #line: Promise<unknown> = Promise.resolve();
-  #chatgptError: string | null = null;
-  #refreshing: Promise<ChatGPTTokens | null> | null = null;
 
   get #sql(): Sql {
     return this.ctx.storage.sql;
@@ -92,6 +69,15 @@ export class PersonAgent extends VoiceAgent {
   override async onStart(): Promise<void> {
     migrate(this.#sql);
     sweepStaleRuns(this.#sql, 0);
+    const changed = () => this.#broadcast({ type: "atlas.view", view: this.#view() });
+    this.#calendar = new CalendarSense(this.#sql, changed);
+    this.#chatgpt = new ChatGPTSignIn(this.#sql, {
+      changed,
+      signedIn: (models) => {
+        const brains = brainsForModels(readSettings(this.#sql).brains, models);
+        if (brains) this.#updateSettings({ brains });
+      },
+    });
     this.#outbox = new Outbox(this.#sql, {
       broadcast: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
       speak: async (text) => {
@@ -158,32 +144,21 @@ export class PersonAgent extends VoiceAgent {
           msg.secret.name === "icloud" && msg.secret.value ? cleanCredentials(msg.secret.value) : msg.secret.value,
         );
         append(this.#sql, { actor: "owner", kind: "settings.change", body: { secret: msg.secret.name, set: msg.secret.value !== null } });
-        if (msg.secret.name === "icloud") {
-          // New credentials: start fresh, and let Atlas ask iCloud again.
-          this.#calendar = null;
-          setSecret(this.#sql, "icloud_refused", null);
-          setSecret(this.#sql, "icloud_calendars", null);
-        }
+        if (msg.secret.name === "icloud") this.#calendar.reconnect();
         this.#refreshVoice();
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       case "atlas.chatgpt.start":
-        await this.#chatgptStart();
+        await this.#chatgpt.start();
         return;
       case "atlas.chatgpt.finish":
-        await this.#chatgptFinish(msg.url);
+        await this.#chatgpt.finish(msg.url);
         return;
       case "atlas.chatgpt.cancel":
-        setSecret(this.#sql, "chatgpt_login", null);
-        this.#chatgptError = null;
-        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        this.#chatgpt.cancel();
         return;
       case "atlas.chatgpt.signout":
-        setSecret(this.#sql, "chatgpt_tokens", null);
-        setSecret(this.#sql, "chatgpt_login", null);
-        this.#chatgptError = null;
-        append(this.#sql, { actor: "owner", kind: "settings.change", body: { chatgpt: "signed_out" } });
-        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        this.#chatgpt.signOut();
         return;
       case "atlas.test":
         await this.#test(connection, msg);
@@ -346,7 +321,7 @@ export class PersonAgent extends VoiceAgent {
   async #remind(item: AgendaItem): Promise<void> {
     const runId = startRun(this.#sql, { actor: "atlas", trigger: `agenda:${item.id}`, surface: "none", role: "main" });
     const settings = readSettings(this.#sql);
-    const tz = this.#tz(settings);
+    const tz = zoneOf(settings);
     const set = new Date(item.created_at);
     const note = `[Atlas's clock, not the owner] The reminder "${item.title}" is due now (set ${shortLocal(set, tz)}). Give it to the owner in one short message, as you'd say it. Don't ask follow-up questions unless it truly helps.`;
     const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
@@ -419,7 +394,7 @@ export class PersonAgent extends VoiceAgent {
 
   async #converse(o: ConverseOpts): Promise<LoopResult> {
     const settings = readSettings(this.#sql);
-    const tz = this.#tz(settings);
+    const tz = zoneOf(settings);
     const now = new Date();
     const messages = withMessage(history(this.#sql, o.runId, undefined, o.beforeSeq), o.input);
     return runLoop(
@@ -427,7 +402,7 @@ export class PersonAgent extends VoiceAgent {
         sql: this.#sql,
         router: this.#router,
         chain: settings.brains[o.role],
-        toolContext: { sql: this.#sql, settings, tz, now, calendar: this.#calendarSource(settings), clock: this.#clock },
+        toolContext: { sql: this.#sql, settings, tz, now, calendar: this.#calendar.source(settings), clock: this.#clock },
       },
       {
         runId: o.runId,
@@ -562,210 +537,19 @@ export class PersonAgent extends VoiceAgent {
     }
     const keys = writeSettings(this.#sql, patch);
     if (keys.length) append(this.#sql, { actor: "owner", kind: "settings.change", body: { keys } });
-    if (keys.includes("calendar")) this.#calendar = null;
+    if (keys.includes("calendar") || keys.includes("timezone")) this.#calendar.reset();
     this.#refreshVoice();
     this.#broadcast({ type: "atlas.view", view: this.#view() });
-  }
-
-  #tz(settings: Settings): string {
-    return settings.timezone && isValidZone(settings.timezone) ? settings.timezone : "UTC";
-  }
-
-  #calendarSource(settings: Settings): CalendarSource | null {
-    if (seams.calendar !== undefined) return seams.calendar ? this.#guarded(seams.calendar, settings) : null;
-    const creds = getSecret<ICloudCredentials>(this.#sql, "icloud");
-    if (!creds) return null;
-    const key = `${creds.username}|${creds.app_password.length}|${settings.calendar.hidden.join(",")}|${settings.timezone}`;
-    if (this.#calendar?.key !== key) {
-      const source = icloudCalendar(creds, {
-        hidden: settings.calendar.hidden,
-        timezone: this.#tz(settings),
-        remember: {
-          load: () => getSecret<RememberedCalendars>(this.#sql, "icloud_calendars"),
-          save: (cals) => setSecret(this.#sql, "icloud_calendars", cals),
-        },
-        ...(seams.fetch ? { fetch: seams.fetch } : {}),
-      });
-      this.#calendar = { key, source: this.#guarded(source, settings) };
-    }
-    return this.#calendar.source;
-  }
-
-  /**
-   * After iCloud refuses the password, Atlas stops asking until the owner
-   * reconnects. Retrying a refused login (the brain can call the calendar
-   * several times in one reply) is how Apple accounts get locked.
-   */
-  #guarded(source: CalendarSource, settings: Settings): CalendarSource {
-    const refused = (err: unknown) => {
-      if (err instanceof CalendarError && err.code === "auth") {
-        setSecret(this.#sql, "icloud_refused", { at: Date.now(), message: err.message });
-        append(this.#sql, { actor: "system", kind: "settings.change", body: { icloud: "refused", message: err.message } });
-        this.#broadcast({ type: "atlas.view", view: this.#view() });
-      }
-      return err;
-    };
-    return {
-      list: async (range) => {
-        const stopped = getSecret<{ at: number; message: string }>(this.#sql, "icloud_refused");
-        if (stopped) {
-          throw new CalendarError(
-            `iCloud refused the Apple ID and app-specific password at ${shortLocal(new Date(stopped.at), this.#tz(settings))}, so Atlas stopped asking, to keep Apple from locking the account. Reconnect in Settings → Calendar.`,
-            "auth",
-          );
-        }
-        return source.list(range).catch((err: unknown) => {
-          throw refused(err);
-        });
-      },
-      // The owner pressing Test is always one fresh try.
-      check: async () => {
-        const c = await source.check().catch((err: unknown) => {
-          throw refused(err);
-        });
-        setSecret(this.#sql, "icloud_refused", null);
-        this.#broadcast({ type: "atlas.view", view: this.#view() });
-        return c;
-      },
-    };
   }
 
   #makeBrain(choice: BrainChoice): Brain | null {
     if (seams.makeBrain) return seams.makeBrain(choice);
     if (choice.provider === "workers-ai") return workersAIBrain(this.env.AI as never, choice.model);
-    if (!getSecret<ChatGPTTokens>(this.#sql, "chatgpt_tokens")) return null;
-    return chatgptBrain(this.#chatgptAccess, choice.model, seams.fetch ?? fetch);
-  }
-
-  #chatgptAccess: ChatGPTAccess = {
-    access: async (force = false) => {
-      let tokens = getSecret<ChatGPTTokens>(this.#sql, "chatgpt_tokens");
-      if (!tokens) return null;
-      if (force || tokens.expires_at - Date.now() < 5 * 60_000) tokens = await this.#refreshChatGPT(tokens);
-      return tokens?.access_token ?? null;
-    },
-  };
-
-  /** One refresh at a time, however many turns ask: refresh tokens rotate, so two at once would race. */
-  #refreshChatGPT(tokens: ChatGPTTokens): Promise<ChatGPTTokens | null> {
-    this.#refreshing ??= (async () => {
-      try {
-        const fresh = await refreshTokens(tokens, seams.fetch ?? fetch);
-        setSecret(this.#sql, "chatgpt_tokens", fresh);
-        return fresh;
-      } catch (err) {
-        if (err instanceof ChatGPTAuthError) {
-          setSecret(this.#sql, "chatgpt_tokens", null);
-          this.#chatgptError = err.message;
-          this.#broadcast({ type: "atlas.view", view: this.#view() });
-          return null;
-        }
-        throw err;
-      } finally {
-        this.#refreshing = null;
-      }
-    })();
-    return this.#refreshing;
-  }
-
-  #chatgptClient(): ChatGPTClient {
-    let client = getSecret<ChatGPTClient>(this.#sql, "chatgpt_client");
-    if (!client) {
-      client = newClient();
-      setSecret(this.#sql, "chatgpt_client", client);
-    }
-    return client;
-  }
-
-  /** Step 1 of "Sign in with ChatGPT": the address the owner opens. */
-  async #chatgptStart(): Promise<void> {
-    const login = await startLogin(this.#chatgptClient());
-    setSecret(this.#sql, "chatgpt_login", login);
-    this.#chatgptError = null;
-    this.#broadcast({ type: "atlas.view", view: this.#view() });
-  }
-
-  /** Step 2: the owner pastes the address their browser landed on. */
-  async #chatgptFinish(pasted: string): Promise<void> {
-    const login = getSecret<ChatGPTLogin>(this.#sql, "chatgpt_login");
-    if (!login) {
-      this.#chatgptError = "Start the sign-in first.";
-      this.#broadcast({ type: "atlas.view", view: this.#view() });
-      return;
-    }
-    try {
-      const f = seams.fetch ?? fetch;
-      const tokens = await finishLogin(pasted, login, f);
-      const models = await listModels(tokens.access_token, f).catch(() => []);
-      setSecret(this.#sql, "chatgpt_tokens", tokens);
-      setSecret(this.#sql, "chatgpt_login", null);
-      setSecret(this.#sql, "chatgpt_client", {
-        ...this.#chatgptClient(),
-        client_id: tokens.client_id,
-        email: tokens.email,
-        id_token: tokens.id_token,
-        models,
-      });
-      this.#chatgptError = null;
-      append(this.#sql, { actor: "owner", kind: "settings.change", body: { chatgpt: "signed_in", models: models.length } });
-      this.#useAvailableModels(models);
-    } catch (err) {
-      this.#chatgptError = err instanceof Error ? err.message : String(err);
-      if (!(err instanceof ChatGPTAuthError)) setSecret(this.#sql, "chatgpt_login", null);
-    }
-    this.#broadcast({ type: "atlas.view", view: this.#view() });
-  }
-
-  /**
-   * ChatGPT spots in the brain chains that name a model this account can't use
-   * move to the default model if the plan has it, or else its first listed one.
-   */
-  #useAvailableModels(models: string[]): void {
-    if (!models.length) return;
-    const s = readSettings(this.#sql);
-    const preferred = models.includes(DEFAULT_CHATGPT_MODEL) ? DEFAULT_CHATGPT_MODEL : models[0]!;
-    const fix = (chain: BrainChoice[]) =>
-      chain.map((c) => (c.provider === "chatgpt" && !models.includes(c.model) ? { ...c, model: preferred } : c));
-    const brains = { main: fix(s.brains.main), voice: fix(s.brains.voice) };
-    if (JSON.stringify(brains) !== JSON.stringify(s.brains)) this.#updateSettings({ brains });
-  }
-
-  #chatgptView(): ChatGPTView {
-    const login = getSecret<ChatGPTLogin>(this.#sql, "chatgpt_login");
-    const error = this.#chatgptError ?? undefined;
-    if (login && login.expires_at > Date.now()) return { state: "pending", authorize_url: login.url, expires_at: login.expires_at, error };
-    const tokens = getSecret<ChatGPTTokens>(this.#sql, "chatgpt_tokens");
-    const models = getSecret<ChatGPTClient>(this.#sql, "chatgpt_client")?.models ?? [];
-    if (tokens) return { state: "signed_in", email: tokens.email, models };
-    if (error) return { state: "error", message: error };
-    return { state: "signed_out" };
+    return this.#chatgpt.brain(choice.model);
   }
 
   #view(): SettingsView {
-    const icloud = getSecret<ICloudCredentials>(this.#sql, "icloud");
-    return {
-      settings: readSettings(this.#sql),
-      secrets: {
-        elevenlabs_api_key: Boolean(getSecret(this.#sql, "elevenlabs_api_key")),
-        icloud: icloud ? { username: icloud.username, refused: getSecret(this.#sql, "icloud_refused") } : null,
-      },
-      chatgpt: this.#chatgptView(),
-      health: this.#router.snapshot(),
-    };
-  }
-
-  /**
-   * What Atlas holds for iCloud, without the password itself, so the owner can
-   * tell whether it's what they meant to paste.
-   */
-  #icloudShape(): string {
-    const creds = getSecret<ICloudCredentials>(this.#sql, "icloud");
-    if (!creds) return "";
-    const p = creds.app_password;
-    const form = /^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$/.test(p)
-      ? "in Apple's xxxx-xxxx-xxxx-xxxx form"
-      : "not in Apple's xxxx-xxxx-xxxx-xxxx form, so it may not be an app-specific password";
-    return `Atlas is signing in as ${creds.username} with a ${p.length}-character password ${form}.`;
+    return settingsView(this.#sql, { chatgpt: this.#chatgpt, calendar: this.#calendar, router: this.#router });
   }
 
   // --- undo and live checks ---------------------------------------------------
@@ -794,62 +578,25 @@ export class PersonAgent extends VoiceAgent {
   }
 
   async #test(connection: Connection, msg: Extract<ClientMessage, { type: "atlas.test" }>): Promise<void> {
-    const reply = (ok: boolean, message: string, detail?: unknown) =>
-      this.#send(connection, { type: "atlas.test.result", what: msg.what, ref: msg.ref, ok, message, detail });
-    const settings = readSettings(this.#sql);
-    try {
-      if (msg.what === "calendar") {
-        const source = this.#calendarSource(settings);
-        if (!source) return reply(false, "Add your Apple ID and an app-specific password first.");
-        const c = await source.check().catch((err: unknown) => {
-          throw err instanceof CalendarError && err.code === "auth"
-            ? new CalendarError(`${err.message} ${this.#icloudShape()}`, "auth")
-            : err;
-        });
-        return reply(true, `Found ${c.calendars.length} calendars and ${c.events_next_30_days} events in the next 30 days.`, c);
-      }
-      if (msg.what === "brain") {
-        const choice = msg.choice ?? settings.brains[msg.role ?? "main"][msg.index ?? 0];
-        if (!choice) return reply(false, "There's no brain at that spot.");
-        const brain = this.#makeBrain(choice);
-        if (!brain) return reply(false, "Sign in with ChatGPT first.");
-        const t0 = Date.now();
-        let text = "";
-        let firstMs: number | null = null;
-        for await (const ev of brain.stream({
-          system: "You are being tested. Reply with one short sentence.",
-          messages: [{ role: "user", content: "Say hello." }],
-          tools: [],
-          effort: "low",
-          signal: AbortSignal.timeout(30_000),
-        })) {
-          if (ev.type === "text") {
-            firstMs ??= Date.now() - t0;
-            text += ev.text;
-          }
-        }
-        this.#router.markOk(brain);
-        this.#broadcast({ type: "atlas.view", view: this.#view() });
-        return reply(true, `${brainKey(choice)} answered: first words in ${firstMs ?? "?"} ms, done in ${Date.now() - t0} ms.`, {
-          text: text.slice(0, 200),
-          first_ms: firstMs,
-        });
-      }
-      if (msg.what === "voice") {
-        const t0 = Date.now();
-        const audio = await this.tts!.synthesize("Hi, this is how I sound.", AbortSignal.timeout(15_000));
-        if (!audio) return reply(false, "The voice came back empty.");
-        if (this.#inCall.has(connection.id)) await this.speak(connection, "Hi, this is how I sound.");
-        return reply(true, `${(this.tts as { label?: string }).label ?? "voice"} spoke in ${Date.now() - t0} ms.`);
-      }
-    } catch (err) {
-      if (msg.what === "brain") {
-        const choice = msg.choice ?? settings.brains[msg.role ?? "main"][msg.index ?? 0];
-        if (choice) this.#router.markFailed(choice, err);
-        this.#broadcast({ type: "atlas.view", view: this.#view() });
-      }
-      reply(false, err instanceof Error ? err.message : String(err));
-    }
+    const out = await liveTest(
+      {
+        sql: this.#sql,
+        calendar: this.#calendar,
+        router: this.#router,
+        makeBrain: (c) => this.#makeBrain(c),
+        speakSample: async () => {
+          const t0 = Date.now();
+          const sample = "Hi, this is how I sound.";
+          const audio = await this.tts!.synthesize(sample, AbortSignal.timeout(15_000));
+          if (!audio) return { ok: false, message: "The voice came back empty." };
+          if (this.#inCall.has(connection.id)) await this.speak(connection, sample);
+          return { ok: true, message: `${(this.tts as { label?: string }).label ?? "voice"} spoke in ${Date.now() - t0} ms.` };
+        },
+      },
+      msg,
+    );
+    this.#send(connection, { type: "atlas.test.result", what: msg.what, ref: msg.ref, ...out });
+    if (msg.what === "brain") this.#broadcast({ type: "atlas.view", view: this.#view() });
   }
 
   // --- sending ----------------------------------------------------------------

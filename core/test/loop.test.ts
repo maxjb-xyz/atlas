@@ -9,6 +9,7 @@ import { forRun, thread } from "../src/store/log";
 import { correctRecord, createRecord, recordHistory } from "../src/store/records";
 import { readSettings, secretValues, setSecret, writeSettings } from "../src/store/settings";
 import { endRun, getRun, startRun, sweepStaleRuns } from "../src/store/runs";
+import { getState } from "../src/store/state";
 import { calendarRead } from "../src/tools/calendar";
 import { reminderTools } from "../src/tools/reminders";
 import type { ToolContext } from "../src/tools/types";
@@ -279,6 +280,29 @@ describe("the store", () => {
       expect(readSettings(sql).owner_name).toBe("Max");
       expect(() => writeSettings(sql, { brains: { main: [], voice: [] } } as never)).toThrow();
     }));
+
+  it("moves what isn't a secret out of the secrets table", async () => {
+    const stub = env.PersonAgent.get(env.PersonAgent.idFromName(`t-${crypto.randomUUID()}`));
+    await runInDurableObject(stub, async (_i, state) => {
+      const sql = state.storage.sql;
+      migrate(sql, 1);
+      const put = (name: string, value: unknown) =>
+        sql.exec(`INSERT INTO secrets (name, value, updated_at) VALUES (?, ?, 1)`, name, JSON.stringify(value));
+      put("icloud_refused", { at: 5, message: "401" });
+      put("chatgpt_client", { host_id: "urn:uuid:x", id_token: "eyJ-hint-token", models: ["gpt-6.1-sol"] });
+      put("elevenlabs_api_key", "sk_eleven_1234567890");
+      migrate(sql);
+      expect(getState(sql, "icloud_refused")).toEqual({ at: 5, message: "401" });
+      expect(getState<{ models: string[] }>(sql, "chatgpt_client")!.models).toEqual(["gpt-6.1-sol"]);
+      const left = sql
+        .exec<{ name: string }>(`SELECT name FROM secrets`)
+        .toArray()
+        .map((r) => r.name);
+      expect(left).toEqual(["elevenlabs_api_key"]);
+      // The sign-in hint is still kept from leaving.
+      expect(secretValues(sql).sort()).toEqual(["eyJ-hint-token", "sk_eleven_1234567890"]);
+    });
+  });
 
   it("lists only real secret values for the scrubber", () =>
     withSql((sql) => {

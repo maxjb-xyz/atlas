@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import { parse, type Sql } from "./db";
+import { getState } from "./state";
 
 /** The ChatGPT model new chains start with, and the one picked after sign-in when the plan has it. */
 export const DEFAULT_CHATGPT_MODEL = "gpt-5.6-terra";
@@ -93,16 +94,7 @@ export function writeSettings(sql: Sql, patch: SettingsPatch): string[] {
 // M0 keeps a handful of keys in the agent's own storage (encrypted at rest by
 // Cloudflare). The vault (§15) replaces this in M3.
 
-export type SecretName =
-  | "elevenlabs_api_key"
-  | "icloud"
-  /** The iCloud calendar list, kept between wakes. */
-  | "icloud_calendars"
-  /** Set when iCloud refuses the password; Atlas stops asking until the owner reconnects. */
-  | "icloud_refused"
-  | "chatgpt_tokens"
-  | "chatgpt_login"
-  | "chatgpt_client";
+export type SecretName = "elevenlabs_api_key" | "icloud" | "chatgpt_tokens" | "chatgpt_login";
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];
@@ -133,5 +125,8 @@ export function secretValues(sql: Sql): string[] {
     const v = pick(getSecret<unknown>(sql, name), path);
     if (typeof v === "string" && v.length >= 8) out.push(v);
   }
+  // The last ID token is kept as a sign-in hint, outside the secrets; it still never leaves.
+  const hint = getState<{ id_token?: unknown }>(sql, "chatgpt_client")?.id_token;
+  if (typeof hint === "string" && hint.length >= 8 && !out.includes(hint)) out.push(hint);
   return out;
 }
