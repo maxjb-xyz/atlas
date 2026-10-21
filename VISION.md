@@ -669,7 +669,7 @@ Everything installs from the app: browse, preview what it can touch, install, un
   Each role is filled by a model you pick, with a fallback.
 - **Any provider, by key or by sign-in:**
   - **API keys** through AI Gateway: Anthropic, OpenAI, Google, xAI, Workers AI, OpenRouter and others.
-  - **ChatGPT (Codex) subscription sign-in.** "Sign in with ChatGPT" in the app, with a device code, so a ChatGPT plan powers Atlas at a flat cost. OpenAI supports this for outside tools, and OpenClaw does the same. Atlas calls the model directly with the sign-in token, refreshes the token on its own, tracks the plan's usage limits, and falls back when they're hit.
+  - **ChatGPT plan sign-in.** "Sign in with ChatGPT" in the app, so a Plus or Pro plan powers Atlas at a flat cost. This is OpenAI's official plan usage for open-source tools (launched at DevDay, September 2026): Atlas calls the public Responses API at `api.openai.com` with the sign-in token, refreshes the token on its own, tracks the plan's usage limits, and falls back when they're hit. Atlas doesn't use chatgpt.com's own backend, which blocks requests from Cloudflare. OpenAI only redirects sign-in to `127.0.0.1`, so on a deployed Atlas the last step of signing in is pasting the address the browser lands on.
   - **Workers AI can fill every role,** including `main` and `voice`. It comes with the Cloudflare account (with a free daily allowance), and it runs on the same network as the agent, which makes it the fastest option for voice.
   - **Claude subscriptions can't be used.** Since early 2026, Anthropic's terms reserve Pro and Max sign-in for Claude Code and Claude.ai, so Claude models in Atlas need an API key. Whether a Claude plan can power Claude Code inside Atlas's coding jobs (§8.2) depends on Anthropic's terms at the time; check before M6.
 - **Fallbacks** apply to one turn only, and they're reported.
@@ -683,12 +683,12 @@ Everything installs from the app: browse, preview what it can touch, install, un
 
   | Role | Model |
   |---|---|
-  | `main` | Codex on the ChatGPT plan, falling back to Anthropic by API key (capped at $100 a month), then Workers AI |
-  | `voice` | Whichever of Codex, Workers AI and Anthropic is fastest while keeping quality |
+  | `main` | ChatGPT on the owner's plan, falling back to Anthropic by API key (capped at $100 a month), then Workers AI |
+  | `voice` | Whichever of ChatGPT, Workers AI and Anthropic is fastest while keeping quality |
   | `decide`, `extract`, `embed` | Workers AI: Clef, Clairic, embeddings |
   | `speech_in` | Deepgram Flux or ElevenLabs Scribe v2 Realtime |
   | `speech_out` | ElevenLabs `eleven_v4_turbo` |
-  | Helpers and background work | Workers AI for routine work, Codex for hard work |
+  | Helpers and background work | Workers AI for routine work, ChatGPT for hard work |
   | Coding jobs | Codex CLI on the ChatGPT plan |
 
 ---
@@ -1094,7 +1094,7 @@ Each milestone ends with a week of the owner living with it, and its day-in-the-
 **Decided (2026-10-21):**
 - **Repo:** this one, `maxjb-xyz/atlas`, started fresh. Old Atlas is [atlas-legacy](https://github.com/maxjb-xyz/atlas-legacy), kept as a reference.
 - **UI:** v1 is locked (§21, [docs/ui/](docs/ui/README.md)).
-- **Brains:** the owner's setup in §18. Codex sign-in and Workers AI are first-class providers.
+- **Brains:** the owner's setup in §18. ChatGPT plan sign-in and Workers AI are first-class providers.
 - **Voice out:** ElevenLabs `eleven_v4_turbo`.
 
 **Still open:**
@@ -1131,7 +1131,7 @@ Research for this doc, October 2026:
 - Cloudflare: [Clef](https://blog.cloudflare.com/clef-decision-models/), [Clairic](https://blog.cloudflare.com/clairic-extraction-model/), [Project Think](https://blog.cloudflare.com/project-think/), [voice agents](https://developers.cloudflare.com/agents/examples/voice-agent/), [Sandboxes and Containers GA](https://developers.cloudflare.com/changelog/2026-04-13-containers-sandbox-ga), [Browser Run and the agent stack](https://infoq.com/news/2026/05/cloudflare-agent-platform-stack), [Agents Week 2026](https://www.nasdaq.com/press-release/cloudflare-expands-its-agent-cloud-power-next-generation-agents-2026-04-13), [email for agents](https://blog.cloudflare.com/email-for-agents)
 - Other agents: [Hermes credential vault](https://hermes-agent.nousresearch.com/docs/user-guide/features/credential-vault), [Hermes UI options](https://openclawlaunch.com/guides/hermes-agent-gui), [OpenClaw ACP agents](https://docs.openclaw.ai/tools/acp-agents.md), [OpenClaw Control UI](https://kilo.ai/docs/kiloclaw/control-ui), [OpenClaw Canvas](https://docs.openclaw.ai/platforms/mac/canvas)
 - Standards: [MCP Apps](https://blog.modelcontextprotocol.io/tags/apps/), [ACP harness adapter (Vercel)](https://vercel.com/changelog/use-acp-compatible-harnesses-with-the-ai-sdk-harness-layer)
-- Brains: [OpenClaw Codex subscription setup](https://docs.openclaw.ai/providers/openai/setup.md), [Anthropic subscription policy (report)](https://alternativeto.net/news/2026/2/anthropic-officially-bans-using-subscription-authentication-for-third-party-claude-use)
+- Brains: [Sign in with ChatGPT for open-source tools](https://developers.openai.com/siwc/token-sharing-open-source), [OpenClaw Codex subscription setup](https://docs.openclaw.ai/providers/openai/setup.md), [Anthropic subscription policy (report)](https://alternativeto.net/news/2026/2/anthropic-officially-bans-using-subscription-authentication-for-third-party-claude-use)
 - Voice: [Eleven v4 and v4 Turbo](https://elevenlabs.io/docs/overview/capabilities/text-to-speech/eleven-v4), [ElevenLabs models](https://elevenlabs.io/docs/overview/models), [Deepgram Flux](https://developers.deepgram.com/docs/flux/agent), [voice latency comparison](https://softcery.com/lab/ai-voice-agents-real-time-vs-turn-based-tts-stt-architecture)
 - Vaults: [1Password agent autofill](https://www.businesswire.com/news/home/20251008408822/en), [Bitwarden 2026](https://www.businesswire.com/news/home/20260114341558/en/Bitwarden-Strengthens-Identity-Security-Posture-for-2026-With-New-Enterprise-Capabilities-Passkey-Innovation-and-Secure-AI-Assisted-Workflows)
 - Old Atlas ([atlas-legacy](https://github.com/maxjb-xyz/atlas-legacy)): [`docs/AUDIT-2026-10-17-jarvis-blueprint.md`](https://github.com/maxjb-xyz/atlas-legacy/blob/main/docs/AUDIT-2026-10-17-jarvis-blueprint.md), [`docs/COMPANION-VISION-2026-10-10.md`](https://github.com/maxjb-xyz/atlas-legacy/blob/main/docs/COMPANION-VISION-2026-10-10.md), [`docs/ONE-SYSTEM.md`](https://github.com/maxjb-xyz/atlas-legacy/blob/main/docs/ONE-SYSTEM.md), [`docs/ONE-ATLAS.md`](https://github.com/maxjb-xyz/atlas-legacy/blob/main/docs/ONE-ATLAS.md), [`docs/design/`](https://github.com/maxjb-xyz/atlas-legacy/tree/main/docs/design)
