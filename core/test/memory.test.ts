@@ -10,7 +10,7 @@ import { getRecord, recordHistory, standingFacts } from "../src/store/records";
 import { readSettings } from "../src/store/settings";
 import { startRun } from "../src/store/runs";
 import { forget, recall, remember } from "../src/tools/memory";
-import type { Tool, ToolContext, ToolResult } from "../src/tools/types";
+import { type Tool, type ToolContext, type ToolResult, toSpec } from "../src/tools/types";
 import { env, fakeEmbedder } from "./helpers";
 
 const TZ = "America/New_York";
@@ -140,6 +140,16 @@ describe("remember and forget", () => {
       const bad = await run(remember, { type: "note", name: "x", fact: "y", links: [{ to: "rec_nope", kind: "about" }] }, ctx(sql));
       expect(bad.output).toEqual({ error: "There's no record with id rec_nope to link to." });
     }));
+});
+
+describe("the tools as brains see them", () => {
+  it("leaves fields with defaults optional, and nothing providers refuse", () => {
+    const recallSpec = toSpec(recall).parameters as { required: string[] };
+    expect(recallSpec.required ?? []).toEqual([]);
+    const rememberSpec = JSON.stringify(toSpec(remember).parameters);
+    expect(rememberSpec).not.toContain("propertyNames");
+    expect((toSpec(remember).parameters as { required: string[] }).required).toEqual(["type", "name", "fact"]);
+  });
 });
 
 describe("recall", () => {

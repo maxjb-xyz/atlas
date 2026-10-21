@@ -66,10 +66,23 @@ export function defineTool<S extends z.ZodType>(t: {
   return t as unknown as Tool;
 }
 
+/**
+ * The tool as brains see it. Fields with defaults are optional (the input
+ * side of the schema), and `propertyNames`, which some providers refuse, is
+ * left out; the tool still checks its input in full.
+ */
 export function toSpec(tool: Tool): ToolSpec {
-  const schema = z.toJSONSchema(tool.input, { target: "draft-7" }) as Record<string, unknown>;
+  const schema = z.toJSONSchema(tool.input, { target: "draft-7", io: "input" }) as Record<string, unknown>;
   delete schema.$schema;
-  return { name: tool.name, description: tool.description, parameters: schema };
+  return { name: tool.name, description: tool.description, parameters: withoutPropertyNames(schema) as Record<string, unknown> };
+}
+
+function withoutPropertyNames(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(withoutPropertyNames);
+  if (!v || typeof v !== "object") return v;
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) if (k !== "propertyNames") out[k] = withoutPropertyNames(x);
+  return out;
 }
 
 /** Plain-words failure the model can act on. */
