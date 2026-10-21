@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { calendarQuery, davTime, icloudCalendar } from "../src/calendar/caldav";
+import { calendarQuery, cleanCredentials, davTime, icloudCalendar } from "../src/calendar/caldav";
 import { parseDuration, parseEvents, resolveZone, unfold, zonedToUtc } from "../src/calendar/ical";
 import { CalendarError } from "../src/calendar/types";
 import { multistatus, parseXml, find } from "../src/calendar/xml";
@@ -234,5 +234,35 @@ describe("icloudCalendar", () => {
     } as unknown as typeof fetch;
     const cal = icloudCalendar({ username: "max@icloud.com", app_password: "abcd-efgh-ijkl-mnop" }, { fetch: strict });
     await expect(cal.check()).rejects.toMatchObject({ code: "auth" });
+  });
+
+  it("trims pasted spaces from the Apple ID and the app-specific password", async () => {
+    expect(cleanCredentials({ username: " owner@icloud.com\n", app_password: "abcd efgh-ijkl-mnop " })).toEqual({
+      username: "owner@icloud.com",
+      app_password: "abcdefgh-ijkl-mnop",
+    });
+    const { fetchFn, seen } = fakeICloud();
+    await icloudCalendar({ username: " owner@icloud.com ", app_password: " abcd-efgh-ijkl-mnop\n" }, { fetch: fetchFn }).check();
+    expect(seen[0]!.auth).toBe(`Basic ${btoa("owner@icloud.com:abcd-efgh-ijkl-mnop")}`);
+  });
+
+  it("says which iCloud server refused, and doesn't call a 403 a wrong password", async () => {
+    const { fetchFn } = fakeICloud();
+    const laterHost = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith("https://p42-caldav.icloud.com/")
+        ? new Response("", { status: 401 })
+        : fetchFn(input, init)) as typeof fetch;
+    const a = await icloudCalendar(CREDS, { fetch: laterHost })
+      .check()
+      .catch((e: unknown) => e as CalendarError);
+    expect(a).toMatchObject({ code: "auth" });
+    expect((a as CalendarError).message).toContain("at p42-caldav.icloud.com, after caldav.icloud.com accepted the sign-in");
+
+    const forbidden = (async () => new Response("<html><body>Forbidden for this account</body></html>", { status: 403 })) as typeof fetch;
+    const b = await icloudCalendar(CREDS, { fetch: forbidden })
+      .check()
+      .catch((e: unknown) => e as CalendarError);
+    expect(b).toMatchObject({ code: "protocol" });
+    expect((b as CalendarError).message).toBe("iCloud refused the request at caldav.icloud.com (HTTP 403: Forbidden for this account).");
   });
 });

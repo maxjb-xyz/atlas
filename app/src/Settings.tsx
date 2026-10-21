@@ -203,7 +203,8 @@ function SecretField({ label, set, onSave }: { label: string; set: boolean; onSa
       <div className="row">
         <input
           type="password"
-          autoComplete="off"
+          autoComplete="new-password"
+          spellCheck={false}
           value={value}
           placeholder={set ? "Set. Paste a new one to replace it." : "Not set"}
           onChange={(e) => setValue(e.target.value)}
@@ -242,7 +243,7 @@ function ICloud({ view, atlas }: { view: SettingsView; atlas: Atlas }) {
         under Sign-In and Security.
       </p>
       <Field label="Apple ID">
-        <input value={username} autoComplete="off" onChange={(e) => setUsername(e.target.value)} />
+        <input value={username} type="email" autoComplete="off" spellCheck={false} onChange={(e) => setUsername(e.target.value)} />
       </Field>
       <div className="field">
         <span>App password</span>
@@ -250,7 +251,8 @@ function ICloud({ view, atlas }: { view: SettingsView; atlas: Atlas }) {
           <input
             type="password"
             className="mono"
-            autoComplete="off"
+            autoComplete="new-password"
+            spellCheck={false}
             value={password}
             placeholder={connected ? "Set. Paste a new one to replace it." : "xxxx-xxxx-xxxx-xxxx"}
             onChange={(e) => setPassword(e.target.value)}

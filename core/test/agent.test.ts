@@ -2,6 +2,7 @@ import { runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
 import type { ServerMessage } from "../src/protocol";
+import { CalendarError } from "../src/calendar/types";
 import { getItem } from "../src/store/agenda";
 import type { LogRow } from "../src/store/log";
 import { call, collect, env, fakeCalendar, fakeOpenAI, say, scripted, SECRET, type Step } from "./helpers";
@@ -167,6 +168,28 @@ describe("the thread", () => {
     expect(rowsOf(delivered, "message.out")[0]!.body.text).toBe("Reminder: Take the bread out");
     const item = await runInDurableObject(owner(), (_i: PersonAgent, state) => getItem(state.storage.sql, id));
     expect(item!.state).toBe("done");
+    s.ws.close();
+  });
+
+  it("tells the owner what Atlas holds for iCloud when it's refused, without the password", async () => {
+    brains([]);
+    seams.calendar = {
+      list: async () => [],
+      check: async () => {
+        throw new CalendarError("iCloud didn't accept the Apple ID and app-specific password.", "auth");
+      },
+    };
+    const s = await connect();
+    s.send({
+      type: "atlas.secret.set",
+      secret: { name: "icloud", value: { username: " owner@icloud.com ", app_password: "abcd efgh ijkl mnop" } },
+    });
+    expect((await s.next("atlas.view")).view.secrets.icloud).toEqual({ username: "owner@icloud.com" });
+    s.send({ type: "atlas.test", what: "calendar", ref: "cal" });
+    const res = await s.next("atlas.test.result", (m) => m.ref === "cal");
+    expect(res.ok).toBe(false);
+    expect(res.message).toContain("signing in as owner@icloud.com with a 16-character password not in Apple's");
+    expect(res.message).not.toContain("abcdefghijklmnop");
     s.ws.close();
   });
 

@@ -65,8 +65,14 @@ export function calendarQuery(range: CalendarRange): string {
 </c:calendar-query>`;
 }
 
+/** The credentials as iCloud expects them: no stray spaces from copying and pasting. */
+export function cleanCredentials(creds: ICloudCredentials): ICloudCredentials {
+  return { username: creds.username.trim(), app_password: creds.app_password.replace(/\s+/g, "") };
+}
+
 function basicAuth(creds: ICloudCredentials): string {
-  const bytes = new TextEncoder().encode(`${creds.username}:${creds.app_password}`);
+  const c = cleanCredentials(creds);
+  const bytes = new TextEncoder().encode(`${c.username}:${c.app_password}`);
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
   return `Basic ${btoa(bin)}`;
@@ -78,8 +84,11 @@ const AUTH_REASON =
 class CalDavClient {
   #fetch: typeof fetch;
   #auth: string;
+  /** Where discovery starts, so a refusal can say whether it came at the first server or a later one. */
+  #start: string;
 
-  constructor(creds: ICloudCredentials, fetchFn: typeof fetch) {
+  constructor(creds: ICloudCredentials, fetchFn: typeof fetch, start: string) {
+    this.#start = start;
     // Called as a plain function: the Workers runtime's fetch throws "Illegal invocation" if called as a method of another object.
     this.#fetch = (input, init) => fetchFn(input, init);
     this.#auth = basicAuth(creds);
@@ -115,7 +124,22 @@ class CalDavClient {
           "network",
         );
       }
-      if (res.status === 401 || res.status === 403) throw new CalendarError(AUTH_REASON, "auth");
+      if (res.status === 401 || res.status === 403) {
+        const host = new URL(target).host;
+        const said = (await res.text().catch(() => ""))
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 160);
+        console.error(JSON.stringify({ event: "caldav.refused", method, host, status: res.status, said }));
+        if (res.status === 401) {
+          // Which server refused matters: a refusal after the first hop means the password was accepted there.
+          const first = new URL(this.#start).host;
+          const where = host === first ? ` at ${host}` : ` at ${host}, after ${first} accepted the sign-in`;
+          throw new CalendarError(`${AUTH_REASON} iCloud answered HTTP 401${where}.`, "auth");
+        }
+        throw new CalendarError(`iCloud refused the request at ${host} (HTTP 403${said ? `: ${said}` : ""}).`, "protocol");
+      }
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get("Location");
         if (!location) break;
@@ -189,8 +213,8 @@ function overlaps(ev: CalendarEvent, range: CalendarRange): boolean {
 }
 
 export function icloudCalendar(creds: ICloudCredentials, opts: CalDavOptions = {}): CalendarSource {
-  const client = new CalDavClient(creds, opts.fetch ?? fetch);
   const base = opts.baseUrl ?? ICLOUD_CALDAV;
+  const client = new CalDavClient(creds, opts.fetch ?? fetch, base);
   const hidden = new Set((opts.hidden ?? []).map((n) => n.trim().toLowerCase()));
   let cached: Promise<DavCalendar[]> | null = null;
 

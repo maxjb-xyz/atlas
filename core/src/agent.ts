@@ -19,8 +19,8 @@ import {
 } from "./brains/chatgpt-auth";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
-import { icloudCalendar } from "./calendar/caldav";
-import type { CalendarSource, ICloudCredentials } from "./calendar/types";
+import { cleanCredentials, icloudCalendar } from "./calendar/caldav";
+import { CalendarError, type CalendarSource, type ICloudCredentials } from "./calendar/types";
 import { history, systemPrompt, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
 import { Outbox, StreamScrubber } from "./outbox";
@@ -144,7 +144,11 @@ export class PersonAgent extends VoiceAgent {
         this.#updateSettings(msg.patch);
         return;
       case "atlas.secret.set":
-        setSecret(this.#sql, msg.secret.name, msg.secret.value);
+        setSecret(
+          this.#sql,
+          msg.secret.name,
+          msg.secret.name === "icloud" && msg.secret.value ? cleanCredentials(msg.secret.value) : msg.secret.value,
+        );
         append(this.#sql, { actor: "owner", kind: "settings.change", body: { secret: msg.secret.name, set: msg.secret.value !== null } });
         if (msg.secret.name === "icloud") this.#calendar = null;
         this.#refreshVoice();
@@ -657,6 +661,20 @@ export class PersonAgent extends VoiceAgent {
     };
   }
 
+  /**
+   * What Atlas holds for iCloud, without the password itself, so the owner can
+   * tell whether it's what they meant to paste.
+   */
+  #icloudShape(): string {
+    const creds = getSecret<ICloudCredentials>(this.#sql, "icloud");
+    if (!creds) return "";
+    const p = creds.app_password;
+    const form = /^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$/.test(p)
+      ? "in Apple's xxxx-xxxx-xxxx-xxxx form"
+      : "not in Apple's xxxx-xxxx-xxxx-xxxx form, so it may not be an app-specific password";
+    return `Atlas is signing in as ${creds.username} with a ${p.length}-character password ${form}.`;
+  }
+
   // --- undo and live checks ---------------------------------------------------
 
   async #undo(logId: string, connection: Connection): Promise<void> {
@@ -690,7 +708,11 @@ export class PersonAgent extends VoiceAgent {
       if (msg.what === "calendar") {
         const source = this.#calendarSource(settings);
         if (!source) return reply(false, "Add your Apple ID and an app-specific password first.");
-        const c = await source.check();
+        const c = await source.check().catch((err: unknown) => {
+          throw err instanceof CalendarError && err.code === "auth"
+            ? new CalendarError(`${err.message} ${this.#icloudShape()}`, "auth")
+            : err;
+        });
         return reply(true, `Found ${c.calendars.length} calendars and ${c.events_next_30_days} events in the next 30 days.`, c);
       }
       if (msg.what === "brain") {
