@@ -17,7 +17,9 @@ export type LogKind =
   | "brain.fallback"
   | "voice.metrics"
   | "voice.problem"
-  | "settings.change";
+  | "settings.change"
+  /** Atlas's summary of the conversation before a point, which replaces it in context (§4.1). */
+  | "context.summary";
 
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */
 export interface Receipt {

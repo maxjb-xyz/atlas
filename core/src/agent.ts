@@ -14,7 +14,8 @@ import { BrainRouter } from "./brains/router";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
 import { cleanCredentials } from "./calendar/caldav";
-import { history, systemPrompt, withMessage } from "./context";
+import { compact, planCompaction } from "./compaction";
+import { CONTEXT_TOKENS, history, systemPrompt, tokens, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
 import { Outbox, StreamScrubber } from "./outbox";
 import { ClientMessage, type ServerMessage, type SettingsView } from "./protocol";
@@ -23,7 +24,7 @@ import { migrate, type Sql } from "./store/db";
 import { type Actor, append, forRun, get as getRow, type LogRow, type Surface, thread } from "./store/log";
 import { indexNewMessages, setVector, unembedded } from "./store/memory";
 import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
-import { type BrainChoice, getSecret, readSettings, setSecret, writeSettings } from "./store/settings";
+import { type BrainChoice, getSecret, readSettings, type Settings, setSecret, writeSettings } from "./store/settings";
 import { isValidZone, shortLocal, zoneOf } from "./time";
 import { calendarRead } from "./tools/calendar";
 import { memoryTools, recall } from "./tools/memory";
@@ -106,7 +107,8 @@ export class PersonAgent extends VoiceAgent {
     this.#refreshVoice();
     // Anything that came due while the agent was asleep runs now.
     for (const item of due(this.#sql, Date.now())) void this.onAgendaDue({ id: item.id });
-    this.#tendMemory();
+    void this.#tendMemory();
+    void this.#maybeCompact();
   }
 
   /** Connections in a live voice call. The snapshot goes out on atlas.hello, once the app is listening. */
@@ -419,28 +421,23 @@ export class PersonAgent extends VoiceAgent {
     const settings = readSettings(this.#sql);
     const tz = zoneOf(settings);
     const now = new Date();
-    const messages = withMessage(history(this.#sql, o.runId, undefined, o.beforeSeq), o.input);
+    const system = systemPrompt({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq });
+    // Compaction keeps this well inside the window; the budget only matters if it hasn't caught up.
+    const budget = Math.floor(this.#window * 0.85) - tokens(system) - tokens(o.input);
+    const messages = withMessage(history(this.#sql, { excludeRunId: o.runId, beforeSeq: o.beforeSeq, budget }), o.input);
+    const via = o.actor === "atlas" ? "clock" : o.surface === "voice" ? "voice" : "chat";
     return runLoop(
       {
         sql: this.#sql,
         router: this.#router,
         chain: settings.brains[o.role],
-        toolContext: {
-          sql: this.#sql,
-          settings,
-          tz,
-          now,
-          calendar: this.#calendar.source(settings),
-          clock: this.#clock,
-          embed: this.#embedder(),
-          source_log_id: o.sourceLogId,
-        },
+        toolContext: this.#toolContext(settings, now, via, o.sourceLogId),
       },
       {
         runId: o.runId,
         role: o.role,
         surface: o.surface,
-        system: systemPrompt({ settings, tz, now, surface: o.surface, sql: this.#sql }),
+        system,
         messages,
         tools: TOOLS[o.actor],
         budget: o.budget,
@@ -451,6 +448,73 @@ export class PersonAgent extends VoiceAgent {
       },
       o.emit,
     );
+  }
+
+  #toolContext(settings: Settings, now: Date, via: string, sourceLogId: string | null): Omit<ToolContext, "run_id"> {
+    return {
+      sql: this.#sql,
+      settings,
+      tz: zoneOf(settings),
+      now,
+      calendar: this.#calendar.source(settings),
+      clock: this.#clock,
+      embed: this.#embedder(),
+      source_log_id: sourceLogId,
+      via,
+    };
+  }
+
+  // --- compaction ----------------------------------------------------------------
+
+  get #window(): number {
+    return seams.contextWindow ?? CONTEXT_TOKENS;
+  }
+
+  #compacting: Promise<void> | null = null;
+  #compactFailedAt = 0;
+
+  /**
+   * Compacts the context in the background when it has grown past its share
+   * of the window (§4.1). After a failure it waits ten minutes before trying
+   * again; until then runs simply see a little less of the past.
+   */
+  #maybeCompact(): Promise<void> {
+    if (this.#compacting) return this.#compacting;
+    if (Date.now() - this.#compactFailedAt < 10 * 60_000) return Promise.resolve();
+    const p = this.keepAliveWhile(() => this.#compact()).finally(() => {
+      this.#compacting = null;
+    });
+    this.#compacting = p;
+    return p;
+  }
+
+  async #compact(): Promise<void> {
+    const settings = readSettings(this.#sql);
+    const now = new Date();
+    const system = systemPrompt({ settings, tz: zoneOf(settings), now, surface: "none", sql: this.#sql });
+    const plan = planCompaction(this.#sql, { window: this.#window, systemTokens: tokens(system) });
+    if (!plan) return;
+    const deps = {
+      sql: this.#sql,
+      router: this.#router,
+      chain: settings.brains.main,
+      toolContext: this.#toolContext(settings, now, "compaction", null),
+    };
+    const out = await compact({ sql: this.#sql, loop: deps, system }, plan).catch((err: unknown) => {
+      console.error(JSON.stringify({ at: "compaction", error: err instanceof Error ? err.message : String(err) }));
+      return null;
+    });
+    if (!out?.summary) {
+      this.#compactFailedAt = Date.now();
+      if (out)
+        console.error(JSON.stringify({ at: "compaction", save: out.save.error ?? out.save.state, summary: out.write.error ?? "empty" }));
+    }
+    void this.#tendMemory();
+  }
+
+  /** For tests: waits until any compaction in progress is done, after checking whether one is due. */
+  async apiSettleCompaction(): Promise<void> {
+    await this.#maybeCompact();
   }
 
   /** Saves the answer through the outbox and closes the run with its one final state. */
@@ -487,6 +551,7 @@ export class PersonAgent extends VoiceAgent {
     if (res.state === "failed" && end) this.#broadcast({ type: "atlas.rows", rows: [getRow(this.#sql, end.id)!] });
     this.#broadcast({ type: "atlas.run", run_id: runId, state: res.state, surface: channel });
     void this.#tendMemory();
+    void this.#maybeCompact();
   }
 
   // --- memory upkeep -----------------------------------------------------------

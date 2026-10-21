@@ -13,4 +13,6 @@ export const seams: {
   fetch: typeof fetch | null;
   /** The `embed` role: undefined uses Workers AI, null means none. */
   embed: Embedder | null | undefined;
-} = { makeBrain: null, calendar: undefined, fetch: null, embed: undefined };
+  /** A smaller context window, so tests can reach compaction with a few messages. */
+  contextWindow: number | null;
+} = { makeBrain: null, calendar: undefined, fetch: null, embed: undefined, contextWindow: null };

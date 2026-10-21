@@ -73,7 +73,7 @@ export const remember = defineTool({
       .describe("Records this one connects to: a person who works on a project, a place someone lives."),
   }),
   async run(input, ctx) {
-    const source = { via: "chat", run_id: ctx.run_id, ...(ctx.source_log_id ? { log_id: ctx.source_log_id } : {}) };
+    const source = { via: ctx.via, run_id: ctx.run_id, ...(ctx.source_log_id ? { log_id: ctx.source_log_id } : {}) };
     const fields: Record<string, Json> = { ...(input.details ?? {}), fact: input.fact };
     let existing: AtlasRecord | null = null;
     if (input.id) {
@@ -118,7 +118,7 @@ export const forget = defineTool({
     const r = getRecord(ctx.sql, input.id);
     if (!r) return fail(`There's no record with id ${input.id}.`);
     if (r.state === "forgotten") return fail(`${r.name} is already forgotten.`);
-    forgetRecord(ctx.sql, r.id, { via: "chat", run_id: ctx.run_id });
+    forgetRecord(ctx.sql, r.id, { via: ctx.via, run_id: ctx.run_id });
     const fact = typeof r.fields.fact === "string" ? r.fields.fact : r.name;
     return {
       ok: true,

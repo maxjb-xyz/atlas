@@ -26,6 +26,8 @@ export interface ToolContext {
   embed: Embedder | null;
   /** The owner's message that started this run, so saved records can point back to it. */
   source_log_id: string | null;
+  /** How this run came to be, in plain words, for the sources of what it saves: "chat", "voice", "compaction". */
+  via: string;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
   clock: {
     schedule(item: AgendaItem): Promise<void>;

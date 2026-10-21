@@ -36,6 +36,7 @@ function ctx(sql: Sql, opts: { embed?: Embedder | null; source?: string | null }
     clock: { schedule: async () => {}, unschedule: async () => {} },
     embed: opts.embed === undefined ? fakeEmbedder() : opts.embed,
     source_log_id: opts.source ?? null,
+    via: "chat",
   };
 }
 
