@@ -29,12 +29,20 @@ import { type AgendaItem, due, finish, getItem, lease, setScheduleId, upcoming }
 import { migrate, type Sql } from "./store/db";
 import { append, get as getRow, type LogRow, type Surface, thread } from "./store/log";
 import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
-import { type BrainChoice, getSecret, readSettings, type Settings, setSecret, writeSettings } from "./store/settings";
+import {
+  type BrainChoice,
+  DEFAULT_CHATGPT_MODEL,
+  getSecret,
+  readSettings,
+  type Settings,
+  setSecret,
+  writeSettings,
+} from "./store/settings";
 import { isValidZone, shortLocal } from "./time";
 import { calendarRead } from "./tools/calendar";
 import { reminderTools } from "./tools/reminders";
 import type { Tool, ToolContext } from "./tools/types";
-import { makeTranscriber, makeTTS } from "./voice/providers";
+import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 
 /** The one owner in M0. Members get their own agents in M5. */
 export const OWNER = "owner";
@@ -51,7 +59,7 @@ const TOOLS: Tool[] = [calendarRead, ...reminderTools];
 /** How long a brain gets to start answering before the next one is tried. */
 const FIRST_EVENT_MS = { main: 25_000, voice: 6_000 };
 
-const VoiceAgent = withVoice(Agent<Env>, { audioFormat: "mp3" });
+const VoiceAgent = withVoice(Agent<Env>, { audioFormat: AUDIO.format, sampleRate: AUDIO.sampleRate });
 
 interface ConverseOpts {
   runId: string;
@@ -627,12 +635,16 @@ export class PersonAgent extends VoiceAgent {
     this.#broadcast({ type: "atlas.view", view: this.#view() });
   }
 
-  /** ChatGPT spots in the brain chains that name a model this account can't use get its first listed model instead. */
+  /**
+   * ChatGPT spots in the brain chains that name a model this account can't use
+   * move to the default model if the plan has it, or else its first listed one.
+   */
   #useAvailableModels(models: string[]): void {
     if (!models.length) return;
     const s = readSettings(this.#sql);
+    const preferred = models.includes(DEFAULT_CHATGPT_MODEL) ? DEFAULT_CHATGPT_MODEL : models[0]!;
     const fix = (chain: BrainChoice[]) =>
-      chain.map((c) => (c.provider === "chatgpt" && !models.includes(c.model) ? { ...c, model: models[0]! } : c));
+      chain.map((c) => (c.provider === "chatgpt" && !models.includes(c.model) ? { ...c, model: preferred } : c));
     const brains = { main: fix(s.brains.main), voice: fix(s.brains.voice) };
     if (JSON.stringify(brains) !== JSON.stringify(s.brains)) this.#updateSettings({ brains });
   }

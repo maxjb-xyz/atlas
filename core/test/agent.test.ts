@@ -58,7 +58,7 @@ const owner = () => env.PersonAgent.get(env.PersonAgent.idFromName("owner"));
 const rowsOf = (m: Extract<ServerMessage, { type: "atlas.rows" }>, kind: string): LogRow[] => m.rows.filter((r) => r.kind === kind);
 
 function brains(main: Step[], voice: Step[] = []) {
-  const m = scripted(main, "chatgpt", "gpt-5.5");
+  const m = scripted(main, "chatgpt", "gpt-5.6-terra");
   const v = scripted(voice, "workers-ai", "@cf/moonshotai/kimi-k2.6");
   seams.makeBrain = (c) => (c.provider === "chatgpt" ? m.brain : v.brain);
   return { main: m, voice: v };
@@ -232,6 +232,45 @@ describe("sign in with chatgpt", () => {
 });
 
 describe("voice", () => {
+  it("says the status line while the lookup is still running", async () => {
+    const b = brains([], [call("calendar_read", {})]);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const first = b.voice.brain.stream.bind(b.voice.brain);
+    let calls = 0;
+    b.voice.brain.stream = async function* (req) {
+      calls += 1;
+      if (calls === 1) {
+        yield* first(req);
+        return;
+      }
+      await gate;
+      yield { type: "text", text: "You're free." };
+      yield { type: "done", finish: "stop" };
+    };
+    // A long stored secret used to hold back every word until the turn ended.
+    const s = await connect();
+    s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: `sk_${"x".repeat(180)}` } });
+    await s.next("atlas.view");
+    const said = await runInDurableObject(owner(), async (agent: PersonAgent) => {
+      const spoken = await agent.onTurn("am I free", {
+        connection: { id: "voice-2" } as never,
+        messages: [],
+        signal: new AbortController().signal,
+      });
+      const it = (spoken as AsyncIterable<string>)[Symbol.asyncIterator]();
+      const status = await it.next();
+      release();
+      let rest = "";
+      for (let x = await it.next(); !x.done; x = await it.next()) rest += x.value;
+      return { status: status.value as string, rest };
+    });
+    expect(said).toEqual({ status: "Checking your calendar. ", rest: "You're free." });
+    s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: null } });
+    await s.next("atlas.view");
+    s.ws.close();
+  });
+
   it("is the same mind: same log, same tools, and a status line before a lookup", async () => {
     const b = brains([], [call("calendar_read", {}), say("You're free all afternoon.")]);
     const s = await connect();
@@ -263,7 +302,7 @@ describe("the HTTP API", () => {
   it("runs a text turn for the benchmark", async () => {
     brains([say("Hello from the API.")]);
     const res = await SELF.fetch(`${ORIGIN}/api/turn`, { method: "POST", headers: auth, body: JSON.stringify({ text: "hi" }) });
-    expect(await res.json()).toMatchObject({ state: "replied", reply: "Hello from the API.", brain: "chatgpt:gpt-5.5" });
+    expect(await res.json()).toMatchObject({ state: "replied", reply: "Hello from the API.", brain: "chatgpt:gpt-5.6-terra" });
     const log = (await (await SELF.fetch(`${ORIGIN}/api/log?since=0`, { headers: auth })).json()) as { rows: LogRow[] };
     expect(log.rows.map((r) => r.kind)).toEqual(expect.arrayContaining(["message.in", "message.out", "run.end"]));
   });

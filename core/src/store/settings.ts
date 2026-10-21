@@ -5,6 +5,9 @@
 import { z } from "zod";
 import { parse, type Sql } from "./db";
 
+/** The ChatGPT model new chains start with, and the one picked after sign-in when the plan has it. */
+export const DEFAULT_CHATGPT_MODEL = "gpt-5.6-terra";
+
 export const BrainChoice = z.object({
   provider: z.enum(["chatgpt", "workers-ai"]),
   model: z.string().min(1).max(200),
@@ -25,12 +28,12 @@ export const Settings = z.object({
     })
     .default({
       main: [
-        { provider: "chatgpt", model: "gpt-5.5" },
+        { provider: "chatgpt", model: DEFAULT_CHATGPT_MODEL },
         { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" },
       ],
       voice: [
         { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" },
-        { provider: "chatgpt", model: "gpt-5.5" },
+        { provider: "chatgpt", model: DEFAULT_CHATGPT_MODEL },
       ],
     }),
   voice: z

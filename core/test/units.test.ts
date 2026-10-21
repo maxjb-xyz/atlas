@@ -5,6 +5,7 @@ import { BrainRouter } from "../src/brains/router";
 import { BrainError } from "../src/brains/types";
 import { readWorkersAIStream, toChatMessages } from "../src/brains/workers-ai";
 import { scrub, StreamScrubber } from "../src/outbox";
+import { auraPcm, wholeSamples } from "../src/voice/providers";
 import { isoLocal, parseWhen, shortLocal, startOfLocalDay, addLocalDays } from "../src/time";
 import { checkSession, makeSession } from "../src/auth";
 import { collect, fakeOpenAI, scripted, sse } from "./helpers";
@@ -301,6 +302,16 @@ describe("brain router", () => {
 });
 
 describe("secrets scrubber", () => {
+  it("lets ordinary text straight through, even with a very long secret stored", () => {
+    const token = `eyJ${"x".repeat(1500)}`;
+    const s = new StreamScrubber([token, "sk_live_123456789"]);
+    expect(s.push("Checking your calendar. ")).toBe("Checking your calendar. ");
+    expect(s.push("You're free at 3")).toBe("You're free at 3");
+    // Only a tail that could start a secret waits for the next chunk.
+    expect(s.push(" then sk_li")).toBe(" then ");
+    expect(s.push("ve_123456789 done") + s.flush()).toBe("[hidden] done");
+  });
+
   it("hides secrets, even split across streamed chunks", () => {
     expect(scrub("key is sk_live_123456789", ["sk_live_123456789"])).toBe("key is [hidden]");
     const s = new StreamScrubber(["sk_live_123456789"]);
@@ -316,5 +327,39 @@ describe("sessions", () => {
     expect(await checkSession("other", v)).toBe(false);
     expect(await checkSession("s3cret", v.replace(/^\d+/, "9999999999999"))).toBe(false);
     expect(await checkSession("s3cret", await makeSession("s3cret", Date.now() - 40 * 86_400_000))).toBe(false);
+  });
+});
+
+describe("voice out", () => {
+  const bytes = (n: number) => new Uint8Array(n).fill(7).buffer;
+
+  it("keeps streamed PCM in whole samples, sending the first piece at once", async () => {
+    const inner = {
+      synthesize: async () => bytes(5),
+      async *synthesizeStream() {
+        yield bytes(1001);
+        yield bytes(3);
+        yield bytes(4999);
+        yield bytes(1);
+      },
+    };
+    const out = await collect(wholeSamples(inner, "test").synthesizeStream("hi"));
+    expect(out.every((b) => b.byteLength % 2 === 0)).toBe(true);
+    expect(out[0]!.byteLength).toBe(1000);
+    expect(out.reduce((n, b) => n + b.byteLength, 0)).toBe(1001 + 3 + 4999 + 1);
+    expect((await wholeSamples(inner, "test").synthesize("hi"))!.byteLength).toBe(4);
+  });
+
+  it("asks Workers AI's Aura for raw PCM at Atlas's rate", async () => {
+    let asked: Record<string, unknown> = {};
+    const ai = {
+      run: async (_model: string, inputs: Record<string, unknown>) => {
+        asked = inputs;
+        return new Response(bytes(10));
+      },
+    };
+    const out = await collect(auraPcm(ai).synthesizeStream("hi"));
+    expect(asked).toMatchObject({ text: "hi", encoding: "linear16", container: "none", sample_rate: 24000 });
+    expect(out.reduce((n, b) => n + b.byteLength, 0)).toBe(10);
   });
 });

@@ -246,7 +246,7 @@ describe("the store", () => {
     withSql((sql) => {
       const s = readSettings(sql);
       expect(s.assistant_name).toBe("Atlas");
-      expect(s.brains.main[0]).toEqual({ provider: "chatgpt", model: "gpt-5.5" });
+      expect(s.brains.main[0]).toEqual({ provider: "chatgpt", model: "gpt-5.6-terra" });
       expect(s.voice.elevenlabs_model).toBe("eleven_v4_turbo");
       writeSettings(sql, { owner_name: "Max" });
       expect(readSettings(sql).owner_name).toBe("Max");
