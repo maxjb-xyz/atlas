@@ -1,0 +1,23 @@
+{
+  "name": "atlas",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "core",
+    "app",
+    "bench"
+  ],
+  "scripts": {
+    "build": "npm run build -w app",
+    "typecheck": "npm run typecheck -ws --if-present",
+    "test": "npm test -w core",
+    "check": "npm run typecheck && npm test && npm run build",
+    "dev": "npm run build && npm run dev -w core",
+    "deploy": "npm run build && npm run deploy -w core",
+    "bench": "npm run bench -w bench --",
+    "format": "prettier --write \"core/src/**/*.ts\" \"core/test/**/*.ts\" \"app/src/**/*.{ts,tsx,css}\" \"bench/*.ts\""
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -3,3 +3,9 @@ node_modules/
 __pycache__/
 # the design canvas runtime, copied in only to take screenshots
 docs/ui/source/support.js
+dist/
+.wrangler/
+.dev.vars
+*.log
+bench/results/
+bench/audio/
