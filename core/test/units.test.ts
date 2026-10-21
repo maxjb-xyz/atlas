@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readCodexStream, toInput } from "../src/brains/codex";
+import { readCodexStream, refusal, toInput } from "../src/brains/codex";
 import { jwtClaims, pollDeviceLogin, startDeviceLogin, toTokens } from "../src/brains/codex-auth";
 import { BrainRouter } from "../src/brains/router";
 import { BrainError } from "../src/brains/types";
@@ -81,6 +81,21 @@ describe("codex brain", () => {
       collect(readCodexStream(sse([{ type: "response.failed", response: { error: { message: "overloaded" } } }]))),
     ).rejects.toThrow("overloaded");
     await expect(collect(readCodexStream(sse([{ type: "response.output_text.delta", delta: "hi" }])))).rejects.toThrow("ended early");
+  });
+
+  it("says why a request was refused", async () => {
+    const json = (status: number, body: object) =>
+      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    expect((await refusal(json(403, { detail: "Unsupported client" }))).message).toBe(
+      "ChatGPT refused the request (HTTP 403: Unsupported client).",
+    );
+    expect((await refusal(json(400, { error: { message: "The 'gpt-9' model is not supported" } }))).message).toContain("gpt-9");
+    const page = new Response("<html><title>Just a moment...</title><script>x()</script></html>", {
+      status: 403,
+      headers: { "cf-mitigated": "challenge" },
+    });
+    expect((await refusal(page)).message).toBe("ChatGPT's bot check blocked the request from Cloudflare (HTTP 403).");
+    expect((await refusal(json(401, {}))).message).toContain("HTTP 401");
   });
 
   it("maps the thread to Responses input items", () => {

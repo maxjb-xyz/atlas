@@ -93,6 +93,42 @@ export async function* readCodexStream(body: ReadableStream<Uint8Array>, signal?
   throw new BrainError("ChatGPT: the stream ended early");
 }
 
+/**
+ * A plain reason for a refused request, with the status and what OpenAI or
+ * Cloudflare said, so the thread shows the real cause. Exported for tests.
+ */
+export async function refusal(res: Response): Promise<BrainError> {
+  const raw = await res.text().catch(() => "");
+  let detail = raw;
+  try {
+    const body = JSON.parse(raw) as { detail?: unknown; error?: { message?: unknown; code?: unknown }; message?: unknown };
+    const d = body.error?.message ?? body.detail ?? body.message ?? body.error?.code;
+    if (d) detail = typeof d === "string" ? d : JSON.stringify(d);
+  } catch {
+    // Not JSON: an HTML page, so keep only its words.
+    detail = raw.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ");
+  }
+  detail = detail.replace(/\s+/g, " ").trim().slice(0, 200);
+  const status = `HTTP ${res.status}`;
+  const challenged = res.headers.get("cf-mitigated") === "challenge" || /just a moment|attention required|cf-chl/i.test(raw);
+  if (challenged) {
+    return new BrainError(`ChatGPT's bot check blocked the request from Cloudflare (${status}).`, false, res.status);
+  }
+  if (res.status === 401) {
+    return new BrainError(
+      `ChatGPT refused the sign-in (${status}${detail ? `: ${detail}` : ""}). Try signing in again in Settings.`,
+      true,
+      401,
+    );
+  }
+  if (res.status === 403) return new BrainError(`ChatGPT refused the request (${status}${detail ? `: ${detail}` : ""}).`, true, 403);
+  if (res.status === 429) return new BrainError(`The ChatGPT plan's usage limit is reached for now (${status}).`, false, 429);
+  if (res.status === 400 || res.status === 404) {
+    return new BrainError(`ChatGPT rejected the request (${status}${detail ? `: ${detail}` : ""}).`, true, res.status);
+  }
+  return new BrainError(`ChatGPT: ${status}${detail ? ` ${detail}` : ""}`, false, res.status);
+}
+
 export function codexBrain(auth: CodexAccess, model: string, f: typeof fetch = fetch): Brain {
   async function open(req: BrainRequest, force: boolean): Promise<Response> {
     const token = await auth.access(force);
@@ -135,15 +171,7 @@ export function codexBrain(auth: CodexAccess, model: string, f: typeof fetch = f
     async *stream(req: BrainRequest): AsyncIterable<BrainEvent> {
       let res = await open(req, false);
       if (res.status === 401) res = await open(req, true);
-      if (!res.ok || !res.body) {
-        const text = (await res.text().catch(() => "")).slice(0, 300);
-        if (res.status === 401 || res.status === 403)
-          throw new BrainError("ChatGPT sign-in was refused. Sign in again in Settings.", true, res.status);
-        if (res.status === 429) throw new BrainError("The ChatGPT plan's usage limit is reached for now.", false, 429);
-        if (res.status === 400 || res.status === 404)
-          throw new BrainError(`ChatGPT rejected the request: ${text || res.status}`, true, res.status);
-        throw new BrainError(`ChatGPT: HTTP ${res.status} ${text}`, false, res.status);
-      }
+      if (!res.ok || !res.body) throw await refusal(res);
       yield* readCodexStream(res.body, req.signal);
     },
   };
