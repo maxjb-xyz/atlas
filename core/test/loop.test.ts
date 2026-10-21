@@ -202,6 +202,18 @@ describe("the loop", () => {
       });
     }));
 
+  it("closes what Atlas said before a lookup, so voice can speak it while the tool runs", () =>
+    withSql(async (sql) => {
+      const t = setup(sql, [[{ type: "text", text: "Let me look." }, ...call("calendar_read", {})], say("You're free.")], {
+        surface: "voice",
+        joiner: " ",
+      });
+      const res = await t.run();
+      const order = t.events.filter((e) => e.type === "text" || e.type === "tools").map((e) => (e.type === "text" ? e.text : "[tools]"));
+      expect(order).toEqual(["Let me look.", " ", "[tools]", "You're free."]);
+      expect(res.text).toBe("Let me look. You're free.");
+    }));
+
   it("doesn't speak a status line once Atlas has said something", () =>
     withSql(async (sql) => {
       const t = setup(sql, [[{ type: "text", text: "Let me look." }, ...call("calendar_read", {})], say("You're free.")], {

@@ -237,6 +237,7 @@ export class PersonAgent extends VoiceAgent {
     let firstWordsMs: number | null = null;
     let statusMs: number | null = null;
     let answerMs: number | null = null;
+    let toolsRan = false;
     let statusLine = "";
     this.#voiceRun = runId;
     const scrubber = new StreamScrubber(this.#outbox.secrets());
@@ -252,11 +253,15 @@ export class PersonAgent extends VoiceAgent {
           budget: BUDGETS.voice,
           signal: context.signal,
           emit: (e) => {
+            if (e.type === "tools") toolsRan = true;
             if (e.type === "text" || (e.type === "status" && e.speakable && e.text)) {
-              firstWordsMs ??= Date.now() - started;
-              if (e.type === "status") statusMs ??= Date.now() - started;
-              else answerMs ??= Date.now() - started;
               const words = e.type === "text" ? e.text : `${e.text} `;
+              if (words.trim()) {
+                firstWordsMs ??= Date.now() - started;
+                // Words before any tool has answered are the status line, whether Atlas's or the brain's own.
+                if (e.type === "status" || !toolsRan) statusMs ??= Date.now() - started;
+                else answerMs ??= Date.now() - started;
+              }
               if (e.type === "status") statusLine = words;
               spoken.push(scrubber.push(words));
             }
@@ -483,7 +488,7 @@ export class PersonAgent extends VoiceAgent {
       if (text) this.#broadcast({ type: "atlas.delta", run_id: runId, text });
     } else if (e.type === "status") {
       this.#broadcast({ type: "atlas.status", run_id: runId, text: e.text });
-    } else {
+    } else if (e.type === "row") {
       this.#broadcast({ type: "atlas.rows", rows: [e.row] });
     }
   }

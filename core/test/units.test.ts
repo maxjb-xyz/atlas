@@ -5,6 +5,7 @@ import { BrainRouter } from "../src/brains/router";
 import { BrainError } from "../src/brains/types";
 import { readWorkersAIStream, toChatMessages } from "../src/brains/workers-ai";
 import { scrub, StreamScrubber } from "../src/outbox";
+import { SentenceChunker } from "agents/voice";
 import { auraPcm, elevenLabsPcm, wholeSamples } from "../src/voice/providers";
 import { isoLocal, parseWhen, shortLocal, startOfLocalDay, addLocalDays } from "../src/time";
 import { checkSession, makeSession } from "../src/auth";
@@ -409,5 +410,11 @@ describe("voice out", () => {
     expect(await collect(bad.synthesizeStream("Hi there."))).toEqual([]);
     expect(problems[0]).toContain("HTTP 401");
     expect(problems[0]).toContain("quota_exceeded");
+  });
+
+  it("speaks a sentence once the space after it arrives (why Atlas closes its words before a lookup)", () => {
+    const chunker = new SentenceChunker();
+    expect(chunker.add("I'm checking next week's calendar.")).toEqual([]);
+    expect(chunker.add(" ")).toEqual(["I'm checking next week's calendar."]);
   });
 });
