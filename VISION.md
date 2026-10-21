@@ -707,7 +707,7 @@ Everything installs from the app: browse, preview what it can touch, install, un
 | Repos | Artifacts (git-compatible) |
 | Code Mode and extensions | Dynamic Workers |
 | Decide and extract | Workers AI: Clef, Clairic |
-| Embeddings and search | Workers AI embeddings, plus a vector index |
+| Embeddings and search | Workers AI embeddings and full-text search, kept in each person's agent beside their records (a Vectorize index if one person's memory outgrows that) |
 | Files | R2 |
 | Email | Email Service for sending, Email Routing for receiving |
 | Brains | AI Gateway |
