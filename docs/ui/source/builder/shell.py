@@ -1,0 +1,237 @@
+"""Shared Atlas shell for the Stage-style pages.
+
+page(...) returns a complete .dc.html string. Every page uses the same sidebar,
+toolbar, stage frame and slim composer, so a change here reaches every page
+after re-running the page builders (build_all.py).
+"""
+import json, html
+
+FONTS = '<link rel="preconnect" href="https://fonts.googleapis.com">\n<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&amp;family=Inter+Tight:wght@500;600;700&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">'
+
+CSS = r"""
+body{margin:0;background:#141413}
+.lt{--bg:#faf9f6;--win:#ffffff;--side:#f4f3ef;--sep:#e7e5df;--sep2:#d9d6ce;--dash:#cdc9c0;--hover:#eeece7;--sel:#e7e5df;--tx:#191817;--tx2:#5c5954;--tx3:#6f6b65;--ac:#e8501b;--acs:rgba(232,80,27,.08);--dot:rgba(25,24,23,.09);--btn:#191817;--btntx:#ffffff;--m1:#191817;--m2:#4a4743;--m3:#8d8982;--m4:#c9c5bd;--P:#c0588a;--K:#c08423;--U:#3d74cf;--F:#2e9a6b;--H:#7a68c9;--Prgb:192,88,138;--Krgb:192,132,35;--Urgb:61,116,207;--Frgb:46,154,107;--Hrgb:122,104,201;--sh:0 14px 40px -18px rgba(0,0,0,.22)}
+.dk{--bg:#141413;--win:#1b1a19;--side:#181716;--sep:#2c2a28;--sep2:#3a3835;--dash:#3f3c37;--hover:#252321;--sel:#2c2a27;--tx:#f1efea;--tx2:#aaa69e;--tx3:#918d86;--ac:#ff6a3d;--acs:rgba(255,106,61,.07);--dot:rgba(241,239,234,.07);--btn:#f1efea;--btntx:#191817;--m1:rgba(250,244,238,.95);--m2:rgba(250,244,238,.6);--m3:rgba(250,244,238,.32);--m4:rgba(250,244,238,.16);--P:#e27aaa;--K:#e0a548;--U:#6c9ef0;--F:#4cc48f;--H:#a593f0;--Prgb:226,122,170;--Krgb:224,165,72;--Urgb:108,158,240;--Frgb:76,196,143;--Hrgb:165,147,240;--sh:0 18px 48px -16px rgba(0,0,0,.6)}
+.app{background:var(--bg);color:var(--tx);font-family:Inter,-apple-system,system-ui,sans-serif;font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased}
+.disp{font-family:'Inter Tight',Inter,system-ui,sans-serif;letter-spacing:-0.02em}
+.mono{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.lab{font-family:'Geist Mono',ui-monospace,monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--tx3)}
+.num{font-variant-numeric:tabular-nums}
+.ic{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.it{transition:background .12s}.it:hover{background:var(--hover)}
+.row{transition:background .12s}.row:hover{background:var(--hover)}
+.kbd{font-family:'Geist Mono',ui-monospace,monospace;font-size:10.5px;color:var(--tx2);border:1px solid var(--sep2);border-bottom-width:2px;border-radius:4px;padding:0 5px;line-height:15px;display:inline-block;background:var(--win)}
+.node{position:absolute;width:7px;height:7px;box-sizing:border-box;background:var(--bg);border:1px solid var(--dash);transform:translate(-50%,-50%)}
+.hd{position:absolute;width:7px;height:7px;box-sizing:border-box;background:var(--win);border:1.5px solid var(--ac)}
+.pick{animation:pick .5s cubic-bezier(.2,.8,.2,1) both .2s}
+@keyframes pick{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+.rise{animation:rise .45s cubic-bezier(.2,.8,.2,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.draw{stroke-dasharray:4 4;animation:march 1.2s linear infinite}
+@keyframes march{to{stroke-dashoffset:-16}}
+.spin::before{content:'\280B';animation:spin 1s steps(1) infinite}
+@keyframes spin{0%{content:'\280B'}12.5%{content:'\2819'}25%{content:'\2839'}37.5%{content:'\2838'}50%{content:'\283C'}62.5%{content:'\2834'}75%{content:'\2826'}87.5%{content:'\2827'}}
+.blink{animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.tag{font-family:'Geist Mono',ui-monospace,monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;height:18px;padding:0 6px;display:inline-flex;align-items:center;gap:5px;border:1px solid var(--sep2);color:var(--tx2);white-space:nowrap;box-sizing:border-box}
+.btn{height:30px;padding:0 12px;border-radius:6px;border:1px solid var(--sep2);background:var(--win);display:inline-flex;align-items:center;gap:8px;font-size:12.5px;white-space:nowrap}
+.btn:hover{background:var(--hover)}
+.btnp{height:30px;padding:0 13px;border-radius:6px;border:0;background:var(--btn);color:var(--btntx);font-weight:600;display:inline-flex;align-items:center;gap:8px;font-size:12.5px;white-space:nowrap}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:inherit}
+.sr{position:absolute;left:-9999px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+"""
+
+DIAMOND = '<svg viewBox="290 128 444 768" width="{w}" height="{h}" aria-hidden="true" style="flex: none;"><polygon points="512,128.96 290.84,418.52 512,505.16" style="fill: var(--m1);"></polygon><polygon points="512,128.96 512,505.16 733.16,418.52" style="fill: var(--m2);"></polygon><polygon points="512,895.04 290.84,418.52 512,505.16" style="fill: var(--m3);"></polygon><polygon points="512,895.04 512,505.16 733.16,418.52" style="fill: var(--m4);"></polygon></svg>'
+
+
+def diamond(w=11, h=19):
+    return DIAMOND.format(w=w, h=h)
+
+
+SIDEBAR = r"""
+<nav aria-label="Sidebar" style="flex: 0 0 220px; box-sizing: border-box; background: var(--side); border-right: 1px solid var(--sep); display: flex; flex-direction: column; padding: 14px 10px 12px;">
+  <div style="display: flex; gap: 8px; padding: 2px 8px 18px;" aria-hidden="true"><span style="width: 12px; height: 12px; border-radius: 50%; background: #ff5f57;"></span><span style="width: 12px; height: 12px; border-radius: 50%; background: #febc2e;"></span><span style="width: 12px; height: 12px; border-radius: 50%; background: #28c840;"></span></div>
+  <div style="display: flex; align-items: center; gap: 9px; padding: 0 8px 16px;">
+    DIAMOND
+    <span class="disp" style="font-size: 16px; font-weight: 600;">Atlas</span>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 1px;">
+    <sc-for list="{{nav}}" as="n" hint-placeholder-count="6">
+      <a href="#" class="it" style="display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px; border-radius: 7px; text-decoration: none; color: var(--tx); background: {{n.bg}}; font-weight: {{n.fw}}; margin-top: {{n.gap}}px;">
+        <svg class="ic" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="color: {{n.ic}};"><path d="{{n.d}}"></path></svg>
+        <span style="flex: 1;">{{n.name}}</span>
+        <sc-if value="{{n.badge}}" hint-placeholder-val="{{false}}"><span style="min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 4px; background: var(--ac); color: #fff; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;">{{n.badge}}</span></sc-if>
+      </a>
+    </sc-for>
+  </div>
+  <div style="display: flex; align-items: center; padding: 22px 8px 6px;"><span style="flex: 1; font-size: 11.5px; font-weight: 600; color: var(--tx3);">Pinned</span><svg class="ic" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M12 5v14M5 12h14"></path></svg></div>
+  <sc-for list="{{pinned}}" as="p" hint-placeholder-count="4">
+    <a href="#" class="it" style="display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px; border-radius: 7px; text-decoration: none; color: var(--tx);">
+      <span style="width: 16px; height: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center;">
+        <sc-if value="{{p.isArea}}" hint-placeholder-val="{{false}}"><span style="width: 8px; height: 8px; border-radius: 2px; background: {{p.c}};"></span></sc-if>
+        <sc-if value="{{p.isPerson}}" hint-placeholder-val="{{false}}"><span style="width: 16px; height: 16px; border-radius: 50%; background: var(--sel); color: var(--tx2); font-size: 9px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;">{{p.i}}</span></sc-if>
+        <sc-if value="{{p.isProject}}" hint-placeholder-val="{{false}}"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="5.5" style="fill: none; stroke: {{p.c}}; stroke-width: 1.5;"></circle><path d="M7 7 L7 3.5 A3.5 3.5 0 0 1 9.06 9.83 Z" style="fill: {{p.c}};"></path></svg></sc-if>
+        <sc-if value="{{p.isAuto}}" hint-placeholder-val="{{false}}"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx2);"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"></path></svg></sc-if>
+      </span>
+      <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{p.n}}</span>
+      <span style="font-size: 12px; color: var(--tx3);">{{p.meta}}</span>
+    </a>
+  </sc-for>
+  <div style="margin-top: auto; display: flex; flex-direction: column; gap: 1px; padding-top: 8px; border-top: 1px solid var(--sep);">
+    <a href="#" class="it" style="display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px; border-radius: 7px; text-decoration: none; color: var(--tx); background: {{setBg}}; font-weight: {{setFw}};"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="color: {{setIc}};"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"></path></svg><span style="flex: 1;">Atlas settings</span></a>
+    <div style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 8px;">
+      <span style="width: 22px; height: 22px; margin: 0 -3px; border-radius: 50%; background: var(--sel); display: inline-flex; align-items: center; justify-content: center; font-size: 9.5px; font-weight: 600; color: var(--tx2);">MB</span>
+      <span style="flex: 1;">Max Barbare</span>
+    </div>
+  </div>
+</nav>
+""".replace('DIAMOND', DIAMOND.format(w=11, h=19))
+
+# Toolbar. LEFT/RIGHT extras let Voice swap in its own controls.
+TOOLBAR = r"""
+  <header style="height: 48px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 16px; border-bottom: 1px solid var(--sep); background: var(--win); position: relative; z-index: 5;">
+    <button type="button" class="it" style="height: 28px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--sep2); background: var(--win); display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;">
+      <span style="display: inline-flex; gap: 2px;"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--P);"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--K);"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--U);"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--F);"></span></span>
+      All areas<svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M6 9l6 6 6-6"></path></svg></button>
+    <span style="flex: 1;"></span>
+    <div style="position: relative;">
+      <button type="button" class="it" onClick="{{toggleJobs}}" aria-expanded="{{jobsOpen}}" style="height: 28px; padding: 0 9px; border-radius: 6px; border: 1px solid {{jobsBd}}; background: {{jobsBg}}; display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;"><span class="mono spin" aria-hidden="true" style="color: var(--ac); width: 9px;"></span>2 jobs running</button>
+      <sc-if value="{{jobsOpen}}" hint-placeholder-val="{{false}}">
+        <div class="rise" style="position: absolute; right: 0; top: 36px; width: 340px; background: var(--win); border: 1px solid var(--sep2); border-radius: 10px; box-shadow: var(--sh); z-index: 20; overflow: hidden;">
+          <div style="display: flex; align-items: center; padding: 10px 14px 6px;"><span class="lab">Running now</span><span style="flex: 1;"></span><span class="lab">$0.07 so far</span></div>
+          <sc-for list="{{jobs}}" as="j" hint-placeholder-count="2">
+            <button type="button" class="it" onClick="{{j.open}}" style="width: 100%; border: 0; background: transparent; text-align: left; padding: 9px 14px; display: flex; flex-direction: column; gap: 4px;">
+              <span style="display: flex; align-items: center; gap: 8px;"><span style="font-weight: 500; flex: 1;">{{j.name}}</span><span style="width: 7px; height: 7px; border-radius: 2px; background: {{j.c}};"></span></span>
+              <span style="display: flex; align-items: center; gap: 10px;"><span class="mono" style="font-size: 11.5px; color: var(--ac); letter-spacing: .02em;">{{j.bar}}</span><span style="font-size: 12px; color: var(--tx2); flex: 1;">{{j.status}}</span><span class="mono" style="font-size: 11px; color: var(--tx3);">{{j.t}}</span></span>
+            </button>
+          </sc-for>
+          <div style="padding: 9px 14px 11px; border-top: 1px solid var(--sep); font-size: 12px; color: var(--tx3);">Click one to watch it on the stage. Finished work lands in Inbox.</div>
+        </div>
+      </sc-if>
+    </div>
+    <button type="button" class="it" style="height: 28px; padding: 0 8px 0 10px; border-radius: 6px; border: 1px solid var(--sep2); background: var(--win); display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px;">Talk<span class="kbd">Space</span></button>
+    <button type="button" class="it" style="width: 190px; height: 28px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--sep2); background: var(--win); display: inline-flex; align-items: center; gap: 6px; color: var(--tx3); font-size: 12.5px; text-align: left;"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><span style="flex: 1;">Search</span><span class="kbd">⌘K</span></button>
+  </header>
+"""
+
+STAGE_OPEN = r"""
+  <section aria-label="LABEL" style="flex: 1; position: relative; min-height: 852px; background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1.2px); background-size: 16px 16px; overflow: hidden;">
+    <div aria-hidden="true" style="position: absolute; left: 40px; top: 0; bottom: 0; border-left: 1px dashed var(--dash);"></div>
+    <div aria-hidden="true" style="position: absolute; right: 40px; top: 0; bottom: 0; border-left: 1px dashed var(--dash);"></div>
+    <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 56px; border-top: 1px dashed var(--dash);"></div>
+    <span class="node" aria-hidden="true" style="left: 40px; top: 56px;"></span>
+    <span class="node" aria-hidden="true" style="left: calc(100% - 40px); top: 56px;"></span>
+"""
+
+# Page header row: LABEL / tabs ... meta
+STAGE_HEAD = r"""
+    <div style="position: relative; height: 56px; display: flex; align-items: center; gap: 14px; padding: 0 60px;">
+      <span class="lab" style="color: var(--tx2);">LABEL</span>
+      <span class="lab" style="color: var(--sep2);">/</span>
+      <div role="tablist" style="display: flex; gap: 4px;">
+        <sc-for list="{{tabs}}" as="t" hint-placeholder-count="4">
+          <button type="button" role="tab" onClick="{{t.pick}}" style="height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid {{t.bd}}; background: {{t.bg}}; color: {{t.fg}}; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px;">{{t.name}}<sc-if value="{{t.badge}}" hint-placeholder-val="{{false}}"><span class="mono" style="font-size: 10.5px; color: {{t.bc}};">{{t.badge}}</span></sc-if></button>
+        </sc-for>
+      </div>
+      <span style="flex: 1;"></span>
+      <span class="lab">{{meta}}</span>
+    </div>
+"""
+
+SHEET_OPEN = r"""
+    <div style="position: relative; padding: 18px 60px 0;">
+      <div style="position: relative; background: var(--win); border: 1px solid var(--sep); border-radius: 10px; height: HEIGHTpx;">
+        <span class="node" aria-hidden="true" style="left: 0; top: 0;"></span>
+        <span class="node" aria-hidden="true" style="left: 100%; top: 0;"></span>
+        <span class="node" aria-hidden="true" style="left: 0; top: 100%;"></span>
+        <span class="node" aria-hidden="true" style="left: 100%; top: 100%;"></span>
+        <div style="position: absolute; inset: 0; overflow: hidden; border-radius: 10px;">
+"""
+SHEET_CLOSE = r"""
+        </div>
+      </div>
+    </div>
+"""
+
+COMPOSER = r"""
+    <div style="position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(680px, calc(100% - 120px)); background: var(--win); border: 1px solid var(--sep2); border-radius: 12px; box-shadow: var(--sh); display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 14px; box-sizing: border-box;">
+      DIAMOND
+      <label for="msg" class="sr">Message Atlas</label>
+      <input id="msg" placeholder="PLACEHOLDER" style="flex: 1; height: 30px; border: 0; outline: none; background: transparent; font-size: 14px; margin-left: 4px;">
+      <span class="kbd">/</span>
+      <button type="button" aria-label="Talk" class="it" style="width: 30px; height: 30px; border-radius: 7px; border: 0; background: transparent; color: var(--tx2); display: inline-flex; align-items: center; justify-content: center;"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0M12 17v4"></path></svg></button>
+      <button type="button" aria-label="Send" style="width: 30px; height: 30px; border-radius: 7px; border: 0; background: var(--btn); color: var(--btntx); display: inline-flex; align-items: center; justify-content: center;"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width: 2.1;"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></button>
+    </div>
+""".replace('DIAMOND', DIAMOND.format(w=9, h=16))
+
+# JS shared by every page: theme, sidebar, toolbar jobs, tab helper.
+SHELL_JS = r"""
+  shellVals(active) {
+    var self = this;
+    var NAV = [
+  { name: 'Home', d: 'M3 5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM3 15h18' },
+  { name: 'Inbox', d: 'M22 12h-6l-2 3h-4l-2-3H2M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z', badge: '5' },
+  { name: 'Agenda', d: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z' },
+  { name: 'Automations', d: 'M13 2 3 14h9l-1 8 10-12h-9l1-8z', gap: 10 },
+  { name: 'Library', d: 'M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z' },
+  { name: 'History', d: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2' }
+];
+    var jobsOpen = !!self.state.jobsOpen;
+  return {
+    tc: self.props.theme === 'Dark' ? 'dk' : 'lt',
+    nav: NAV.map(function (n) { var on = n.name === active; return { name: n.name, d: n.d, badge: n.badge || '', gap: n.gap || 0, bg: on ? 'var(--sel)' : 'transparent', fw: on ? 500 : 400, ic: on ? 'var(--tx)' : 'var(--tx2)' }; }),
+    pinned: [
+      { n: 'Keyframes', isArea: true, c: 'var(--K)', meta: '' },
+      { n: 'Mom', isPerson: true, i: 'M', meta: '' },
+      { n: 'Riverside promo', isProject: true, c: 'var(--K)', meta: 'Nov 8' },
+      { n: 'Goodnight', isAuto: true, meta: '' }
+    ],
+    setBg: active === 'Settings' ? 'var(--sel)' : 'transparent', setFw: active === 'Settings' ? 500 : 400, setIc: active === 'Settings' ? 'var(--tx)' : 'var(--tx2)',
+    jobsOpen: jobsOpen, jobsBg: jobsOpen ? 'var(--sel)' : 'var(--win)', jobsBd: jobsOpen ? 'var(--dash)' : 'var(--sep2)',
+    toggleJobs: function () { self.setState({ jobsOpen: !jobsOpen }); },
+    jobs: [
+      { name: 'Gear rental quotes', c: 'var(--K)', bar: '[■■■□]', status: '3 of 4 shops answered', t: '14m', open: function () { self.openJob ? self.openJob('gear') : self.setState({ jobsOpen: false }); } },
+      { name: 'Fix gallery lazy-load', c: 'var(--K)', bar: '[■■□□]', status: 'Claude Code · tests 41/58', t: '22m', open: function () { self.openJob ? self.openJob('code') : self.setState({ jobsOpen: false }); } }
+    ]
+  };
+  }
+  mkTabs(list, cur, key) {
+    var self = this;
+    return list.map(function (t) {
+    var on = t[0] === cur;
+    var o = { name: t[0], badge: t[1] || '', bg: on ? 'var(--btn)' : 'var(--win)', fg: on ? 'var(--btntx)' : 'var(--tx2)', bd: on ? 'var(--btn)' : 'var(--sep2)', bc: on ? 'var(--btntx)' : 'var(--tx3)' };
+    o.pick = function () { var s = {}; s[key] = t[0]; self.setState(s); };
+    return o;
+  });
+  }
+"""
+
+
+def page(*, title, active, label, body, js, placeholder='Message Atlas', sheet_height=690, extra_css='', state='{}', composer=True, sheet=True, head=True):
+    props = {"theme": {"editor": "enum", "options": ["Light", "Dark"], "default": "Dark"}, "$preview": {"width": 1440, "height": 900}}
+    props_attr = html.escape(json.dumps(props, separators=(',', ':')), quote=True)
+    parts = [
+        '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>%s</title>\n<script src="./support.js"></script>\n</head>\n<body>\n<x-dc>\n<helmet>\n' % title,
+        FONTS, '\n<style>', CSS, extra_css, '</style>\n</helmet>\n',
+        '<div class="app {{tc}}" style="min-height: 100vh; display: flex; flex-wrap: wrap;">\n',
+        SIDEBAR,
+        '<div style="flex: 999 1 720px; min-width: 0; display: flex; flex-direction: column;">\n',
+        TOOLBAR,
+        STAGE_OPEN.replace('LABEL', label),
+    ]
+    if head:
+        parts.append(STAGE_HEAD.replace('LABEL', label))
+    if sheet:
+        parts += [SHEET_OPEN.replace('HEIGHT', str(sheet_height)), body, SHEET_CLOSE]
+    else:
+        parts.append(body)
+    if composer:
+        parts.append(COMPOSER.replace('PLACEHOLDER', placeholder))
+    parts += ['  </section>\n</div>\n</div>\n</x-dc>\n',
+              '<script type="text/x-dc" data-dc-script data-props="%s">\n' % props_attr,
+              'class Component extends DCLogic {\n  constructor(props) {\n    super(props);\n    this.state = %s;\n  }\n' % state,
+              js, '\n', SHELL_JS, '}\n</script>\n</body>\n</html>\n']
+    return ''.join(parts)
