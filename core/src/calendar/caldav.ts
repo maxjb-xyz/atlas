@@ -104,10 +104,13 @@ class CalDavClient {
         });
       } catch (err) {
         const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+        // Keep the runtime's own reason (and where it happened) so the owner sees the real cause.
+        const why = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        console.error(JSON.stringify({ event: "caldav.fetch_failed", method, host: new URL(target).host, why }));
         throw new CalendarError(
           timedOut
             ? "iCloud Calendar didn't answer in time. Try again in a minute."
-            : "Couldn't reach iCloud Calendar. Check the connection and try again.",
+            : `Couldn't reach iCloud Calendar at ${new URL(target).host} (${why}).`,
           "network",
         );
       }
