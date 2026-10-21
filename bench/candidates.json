@@ -1,10 +1,25 @@
 {
-  "_about": "What --sweep compares for the voice role and speech in. Each voice brain is tried alone (no fallback) with each speech_in option. Edit to add models from the Workers AI catalog or ChatGPT.",
+  "_about": "What --sweep compares for the voice role and speech in. Each voice brain is tried alone (no fallback) with each speech_in option. A ChatGPT entry with an empty model uses the ChatGPT model already in your brain chains. Edit to add models from the Workers AI catalog or your ChatGPT plan.",
   "voice": [
-    { "provider": "workers-ai", "model": "@cf/moonshotai/kimi-k2.6" },
-    { "provider": "workers-ai", "model": "@cf/zai-org/glm-5.3-flash" },
-    { "provider": "workers-ai", "model": "@cf/openai/gpt-oss-20b" },
-    { "provider": "codex", "model": "gpt-5.5" }
+    {
+      "provider": "workers-ai",
+      "model": "@cf/moonshotai/kimi-k2.6"
+    },
+    {
+      "provider": "workers-ai",
+      "model": "@cf/zai-org/glm-5.3-flash"
+    },
+    {
+      "provider": "workers-ai",
+      "model": "@cf/openai/gpt-oss-20b"
+    },
+    {
+      "provider": "chatgpt",
+      "model": ""
+    }
   ],
-  "speech_in": ["workers-ai-flux", "elevenlabs-scribe"]
+  "speech_in": [
+    "workers-ai-flux",
+    "elevenlabs-scribe"
+  ]
 }

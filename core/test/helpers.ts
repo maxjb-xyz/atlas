@@ -78,3 +78,57 @@ export async function collect<T>(it: AsyncIterable<T>): Promise<T[]> {
   for await (const x of it) out.push(x);
   return out;
 }
+
+const b64url = (b: ArrayBuffer | Uint8Array) =>
+  btoa(String.fromCharCode(...new Uint8Array(b)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+const part = (o: object) => b64url(new TextEncoder().encode(JSON.stringify(o)));
+
+/** A fake OpenAI: a real RSA key, a JWKS, and a token endpoint that signs ID tokens. */
+export async function fakeOpenAI(opts: { scope?: string; tokenStatus?: number; tokenBody?: object } = {}) {
+  const keys = (await crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const kid = crypto.randomUUID();
+  const jwk = { ...((await crypto.subtle.exportKey("jwk", keys.publicKey)) as JsonWebKey), kid };
+  const sign = async (claims: object) => {
+    const unsigned = `${part({ alg: "RS256", kid })}.${part(claims)}`;
+    const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keys.privateKey, new TextEncoder().encode(unsigned));
+    return `${unsigned}.${b64url(sig)}`;
+  };
+  const calls: Array<{ url: string; body: URLSearchParams }> = [];
+  let nonce = "";
+  const f = (async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/.well-known/openid-configuration")) return Response.json({ jwks_uri: "https://auth.openai.com/jwks" });
+    if (url === "https://auth.openai.com/jwks") return Response.json({ keys: [jwk] });
+    if (url === "https://api.openai.com/v1/models")
+      return Response.json({
+        models: [
+          { slug: "gpt-6.1-sol", visibility: "list" },
+          { slug: "hidden", visibility: "hide" },
+        ],
+      });
+    const body = new URLSearchParams(String(init?.body ?? ""));
+    calls.push({ url, body });
+    if (opts.tokenStatus) return Response.json(opts.tokenBody ?? {}, { status: opts.tokenStatus });
+    const id_token = await sign({
+      iss: "https://auth.openai.com",
+      aud: "oaiapp_123",
+      exp: Date.now() / 1000 + 600,
+      nonce,
+      email: "max@example.com",
+    });
+    return Response.json({
+      access_token: "at1",
+      refresh_token: "rt2",
+      id_token,
+      expires_in: 3600,
+      scope: opts.scope ?? "openid email offline_access chatgpt.tokens.use.direct",
+    });
+  }) as unknown as typeof fetch;
+  return { f, calls, setNonce: (n: string) => (nonce = n) };
+}

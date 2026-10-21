@@ -5,26 +5,44 @@
 import { Agent, type Connection, type WSMessage } from "agents";
 import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } from "agents/voice";
 import { BrainRouter } from "./brains/router";
-import { codexBrain, type CodexAccess } from "./brains/codex";
-import { CodexAuthError, type CodexLogin, type CodexTokens, pollDeviceLogin, refreshTokens, startDeviceLogin } from "./brains/codex-auth";
+import { type ChatGPTAccess, chatgptBrain } from "./brains/chatgpt";
+import {
+  ChatGPTAuthError,
+  type ChatGPTClient,
+  type ChatGPTLogin,
+  type ChatGPTTokens,
+  finishLogin,
+  listModels,
+  newClient,
+  refreshTokens,
+  startLogin,
+} from "./brains/chatgpt-auth";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
-import { icloudCalendar } from "./calendar/caldav";
-import type { CalendarSource, ICloudCredentials } from "./calendar/types";
+import { cleanCredentials, icloudCalendar, type RememberedCalendars } from "./calendar/caldav";
+import { CalendarError, type CalendarSource, type ICloudCredentials } from "./calendar/types";
 import { history, systemPrompt, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
 import { Outbox, StreamScrubber } from "./outbox";
-import { ClientMessage, type CodexView, type ServerMessage, type SettingsView } from "./protocol";
+import { type ChatGPTView, ClientMessage, type ServerMessage, type SettingsView } from "./protocol";
 import { type AgendaItem, due, finish, getItem, lease, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, type Sql } from "./store/db";
-import { append, get as getRow, type LogRow, type Surface, thread } from "./store/log";
+import { append, forRun, get as getRow, type LogRow, type Surface, thread } from "./store/log";
 import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
-import { type BrainChoice, getSecret, readSettings, type Settings, setSecret, writeSettings } from "./store/settings";
+import {
+  type BrainChoice,
+  DEFAULT_CHATGPT_MODEL,
+  getSecret,
+  readSettings,
+  type Settings,
+  setSecret,
+  writeSettings,
+} from "./store/settings";
 import { isValidZone, shortLocal } from "./time";
 import { calendarRead } from "./tools/calendar";
 import { reminderTools } from "./tools/reminders";
 import type { Tool, ToolContext } from "./tools/types";
-import { makeTranscriber, makeTTS } from "./voice/providers";
+import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 
 /** The one owner in M0. Members get their own agents in M5. */
 export const OWNER = "owner";
@@ -41,7 +59,7 @@ const TOOLS: Tool[] = [calendarRead, ...reminderTools];
 /** How long a brain gets to start answering before the next one is tried. */
 const FIRST_EVENT_MS = { main: 25_000, voice: 6_000 };
 
-const VoiceAgent = withVoice(Agent<Env>, { audioFormat: "mp3" });
+const VoiceAgent = withVoice(Agent<Env>, { audioFormat: AUDIO.format, sampleRate: AUDIO.sampleRate });
 
 interface ConverseOpts {
   runId: string;
@@ -62,8 +80,8 @@ export class PersonAgent extends VoiceAgent {
   #calendar: { key: string; source: CalendarSource } | null = null;
   /** Runs go one at a time, so each one sees the last one's answer. */
   #line: Promise<unknown> = Promise.resolve();
-  #codexError: string | null = null;
-  #refreshing: Promise<CodexTokens | null> | null = null;
+  #chatgptError: string | null = null;
+  #refreshing: Promise<ChatGPTTokens | null> | null = null;
 
   get #sql(): Sql {
     return this.ctx.storage.sql;
@@ -134,20 +152,37 @@ export class PersonAgent extends VoiceAgent {
         this.#updateSettings(msg.patch);
         return;
       case "atlas.secret.set":
-        setSecret(this.#sql, msg.secret.name, msg.secret.value);
+        setSecret(
+          this.#sql,
+          msg.secret.name,
+          msg.secret.name === "icloud" && msg.secret.value ? cleanCredentials(msg.secret.value) : msg.secret.value,
+        );
         append(this.#sql, { actor: "owner", kind: "settings.change", body: { secret: msg.secret.name, set: msg.secret.value !== null } });
-        if (msg.secret.name === "icloud") this.#calendar = null;
+        if (msg.secret.name === "icloud") {
+          // New credentials: start fresh, and let Atlas ask iCloud again.
+          this.#calendar = null;
+          setSecret(this.#sql, "icloud_refused", null);
+          setSecret(this.#sql, "icloud_calendars", null);
+        }
         this.#refreshVoice();
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
-      case "atlas.codex.start":
-        await this.#codexStart(connection);
+      case "atlas.chatgpt.start":
+        await this.#chatgptStart();
         return;
-      case "atlas.codex.signout":
-        setSecret(this.#sql, "codex_tokens", null);
-        setSecret(this.#sql, "codex_login", null);
-        this.#codexError = null;
-        append(this.#sql, { actor: "owner", kind: "settings.change", body: { codex: "signed_out" } });
+      case "atlas.chatgpt.finish":
+        await this.#chatgptFinish(msg.url);
+        return;
+      case "atlas.chatgpt.cancel":
+        setSecret(this.#sql, "chatgpt_login", null);
+        this.#chatgptError = null;
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      case "atlas.chatgpt.signout":
+        setSecret(this.#sql, "chatgpt_tokens", null);
+        setSecret(this.#sql, "chatgpt_login", null);
+        this.#chatgptError = null;
+        append(this.#sql, { actor: "owner", kind: "settings.change", body: { chatgpt: "signed_out" } });
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       case "atlas.test":
@@ -200,7 +235,11 @@ export class PersonAgent extends VoiceAgent {
     const spoken = new Speech();
     const started = Date.now();
     let firstWordsMs: number | null = null;
+    let statusMs: number | null = null;
+    let answerMs: number | null = null;
+    let toolsRan = false;
     let statusLine = "";
+    this.#voiceRun = runId;
     const scrubber = new StreamScrubber(this.#outbox.secrets());
 
     void this.#inLine(
@@ -214,9 +253,15 @@ export class PersonAgent extends VoiceAgent {
           budget: BUDGETS.voice,
           signal: context.signal,
           emit: (e) => {
+            if (e.type === "tools") toolsRan = true;
             if (e.type === "text" || (e.type === "status" && e.speakable && e.text)) {
-              firstWordsMs ??= Date.now() - started;
               const words = e.type === "text" ? e.text : `${e.text} `;
+              if (words.trim()) {
+                firstWordsMs ??= Date.now() - started;
+                // Words before any tool has answered are the status line, whether Atlas's or the brain's own.
+                if (e.type === "status" || !toolsRan) statusMs ??= Date.now() - started;
+                else answerMs ??= Date.now() - started;
+              }
               if (e.type === "status") statusLine = words;
               spoken.push(scrubber.push(words));
             }
@@ -225,7 +270,12 @@ export class PersonAgent extends VoiceAgent {
         });
         spoken.push(scrubber.flush());
         spoken.close();
-        const said = { ...res, text: `${statusLine}${res.text}`.trim() };
+        // When the status line and the answer were ready, counted from the end of the owner's turn.
+        const tools = forRun(this.#sql, runId)
+          .filter((r) => r.kind === "tool.call")
+          .map((r) => String(r.body.name));
+        const timing = { status_ms: statusMs, answer_ms: answerMs, tools };
+        const said = { ...res, text: `${statusLine}${res.text}`.trim(), timing };
         append(this.#sql, {
           actor: "system",
           kind: "voice.metrics",
@@ -233,6 +283,7 @@ export class PersonAgent extends VoiceAgent {
           surface: "voice",
           body: {
             first_words_ms: firstWordsMs,
+            ...timing,
             total_ms: Date.now() - started,
             brain: res.brain,
             tts: this.tts ? ((this.tts as { label?: string }).label ?? null) : null,
@@ -267,8 +318,20 @@ export class PersonAgent extends VoiceAgent {
     this.#inCall.delete(connection.id);
   }
 
+  /** The voice run in progress, so a sentence that couldn't be spoken is noted against it. */
+  #voiceRun: string | null = null;
+
   #refreshVoice(): void {
-    this.tts = makeTTS(this.env.AI, readSettings(this.#sql), getSecret<string>(this.#sql, "elevenlabs_api_key"));
+    this.tts = makeTTS(this.env.AI, readSettings(this.#sql), getSecret<string>(this.#sql, "elevenlabs_api_key"), (message) => {
+      const row = append(this.#sql, {
+        actor: "system",
+        kind: "voice.problem",
+        run_id: this.#voiceRun,
+        surface: "voice",
+        body: { message },
+      });
+      this.#broadcast({ type: "atlas.rows", rows: [row] });
+    });
   }
 
   // --- the clock -------------------------------------------------------------
@@ -384,7 +447,13 @@ export class PersonAgent extends VoiceAgent {
   }
 
   /** Saves the answer through the outbox and closes the run with its one final state. */
-  async #finishRun(runId: string, channel: Surface, res: LoopResult, streamed: boolean, trigger?: string): Promise<void> {
+  async #finishRun(
+    runId: string,
+    channel: Surface,
+    res: LoopResult & { timing?: Record<string, unknown> },
+    streamed: boolean,
+    trigger?: string,
+  ): Promise<void> {
     if (res.text.trim()) {
       await this.#outbox.deliver(
         {
@@ -396,6 +465,7 @@ export class PersonAgent extends VoiceAgent {
           interrupted: res.interrupted,
           usage: res.usage,
           trigger,
+          timing: res.timing,
         },
         { alreadyStreamed: streamed },
       );
@@ -418,7 +488,7 @@ export class PersonAgent extends VoiceAgent {
       if (text) this.#broadcast({ type: "atlas.delta", run_id: runId, text });
     } else if (e.type === "status") {
       this.#broadcast({ type: "atlas.status", run_id: runId, text: e.text });
-    } else {
+    } else if (e.type === "row") {
       this.#broadcast({ type: "atlas.rows", rows: [e.row] });
     }
   }
@@ -469,7 +539,7 @@ export class PersonAgent extends VoiceAgent {
   async apiRunsSince(seq: number): Promise<LogRow[]> {
     return this.#sql
       .exec<{ id: string }>(
-        `SELECT id FROM log WHERE seq > ? AND kind IN ('message.in','message.out','tool.call','tool.result','voice.metrics','run.end','brain.fallback') ORDER BY seq LIMIT 500`,
+        `SELECT id FROM log WHERE seq > ? AND kind IN ('message.in','message.out','tool.call','tool.result','voice.metrics','voice.problem','run.end','brain.fallback') ORDER BY seq LIMIT 500`,
         seq,
       )
       .toArray()
@@ -502,50 +572,91 @@ export class PersonAgent extends VoiceAgent {
   }
 
   #calendarSource(settings: Settings): CalendarSource | null {
-    if (seams.calendar !== undefined) return seams.calendar;
+    if (seams.calendar !== undefined) return seams.calendar ? this.#guarded(seams.calendar, settings) : null;
     const creds = getSecret<ICloudCredentials>(this.#sql, "icloud");
     if (!creds) return null;
     const key = `${creds.username}|${creds.app_password.length}|${settings.calendar.hidden.join(",")}|${settings.timezone}`;
     if (this.#calendar?.key !== key) {
-      this.#calendar = {
-        key,
-        source: icloudCalendar(creds, {
-          hidden: settings.calendar.hidden,
-          timezone: this.#tz(settings),
-          ...(seams.fetch ? { fetch: seams.fetch } : {}),
-        }),
-      };
+      const source = icloudCalendar(creds, {
+        hidden: settings.calendar.hidden,
+        timezone: this.#tz(settings),
+        remember: {
+          load: () => getSecret<RememberedCalendars>(this.#sql, "icloud_calendars"),
+          save: (cals) => setSecret(this.#sql, "icloud_calendars", cals),
+        },
+        ...(seams.fetch ? { fetch: seams.fetch } : {}),
+      });
+      this.#calendar = { key, source: this.#guarded(source, settings) };
     }
     return this.#calendar.source;
+  }
+
+  /**
+   * After iCloud refuses the password, Atlas stops asking until the owner
+   * reconnects. Retrying a refused login (the brain can call the calendar
+   * several times in one reply) is how Apple accounts get locked.
+   */
+  #guarded(source: CalendarSource, settings: Settings): CalendarSource {
+    const refused = (err: unknown) => {
+      if (err instanceof CalendarError && err.code === "auth") {
+        setSecret(this.#sql, "icloud_refused", { at: Date.now(), message: err.message });
+        append(this.#sql, { actor: "system", kind: "settings.change", body: { icloud: "refused", message: err.message } });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+      }
+      return err;
+    };
+    return {
+      list: async (range) => {
+        const stopped = getSecret<{ at: number; message: string }>(this.#sql, "icloud_refused");
+        if (stopped) {
+          throw new CalendarError(
+            `iCloud refused the Apple ID and app-specific password at ${shortLocal(new Date(stopped.at), this.#tz(settings))}, so Atlas stopped asking, to keep Apple from locking the account. Reconnect in Settings → Calendar.`,
+            "auth",
+          );
+        }
+        return source.list(range).catch((err: unknown) => {
+          throw refused(err);
+        });
+      },
+      // The owner pressing Test is always one fresh try.
+      check: async () => {
+        const c = await source.check().catch((err: unknown) => {
+          throw refused(err);
+        });
+        setSecret(this.#sql, "icloud_refused", null);
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return c;
+      },
+    };
   }
 
   #makeBrain(choice: BrainChoice): Brain | null {
     if (seams.makeBrain) return seams.makeBrain(choice);
     if (choice.provider === "workers-ai") return workersAIBrain(this.env.AI as never, choice.model);
-    if (!getSecret<CodexTokens>(this.#sql, "codex_tokens")) return null;
-    return codexBrain(this.#codexAccess, choice.model);
+    if (!getSecret<ChatGPTTokens>(this.#sql, "chatgpt_tokens")) return null;
+    return chatgptBrain(this.#chatgptAccess, choice.model, seams.fetch ?? fetch);
   }
 
-  #codexAccess: CodexAccess = {
+  #chatgptAccess: ChatGPTAccess = {
     access: async (force = false) => {
-      let tokens = getSecret<CodexTokens>(this.#sql, "codex_tokens");
+      let tokens = getSecret<ChatGPTTokens>(this.#sql, "chatgpt_tokens");
       if (!tokens) return null;
-      if (force || tokens.expires_at - Date.now() < 5 * 60_000) tokens = await this.#refreshCodex(tokens);
-      return tokens ? { access_token: tokens.access_token, account_id: tokens.account_id } : null;
+      if (force || tokens.expires_at - Date.now() < 5 * 60_000) tokens = await this.#refreshChatGPT(tokens);
+      return tokens?.access_token ?? null;
     },
   };
 
-  /** One refresh at a time, however many turns ask for it. */
-  #refreshCodex(tokens: CodexTokens): Promise<CodexTokens | null> {
+  /** One refresh at a time, however many turns ask: refresh tokens rotate, so two at once would race. */
+  #refreshChatGPT(tokens: ChatGPTTokens): Promise<ChatGPTTokens | null> {
     this.#refreshing ??= (async () => {
       try {
         const fresh = await refreshTokens(tokens, seams.fetch ?? fetch);
-        setSecret(this.#sql, "codex_tokens", fresh);
+        setSecret(this.#sql, "chatgpt_tokens", fresh);
         return fresh;
       } catch (err) {
-        if (err instanceof CodexAuthError) {
-          setSecret(this.#sql, "codex_tokens", null);
-          this.#codexError = err.message;
+        if (err instanceof ChatGPTAuthError) {
+          setSecret(this.#sql, "chatgpt_tokens", null);
+          this.#chatgptError = err.message;
           this.#broadcast({ type: "atlas.view", view: this.#view() });
           return null;
         }
@@ -557,47 +668,76 @@ export class PersonAgent extends VoiceAgent {
     return this.#refreshing;
   }
 
-  async #codexStart(connection: Connection): Promise<void> {
-    try {
-      const login = await startDeviceLogin(seams.fetch ?? fetch);
-      setSecret(this.#sql, "codex_login", login);
-      this.#codexError = null;
-      await this.schedule(login.interval, "pollCodexLogin", {});
-      this.#broadcast({ type: "atlas.view", view: this.#view() });
-    } catch (err) {
-      this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+  #chatgptClient(): ChatGPTClient {
+    let client = getSecret<ChatGPTClient>(this.#sql, "chatgpt_client");
+    if (!client) {
+      client = newClient();
+      setSecret(this.#sql, "chatgpt_client", client);
     }
+    return client;
   }
 
-  /** Polls OpenAI until the owner has typed the code, on the scheduler so it survives a restart. */
-  async pollCodexLogin(): Promise<void> {
-    const login = getSecret<CodexLogin>(this.#sql, "codex_login");
-    if (!login) return;
+  /** Step 1 of "Sign in with ChatGPT": the address the owner opens. */
+  async #chatgptStart(): Promise<void> {
+    const login = await startLogin(this.#chatgptClient());
+    setSecret(this.#sql, "chatgpt_login", login);
+    this.#chatgptError = null;
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  /** Step 2: the owner pastes the address their browser landed on. */
+  async #chatgptFinish(pasted: string): Promise<void> {
+    const login = getSecret<ChatGPTLogin>(this.#sql, "chatgpt_login");
+    if (!login) {
+      this.#chatgptError = "Start the sign-in first.";
+      this.#broadcast({ type: "atlas.view", view: this.#view() });
+      return;
+    }
     try {
-      const result = await pollDeviceLogin(login, seams.fetch ?? fetch);
-      if (result === "pending") {
-        await this.schedule(login.interval, "pollCodexLogin", {});
-        return;
-      }
-      setSecret(this.#sql, "codex_tokens", result);
-      setSecret(this.#sql, "codex_login", null);
-      this.#codexError = null;
-      append(this.#sql, { actor: "owner", kind: "settings.change", body: { codex: "signed_in", plan: result.plan } });
+      const f = seams.fetch ?? fetch;
+      const tokens = await finishLogin(pasted, login, f);
+      const models = await listModels(tokens.access_token, f).catch(() => []);
+      setSecret(this.#sql, "chatgpt_tokens", tokens);
+      setSecret(this.#sql, "chatgpt_login", null);
+      setSecret(this.#sql, "chatgpt_client", {
+        ...this.#chatgptClient(),
+        client_id: tokens.client_id,
+        email: tokens.email,
+        id_token: tokens.id_token,
+        models,
+      });
+      this.#chatgptError = null;
+      append(this.#sql, { actor: "owner", kind: "settings.change", body: { chatgpt: "signed_in", models: models.length } });
+      this.#useAvailableModels(models);
     } catch (err) {
-      setSecret(this.#sql, "codex_login", null);
-      this.#codexError = err instanceof Error ? err.message : String(err);
+      this.#chatgptError = err instanceof Error ? err.message : String(err);
+      if (!(err instanceof ChatGPTAuthError)) setSecret(this.#sql, "chatgpt_login", null);
     }
     this.#broadcast({ type: "atlas.view", view: this.#view() });
   }
 
-  #codexView(): CodexView {
-    const login = getSecret<CodexLogin>(this.#sql, "codex_login");
-    if (login && login.expires_at > Date.now()) {
-      return { state: "pending", verification_url: login.verification_url, user_code: login.user_code, expires_at: login.expires_at };
-    }
-    const tokens = getSecret<CodexTokens>(this.#sql, "codex_tokens");
-    if (tokens) return { state: "signed_in", email: tokens.email, plan: tokens.plan };
-    if (this.#codexError) return { state: "error", message: this.#codexError };
+  /**
+   * ChatGPT spots in the brain chains that name a model this account can't use
+   * move to the default model if the plan has it, or else its first listed one.
+   */
+  #useAvailableModels(models: string[]): void {
+    if (!models.length) return;
+    const s = readSettings(this.#sql);
+    const preferred = models.includes(DEFAULT_CHATGPT_MODEL) ? DEFAULT_CHATGPT_MODEL : models[0]!;
+    const fix = (chain: BrainChoice[]) =>
+      chain.map((c) => (c.provider === "chatgpt" && !models.includes(c.model) ? { ...c, model: preferred } : c));
+    const brains = { main: fix(s.brains.main), voice: fix(s.brains.voice) };
+    if (JSON.stringify(brains) !== JSON.stringify(s.brains)) this.#updateSettings({ brains });
+  }
+
+  #chatgptView(): ChatGPTView {
+    const login = getSecret<ChatGPTLogin>(this.#sql, "chatgpt_login");
+    const error = this.#chatgptError ?? undefined;
+    if (login && login.expires_at > Date.now()) return { state: "pending", authorize_url: login.url, expires_at: login.expires_at, error };
+    const tokens = getSecret<ChatGPTTokens>(this.#sql, "chatgpt_tokens");
+    const models = getSecret<ChatGPTClient>(this.#sql, "chatgpt_client")?.models ?? [];
+    if (tokens) return { state: "signed_in", email: tokens.email, models };
+    if (error) return { state: "error", message: error };
     return { state: "signed_out" };
   }
 
@@ -607,11 +747,25 @@ export class PersonAgent extends VoiceAgent {
       settings: readSettings(this.#sql),
       secrets: {
         elevenlabs_api_key: Boolean(getSecret(this.#sql, "elevenlabs_api_key")),
-        icloud: icloud ? { username: icloud.username } : null,
+        icloud: icloud ? { username: icloud.username, refused: getSecret(this.#sql, "icloud_refused") } : null,
       },
-      codex: this.#codexView(),
+      chatgpt: this.#chatgptView(),
       health: this.#router.snapshot(),
     };
+  }
+
+  /**
+   * What Atlas holds for iCloud, without the password itself, so the owner can
+   * tell whether it's what they meant to paste.
+   */
+  #icloudShape(): string {
+    const creds = getSecret<ICloudCredentials>(this.#sql, "icloud");
+    if (!creds) return "";
+    const p = creds.app_password;
+    const form = /^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$/.test(p)
+      ? "in Apple's xxxx-xxxx-xxxx-xxxx form"
+      : "not in Apple's xxxx-xxxx-xxxx-xxxx form, so it may not be an app-specific password";
+    return `Atlas is signing in as ${creds.username} with a ${p.length}-character password ${form}.`;
   }
 
   // --- undo and live checks ---------------------------------------------------
@@ -647,7 +801,11 @@ export class PersonAgent extends VoiceAgent {
       if (msg.what === "calendar") {
         const source = this.#calendarSource(settings);
         if (!source) return reply(false, "Add your Apple ID and an app-specific password first.");
-        const c = await source.check();
+        const c = await source.check().catch((err: unknown) => {
+          throw err instanceof CalendarError && err.code === "auth"
+            ? new CalendarError(`${err.message} ${this.#icloudShape()}`, "auth")
+            : err;
+        });
         return reply(true, `Found ${c.calendars.length} calendars and ${c.events_next_30_days} events in the next 30 days.`, c);
       }
       if (msg.what === "brain") {

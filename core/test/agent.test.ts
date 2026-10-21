@@ -2,9 +2,10 @@ import { runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
 import type { ServerMessage } from "../src/protocol";
+import { CalendarError } from "../src/calendar/types";
 import { getItem } from "../src/store/agenda";
 import type { LogRow } from "../src/store/log";
-import { call, collect, env, fakeCalendar, say, scripted, SECRET, type Step } from "./helpers";
+import { call, collect, env, fakeCalendar, fakeOpenAI, say, scripted, SECRET, type Step } from "./helpers";
 
 const ORIGIN = "http://atlas.test";
 const auth = { authorization: `Bearer ${SECRET}` };
@@ -57,9 +58,9 @@ const owner = () => env.PersonAgent.get(env.PersonAgent.idFromName("owner"));
 const rowsOf = (m: Extract<ServerMessage, { type: "atlas.rows" }>, kind: string): LogRow[] => m.rows.filter((r) => r.kind === kind);
 
 function brains(main: Step[], voice: Step[] = []) {
-  const m = scripted(main, "codex", "gpt-5.5");
+  const m = scripted(main, "chatgpt", "gpt-5.6-terra");
   const v = scripted(voice, "workers-ai", "@cf/moonshotai/kimi-k2.6");
-  seams.makeBrain = (c) => (c.provider === "codex" ? m.brain : v.brain);
+  seams.makeBrain = (c) => (c.provider === "chatgpt" ? m.brain : v.brain);
   return { main: m, voice: v };
 }
 
@@ -67,6 +68,7 @@ beforeEach(() => {
   seams.calendar = fakeCalendar([]);
 });
 afterEach(() => {
+  seams.fetch = null;
   seams.makeBrain = null;
   seams.calendar = undefined;
 });
@@ -114,7 +116,11 @@ describe("the thread", () => {
     await s.next("atlas.status", (m) => m.text === "Checking your calendar.");
     await s.next("atlas.delta", (m) => m.text.includes("Nothing"));
     const out = await s.next("atlas.rows", (m) => rowsOf(m, "message.out").length > 0);
-    expect(rowsOf(out, "message.out")[0]!.body).toMatchObject({ text: "Nothing on today.", channel: "app", brain: { provider: "codex" } });
+    expect(rowsOf(out, "message.out")[0]!.body).toMatchObject({
+      text: "Nothing on today.",
+      channel: "app",
+      brain: { provider: "chatgpt" },
+    });
     await s.next("atlas.run", (m) => m.state === "replied");
 
     // A refresh shows the same saved truth.
@@ -165,6 +171,62 @@ describe("the thread", () => {
     s.ws.close();
   });
 
+  it("tells the owner what Atlas holds for iCloud when it's refused, without the password", async () => {
+    brains([]);
+    seams.calendar = {
+      list: async () => [],
+      check: async () => {
+        throw new CalendarError("iCloud didn't accept the Apple ID and app-specific password.", "auth");
+      },
+    };
+    const s = await connect();
+    s.send({
+      type: "atlas.secret.set",
+      secret: { name: "icloud", value: { username: " owner@icloud.com ", app_password: "abcd efgh ijkl mnop" } },
+    });
+    expect((await s.next("atlas.view")).view.secrets.icloud).toEqual({ username: "owner@icloud.com", refused: null });
+    s.send({ type: "atlas.test", what: "calendar", ref: "cal" });
+    const res = await s.next("atlas.test.result", (m) => m.ref === "cal");
+    expect(res.ok).toBe(false);
+    expect(res.message).toContain("signing in as owner@icloud.com with a 16-character password not in Apple's");
+    expect(res.message).not.toContain("abcdefghijklmnop");
+    s.ws.close();
+  });
+
+  it("stops asking iCloud after it refuses the password, until the owner reconnects", async () => {
+    let asked = 0;
+    seams.calendar = {
+      list: async () => {
+        asked += 1;
+        throw new CalendarError("iCloud didn't accept the Apple ID and app-specific password.", "auth");
+      },
+      check: async () => ({ calendars: [], events_next_30_days: 0 }),
+    };
+    brains([call("calendar_read", {}, "c1"), call("calendar_read", {}, "c2"), say("iCloud refused the password.")]);
+    const s = await connect();
+    s.send({
+      type: "atlas.secret.set",
+      secret: { name: "icloud", value: { username: "owner@icloud.com", app_password: "abcd-efgh-ijkl-mnop" } },
+    });
+    await s.next("atlas.view");
+    s.send({ type: "atlas.say", text: "what's on today?", client_id: "c9" });
+    const refused = await s.next("atlas.view", (m) => Boolean(m.view.secrets.icloud?.refused));
+    expect(refused.view.secrets.icloud!.refused!.message).toContain("didn't accept");
+    await s.next("atlas.run", (m) => m.state === "replied");
+    expect(asked).toBe(1); // the brain asked twice; iCloud was only asked once
+
+    // Reconnecting lets Atlas ask again.
+    s.send({
+      type: "atlas.secret.set",
+      secret: { name: "icloud", value: { username: "owner@icloud.com", app_password: "wxyz-wxyz-wxyz-wxyz" } },
+    });
+    const fresh = await s.next("atlas.view", (m) => m.view.secrets.icloud?.refused === null);
+    expect(fresh.view.secrets.icloud!.username).toBe("owner@icloud.com");
+    s.send({ type: "atlas.secret.set", secret: { name: "icloud", value: null } });
+    await s.next("atlas.view");
+    s.ws.close();
+  });
+
   it("never sends secrets to the app", async () => {
     brains([]);
     const s = await connect();
@@ -178,7 +240,71 @@ describe("the thread", () => {
   });
 });
 
+describe("sign in with chatgpt", () => {
+  it("signs in from the pasted address and points the chains at a model the account has", async () => {
+    const openai = await fakeOpenAI();
+    seams.fetch = openai.f;
+    const s = await connect();
+    s.send({ type: "atlas.chatgpt.start" });
+    const pending = await s.next("atlas.view", (m) => m.view.chatgpt.state === "pending");
+    const url = new URL((pending.view.chatgpt as { authorize_url: string }).authorize_url);
+    openai.setNonce(url.searchParams.get("nonce")!);
+    const landed = `http://127.0.0.1:1455/auth/callback?code=c1&state=${url.searchParams.get("state")}&client_id=oaiapp_123`;
+    s.send({ type: "atlas.chatgpt.finish", url: landed });
+    const done = await s.next("atlas.view", (m) => m.view.chatgpt.state === "signed_in");
+    expect(done.view.chatgpt).toMatchObject({ email: "max@example.com", models: ["gpt-6.1-sol"] });
+    expect(done.view.settings.brains.main[0]).toEqual({ provider: "chatgpt", model: "gpt-6.1-sol" });
+    expect(JSON.stringify(done.view)).not.toContain("rt2");
+
+    // Signing in again reuses the client id OpenAI issued.
+    s.send({ type: "atlas.chatgpt.start" });
+    const again = await s.next("atlas.view", (m) => m.view.chatgpt.state === "pending");
+    expect(new URL((again.view.chatgpt as { authorize_url: string }).authorize_url).searchParams.get("client_id")).toBe("oaiapp_123");
+    s.send({ type: "atlas.chatgpt.cancel" });
+    s.ws.close();
+  });
+});
+
 describe("voice", () => {
+  it("says the status line while the lookup is still running", async () => {
+    const b = brains([], [call("calendar_read", {})]);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const first = b.voice.brain.stream.bind(b.voice.brain);
+    let calls = 0;
+    b.voice.brain.stream = async function* (req) {
+      calls += 1;
+      if (calls === 1) {
+        yield* first(req);
+        return;
+      }
+      await gate;
+      yield { type: "text", text: "You're free." };
+      yield { type: "done", finish: "stop" };
+    };
+    // A long stored secret used to hold back every word until the turn ended.
+    const s = await connect();
+    s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: `sk_${"x".repeat(180)}` } });
+    await s.next("atlas.view");
+    const said = await runInDurableObject(owner(), async (agent: PersonAgent) => {
+      const spoken = await agent.onTurn("am I free", {
+        connection: { id: "voice-2" } as never,
+        messages: [],
+        signal: new AbortController().signal,
+      });
+      const it = (spoken as AsyncIterable<string>)[Symbol.asyncIterator]();
+      const status = await it.next();
+      release();
+      let rest = "";
+      for (let x = await it.next(); !x.done; x = await it.next()) rest += x.value;
+      return { status: status.value as string, rest };
+    });
+    expect(said).toEqual({ status: "Checking your calendar. ", rest: "You're free." });
+    s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: null } });
+    await s.next("atlas.view");
+    s.ws.close();
+  });
+
   it("is the same mind: same log, same tools, and a status line before a lookup", async () => {
     const b = brains([], [call("calendar_read", {}), say("You're free all afternoon.")]);
     const s = await connect();
@@ -198,6 +324,8 @@ describe("voice", () => {
     expect(b.voice.requests[0]!.tools.map((t) => t.name)).toContain("calendar_read");
 
     const saved = await s.next("atlas.rows", (m) => rowsOf(m, "message.out").length > 0);
+    const timing = rowsOf(saved, "message.out")[0]!.body.timing as { status_ms: number; answer_ms: number };
+    expect(timing.status_ms).toBeLessThanOrEqual(timing.answer_ms);
     expect(rowsOf(saved, "message.out")[0]).toMatchObject({
       surface: "voice",
       body: { text: "Checking your calendar. You're free all afternoon." },
@@ -210,7 +338,7 @@ describe("the HTTP API", () => {
   it("runs a text turn for the benchmark", async () => {
     brains([say("Hello from the API.")]);
     const res = await SELF.fetch(`${ORIGIN}/api/turn`, { method: "POST", headers: auth, body: JSON.stringify({ text: "hi" }) });
-    expect(await res.json()).toMatchObject({ state: "replied", reply: "Hello from the API.", brain: "codex:gpt-5.5" });
+    expect(await res.json()).toMatchObject({ state: "replied", reply: "Hello from the API.", brain: "chatgpt:gpt-5.6-terra" });
     const log = (await (await SELF.fetch(`${ORIGIN}/api/log?since=0`, { headers: auth })).json()) as { rows: LogRow[] };
     expect(log.rows.map((r) => r.kind)).toEqual(expect.arrayContaining(["message.in", "message.out", "run.end"]));
   });

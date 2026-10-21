@@ -29,9 +29,26 @@ export interface CalDavOptions {
   baseUrl?: string;
   /** The owner's zone, for the rare floating (zone-less) event time. Defaults to UTC. */
   timezone?: string;
+  /**
+   * Somewhere to keep the calendar list between wakes, so a sleeping agent
+   * doesn't sign in three extra times to find the calendars again.
+   */
+  remember?: { load(): RememberedCalendars | null; save(calendars: RememberedCalendars | null): void };
 }
 
-interface DavCalendar {
+/** At most this many calendars are read at once, so a question isn't a burst of sign-ins. */
+export const MAX_PARALLEL_READS = 2;
+/** The same range asked again this soon (the brain asking twice in one reply) is answered from the last read. */
+export const REUSE_MS = 15_000;
+/** The remembered calendar list is found afresh after this long, so new calendars show up. */
+export const REDISCOVER_MS = 6 * 3_600_000;
+
+export interface RememberedCalendars {
+  at: number;
+  calendars: DavCalendar[];
+}
+
+export interface DavCalendar {
   url: string;
   name: string;
 }
@@ -65,8 +82,14 @@ export function calendarQuery(range: CalendarRange): string {
 </c:calendar-query>`;
 }
 
+/** The credentials as iCloud expects them: no stray spaces from copying and pasting. */
+export function cleanCredentials(creds: ICloudCredentials): ICloudCredentials {
+  return { username: creds.username.trim(), app_password: creds.app_password.replace(/\s+/g, "") };
+}
+
 function basicAuth(creds: ICloudCredentials): string {
-  const bytes = new TextEncoder().encode(`${creds.username}:${creds.app_password}`);
+  const c = cleanCredentials(creds);
+  const bytes = new TextEncoder().encode(`${c.username}:${c.app_password}`);
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
   return `Basic ${btoa(bin)}`;
@@ -78,9 +101,13 @@ const AUTH_REASON =
 class CalDavClient {
   #fetch: typeof fetch;
   #auth: string;
+  /** Where discovery starts, so a refusal can say whether it came at the first server or a later one. */
+  #start: string;
 
-  constructor(creds: ICloudCredentials, fetchFn: typeof fetch) {
-    this.#fetch = fetchFn;
+  constructor(creds: ICloudCredentials, fetchFn: typeof fetch, start: string) {
+    this.#start = start;
+    // Called as a plain function: the Workers runtime's fetch throws "Illegal invocation" if called as a method of another object.
+    this.#fetch = (input, init) => fetchFn(input, init);
     this.#auth = basicAuth(creds);
   }
 
@@ -104,14 +131,32 @@ class CalDavClient {
         });
       } catch (err) {
         const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+        // Keep the runtime's own reason (and where it happened) so the owner sees the real cause.
+        const why = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        console.error(JSON.stringify({ event: "caldav.fetch_failed", method, host: new URL(target).host, why }));
         throw new CalendarError(
           timedOut
             ? "iCloud Calendar didn't answer in time. Try again in a minute."
-            : "Couldn't reach iCloud Calendar. Check the connection and try again.",
+            : `Couldn't reach iCloud Calendar at ${new URL(target).host} (${why}).`,
           "network",
         );
       }
-      if (res.status === 401 || res.status === 403) throw new CalendarError(AUTH_REASON, "auth");
+      if (res.status === 401 || res.status === 403) {
+        const host = new URL(target).host;
+        const said = (await res.text().catch(() => ""))
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 160);
+        console.error(JSON.stringify({ event: "caldav.refused", method, host, status: res.status, said }));
+        if (res.status === 401) {
+          // Which server refused matters: a refusal after the first hop means the password was accepted there.
+          const first = new URL(this.#start).host;
+          const where = host === first ? ` at ${host}` : ` at ${host}, after ${first} accepted the sign-in`;
+          throw new CalendarError(`${AUTH_REASON} iCloud answered HTTP 401${where}.`, "auth");
+        }
+        throw new CalendarError(`iCloud refused the request at ${host} (HTTP 403${said ? `: ${said}` : ""}).`, "protocol");
+      }
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get("Location");
         if (!location) break;
@@ -185,10 +230,14 @@ function overlaps(ev: CalendarEvent, range: CalendarRange): boolean {
 }
 
 export function icloudCalendar(creds: ICloudCredentials, opts: CalDavOptions = {}): CalendarSource {
-  const client = new CalDavClient(creds, opts.fetch ?? fetch);
   const base = opts.baseUrl ?? ICLOUD_CALDAV;
+  const client = new CalDavClient(creds, opts.fetch ?? fetch, base);
   const hidden = new Set((opts.hidden ?? []).map((n) => n.trim().toLowerCase()));
-  let cached: Promise<DavCalendar[]> | null = null;
+  const remembered = opts.remember?.load();
+  const fresh = remembered && Array.isArray(remembered.calendars) && Date.now() - remembered.at < REDISCOVER_MS;
+  let cached: Promise<DavCalendar[]> | null = fresh && remembered.calendars.length ? Promise.resolve(remembered.calendars) : null;
+  let foundAt = fresh ? remembered.at : 0;
+  const recent = new Map<string, { at: number; events: CalendarEvent[] }>();
 
   async function discover(): Promise<DavCalendar[]> {
     const principal = await client.multistatus("PROPFIND", base, PROPFIND_PRINCIPAL, "0");
@@ -209,14 +258,27 @@ export function icloudCalendar(creds: ICloudCredentials, opts: CalDavOptions = {
   }
 
   function calendars(): Promise<DavCalendar[]> {
+    if (cached && foundAt && Date.now() - foundAt > REDISCOVER_MS) cached = null;
     if (!cached) {
       const p = discover();
       cached = p;
-      p.catch(() => {
-        if (cached === p) cached = null; // try discovery again next time
-      });
+      p.then(
+        (cals) => {
+          foundAt = Date.now();
+          opts.remember?.save({ at: foundAt, calendars: cals });
+        },
+        () => {
+          if (cached === p) cached = null; // try discovery again next time
+        },
+      );
     }
     return cached;
+  }
+
+  /** A calendar moved or vanished: forget the list so the next read finds them again. */
+  function forget(): void {
+    cached = null;
+    opts.remember?.save(null);
   }
 
   async function eventsIn(cal: DavCalendar, range: CalendarRange): Promise<CalendarEvent[]> {
@@ -230,8 +292,17 @@ export function icloudCalendar(creds: ICloudCredentials, opts: CalDavOptions = {
   }
 
   async function list(range: CalendarRange): Promise<CalendarEvent[]> {
+    const key = `${range.start.getTime()}|${range.end.getTime()}`;
+    const hit = recent.get(key);
+    if (hit && Date.now() - hit.at < REUSE_MS) return hit.events;
     const cals = await calendars();
-    const perCal = await Promise.all(cals.map((c) => eventsIn(c, range)));
+    let perCal: CalendarEvent[][];
+    try {
+      perCal = await inBatches(cals, MAX_PARALLEL_READS, (c) => eventsIn(c, range));
+    } catch (err) {
+      if (err instanceof CalendarError && err.code === "protocol") forget();
+      throw err;
+    }
     // The same instance can come back twice (an event shared onto two calendars); keep the first.
     const seen = new Set<string>();
     const out: CalendarEvent[] = [];
@@ -242,11 +313,14 @@ export function icloudCalendar(creds: ICloudCredentials, opts: CalDavOptions = {
       seen.add(key);
       out.push(ev);
     }
-    return out.sort((a, b) => startKey(a) - startKey(b) || a.title.localeCompare(b.title));
+    const sorted = out.sort((a, b) => startKey(a) - startKey(b) || a.title.localeCompare(b.title));
+    recent.set(key, { at: Date.now(), events: sorted });
+    return sorted;
   }
 
   async function check(): Promise<CalendarCheck> {
-    cached = null; // a live check always signs in again
+    forget(); // a live check always signs in again
+    recent.clear();
     const cals = await calendars();
     const start = new Date();
     start.setUTCHours(0, 0, 0, 0);
@@ -255,4 +329,18 @@ export function icloudCalendar(creds: ICloudCredentials, opts: CalDavOptions = {
   }
 
   return { list, check };
+}
+
+/** Runs `fn` over `items`, at most `n` at a time, keeping the order of results. */
+async function inBatches<T, R>(items: T[], n: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+  return out;
 }

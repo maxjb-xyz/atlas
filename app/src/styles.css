@@ -546,14 +546,14 @@ button:disabled {
   flex-wrap: wrap;
   font-size: 13px;
 }
-.codex {
+.signin {
   display: grid;
   gap: 10px;
   border: 1px solid var(--sep);
   border-radius: var(--r);
   padding: 12px;
 }
-.codex-head {
+.signin-head {
   display: flex;
   gap: 10px;
   align-items: center;
@@ -684,4 +684,14 @@ button:disabled {
   .brain-tools {
     grid-column: 2;
   }
+}
+
+.paste {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.paste input {
+  flex: 1;
+  min-width: 0;
 }

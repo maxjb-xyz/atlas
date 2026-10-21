@@ -5,8 +5,11 @@
 import { z } from "zod";
 import { parse, type Sql } from "./db";
 
+/** The ChatGPT model new chains start with, and the one picked after sign-in when the plan has it. */
+export const DEFAULT_CHATGPT_MODEL = "gpt-5.6-terra";
+
 export const BrainChoice = z.object({
-  provider: z.enum(["codex", "workers-ai"]),
+  provider: z.enum(["chatgpt", "workers-ai"]),
   model: z.string().min(1).max(200),
 });
 export type BrainChoice = z.infer<typeof BrainChoice>;
@@ -25,12 +28,12 @@ export const Settings = z.object({
     })
     .default({
       main: [
-        { provider: "codex", model: "gpt-5.5" },
+        { provider: "chatgpt", model: DEFAULT_CHATGPT_MODEL },
         { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" },
       ],
       voice: [
         { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" },
-        { provider: "codex", model: "gpt-5.5" },
+        { provider: "chatgpt", model: DEFAULT_CHATGPT_MODEL },
       ],
     }),
   voice: z
@@ -90,7 +93,16 @@ export function writeSettings(sql: Sql, patch: SettingsPatch): string[] {
 // M0 keeps a handful of keys in the agent's own storage (encrypted at rest by
 // Cloudflare). The vault (§15) replaces this in M3.
 
-export type SecretName = "elevenlabs_api_key" | "icloud" | "codex_tokens" | "codex_login";
+export type SecretName =
+  | "elevenlabs_api_key"
+  | "icloud"
+  /** The iCloud calendar list, kept between wakes. */
+  | "icloud_calendars"
+  /** Set when iCloud refuses the password; Atlas stops asking until the owner reconnects. */
+  | "icloud_refused"
+  | "chatgpt_tokens"
+  | "chatgpt_login"
+  | "chatgpt_client";
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];
@@ -112,9 +124,9 @@ export function secretValues(sql: Sql): string[] {
   const wanted: Array<[SecretName, string[]]> = [
     ["elevenlabs_api_key", []],
     ["icloud", ["app_password"]],
-    ["codex_tokens", ["access_token"]],
-    ["codex_tokens", ["refresh_token"]],
-    ["codex_tokens", ["id_token"]],
+    ["chatgpt_tokens", ["access_token"]],
+    ["chatgpt_tokens", ["refresh_token"]],
+    ["chatgpt_tokens", ["id_token"]],
   ];
   const out: string[] = [];
   for (const [name, path] of wanted) {

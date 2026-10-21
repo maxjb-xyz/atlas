@@ -54,7 +54,9 @@ export type LoopEvent =
   | { type: "text"; text: string }
   /** `speakable` is true when Atlas hasn't said anything yet in this step, so voice can say it. */
   | { type: "status"; text: string | null; speakable: boolean }
-  | { type: "row"; row: LogRow };
+  | { type: "row"; row: LogRow }
+  /** Tools finished running; whatever Atlas says next comes from their results. */
+  | { type: "tools"; names: string[] };
 
 export interface LoopResult {
   state: FinalState;
@@ -76,25 +78,19 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
   const messages: Message[] = [...spec.messages];
   const usage: Usage = { input: 0, output: 0, cached: 0 };
   let text = "";
-  let gap = false;
   let steps = 0;
   let lastBrain: LoopResult["brain"] = null;
   let fellBack = false;
 
   const say = (t: string) => {
     if (!t) return;
-    if (gap && text) {
-      text += spec.joiner;
-      emit({ type: "text", text: spec.joiner });
-    }
-    gap = false;
     text += t;
     emit({ type: "text", text: t });
   };
 
   const result = (state: FinalState, extra: Partial<LoopResult> = {}): LoopResult => ({
     state,
-    text,
+    text: text.trimEnd(),
     steps,
     brain: lastBrain,
     fallback: fellBack,
@@ -124,13 +120,19 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
 
       if (over || step.calls.length === 0) break;
 
+      // Close what Atlas just said before the tools run, so voice speaks it now:
+      // a sentence only counts as finished once the space after it arrives.
+      if (text && !text.endsWith(spec.joiner)) {
+        text += spec.joiner;
+        emit({ type: "text", text: spec.joiner });
+      }
       messages.push({ role: "assistant", content: step.text, toolCalls: step.calls });
       const outputs = await Promise.all(step.calls.map((call) => runTool(deps, spec, call, emit)));
       for (const [i, call] of step.calls.entries()) {
         messages.push({ role: "tool", callId: call.id, name: call.name, content: outputs[i]! });
       }
       emit({ type: "status", text: null, speakable: false });
-      gap = true;
+      emit({ type: "tools", names: step.calls.map((c) => c.name) });
     }
   } catch (err) {
     emit({ type: "status", text: null, speakable: false });
@@ -196,16 +198,18 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
           produced = true;
           stepText += ev.text;
           io.say(ev.text);
-        } else if (ev.type === "tool_start") {
-          const status = io.tools.find((t) => t.name === ev.name)?.status;
+        } else if (ev.type === "tool_start" || ev.type === "tool_call") {
+          // The status line goes out at the first sign of a lookup: some
+          // providers announce a tool call early, others only send it whole.
+          const name = ev.type === "tool_start" ? ev.name : ev.call.name;
+          const status = io.tools.find((t) => t.name === name)?.status;
           if (status && !statusSaid) {
             statusSaid = true;
             const speakable = !stepText && !io.alreadySaid();
             if (speakable) produced = true;
             io.emit({ type: "status", text: status, speakable });
           }
-        } else if (ev.type === "tool_call") {
-          calls.push(ev.call);
+          if (ev.type === "tool_call") calls.push(ev.call);
         } else if (ev.type === "done") {
           usage = ev.usage;
         }

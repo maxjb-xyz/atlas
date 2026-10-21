@@ -17,32 +17,43 @@ export function scrub(text: string, secrets: string[]): string {
 }
 
 /**
- * The scrubber for streamed text: holds back just enough of the tail that a
- * secret split across two chunks is still caught.
+ * The scrubber for streamed text. It holds back only a tail that could be
+ * the start of a secret, so a secret split across two chunks is still caught
+ * while ordinary text (almost always) goes straight out. Holding back a fixed
+ * length instead would hold whole replies, since sign-in tokens run to
+ * thousands of characters.
  */
 export class StreamScrubber {
   private held = "";
-  private readonly keep: number;
 
-  constructor(private readonly secrets: string[]) {
-    this.keep = Math.max(0, ...secrets.map((s) => s.length - 1));
-  }
+  constructor(private readonly secrets: string[]) {}
 
   push(chunk: string): string {
     const all = scrub(this.held + chunk, this.secrets);
-    if (this.keep === 0) {
-      this.held = "";
-      return all;
-    }
-    const cut = Math.max(0, all.length - this.keep);
-    this.held = all.slice(cut);
-    return all.slice(0, cut);
+    const keep = this.partialTail(all);
+    this.held = all.slice(all.length - keep);
+    return all.slice(0, all.length - keep);
   }
 
   flush(): string {
     const rest = scrub(this.held, this.secrets);
     this.held = "";
     return rest;
+  }
+
+  /** The length of the longest end of `text` that is the beginning of a secret. */
+  private partialTail(text: string): number {
+    let best = 0;
+    for (const s of this.secrets) {
+      for (let k = Math.min(s.length - 1, text.length); k > best; k--) {
+        // Cheap first-character check before comparing the whole stretch.
+        if (text.charCodeAt(text.length - k) === s.charCodeAt(0) && text.endsWith(s.slice(0, k))) {
+          best = k;
+          break;
+        }
+      }
+    }
+    return best;
   }
 }
 
@@ -56,6 +67,8 @@ export interface Delivery {
   interrupted?: boolean;
   usage?: unknown;
   trigger?: string;
+  /** For spoken replies: when the status line and the answer were ready. */
+  timing?: Record<string, unknown>;
 }
 
 /** The live ends of each channel. The agent provides them. */
@@ -99,6 +112,7 @@ export class Outbox {
         ...(d.interrupted ? { interrupted: true } : {}),
         ...(d.usage ? { usage: d.usage as never } : {}),
         ...(d.trigger ? { trigger: d.trigger } : {}),
+        ...(d.timing ? { timing: d.timing as never } : {}),
       },
     });
     this.channels.broadcast([row]);
