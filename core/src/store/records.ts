@@ -28,6 +28,8 @@ export type LinkKind = (typeof LINK_KINDS)[number];
 export interface RecordSource {
   /** The log row this was learned from, when there is one. */
   log_id?: string;
+  /** Messages that corrected it since, so forgetting it takes them out of recall too. */
+  also?: string[];
   run_id?: string;
   /** Where it came from in plain words: "setup", "chat", "calendar". */
   via: string;
@@ -187,6 +189,11 @@ export function correctRecord(
     else fields[k] = v;
   }
   const name = c.name?.trim() || before.name;
+  // Where it was first learned stays its source; the correction's message joins `also`.
+  const kept: RecordSource = { ...before.source };
+  if (source.log_id && source.log_id !== kept.log_id && !kept.also?.includes(source.log_id)) {
+    kept.also = [...(kept.also ?? []), source.log_id];
+  }
   const now = Date.now();
   sql.exec(
     `INSERT INTO record_history (record_id, at, fields, reason, name) VALUES (?, ?, ?, ?, ?)`,
@@ -201,7 +208,7 @@ export function correctRecord(
     `UPDATE records SET name = ?, fields = ?, source = ?, updated_at = ? WHERE id = ?`,
     name,
     JSON.stringify(fields),
-    JSON.stringify(source),
+    JSON.stringify(kept),
     now,
     id,
   );
@@ -216,6 +223,7 @@ export function correctRecord(
       type: before.type,
       name,
       change: "corrected",
+      ...(source.log_id ? { from_log: source.log_id } : {}),
       ...(name !== before.name ? { was: before.name } : {}),
       before: before.fields,
       after: fields,
@@ -226,7 +234,11 @@ export function correctRecord(
   return { ...after, history_seq: seq };
 }
 
-/** Puts a record back as it was before a correction: the undo of a correction. */
+/**
+ * Puts a record back as it was before a correction: the undo of a
+ * correction. Returns null if the record changed or was forgotten since,
+ * so a later change is never silently lost.
+ */
 export function revertRecord(
   sql: Sql,
   id: string,
@@ -235,14 +247,14 @@ export function revertRecord(
   extra: Record<string, unknown> = {},
 ): AtlasRecord | null {
   const h = sql
-    .exec<{ fields: string; name: string | null }>(
-      `SELECT fields, name FROM record_history WHERE seq = ? AND record_id = ?`,
+    .exec<{ at: number; fields: string; name: string | null }>(
+      `SELECT at, fields, name FROM record_history WHERE seq = ? AND record_id = ?`,
       historySeq,
       id,
     )
     .toArray()[0];
   const current = getRecord(sql, id);
-  if (!h || !current) return null;
+  if (!h || !current || current.state !== "active" || current.updated_at !== h.at) return null;
   const old = parse<Record<string, Json>>(h.fields, {});
   const patch: Record<string, Json> = { ...old };
   for (const k of Object.keys(current.fields)) if (!(k in old)) patch[k] = null;
@@ -275,8 +287,8 @@ function setRecordState(
   sql.exec(`UPDATE records SET state = ?, updated_at = ? WHERE id = ?`, state, Date.now(), id);
   const after = getRecord(sql, id)!;
   reindex(sql, after);
-  const from = before.source.log_id;
-  if (from) {
+  for (const from of [before.source.log_id, ...(before.source.also ?? [])]) {
+    if (!from) continue;
     if (state === "forgotten") dropMemory(sql, `log:${from}`);
     else {
       const row = sql.exec<{ at: number; body: string }>(`SELECT at, body FROM log WHERE id = ?`, from).toArray()[0];
@@ -354,13 +366,18 @@ export function ownerRecord(sql: Sql): AtlasRecord {
  * on their own record. These sit in the stable, cacheable block of every
  * run, oldest first so the block only grows at its end.
  */
-export function standingFacts(sql: Sql, limit = 60): AtlasRecord[] {
+export function standingFacts(sql: Sql, limit = STANDING_FACTS): AtlasRecord[] {
   return sql
     .exec<RawRecord>(
-      `SELECT * FROM records WHERE state = 'active' AND (type = 'preference' OR json_extract(fields, '$.is_owner') = 1)
-       ORDER BY learned_at LIMIT ?`,
+      `SELECT * FROM (
+         SELECT * FROM records WHERE state = 'active' AND (type = 'preference' OR json_extract(fields, '$.is_owner') = 1)
+         ORDER BY learned_at DESC LIMIT ?
+       ) ORDER BY learned_at`,
       limit,
     )
     .toArray()
     .map(fromRaw);
 }
+
+/** The newest this many standing facts are in view; older ones are still found by recall. */
+export const STANDING_FACTS = 100;

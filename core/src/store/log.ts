@@ -131,7 +131,8 @@ export function forRun(sql: Sql, runId: string): LogRow[] {
 export function isThreadRow(row: LogRow): boolean {
   if (row.kind === "message.in" || row.kind === "message.out" || row.kind === "brain.fallback" || row.kind === "voice.problem") return true;
   if (row.kind === "tool.result") return row.body.receipt != null;
-  if (row.kind === "run.end") return row.body.state === "failed";
+  // Atlas's own upkeep (compaction) failing isn't news for the thread; the run and the Worker log say why.
+  if (row.kind === "run.end") return row.body.state === "failed" && row.body.trigger !== "compaction";
   // An undo from a receipt shows as its own line, so the thread tells the truth.
   if (row.kind === "agenda.change" || row.kind === "record.change") return row.body.undo_of != null;
   return false;
@@ -149,8 +150,15 @@ export const THREAD_KINDS: LogKind[] = [
 ];
 
 export function thread(sql: Sql, limit: number, beforeSeq?: number): LogRow[] {
-  // Over-fetch, since some tool.result and run.end rows aren't shown.
-  return recent(sql, THREAD_KINDS, limit * 3, beforeSeq)
-    .filter(isThreadRow)
-    .slice(-limit);
+  // Some rows of these kinds aren't shown (tool results without receipts, record changes
+  // that aren't undos), so read back in pages until there are enough or none are left.
+  const out: LogRow[] = [];
+  let before = beforeSeq;
+  for (let page = 0; page < 20 && out.length < limit; page++) {
+    const rows = recent(sql, THREAD_KINDS, limit * 3, before);
+    out.unshift(...rows.filter(isThreadRow));
+    if (rows.length < limit * 3) break;
+    before = rows[0]!.seq;
+  }
+  return out.slice(-limit);
 }

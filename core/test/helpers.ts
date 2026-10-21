@@ -153,7 +153,7 @@ const SAME_IDEA: Record<string, string> = {
  * A fake `embed` role: each word (or its idea) lights up one of 64 slots.
  * Strict like the real one: it fails when told to, and records each call.
  */
-export function fakeEmbedder(opts: { fail?: string } = {}): Embedder & { calls: string[][] } {
+export function fakeEmbedder(opts: { fail?: string; refuse?: string } = {}): Embedder & { calls: string[][] } {
   const calls: string[][] = [];
   return {
     model: "fake-embed",
@@ -161,6 +161,8 @@ export function fakeEmbedder(opts: { fail?: string } = {}): Embedder & { calls: 
     async embed(texts) {
       calls.push(texts);
       if (opts.fail) throw new Error(opts.fail);
+      // Like a model refusing one input: the whole call fails.
+      if (opts.refuse && texts.some((t) => t.includes(opts.refuse!))) throw new Error("Workers AI: 400 input too long");
       return texts.map((t) => {
         const v = new Array<number>(64).fill(0);
         for (const w of t.toLowerCase().match(/[a-z]+/g) ?? []) {

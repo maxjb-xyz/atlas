@@ -123,7 +123,8 @@ const MIGRATIONS: string[] = [
   CREATE INDEX memory_at ON memory(at);
   CREATE INDEX memory_model ON memory(model);
 
-  CREATE VIRTUAL TABLE memory_fts USING fts5(ref UNINDEXED, text, tokenize = 'porter unicode61');
+  -- Keyed by memory's rowid, so updating or dropping an item is a point lookup.
+  CREATE VIRTUAL TABLE memory_fts USING fts5(text, tokenize = 'porter unicode61');
   `,
 ];
 

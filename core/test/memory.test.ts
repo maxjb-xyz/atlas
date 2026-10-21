@@ -1,12 +1,12 @@
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { undoReceipt } from "../src/agent/undo";
-import type { Embedder } from "../src/brains/embed";
+import { type Embedder, embedPending } from "../src/brains/embed";
 import { systemPrompt } from "../src/context";
 import { migrate, type Sql } from "../src/store/db";
 import { append, type Surface } from "../src/store/log";
-import { getMemory, indexNewMessages } from "../src/store/memory";
-import { getRecord, recordHistory, standingFacts } from "../src/store/records";
+import { getMemory, indexNewMessages, unembedded } from "../src/store/memory";
+import { correctRecord, getRecord, recordHistory, standingFacts } from "../src/store/records";
 import { readSettings } from "../src/store/settings";
 import { startRun } from "../src/store/runs";
 import { forget, recall, remember } from "../src/tools/memory";
@@ -96,6 +96,44 @@ describe("remember and forget", () => {
         .toArray()
         .map((r) => JSON.parse(r.body).change);
       expect(changes).toEqual(["created", "forgotten"]);
+    }));
+
+  it("forgets a corrected record's every message, and undo keeps where it came from", () =>
+    withSql(async (sql) => {
+      const first = exchange(sql, "I am vegetarian these days", "Noted.", NOW.getTime() - 2 * DAY);
+      const second = exchange(sql, "Actually I eat fish now", "Got it.", NOW.getTime() - DAY);
+      const id = (
+        (await run(remember, { type: "preference", name: "Diet", fact: "Max is vegetarian." }, ctx(sql, { source: first }))).output as {
+          id: string;
+        }
+      ).id;
+      await run(remember, { id, type: "preference", name: "Diet", fact: "Max eats fish." }, ctx(sql, { source: second }));
+      expect(getRecord(sql, id)!.source).toMatchObject({ log_id: first, also: [second] });
+      indexNewMessages(sql);
+      await run(forget, { id }, ctx(sql));
+      expect(getMemory(sql, `log:${first}`)).toBeNull();
+      expect(getMemory(sql, `log:${second}`)).toBeNull();
+      expect(results(await run(recall, { query: "vegetarian fish" }, ctx(sql)))).toEqual([]);
+    }));
+
+  it("won't undo a correction that a later change or a forget came after", () =>
+    withSql(async (sql) => {
+      const clock = { schedule: async () => {}, unschedule: async () => {} };
+      const c = ctx(sql);
+      const id = ((await run(remember, { type: "note", name: "Gate", fact: "Code 1111." }, c)).output as { id: string }).id;
+      const c2 = ctx(sql);
+      const r2 = await run(remember, { id, type: "note", name: "Gate", fact: "Code 2222." }, c2);
+      const chip = append(sql, {
+        actor: "atlas",
+        kind: "tool.result",
+        run_id: c2.run_id,
+        body: { ok: true, receipt: r2.receipt as never },
+      });
+      await new Promise((r) => setTimeout(r, 5));
+      await run(remember, { id, type: "note", name: "Gate", fact: "Code 3333." }, ctx(sql));
+      const out = await undoReceipt(sql, chip.id, clock);
+      expect(out).toMatchObject({ ok: false, message: expect.stringContaining("was changed or forgotten since") });
+      expect(getRecord(sql, id)!.fields.fact).toBe("Code 3333.");
     }));
 
   it("undoes each kind of chip once, and says so in the log", () =>
@@ -228,14 +266,56 @@ describe("recall", () => {
       expect(notes(r)[0]).toContain("Meaning search is down (Workers AI: 429 out of neurons)");
     }));
 
-  it("embeds what's waiting along with the query, in one call", () =>
+  it("embeds the query on its own, and what's waiting beside it", () =>
     withSql(async (sql) => {
       exchange(sql, "one", "two", NOW.getTime() - DAY);
       const e = fakeEmbedder();
       await run(recall, { query: "anything numbered" }, ctx(sql, { embed: e }));
-      expect(e.calls).toEqual([["anything numbered", "one", "two"]]);
+      expect(e.calls).toEqual([["anything numbered"], ["one", "two"]]);
       await run(recall, { query: "again" }, ctx(sql, { embed: e }));
-      expect(e.calls[1]).toEqual(["again"]);
+      expect(e.calls.slice(2)).toEqual([["again"]]);
+    }));
+
+  it("keeps answering by meaning when a stored text can't be embedded", () =>
+    withSql(async (sql) => {
+      exchange(sql, "Booked the lens hire for Friday", "Nice.", NOW.getTime() - 2 * DAY);
+      exchange(sql, "POISON text the model refuses", "ok", NOW.getTime() - DAY);
+      const picky = fakeEmbedder({ refuse: "POISON" });
+      // The background pass sets the refused text aside and embeds the rest.
+      indexNewMessages(sql);
+      expect(await embedPending(sql, picky, { batches: 5 })).toBeNull();
+      expect(unembedded(sql, picky.model, 10)).toEqual([]);
+      const r = await run(recall, { query: "camera rental" }, ctx(sql, { embed: picky }));
+      expect(results(r)[0]).toMatchObject({ text: "Booked the lens hire for Friday" });
+      expect(notes(r)).toEqual([]);
+    }));
+
+  it("says the model is down rather than setting texts aside when nothing gets through", () =>
+    withSql(async (sql) => {
+      exchange(sql, "one", "two", NOW.getTime() - DAY);
+      const down = fakeEmbedder({ fail: "Workers AI: 503 from api.cloudflare.com" });
+      indexNewMessages(sql);
+      expect(await embedPending(sql, down, { batches: 5 })).toContain("503");
+      expect(unembedded(sql, down.model, 10).length).toBe(2);
+    }));
+
+  it("never stores an embedding for text that changed while it was being made", () =>
+    withSql(async (sql) => {
+      const saved = await run(remember, { type: "preference", name: "Coffee", fact: "Max takes coffee black." }, ctx(sql));
+      const id = (saved.output as { id: string }).id;
+      let changeMidway = true;
+      const slow: Embedder = {
+        model: "fake-embed",
+        async embed(texts) {
+          if (changeMidway) {
+            changeMidway = false;
+            correctRecord(sql, id, { fields: { fact: "Max takes coffee with oat milk." } }, "said in chat", { via: "chat" });
+          }
+          return fakeEmbedder().embed(texts);
+        },
+      };
+      await embedPending(sql, slow, { batches: 1 });
+      expect(unembedded(sql, "fake-embed", 10).map((t) => t.text)).toEqual([expect.stringContaining("oat milk")]);
     }));
 
   it("asks for something to look for", () =>

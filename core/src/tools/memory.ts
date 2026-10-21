@@ -6,19 +6,8 @@
 import { z } from "zod";
 import type { Json, Sql } from "../store/db";
 import { get as getRow, type LogRow } from "../store/log";
-import { EMBED_BATCH } from "../brains/embed";
-import {
-  type Hit,
-  indexNewMessages,
-  inRange,
-  keywords,
-  keywordSearch,
-  type MemoryKind,
-  meaningSearch,
-  type Range,
-  setVector,
-  unembedded,
-} from "../store/memory";
+import { embedPending } from "../brains/embed";
+import { type Hit, indexNewMessages, inRange, keywords, keywordSearch, type MemoryKind, meaningSearch, type Range } from "../store/memory";
 import {
   type AtlasRecord,
   correctRecord,
@@ -204,11 +193,13 @@ export const recall = defineTool({
       lists.push({ label: "keyword", hits: keywordSearch(ctx.sql, query, range) });
       if (ctx.embed) {
         try {
-          // Anything not embedded yet rides along with the query in the same call.
+          // The query alone, so no stored text can hold it up. Anything not embedded yet
+          // is embedded alongside, best effort, so the newest messages are found too.
           const model = ctx.embed.model;
-          const late = unembedded(ctx.sql, model, EMBED_BATCH - 1);
-          const [vec, ...rest] = await ctx.embed.embed([query, ...late.map((t) => t.text)]);
-          for (const [i, t] of late.entries()) if (rest[i]) setVector(ctx.sql, t.ref, model, rest[i]);
+          const [[vec]] = await Promise.all([
+            ctx.embed.embed([query]),
+            embedPending(ctx.sql, ctx.embed, { batches: 1, oneTry: true }).catch(() => null),
+          ]);
           lists.push({ label: "meaning", hits: meaningSearch(ctx.sql, vec!, model, range) });
         } catch (err) {
           notes.push(

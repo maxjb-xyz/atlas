@@ -20,6 +20,12 @@ export const COMPACT_AT = 0.7;
 export const KEEP = 0.25;
 /** At least this many of the newest messages always stay in view. */
 export const KEEP_MESSAGES = 6;
+/**
+ * One pass compacts at most this share of the window, oldest first, so its
+ * own prompt always fits. A context that fell far behind catches up over
+ * several passes.
+ */
+export const CHUNK = 0.4;
 
 export interface CompactionPlan {
   /** The messages leaving the context, oldest first. */
@@ -49,12 +55,18 @@ export function planCompaction(sql: Sql, opts: { window?: number; systemTokens: 
   let cut = rows.length - keep;
   // Keep a question and its answer on the same side of the cut, by keeping the question too.
   while (cut > 0 && cut < rows.length && rows[cut]!.kind === "message.out" && rows[cut]!.run_id === rows[cut - 1]!.run_id) cut -= 1;
+  // Never more in one pass than its prompt can hold.
+  let chunk = 0;
+  let take = 0;
+  while (take < cut && (take < 2 || chunk + sizes[take]! <= window * CHUNK)) chunk += sizes[take++]!;
+  while (take > 0 && take < cut && rows[take]!.kind === "message.out" && rows[take]!.run_id === rows[take - 1]!.run_id) take -= 1;
+  cut = take;
   if (cut < 2) return null;
   const leaving = rows.slice(0, cut);
   return { rows: leaving, through_seq: leaving[leaving.length - 1]!.seq, tokens_before: total };
 }
 
-export const SAVE_NOTE = `[Atlas's memory, not the owner] The conversation above is about to leave your view; a summary will take its place, and recall will still find the messages. Before it goes, save what matters with remember: what the owner told you about themselves, their people, places, plans, preferences and commitments that you'd want later and haven't saved yet (the standing facts are already saved). Don't save small talk, guesses, or anything already on the calendar or in a reminder. Saving nothing is fine. When you're done, reply with one word: done.`;
+export const SAVE_NOTE = `[Atlas's memory, not the owner] The conversation above is about to leave your view; a summary will take its place, and recall will still find the messages. Before it goes, save what matters with remember: what the owner told you about themselves, their people, places, plans, preferences and commitments that you'd want later and haven't saved yet (the standing facts are already saved). Newer facts win: if a standing fact or something you already saved says otherwise, it came later than these messages, so leave it as it is. Don't save small talk, guesses, or anything already on the calendar or in a reminder. Saving nothing is fine. When you're done, reply with one word: done.`;
 
 export const SUMMARY_NOTE = `[Atlas's memory, not the owner] Write the summary that will replace the conversation above in your view. Write it for yourself, in plain sentences: what was talked about, what was decided, what you promised or are in the middle of, open questions, and how the owner seemed and what they care about right now. Carry over whatever still matters from your earlier summary. Use absolute dates, not "today" or "tomorrow". Stay under 350 words, and write only the summary.`;
 

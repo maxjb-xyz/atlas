@@ -41,7 +41,9 @@ export async function undoReceipt(sql: Sql, logId: string, clock: ToolContext["c
         return {
           ok: false,
           message:
-            undo.kind === "record.restore" ? `${rec.name} isn't forgotten anymore.` : `${rec.name} was already changed or forgotten since.`,
+            undo.kind === "record.restore"
+              ? `${rec.name} isn't forgotten anymore.`
+              : `${rec.name} was changed or forgotten since, so undoing this would lose that. Change it again instead.`,
         };
       }
       return { ok: true, row: undoneBy(sql, logId)!, agenda: false };

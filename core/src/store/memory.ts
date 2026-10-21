@@ -45,25 +45,33 @@ export const MEANING_SPREAD = 0.2;
 
 /** Adds or updates an item. Changed text needs a new embedding. */
 export function putMemory(sql: Sql, item: MemoryItem): void {
-  const old = sql.exec<{ text: string }>(`SELECT text FROM memory WHERE ref = ?`, item.ref).toArray()[0];
-  if (old && old.text === item.text) {
-    sql.exec(`UPDATE memory SET at = ? WHERE ref = ?`, item.at, item.ref);
+  const old = sql.exec<{ id: number; text: string }>(`SELECT rowid AS id, text FROM memory WHERE ref = ?`, item.ref).toArray()[0];
+  if (old) {
+    if (old.text === item.text) {
+      sql.exec(`UPDATE memory SET at = ? WHERE rowid = ?`, item.at, old.id);
+      return;
+    }
+    sql.exec(
+      `UPDATE memory SET kind = ?, at = ?, text = ?, model = NULL, vec = NULL WHERE rowid = ?`,
+      item.kind,
+      item.at,
+      item.text,
+      old.id,
+    );
+    sql.exec(`DELETE FROM memory_fts WHERE rowid = ?`, old.id);
+    sql.exec(`INSERT INTO memory_fts (rowid, text) VALUES (?, ?)`, old.id, item.text);
     return;
   }
-  sql.exec(
-    `INSERT OR REPLACE INTO memory (ref, kind, at, text, model, vec) VALUES (?, ?, ?, ?, NULL, NULL)`,
-    item.ref,
-    item.kind,
-    item.at,
-    item.text,
-  );
-  sql.exec(`DELETE FROM memory_fts WHERE ref = ?`, item.ref);
-  sql.exec(`INSERT INTO memory_fts (ref, text) VALUES (?, ?)`, item.ref, item.text);
+  sql.exec(`INSERT INTO memory (ref, kind, at, text) VALUES (?, ?, ?, ?)`, item.ref, item.kind, item.at, item.text);
+  const id = sql.exec<{ id: number }>(`SELECT last_insert_rowid() AS id`).one().id;
+  sql.exec(`INSERT INTO memory_fts (rowid, text) VALUES (?, ?)`, id, item.text);
 }
 
 export function dropMemory(sql: Sql, ref: string): void {
-  sql.exec(`DELETE FROM memory WHERE ref = ?`, ref);
-  sql.exec(`DELETE FROM memory_fts WHERE ref = ?`, ref);
+  const old = sql.exec<{ id: number }>(`SELECT rowid AS id FROM memory WHERE ref = ?`, ref).toArray()[0];
+  if (!old) return;
+  sql.exec(`DELETE FROM memory WHERE rowid = ?`, old.id);
+  sql.exec(`DELETE FROM memory_fts WHERE rowid = ?`, old.id);
 }
 
 export function getMemory(sql: Sql, ref: string): MemoryItem | null {
@@ -112,7 +120,7 @@ export function keywordSearch(sql: Sql, query: string, range: Range, limit = 50)
   return sql
     .exec<{ ref: string; kind: string; at: number; s: number }>(
       `SELECT m.ref AS ref, m.kind AS kind, m.at AS at, bm25(memory_fts) AS s
-       FROM memory_fts JOIN memory m ON m.ref = memory_fts.ref
+       FROM memory_fts JOIN memory m ON m.rowid = memory_fts.rowid
        WHERE memory_fts MATCH ?${w.clause} ORDER BY s LIMIT ?`,
       match,
       ...w.args,
@@ -175,15 +183,32 @@ export function normalize(v: ArrayLike<number>): Float32Array {
   return out;
 }
 
-/** Items that still need an embedding from `model`, oldest first. */
+/** What a text that the embedding model refused is marked with, so it's skipped instead of retried forever. */
+export const refusedBy = (model: string) => `refused:${model}`;
+
+/** Items that still need an embedding from `model`, oldest first. Texts the model refused are left out. */
 export function unembedded(sql: Sql, model: string, limit: number): Array<{ ref: string; text: string }> {
   return sql
-    .exec<{ ref: string; text: string }>(`SELECT ref, text FROM memory WHERE model IS NULL OR model != ? ORDER BY at LIMIT ?`, model, limit)
+    .exec<{ ref: string; text: string }>(
+      `SELECT ref, text FROM memory WHERE model IS NULL OR (model != ? AND model != ?) ORDER BY at LIMIT ?`,
+      model,
+      refusedBy(model),
+      limit,
+    )
     .toArray();
 }
 
-export function setVector(sql: Sql, ref: string, model: string, vec: Float32Array): void {
-  sql.exec(`UPDATE memory SET model = ?, vec = ? WHERE ref = ?`, model, vec.buffer as ArrayBuffer, ref);
+/**
+ * Stores an item's embedding, unless its text changed while it was being
+ * embedded; then the new text waits for its own.
+ */
+export function setVector(sql: Sql, ref: string, text: string, model: string, vec: Float32Array): void {
+  sql.exec(`UPDATE memory SET model = ?, vec = ? WHERE ref = ? AND text = ?`, model, vec.buffer as ArrayBuffer, ref, text);
+}
+
+/** Marks a text the model refused, so meaning search moves on without it. */
+export function setRefused(sql: Sql, ref: string, text: string, model: string): void {
+  sql.exec(`UPDATE memory SET model = ?, vec = NULL WHERE ref = ? AND text = ?`, refusedBy(model), ref, text);
 }
 
 /**
@@ -205,7 +230,12 @@ export function indexNewMessages(sql: Sql): number {
     const text = parse<LogRow["body"]>(r.body, {}).text;
     if (typeof text !== "string" || !text.trim()) continue;
     const forgotten = sql
-      .exec(`SELECT 1 FROM records WHERE state = 'forgotten' AND json_extract(source, '$.log_id') = ? LIMIT 1`, r.id)
+      .exec(
+        `SELECT 1 FROM records WHERE state = 'forgotten'
+         AND (json_extract(source, '$.log_id') = ? OR EXISTS (SELECT 1 FROM json_each(records.source, '$.also') WHERE value = ?)) LIMIT 1`,
+        r.id,
+        r.id,
+      )
       .toArray().length;
     if (forgotten) continue;
     putMemory(sql, { ref: `log:${r.id}`, kind: "message", at: r.at, text });

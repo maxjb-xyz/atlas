@@ -6,10 +6,11 @@ import { BrainRouter } from "../src/brains/router";
 import { compact, KEEP_MESSAGES, planCompaction, SAVE_NOTE, SUMMARY_NOTE } from "../src/compaction";
 import { history, latestSummary, systemPrompt } from "../src/context";
 import { migrate, type Sql } from "../src/store/db";
-import { append } from "../src/store/log";
+import { append, thread } from "../src/store/log";
 import { standingFacts } from "../src/store/records";
 import { readSettings } from "../src/store/settings";
 import { startRun } from "../src/store/runs";
+import { getState } from "../src/store/state";
 import type { ToolContext } from "../src/tools/types";
 import { env, fakeCalendar, fakeEmbedder } from "./helpers";
 
@@ -126,9 +127,10 @@ describe("planning", () => {
       const plan = planCompaction(sql, { window: 3_000, systemTokens: 500 })!;
       const all = history(sql).length;
       expect(all).toBe(20);
-      // Each message is about 103 tokens; a quarter of the window (750) holds 7, so 13 would leave,
-      // but that splits exchange 6, so its question stays too and 12 leave.
-      expect(plan.rows.length).toBe(12);
+      // Each message is about 103 tokens. Keeping a quarter of the window (750) would let 13 leave,
+      // but one pass takes at most 40% of the window (1,200): 11 messages. That splits exchange 5,
+      // so its question stays too, and 10 leave; the next pass takes the rest.
+      expect(plan.rows.length).toBe(10);
       expect(plan.rows[plan.rows.length - 1]!.kind).toBe("message.out");
       expect(plan.rows[plan.rows.length - 1]!.run_id).toBe(plan.rows[plan.rows.length - 2]!.run_id);
       expect(20 - plan.rows.length).toBeGreaterThanOrEqual(KEEP_MESSAGES);
@@ -212,6 +214,9 @@ describe("in the agent", () => {
       talk(sql, 14, 400, "I owe Keyframes the invoice on Friday");
       await agent.apiSettleCompaction();
       expect(latestSummary(sql)).not.toBeNull();
+      // It took more than one pass, and the context is back under the line.
+      expect(sql.exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE kind = 'context.summary'`).one().n).toBeGreaterThan(1);
+      expect(planCompaction(sql, { window: 3_000, systemTokens: 0 })).toBeNull();
       expect(standingFacts(sql)).toEqual([]); // a commitment, not a preference: found by recall
 
       await agent.apiTurn("what do I owe this week?");
@@ -220,4 +225,36 @@ describe("in the agent", () => {
       expect(asked.messages.some((m) => m.role === "user" && m.content.includes("I owe Keyframes"))).toBe(false);
     });
   });
+
+  it("waits after a failure, across restarts, and keeps it out of the thread", async () => {
+    seams.makeBrain = () => memoryBrain({ summary: new Error("429 from api.openai.com: usage limit reached") });
+    seams.contextWindow = 3_000;
+    seams.embed = fakeEmbedder();
+    seams.calendar = fakeCalendar([]);
+    const stub = env.PersonAgent.get(env.PersonAgent.idFromName(`cf-${crypto.randomUUID()}`));
+    await runInDurableObject(stub, async (agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      talk(sql, 14, 400);
+      await agent.apiSettleCompaction();
+      expect(latestSummary(sql)).toBeNull();
+      expect(getState<number>(sql, "compaction_failed_at")).toBeGreaterThan(0);
+      const runs = () => sql.exec<{ n: number }>(`SELECT count(*) AS n FROM runs WHERE trigger = 'compaction'`).one().n;
+      const before = runs();
+      await agent.apiSettleCompaction();
+      expect(runs()).toBe(before); // waiting, not trying again
+      expect(sql.exec(`SELECT 1 FROM runs WHERE trigger = 'compaction' AND state = 'failed'`).toArray().length).toBeGreaterThan(0);
+      expect(thread(sql, 100).some((r) => r.kind === "run.end" && r.body.trigger === "compaction")).toBe(false);
+    });
+  });
+});
+
+describe("the thread", () => {
+  it("pages past rows it doesn't show", () =>
+    withSql((sql) => {
+      talk(sql, 3, 10);
+      // Many rows of thread kinds that the thread doesn't show.
+      for (let i = 0; i < 400; i++) append(sql, { actor: "atlas", kind: "tool.result", body: { ok: true } });
+      expect(thread(sql, 10).filter((r) => r.kind.startsWith("message.")).length).toBe(6);
+    }));
 });

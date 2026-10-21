@@ -9,7 +9,7 @@ import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
 import { seams } from "./agent/seams";
 import { liveTest, settingsView } from "./agent/settings";
 import { undoReceipt } from "./agent/undo";
-import { EMBED_BATCH, type Embedder, workersAIEmbedder } from "./brains/embed";
+import { type Embedder, embedPending, workersAIEmbedder } from "./brains/embed";
 import { BrainRouter } from "./brains/router";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
@@ -22,7 +22,8 @@ import { ClientMessage, type ServerMessage, type SettingsView } from "./protocol
 import { type AgendaItem, due, finish, lease, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, type Sql } from "./store/db";
 import { type Actor, append, forRun, get as getRow, type LogRow, type Surface, thread } from "./store/log";
-import { indexNewMessages, setVector, unembedded } from "./store/memory";
+import { indexNewMessages } from "./store/memory";
+import { getState, setState } from "./store/state";
 import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
 import { type BrainChoice, getSecret, readSettings, type Settings, setSecret, writeSettings } from "./store/settings";
 import { isValidZone, shortLocal, zoneOf } from "./time";
@@ -46,6 +47,12 @@ const TOOLS: Record<Actor, Tool[]> = {
   atlas: [calendarRead, ...reminderTools, recall],
   system: [],
 };
+
+/**
+ * The most history a voice turn reads, in tokens: about M0's last 40
+ * messages of ordinary talk. A long prompt slows a model's first words.
+ */
+const VOICE_HISTORY_TOKENS = 12_000;
 
 /** How long a brain gets to start answering before the next one is tried. */
 const FIRST_EVENT_MS = { main: 25_000, voice: 6_000 };
@@ -423,7 +430,9 @@ export class PersonAgent extends VoiceAgent {
     const now = new Date();
     const system = systemPrompt({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq });
     // Compaction keeps this well inside the window; the budget only matters if it hasn't caught up.
-    const budget = Math.floor(this.#window * 0.85) - tokens(system) - tokens(o.input);
+    // Voice reads less, so a spoken reply starts fast; recall still has the rest.
+    const room = o.role === "voice" ? VOICE_HISTORY_TOKENS : Math.floor(this.#window * 0.85) - tokens(system);
+    const budget = room - tokens(o.input);
     const messages = withMessage(history(this.#sql, { excludeRunId: o.runId, beforeSeq: o.beforeSeq, budget }), o.input);
     const via = o.actor === "atlas" ? "clock" : o.surface === "voice" ? "voice" : "chat";
     return runLoop(
@@ -471,7 +480,6 @@ export class PersonAgent extends VoiceAgent {
   }
 
   #compacting: Promise<void> | null = null;
-  #compactFailedAt = 0;
 
   /**
    * Compacts the context in the background when it has grown past its share
@@ -480,34 +488,41 @@ export class PersonAgent extends VoiceAgent {
    */
   #maybeCompact(): Promise<void> {
     if (this.#compacting) return this.#compacting;
-    if (Date.now() - this.#compactFailedAt < 10 * 60_000) return Promise.resolve();
-    const p = this.keepAliveWhile(() => this.#compact()).finally(() => {
-      this.#compacting = null;
-    });
+    const failedAt = getState<number>(this.#sql, "compaction_failed_at") ?? 0;
+    if (Date.now() - failedAt < 10 * 60_000) return Promise.resolve();
+    const p = this.keepAliveWhile(() => this.#compact())
+      .catch((err: unknown) => {
+        setState(this.#sql, "compaction_failed_at", Date.now());
+        console.error(JSON.stringify({ at: "compaction", error: err instanceof Error ? err.message : String(err) }));
+      })
+      .finally(() => {
+        this.#compacting = null;
+      });
     this.#compacting = p;
     return p;
   }
 
   async #compact(): Promise<void> {
-    const settings = readSettings(this.#sql);
-    const now = new Date();
-    const system = systemPrompt({ settings, tz: zoneOf(settings), now, surface: "none", sql: this.#sql });
-    const plan = planCompaction(this.#sql, { window: this.#window, systemTokens: tokens(system) });
-    if (!plan) return;
-    const deps = {
-      sql: this.#sql,
-      router: this.#router,
-      chain: settings.brains.main,
-      toolContext: this.#toolContext(settings, now, "compaction", null),
-    };
-    const out = await compact({ sql: this.#sql, loop: deps, system }, plan).catch((err: unknown) => {
-      console.error(JSON.stringify({ at: "compaction", error: err instanceof Error ? err.message : String(err) }));
-      return null;
-    });
-    if (!out?.summary) {
-      this.#compactFailedAt = Date.now();
-      if (out)
+    // A context far behind catches up a chunk at a time.
+    for (let pass = 0; pass < 10; pass++) {
+      const settings = readSettings(this.#sql);
+      const now = new Date();
+      const system = systemPrompt({ settings, tz: zoneOf(settings), now, surface: "none", sql: this.#sql });
+      const plan = planCompaction(this.#sql, { window: this.#window, systemTokens: tokens(system) });
+      if (!plan) break;
+      const deps = {
+        sql: this.#sql,
+        router: this.#router,
+        chain: settings.brains.main,
+        toolContext: this.#toolContext(settings, now, "compaction", null),
+      };
+      const out = await compact({ sql: this.#sql, loop: deps, system }, plan);
+      if (!out.summary) {
+        setState(this.#sql, "compaction_failed_at", Date.now());
         console.error(JSON.stringify({ at: "compaction", save: out.save.error ?? out.save.state, summary: out.write.error ?? "empty" }));
+        break;
+      }
+      setState(this.#sql, "compaction_failed_at", null);
     }
     void this.#tendMemory();
   }
@@ -567,33 +582,36 @@ export class PersonAgent extends VoiceAgent {
   /**
    * Adds new messages to the memory index and embeds whatever still needs it.
    * Runs after each run ends, in the background, so memory never slows a
-   * reply. One pass at a time, with at most one more queued behind it.
+   * reply. One pass at a time, with at most one more queued behind it. The
+   * embedder is chosen when the pass is queued.
    */
   #tendMemory(): Promise<void> {
     if (this.#tendQueued) return this.#tending;
     this.#tendQueued = true;
-    this.#tending = this.#tending.then(() => {
+    const embedder = this.#embedder();
+    const pass = () => {
       this.#tendQueued = false;
-      return this.keepAliveWhile(() => this.#tend());
-    });
+      return this.keepAliveWhile(() => this.#tend(embedder)).catch((err: unknown) => this.#logMemoryError(err));
+    };
+    this.#tending = this.#tending.then(pass, pass);
     return this.#tending;
   }
 
-  async #tend(): Promise<void> {
+  async #tend(embedder: Embedder | null): Promise<void> {
     try {
-      while (indexNewMessages(this.#sql) > 0);
-      const embedder = this.#embedder();
+      // In batches, letting other work in between: the first start indexes all of M0's thread.
+      while (indexNewMessages(this.#sql) > 0) await yieldNow();
       if (!embedder) return;
-      for (let i = 0; i < 100; i++) {
-        const todo = unembedded(this.#sql, embedder.model, EMBED_BATCH);
-        if (!todo.length) break;
-        const vecs = await embedder.embed(todo.map((t) => t.text));
-        for (const [j, t] of todo.entries()) setVector(this.#sql, t.ref, embedder.model, vecs[j]!);
-      }
-    } catch (err) {
+      const down = await embedPending(this.#sql, embedder, { batches: 100, between: yieldNow });
       // Recall still works by keyword and time; this says why meaning search lags.
-      console.error(JSON.stringify({ at: "memory.embed", error: err instanceof Error ? err.message : String(err) }));
+      if (down) this.#logMemoryError(down);
+    } catch (err) {
+      this.#logMemoryError(err);
     }
+  }
+
+  #logMemoryError(err: unknown): void {
+    console.error(JSON.stringify({ at: "memory.embed", error: err instanceof Error ? err.message : String(err) }));
   }
 
   /** For tests: waits until the memory index has caught up. */
@@ -777,3 +795,6 @@ class Speech implements AsyncIterable<string> {
     }
   }
 }
+
+/** Lets the agent take other work between batches of background upkeep. */
+const yieldNow = () => new Promise<void>((resolve) => setTimeout(resolve, 0));

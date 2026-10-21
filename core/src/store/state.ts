@@ -13,7 +13,9 @@ export type StateName =
   /** This deployment's ChatGPT client: host id, signed-in email, the plan's models and the last ID token as a sign-in hint. */
   | "chatgpt_client"
   /** The last log row the memory index has seen. */
-  | "memory_seq";
+  | "memory_seq"
+  /** When compaction last failed, so it waits before trying again, across restarts. */
+  | "compaction_failed_at";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

@@ -2,7 +2,8 @@
 // (§5.3). Workers AI fills it by default, since it comes with the account.
 
 import { BrainError } from "./types";
-import { normalize } from "../store/memory";
+import type { Sql } from "../store/db";
+import { normalize, setRefused, setVector, unembedded } from "../store/memory";
 
 /** EmbeddingGemma: 768 numbers per text, multilingual, on Workers AI. */
 export const EMBED_MODEL = "@cf/google/embeddinggemma-300m";
@@ -20,8 +21,11 @@ interface AiLike {
 
 /** Texts sent in one call; longer lists are split. */
 export const EMBED_BATCH = 32;
-/** Characters kept per text; the model reads a few thousand tokens at most. */
-const MAX_CHARS = 6_000;
+/**
+ * Characters kept per text. EmbeddingGemma reads about 2,000 tokens, and
+ * some text (other scripts, code, links) runs close to a token a character.
+ */
+const MAX_CHARS = 2_000;
 
 export function workersAIEmbedder(ai: AiLike, model = EMBED_MODEL): Embedder {
   return {
@@ -46,4 +50,51 @@ export function workersAIEmbedder(ai: AiLike, model = EMBED_MODEL): Embedder {
       return out;
     },
   };
+}
+
+/**
+ * Embeds up to `batches` batches of items that are waiting. When a batch
+ * fails, its items are tried one at a time, and a text the model refuses on
+ * its own is marked so it never holds up the rest. Returns the last error,
+ * if the model itself is down. `between` runs after each batch. With
+ * `oneTry`, a failed batch is left for the background pass to sort out.
+ */
+export async function embedPending(
+  sql: Sql,
+  embedder: Embedder,
+  opts: { batches: number; size?: number; between?: () => Promise<void>; oneTry?: boolean },
+): Promise<string | null> {
+  for (let b = 0; b < opts.batches; b++) {
+    const todo = unembedded(sql, embedder.model, opts.size ?? EMBED_BATCH);
+    if (!todo.length) return null;
+    try {
+      const vecs = await embedder.embed(todo.map((t) => t.text));
+      for (const [i, t] of todo.entries()) setVector(sql, t.ref, t.text, embedder.model, vecs[i]!);
+    } catch (batchErr) {
+      if (opts.oneTry) return batchErr instanceof Error ? batchErr.message : String(batchErr);
+      let worked = 0;
+      let lastErr = batchErr;
+      for (const t of todo) {
+        try {
+          const [v] = await embedder.embed([t.text]);
+          setVector(sql, t.ref, t.text, embedder.model, v!);
+          worked += 1;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      // Some went through, so the model works and the rest are texts it won't take.
+      if (worked > 0) {
+        for (const t of unembedded(sql, embedder.model, todo.length)) {
+          if (todo.some((x) => x.ref === t.ref && x.text === t.text)) setRefused(sql, t.ref, t.text, embedder.model);
+        }
+      } else {
+        // Nothing went through: the model is down, or the one waiting text is refused. Try again later;
+        // once anything new joins the batch, a refused text shows itself and is set aside.
+        return lastErr instanceof Error ? lastErr.message : String(lastErr);
+      }
+    }
+    await opts.between?.();
+  }
+  return null;
 }
