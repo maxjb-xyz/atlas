@@ -82,7 +82,14 @@ describe("helpers", () => {
       expect(b.requests[3]!.messages.at(-1)).toMatchObject({ role: "tool", content: expect.stringContaining("moved to Saturday") });
       // The helper had no personality and only lookup tools.
       expect(b.requests[1]!.system).toContain("You are a helper for Atlas");
-      expect(b.requests[1]!.tools.map((t) => t.name).sort()).toEqual(["agenda_list", "calendar_read", "recall", "web_fetch", "web_search"]);
+      expect(b.requests[1]!.tools.map((t) => t.name).sort()).toEqual([
+        "agenda_list",
+        "calendar_read",
+        "recall",
+        "skill_read",
+        "web_fetch",
+        "web_search",
+      ]);
 
       const result = rowsOf(sql, "job.result")[0]!;
       expect(result.body).toMatchObject({ title: "Riverside notes", state: "done", text: expect.stringContaining("Saturday") });

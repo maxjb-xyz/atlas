@@ -6,6 +6,7 @@
 
 import { listPages } from "./pages";
 import { listFiles } from "./files";
+import { listSkills } from "./skills";
 import { focusNow } from "./outbox";
 import type { Message } from "./brains/types";
 import { character, TEXT_PROFILE, VOICE_PROFILE } from "./character";
@@ -85,6 +86,7 @@ export function systemPrompt(opts: {
     `Now: ${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}.`,
     focusLine(sql, tz),
     pagesLine(sql),
+    skillsLine(sql),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     areaContext(sql, opts.beforeSeq),
     exitsContext(sql, tz, now),
@@ -202,6 +204,16 @@ export function hat(sql: Sql, beforeSeq?: number): Area[] {
  * waiting for their OK, and what was settled in the last two hours, so
  * Atlas never says something is done that's still waiting, or the reverse.
  */
+/** The skills index (§9.3): every active skill's one line, most used first, so Atlas finds them again. */
+function skillsLine(sql: Sql): string {
+  const skills = listSkills(sql).slice(0, 60);
+  return skills.length
+    ? `Your skills (open one with skill_read before a task it covers; improve it with skill_save when it was wrong):\n${skills
+        .map((s) => `- ${s.name}: ${s.description}${s.checked && !s.checked.ok ? " (its last check failed)" : ""}`)
+        .join("\n")}`
+    : "";
+}
+
 function pagesLine(sql: Sql): string {
   const pages = listPages(sql).slice(0, 20);
   const files = listFiles(sql).slice(0, 20);

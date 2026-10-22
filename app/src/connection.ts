@@ -84,6 +84,7 @@ export interface State {
   files: import("../../core/src/stage").FileRow[] | null;
   /** What the workspace is printing for Atlas right now (a progress hint; the tool's result is the truth). */
   workspaceOut: { run_id: string; text: string } | null;
+  skills: import("../../core/src/protocol").SkillView[] | null;
   /** The page Keep just made, so the view can say where it went. */
   kept: { id: string; name: string } | null;
 }
@@ -116,6 +117,7 @@ const initial: State = {
   pages: null,
   files: null,
   workspaceOut: null,
+  skills: null,
   kept: null,
 };
 
@@ -263,6 +265,8 @@ function reduce(s: State, a: Action): State {
       return { ...s, pages: m.pages };
     case "atlas.files":
       return { ...s, files: m.files };
+    case "atlas.skills":
+      return { ...s, skills: m.skills };
     case "atlas.workspace.out": {
       const prev = s.workspaceOut?.run_id === m.run_id ? s.workspaceOut.text : "";
       return { ...s, workspaceOut: { run_id: m.run_id, text: (prev + m.text).slice(-40_000) } };

@@ -269,6 +269,7 @@ describe("automations", () => {
       "file_read",
       "page_read",
       "recall",
+      "skill_read",
       "web_fetch",
       "web_search",
       "webhook_call",

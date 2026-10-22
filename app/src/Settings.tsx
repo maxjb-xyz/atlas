@@ -11,10 +11,11 @@ import { addPasskey, deviceName, passkeysSupported } from "./passkey";
 import { Composer } from "./Shell";
 import { useLook } from "./theme";
 import { Icon, Sheet, shortDay, Stage } from "./ui";
+import { Markdown } from "./Markdown";
 import { PROVIDERS, type SearchProvider } from "../../core/src/web";
 import { FIELDS, type VaultKind } from "../../core/src/vault-fields";
 
-type Section = "character" | "look" | "brains" | "connections" | "devices" | "vault" | "permissions" | "notifications" | "data";
+type Section = "character" | "look" | "brains" | "connections" | "devices" | "vault" | "skills" | "permissions" | "notifications" | "data";
 
 const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
   {
@@ -33,7 +34,13 @@ const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
       ["vault", "Vault"],
     ],
   },
-  { group: "Abilities", items: [["permissions", "Permissions"]] },
+  {
+    group: "Abilities",
+    items: [
+      ["skills", "Skills"],
+      ["permissions", "Permissions"],
+    ],
+  },
   {
     group: "System",
     items: [
@@ -139,6 +146,7 @@ export function SettingsPage({
                 {section === "connections" && <Connections atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "devices" && <Devices atlas={atlas} view={view} />}
                 {section === "vault" && <Vault atlas={atlas} view={view} />}
+                {section === "skills" && <Skills atlas={atlas} />}
                 {section === "permissions" && <Permissions atlas={atlas} view={view} />}
                 {section === "notifications" && <Notifications atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "data" && <Data atlas={atlas} onSignOut={onSignOut} onSetup={onSetup} />}
@@ -562,6 +570,164 @@ function WebSearch({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settings
       ) : (
         <p className="muted small">Save to test it.</p>
       )}
+    </>
+  );
+}
+
+/**
+ * Skills (§9.3): what Atlas has learned to do, in the SKILL.md format. Each
+ * one shows what it's for, how often it's used, whether its check passes,
+ * and every version; you can edit it, bring an old version back, archive
+ * it, or download it. A SKILL.md from another agent can be pasted in.
+ */
+function Skills({ atlas }: { atlas: Atlas }) {
+  const s = atlas.state;
+  useEffect(() => {
+    if (atlas.voice.connected) atlas.send({ type: "atlas.skills" });
+  }, [atlas.voice.connected, s.rows.length]);
+  const [open, setOpen] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ id: string | null; md: string } | null>(null);
+  const skills = s.skills;
+  const active = skills?.filter((k) => k.state === "active") ?? [];
+  const archived = skills?.filter((k) => k.state === "archived") ?? [];
+  const download = (name: string, md: string) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+    a.download = `${name}.SKILL.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  const row = (k: NonNullable<typeof skills>[number]) => (
+    <div className="r" key={k.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+      <div className="row" style={{ flexWrap: "wrap" }}>
+        <button className="link" style={{ fontWeight: 500 }} onClick={() => setOpen(open === k.id ? null : k.id)}>
+          {k.name}
+        </button>
+        {k.checked && <span className={`tag ${k.checked.ok ? "ok" : "ac"}`}>{k.checked.ok ? "✓ Check passes" : "× Check fails"}</span>}
+        <span className="grow" />
+        <span className="mono faint small">
+          v{k.version} · {k.uses ? `used ${k.uses}×` : "not used yet"}
+        </span>
+      </div>
+      <span className="muted small">{k.description}</span>
+      {open === k.id && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
+          <div className="panel">
+            <Markdown text={k.body} />
+          </div>
+          {k.check && (
+            <p className="small">
+              <span className="lab">Check</span> <code className="mono">{k.check}</code>
+            </p>
+          )}
+          {k.checked && !k.checked.ok && <pre className="code-block mono">{k.checked.output}</pre>}
+          <div className="rows">
+            {k.versions.map((v) => (
+              <div className="r" key={v.n}>
+                <span className="mono small" style={{ flex: "none" }}>
+                  v{v.n}
+                </span>
+                <span className="small grow">{v.note}</span>
+                <span className="lab faint">
+                  {v.by === "owner" ? "You" : "Atlas"} · {shortDay(v.at)}
+                </span>
+                {v.n !== k.version && (
+                  <button className="link small" onClick={() => atlas.send({ type: "atlas.skill.restore", id: k.id, n: v.n })}>
+                    Bring back
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="row">
+            <button className="btn sm" onClick={() => setEditing({ id: k.id, md: k.md })}>
+              Edit
+            </button>
+            <button className="btn sm" onClick={() => download(k.name, k.md)}>
+              Download SKILL.md
+            </button>
+            <button
+              className="btn sm"
+              onClick={() => atlas.send({ type: "atlas.skill.state", id: k.id, state: k.state === "active" ? "archived" : "active" })}
+            >
+              {k.state === "active" ? "Archive" : "Bring back"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <>
+      <Head
+        title="Skills"
+        sub="What Atlas has learned to do, written down so it does it the same way next time. Atlas opens the right one before a task it covers, and improves it when it was wrong."
+      />
+      <Row label="Skills">
+        {skills == null ? (
+          <p className="lab">Looking</p>
+        ) : active.length === 0 ? (
+          <p className="muted small">
+            None yet. After a task that took some working out and went the way you wanted, Atlas writes down how, and says "Learned a
+            skill".
+          </p>
+        ) : (
+          <div className="rows">{active.map(row)}</div>
+        )}
+        {archived.length > 0 && (
+          <>
+            <p className="lab" style={{ marginTop: 12 }}>
+              Archived (unused for months; never deleted)
+            </p>
+            <div className="rows">{archived.map(row)}</div>
+          </>
+        )}
+      </Row>
+      <Row label={editing?.id ? "Edit" : "Add one"}>
+        {editing ? (
+          <form
+            style={{ display: "flex", flexDirection: "column", gap: 10 }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              atlas.send({ type: "atlas.skill.save", md: editing.md });
+              setEditing(null);
+            }}
+          >
+            <textarea
+              className="mono"
+              rows={16}
+              spellCheck={false}
+              value={editing.md}
+              onChange={(e) => setEditing({ ...editing, md: e.target.value })}
+            />
+            <div className="row">
+              <button className="btn primary" disabled={editing.md.trim().length < 20}>
+                Save
+              </button>
+              <button type="button" className="btn" onClick={() => setEditing(null)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <p className="muted small">Paste a SKILL.md from Claude Code, Codex, Hermes or OpenClaw; it works here unchanged.</p>
+            <div className="row">
+              <button
+                className="btn"
+                onClick={() =>
+                  setEditing({
+                    id: null,
+                    md: "---\nname: my-skill\ndescription: What it's for and when to use it.\n---\n\n1. The first step.\n",
+                  })
+                }
+              >
+                Paste a SKILL.md
+              </button>
+            </div>
+          </>
+        )}
+      </Row>
     </>
   );
 }

@@ -29,7 +29,7 @@ import { CONTEXT_TOKENS, history, systemPrompt, tokens, withMessage } from "./co
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
 import { Outbox, type PushDevice, pushDevices, StreamScrubber, type Urgency } from "./outbox";
 import { vapidKeys } from "./push";
-import { type AreaView, ClientMessage, type JobView, type ServerMessage, type SettingsView } from "./protocol";
+import { type AreaView, ClientMessage, type JobView, type ServerMessage, type SettingsView, type SkillView } from "./protocol";
 import { type AgendaItem, createItem, due, finish, getItem, lease, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, type Sql } from "./store/db";
 import { type Actor, append, forRun, get as getRow, type LogRow, logTo, type Surface, thread } from "./store/log";
@@ -69,6 +69,20 @@ import { vaultFill } from "./tools/vault";
 import { fileRead, fileTools } from "./tools/files";
 import { workspaceTools } from "./tools/workspace";
 import { codeRun } from "./tools/code";
+import { skillRead, skillTools } from "./tools/skills";
+import {
+  ensureSkillChecks,
+  findSkill,
+  listSkills,
+  noteCheck,
+  parseSkillMd,
+  restoreSkill,
+  saveSkill,
+  setSkillState,
+  skillMd,
+  skillVersions,
+  tidySkills,
+} from "./skills";
 import type { RunEvent } from "./workspace";
 import { deleteFile, filePage, getFile, keyOf, listFiles, saveFile } from "./files";
 import { type BrowserDriver, type BrowserPage, BrowserRunDriver } from "./browser";
@@ -127,8 +141,9 @@ const TOOLS: Record<Actor, Tool[]> = {
     ...fileTools,
     ...workspaceTools,
     codeRun,
+    ...skillTools,
   ],
-  atlas: [calendarRead, ...agendaTools, recall, ...webTools, fileRead],
+  atlas: [calendarRead, ...agendaTools, recall, ...webTools, fileRead, skillRead],
   system: [],
 };
 
@@ -146,9 +161,10 @@ const AUTOMATION_TOOLS: Tool[] = [
   ...fileTools,
   ...workspaceTools,
   codeRun,
+  skillRead,
 ];
 /** A test run only looks: it changes nothing, and webhooks only say what they'd do (§13.4). */
-const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall, pageRead, webSearch, webFetch, fileRead];
+const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall, pageRead, webSearch, webFetch, fileRead, skillRead];
 
 /**
  * The most history a voice turn reads, in tokens: about M0's last 40
@@ -296,6 +312,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       console.error(JSON.stringify({ at: "routines.seed", error: err instanceof Error ? err.message : String(err) }));
     }
     for (const a of listAutomations(this.#sql)) void this.#automations.arm(a.id).catch(() => {});
+    // The weekly pass over skills' checks, once there's a skill with one.
+    const checks = ensureSkillChecks(this.#sql);
+    if (checks) void this.#clock.schedule(checks).catch(() => {});
     // The key that signs push notifications, made once, so Settings can offer them straight away.
     void vapidKeys(this.#sql).catch((err: unknown) =>
       console.error(JSON.stringify({ at: "push.keys", error: err instanceof Error ? err.message : String(err) })),
@@ -719,6 +738,26 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       case "atlas.files":
         this.#send(connection, { type: "atlas.files", files: listFiles(this.#sql) });
         return;
+      case "atlas.skills":
+        this.#send(connection, { type: "atlas.skills", skills: this.#skillViews() });
+        return;
+      case "atlas.skill.save":
+      case "atlas.skill.state":
+      case "atlas.skill.restore":
+        try {
+          if (msg.type === "atlas.skill.save") {
+            const p = parseSkillMd(msg.md);
+            const had = findSkill(this.#sql, p.name);
+            const { skill } = saveSkill(this.#sql, { ...p, by: "owner", note: had ? "Edited in Settings." : "Added in Settings." });
+            const checks = skill.check ? ensureSkillChecks(this.#sql) : null;
+            if (checks) await this.#clock.schedule(checks);
+          } else if (msg.type === "atlas.skill.state") setSkillState(this.#sql, msg.id, msg.state, "owner");
+          else restoreSkill(this.#sql, msg.id, msg.n, "owner");
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
+        this.#broadcast({ type: "atlas.skills", skills: this.#skillViews() });
+        return;
       case "atlas.workspace.keep": {
         const bucket = this.#bucket();
         const path = msg.path.startsWith("/") ? msg.path : `/workspace/${msg.path}`;
@@ -969,6 +1008,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (!item) return;
     if (item.kind === "automation") {
       await this.keepAliveWhile(() => this.#inLine(() => this.#automations.due(item)));
+      return;
+    }
+    if (item.kind === "skills") {
+      await this.keepAliveWhile(() => this.#checkSkills(item));
       return;
     }
     // A wake for when the lease runs out: if a restart cuts this run off, the item fires again, once, instead of
@@ -1523,6 +1566,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       this.#logMemoryError(err);
     }
     if (decider) await this.#tendAreas(decider);
+    // Skills nobody has used for months leave the index; they're archived, never deleted (§9.3).
+    tidySkills(this.#sql);
   }
 
   /** Tags what's new with areas, and starts new areas when enough fits none (§6.3). */
@@ -2042,6 +2087,60 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       const w = this.#driver()?.where();
       const where = w?.open ? ` It's on ${w.title || w.url} (${w.url}).` : "";
       void this.keepAliveWhile(() => this.#textTurn(`I'm done in the browser.${where} Over to you.`, `browser-${Date.now()}`));
+    }
+  }
+
+  // --- skills (§9.3) ---------------------------------------------------------------------
+
+  #skillViews(): SkillView[] {
+    return listSkills(this.#sql, { all: true }).map((s) => ({
+      id: s.id,
+      name: s.name,
+      description: s.description,
+      body: s.body,
+      check: s.check,
+      made_by: s.made_by,
+      state: s.state,
+      version: s.version,
+      uses: s.uses,
+      last_used: s.last_used,
+      checked: s.checked,
+      updated_at: s.updated_at,
+      versions: skillVersions(this.#sql, s.id).map((v) => ({ n: v.n, at: v.at, by: v.by, note: v.note })),
+      md: skillMd(s),
+    }));
+  }
+
+  /**
+   * The weekly pass: each skill's check runs in the workspace. A skill that
+   * just broke is flagged in the index and the owner hears about it once;
+   * one that still works stays quiet. Then the next pass goes on the clock.
+   */
+  async #checkSkills(item: AgendaItem): Promise<void> {
+    const broke: string[] = [];
+    for (const s of listSkills(this.#sql).filter((x) => x.check)) {
+      let r: { ok: boolean; output: string };
+      try {
+        const out = await this.#workspaceApi.run(s.check, { run_id: item.id, timeout_s: 120 });
+        r = { ok: out.exit === 0, output: out.output };
+      } catch (err) {
+        r = { ok: false, output: err instanceof Error ? err.message : String(err) };
+      }
+      if (!r.ok && s.checked?.ok !== false) broke.push(`${s.name}: ${r.output.trim().split("\n").slice(-3).join(" ").slice(0, 300)}`);
+      noteCheck(this.#sql, s.id, r);
+    }
+    finish(this.#sql, item.id, "done", null, { broke: broke.length });
+    const next = ensureSkillChecks(this.#sql);
+    if (next) await this.#clock.schedule(next);
+    if (broke.length) {
+      await this.#outbox.deliver(
+        {
+          text: `A skill check failed, so I'll fix ${broke.length === 1 ? "it" : "them"} before I rely on ${broke.length === 1 ? "it" : "them"}:\n${broke.map((b) => `- ${b}`).join("\n")}`,
+          run_id: null,
+          channel: "app",
+        },
+        { alreadyStreamed: false },
+      );
     }
   }
 

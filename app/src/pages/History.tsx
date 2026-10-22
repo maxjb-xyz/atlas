@@ -94,6 +94,19 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
             : `${b.change === "made" ? "Made" : `Version ${str(b.version)} of`} the page ${str(b.name)}${b.note && b.change !== "made" ? `: ${str(b.note)}` : ""}`,
         kind: `page.${str(b.change)}`,
       };
+    case "skill.change":
+      return {
+        who: r.actor === "owner" ? "You" : "Atlas",
+        what:
+          b.change === "made"
+            ? `Learned a skill: ${str(b.name)}`
+            : b.change === "patched"
+              ? `Version ${str(b.version)} of the skill ${str(b.name)}${b.note ? `: ${str(b.note)}` : ""}`
+              : b.change === "archived"
+                ? `Archived the skill ${str(b.name)}${b.note ? `: ${str(b.note)}` : ""}`
+                : `Brought back the skill ${str(b.name)}`,
+        kind: `skill.${str(b.change)}`,
+      };
     case "file.change":
       return {
         who: r.actor === "owner" ? "You" : "Atlas",

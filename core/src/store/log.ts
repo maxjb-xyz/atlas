@@ -34,7 +34,9 @@ export type LogKind =
   /** A page was made, given a new version, or deleted (§21.7). */
   | "page.change"
   /** A file was made, replaced or deleted (§21.7). */
-  | "file.change";
+  | "file.change"
+  /** A skill was learned, patched, archived or brought back (§9.3). */
+  | "skill.change";
 
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */
 export interface Receipt {
@@ -53,7 +55,9 @@ export type Undo =
   | { kind: "record.restore"; id: string }
   | { kind: "record.revert"; id: string; history: number }
   /** Undoes a page's version `version`: back to the one before, or no page when it was the first. */
-  | { kind: "page.undo"; id: string; version: number };
+  | { kind: "page.undo"; id: string; version: number }
+  /** Undoes a skill's version `version`: back to the one before, or archived when it was the first. */
+  | { kind: "skill.undo"; id: string; version: number };
 
 export interface LogRow {
   seq: number;

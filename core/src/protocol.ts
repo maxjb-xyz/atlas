@@ -310,6 +310,11 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.browser"), action: z.enum(["take", "give", "close"]) }),
   /** Library's pages (§21.7). */
   z.object({ type: z.literal("atlas.pages") }),
+  /** The Skills page (§9.3): every skill; save one from its SKILL.md (an edit or an import); archive or bring back; restore a version. */
+  z.object({ type: z.literal("atlas.skills") }),
+  z.object({ type: z.literal("atlas.skill.save"), md: z.string().min(20).max(40_000) }),
+  z.object({ type: z.literal("atlas.skill.state"), id: z.string().max(64), state: z.enum(["active", "archived"]) }),
+  z.object({ type: z.literal("atlas.skill.restore"), id: z.string().max(64), n: z.number().int().min(1) }),
   /** The workspace (§9.1): keep a file from it in Library, or take back a site it may reach. */
   z.object({ type: z.literal("atlas.workspace.keep"), path: z.string().min(1).max(500) }),
   z.object({ type: z.literal("atlas.workspace.site.remove"), site: z.string().min(1).max(200) }),
@@ -352,6 +357,25 @@ export const ClientMessage = z.discriminatedUnion("type", [
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
 // --- agent -> app ----------------------------------------------------------
+
+/** A skill as the Skills page shows it (§9.3): what it says, how it's used, its check, and every version. */
+export interface SkillView {
+  id: string;
+  name: string;
+  description: string;
+  body: string;
+  check: string;
+  made_by: "owner" | "atlas";
+  state: "active" | "archived";
+  version: number;
+  uses: number;
+  last_used: number | null;
+  checked: { at: number; ok: boolean; output: string } | null;
+  updated_at: number;
+  versions: Array<{ n: number; at: number; by: "owner" | "atlas"; note: string }>;
+  /** The whole thing as a SKILL.md, to edit or take elsewhere. */
+  md: string;
+}
 
 /** Settings as the app sees them: values, plus whether each secret is set (never the secret). */
 export interface SettingsView {
@@ -439,6 +463,7 @@ export type ServerMessage =
   | { type: "atlas.automations"; automations: AutomationView[]; suggestions: SuggestionView[] }
   | { type: "atlas.pages"; pages: PageSummary[] }
   | { type: "atlas.files"; files: import("./stage").FileRow[] }
+  | { type: "atlas.skills"; skills: SkillView[] }
   /** What a command in the workspace prints, as it prints it (a progress hint; the tool's result is the truth). */
   | { type: "atlas.workspace.out"; run_id: string; text: string }
   /** Keep worked: the new page, so the view can say where it went. */

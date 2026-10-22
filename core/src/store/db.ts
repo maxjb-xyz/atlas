@@ -216,6 +216,36 @@ const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL
   );
   `,
+  // 10. M3: skills (§9.3), in the SKILL.md format, every version kept.
+  `
+  CREATE TABLE skills (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    body TEXT NOT NULL,
+    "check" TEXT NOT NULL DEFAULT '',
+    areas TEXT NOT NULL DEFAULT '[]',
+    made_by TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'active',
+    version INTEGER NOT NULL DEFAULT 1,
+    uses INTEGER NOT NULL DEFAULT 0,
+    last_used INTEGER,
+    checked TEXT NOT NULL DEFAULT 'null',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE skill_versions (
+    skill_id TEXT NOT NULL,
+    n INTEGER NOT NULL,
+    at INTEGER NOT NULL,
+    by TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL,
+    body TEXT NOT NULL,
+    "check" TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (skill_id, n)
+  );
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

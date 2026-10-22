@@ -191,7 +191,9 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
       .map((e) => ({ at: eventStart(e), allDay: e.all_day, kind: "Event" as const, title: e.title, source: e.calendar, id: e.id })),
     ...s.agenda
       // Notifications held for quiet hours are the outbox's, and approvals wait in Inbox: neither is something on your clock.
-      .filter((a) => (a.state === "scheduled" || a.state === "running") && a.kind !== "notify" && a.kind !== "approval")
+      .filter(
+        (a) => (a.state === "scheduled" || a.state === "running") && a.kind !== "notify" && a.kind !== "approval" && a.kind !== "skills",
+      )
       .map((a): AgendaEntry => {
         const d = a.source.detail ?? {};
         return {
