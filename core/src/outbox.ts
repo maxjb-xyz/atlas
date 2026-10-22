@@ -501,7 +501,7 @@ export class Outbox {
     a: Extract<Action, { kind: "mcp_add" }>,
     o: { run_id: string | null; by: string },
   ): Promise<{ ok: boolean; text: string }> {
-    const base = { channel: "mcp", to: a.name, text: `Connect ${a.url}`, by: o.by };
+    const base = { channel: "mcp", what: "connect", to: a.name, text: a.url, by: o.by };
     const client = this.channels.mcp();
     if (!client) return { ok: false, text: "This deployment has no MCP client." };
     try {
@@ -509,12 +509,15 @@ export class Outbox {
       const tools = client.servers().find((s) => s.id === r.id)?.tools.length ?? 0;
       const text =
         r.state === "authenticating"
-          ? `${a.name} is added and needs the owner to sign in: ${r.auth_url ?? "Settings → Connections → MCP servers has Sign in"}.`
+          ? `${a.name} is added. Sign in to finish: ${r.auth_url ?? "Settings → Connections → MCP servers has Sign in"}`
           : `Connected ${a.name}, with ${tools} tool${tools === 1 ? "" : "s"}.`;
       this.receipt(o.run_id, { ...base, ok: true, answer: r.state === "authenticating" ? "Waiting for sign-in" : `${tools} tools` });
       return { ok: true, text };
     } catch (err) {
-      const error = `${a.name} (${hostOf(a.url)}) didn't connect: ${err instanceof Error ? err.message : String(err)}`;
+      const error = `${a.name} (${hostOf(a.url)}) didn't connect: ${err instanceof Error ? err.message : String(err)}`.replace(
+        /\.\.$/,
+        ".",
+      );
       this.receipt(o.run_id, { ...base, ok: false, error });
       console.error(JSON.stringify({ at: "mcp.add", url: a.url, error }));
       return { ok: false, text: error };

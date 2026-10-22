@@ -335,6 +335,11 @@ describe("MCP in a run", () => {
     expect((await s.next("atlas.error")).message).toBe("An MCP server's address starts with https://.");
   });
 
+  it("signs in to a service under Atlas's name, not the agent's id", async () => {
+    const meta = await inOwner((agent) => agent.createMcpOAuthProvider("https://atlas.example/mcp/callback").clientMetadata);
+    expect(meta).toMatchObject({ client_name: "Atlas", redirect_uris: ["https://atlas.example/mcp/callback"] });
+  });
+
   it("refuses a sign-in callback it didn't start", async () => {
     seams.mcp = undefined;
     const res = await SELF.fetch("http://atlas.test/mcp/callback?code=abc&state=forged");

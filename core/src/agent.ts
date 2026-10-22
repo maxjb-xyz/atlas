@@ -2,6 +2,7 @@
 // log, records, agenda, settings and live connections. Text and voice share
 // one socket and one loop, so voice is the same mind (§11).
 
+import { DurableObjectOAuthClientProvider } from "agents/mcp/do-oauth-client-provider";
 import { Agent, type Connection, type ConnectionContext, type WSMessage } from "agents";
 import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } from "agents/voice";
 import { CalendarSense } from "./agent/calendar";
@@ -127,6 +128,22 @@ import type { BrainEvent, BrainRequest } from "./brains/types";
 import type { Append } from "./store/log";
 
 export { seams };
+
+/** The SDK's sign-in client, under the assistant's name on consent pages (see `createMcpOAuthProvider`). */
+class NamedOAuthProvider extends DurableObjectOAuthClientProvider {
+  constructor(
+    storage: DurableObjectStorage,
+    key: string,
+    callbackUrl: string,
+    private readonly displayName: string,
+  ) {
+    super(storage, key, callbackUrl);
+  }
+
+  override get clientMetadata() {
+    return { ...super.clientMetadata, client_name: this.displayName };
+  }
+}
 
 /** What the agent asks of the workspace's Durable Object (core/src/workspace.ts), or of a fake in tests. */
 export interface WorkspaceStub {
@@ -2364,13 +2381,28 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         // A sign-in comes back to the app's own address, where the Worker hands it to this agent.
         const origin = getState<string>(this.#sql, "origin");
         if (!origin) throw new Error("Open Atlas in the app once first, so it knows its own address for a sign-in to come back to.");
-        const r = await this.addMcpServer(name, url, {
-          callbackHost: origin,
-          callbackPath: "/mcp/callback",
-          // MCP Apps: tell servers Atlas can show their pages.
-          client: { capabilities: { extensions: UI_EXTENSION } } as never,
-          ...(token ? { transport: { headers: { Authorization: /^\w+ \S/.test(token) ? token : `Bearer ${token}` } } } : {}),
-        });
+        let r: Awaited<ReturnType<typeof this.addMcpServer>>;
+        try {
+          r = await this.addMcpServer(name, url, {
+            callbackHost: origin,
+            callbackPath: "/mcp/callback",
+            // MCP Apps: tell servers Atlas can show their pages.
+            client: { capabilities: { extensions: UI_EXTENSION } } as never,
+            ...(token ? { transport: { headers: { Authorization: /^\w+ \S/.test(token) ? token : `Bearer ${token}` } } } : {}),
+          });
+        } catch (err) {
+          // A server that didn't connect isn't kept half-added: it can be added again, with a token if it needs one.
+          for (const [id, s] of Object.entries(this.getMcpServers().servers)) {
+            if (s.server_url === url || s.server_url === new URL(url).href) await this.removeMcpServer(id).catch(() => {});
+          }
+          const said = err instanceof Error ? err.message : String(err);
+          if (/dynamic client registration/i.test(said)) {
+            throw new Error(
+              `${said}. ${name} doesn't let apps sign themselves up to sign in, so it needs a token instead: make one in ${name}'s settings (for GitHub, a personal access token), then add it in Settings → Connections → MCP servers with the token.`,
+            );
+          }
+          throw err;
+        }
         return r.state === "authenticating" ? { id: r.id, state: r.state, auth_url: r.authUrl } : { id: r.id, state: r.state };
       },
       remove: (id) => this.removeMcpServer(id),
@@ -2380,6 +2412,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       settle: (ms) => this.mcp.waitForConnections({ timeout: ms }),
     };
     return this.#sdkMcp;
+  }
+
+  /**
+   * The sign-in client Atlas registers with a server (OAuth): it goes by
+   * Atlas's name on the service's consent page, not the agent's id. Its
+   * stored tokens keep the SDK's keys, so existing sign-ins carry on.
+   */
+  override createMcpOAuthProvider(callbackUrl: string) {
+    return new NamedOAuthProvider(this.ctx.storage, this.name, callbackUrl, readSettings(this.#sql).assistant_name.trim() || "Atlas");
   }
 
   /** Connected servers, after waiting a moment for any still reconnecting after a sleep. */

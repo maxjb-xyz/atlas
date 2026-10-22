@@ -1,6 +1,7 @@
 // Home (§21.2): the stage and the console. The stage shows Now, the Week,
 // helpers' Jobs, the views Atlas shows (§21.6), and whatever a receipt opens into.
 
+import { InlineText } from "../Markdown";
 import { useEffect, useRef, useState } from "react";
 import type { LogRow } from "../../../core/src/protocol";
 import type { StageView } from "../../../core/src/stage";
@@ -477,7 +478,7 @@ function ApprovalTab({ atlas, id }: { atlas: Atlas; id: string }) {
         {item?.approval ? (
           <ApprovalCard atlas={atlas} a={item.approval} />
         ) : (
-          <p className="muted">{settled ? settledDetail(settled) : "It isn't waiting any more."}</p>
+          <p className="muted wrap-anywhere">{settled ? <InlineText text={settledDetail(settled)} /> : "It isn't waiting any more."}</p>
         )}
       </div>
     </Sheet>

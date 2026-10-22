@@ -132,7 +132,9 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
                 : b.channel === "vault"
                   ? `Filled in ${str(b.text)} on ${str(b.to)}${b.pressed ? `, then pressed “${str(b.pressed)}”` : ""}`
                   : b.channel === "mcp"
-                    ? `Used ${str(b.text)} on ${str(b.to)}`
+                    ? b.what === "connect"
+                      ? `${b.ok === false ? "Tried to connect" : "Connected"} ${str(b.to)} (${str(b.text)})`
+                      : `Used ${str(b.text)} on ${str(b.to)}`
                     : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
       const what =
         b.ok === false
