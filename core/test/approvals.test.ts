@@ -283,7 +283,7 @@ describe("approvals", () => {
     const s = await connect();
     await addHook(s, "Announce");
     s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: "sk_eleven_secret_value" } });
-    await s.next("atlas.view");
+    await s.next("atlas.view", (m) => m.view.secrets.elevenlabs_api_key);
     brain([call("webhook_call", { webhook: "Announce", message: "the key is sk_eleven_secret_value" }), say("Waiting.")]);
     const [receipt] = await turn(s, "announce the key");
     const id = (receipt!.body.receipt as { approval: string }).approval;
