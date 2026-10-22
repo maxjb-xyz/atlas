@@ -54,6 +54,8 @@ export const IGNORED_MS = 2 * 3_600_000;
 export const MATTERS = 0.5;
 /** The same event at the same place within this long is a duplicate. */
 const DUPLICATE_MS = 10 * 60_000;
+/** On the move, the most often a move wakes Atlas. */
+export const MOVE_COOLDOWN_MS = 20 * 60_000;
 /** The leave look comes this long before the leave-by time. */
 export const LEAVE_LEAD_MS = 10 * 60_000;
 /** The owner counts as using Atlas when they've said something this recently: the weather and travel are kept current then. */
@@ -199,19 +201,35 @@ export class SenseDesk {
       quiet("rules", "Speaking up about errands and other things is off.");
       return;
     }
+    // Arriving or leaving the same place twice in a few minutes is the edge of a place, not news. (Moves have their own cool-down.)
     const place = (row.body.place as { id?: string } | undefined)?.id;
-    const dup = this.d.sql
-      .exec(
-        `SELECT 1 FROM log WHERE kind = 'sense' AND seq < ? AND at > ? AND json_extract(body, '$.event') = ? AND COALESCE(json_extract(body, '$.place.id'), '') = ? LIMIT 1`,
-        row.seq,
-        row.at - DUPLICATE_MS,
-        String(row.body.event),
-        place ?? "",
-      )
-      .toArray().length;
+    const dup =
+      place &&
+      this.d.sql
+        .exec(
+          `SELECT 1 FROM log WHERE kind = 'sense' AND seq < ? AND at > ? AND json_extract(body, '$.event') = ? AND COALESCE(json_extract(body, '$.place.id'), '') = ? LIMIT 1`,
+          row.seq,
+          row.at - DUPLICATE_MS,
+          String(row.body.event),
+          place,
+        )
+        .toArray().length;
     if (dup) {
       quiet("rules", "The same happened a few minutes ago.");
       return;
+    }
+    // On the move, Atlas looks at most every twenty minutes; leaving a place always counts, since that's the moment.
+    if (row.body.event === "moved") {
+      const looked = this.d.sql
+        .exec(
+          `SELECT 1 FROM log WHERE kind = 'awareness' AND json_extract(body, '$.step') = 'woke' AND at > ? LIMIT 1`,
+          row.at - MOVE_COOLDOWN_MS,
+        )
+        .toArray().length;
+      if (looked) {
+        quiet("rules", "Atlas looked a few minutes ago; on the move it looks at most every twenty minutes.");
+        return;
+      }
     }
     const open = this.#openThings(settings);
     if (!open.length) {
@@ -461,7 +479,10 @@ export class SenseDesk {
    */
   async reacted(text: string, now = Date.now()): Promise<string | null> {
     const all = nudges(this.d.sql);
-    const n = [...all].reverse().find((x) => !x.reaction && now - x.at < REACT_MS);
+    // A reply says more than opening the notification did, so it's the reaction that counts.
+    const n = [...all]
+      .reverse()
+      .find((x) => (!x.reaction || x.reaction === "opened" || x.reaction === "dismissed") && now - x.at < REACT_MS);
     if (!n) return null;
     let reaction: Nudge["reaction"] = "replied";
     const decider = this.d.decider();

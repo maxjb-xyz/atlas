@@ -1409,6 +1409,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return pollPairing(this.#sql, poll);
   }
 
+  /** A push was opened or dismissed: if it was a nudge, that's its reaction (§10.3). */
+  async apiReaction(id: string, how: "opened" | "dismissed"): Promise<void> {
+    this.#senses.pushed(id, how);
+  }
+
   /** The node a device's token belongs to, for the Worker before it lets the socket in. */
   async apiNodeAuth(token: string): Promise<string | null> {
     return (await nodeByToken(this.#sql, token))?.id ?? null;

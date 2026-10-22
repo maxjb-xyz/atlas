@@ -21,6 +21,7 @@ interface OwnerApi {
   apiApprove(id: string): Promise<{ ok: boolean; text: string }>;
   apiFile(id: string): Promise<{ key: string; name: string; type: string } | null>;
   apiWorkspaceGate(): Promise<{ allow: string[]; inject: Record<string, string> }>;
+  apiReaction(id: string, how: "opened" | "dismissed"): Promise<void>;
 }
 
 interface SenseApi {
@@ -125,6 +126,16 @@ export default {
         if (typeof body.id !== "string" || body.id.length > 64) return json({ error: 'Send {"id": "..."}.' }, 400);
         const out = await agent.apiApprove(body.id);
         return json(out, out.ok ? 200 : 409);
+      }
+      // A notification opened or dismissed (§10.3): the service worker says so, with the session cookie.
+      if (path === "/api/reaction" && request.method === "POST") {
+        if (!sameOrigin(request)) return json({ error: "Wrong origin." }, 403);
+        const body = (await request.json().catch(() => ({}))) as { id?: unknown; how?: unknown };
+        if (typeof body.id !== "string" || body.id.length > 64 || (body.how !== "opened" && body.how !== "dismissed")) {
+          return json({ error: 'Send {"id": "...", "how": "opened" or "dismissed"}.' }, 400);
+        }
+        await agent.apiReaction(body.id, body.how);
+        return json({ ok: true });
       }
       // The workspace's terminal (§9.1): the owner's only, from the app's own page.
       if (path === "/api/workspace/terminal" && request.headers.get("upgrade")?.toLowerCase() === "websocket") {

@@ -11,7 +11,7 @@ import { createRecord } from "../src/store/records";
 import { readSettings } from "../src/store/settings";
 import { fetchWeather, whatMatters } from "../src/weather";
 import { polyline, samples } from "../src/maps";
-import { call, fakeCalendar, fakeEmbedder, say } from "./helpers";
+import { call, fakeCalendar, fakeEmbedder, say, SECRET } from "./helpers";
 import { brain, connect, inOwner, turn, type Socket } from "./owner";
 
 const GYM = { lat: 28.6024, lon: -81.2001 };
@@ -262,6 +262,61 @@ describe("the gym-to-store moment", () => {
     expect(b.requests[0]!.system).toContain("The owner just said stop to your nudges about errands near you");
     expect(b.requests[0]!.system).toContain("off for errands near you");
     expect((await inOwner((_a, sql) => readSettings(sql))).speaking.errands).toBe(false);
+  });
+});
+
+describe("on the move, and pushes", () => {
+  it("wakes Atlas at most every twenty minutes on the move, but always when leaving a place", async () => {
+    seams.decide = decider({ errand: 0.9 });
+    await inOwner(async (_a, sql) => {
+      // Earlier tests' looks are an hour old here, so the cool-down starts clear.
+      sql.exec(`UPDATE log SET at = at - 3600000 WHERE kind = 'awareness'`);
+      const { createItem } = await import("../src/store/agenda");
+      createItem(sql, {
+        kind: "errand",
+        title: "Stamps",
+        due_at: 8_640_000_000_000_000,
+        source: { via: "chat", detail: { place_kind: "post" } },
+      });
+    });
+    brain([say("Nothing on the way."), say("Still nothing.")]);
+    const from = await lastSeq();
+    await post(fixAt(north(HOME, 3_000), Date.now() - 120_000), auth);
+    await waitFor("the first look", async () => (await rowsSince(from, "awareness")).find((r) => r.step === "woke"));
+    await post(fixAt(north(HOME, 5_000), Date.now() - 60_000), auth);
+    const cooled = await waitFor("the cool-down", async () =>
+      (await rowsSince(from, "awareness")).find((r) => String(r.why).includes("every twenty minutes")),
+    );
+    expect(cooled).toMatchObject({ step: "rules", outcome: "quiet" });
+    // Leaving a place isn't cooled down.
+    await post(fixAt(GYM), auth);
+    await post(fixAt(north(GYM, 700)), auth);
+    await waitFor("a look on leaving", async () => (await rowsSince(from, "awareness")).filter((r) => r.step === "woke").length === 2);
+  }, 20_000);
+
+  it("counts a push opened or dismissed as a nudge's reaction, and a reply after it still counts", async () => {
+    seams.decide = decider({ errand: 0 });
+    await inOwner((_a, sql) =>
+      sql.exec(
+        `INSERT OR REPLACE INTO state (key, value, updated_at) VALUES ('nudges', ?, 0)`,
+        JSON.stringify([{ id: "lg_push", kind: "errands", at: Date.now() - 60_000, text: "There's a Publix on your way." }]),
+      ),
+    );
+    const res = await SELF.fetch("https://atlas.test/api/reaction", {
+      method: "POST",
+      headers: { authorization: `Bearer ${SECRET}`, origin: "https://atlas.test", "content-type": "application/json" },
+      body: JSON.stringify({ id: "lg_push", how: "dismissed" }),
+    });
+    expect(res.status).toBe(200);
+    const from = await lastSeq();
+    brain([say("Okay.")]);
+    await turn(s, "thanks, grabbed it");
+    const rows = await waitFor("the reaction", async () => {
+      const r = (await rowsSince(0, "awareness")).filter((x) => x.nudge === "lg_push");
+      return r.length >= 2 ? r : null;
+    });
+    expect(rows.map((r) => r.reaction)).toEqual(["dismissed", "thanks"]);
+    void from;
   });
 });
 
