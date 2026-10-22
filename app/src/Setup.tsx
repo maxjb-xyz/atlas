@@ -20,7 +20,13 @@ const STEPS: Array<[Step, string]> = [
 export function Setup({ atlas, onDone }: { atlas: Atlas; onDone: () => void }) {
   const view = atlas.state.view;
   const setup = view?.setup;
-  const [step, setStep] = useState<Step>("passkey");
+  // Start where there's something left: the first open step, else the first one skipped.
+  const [step, setStep] = useState<Step>(() => {
+    const done = setup?.done ?? [];
+    const skipped = setup?.skipped ?? [];
+    const open = STEPS.find(([id]) => !done.includes(id) && !skipped.includes(id));
+    return (open ?? STEPS.find(([id]) => !done.includes(id)) ?? STEPS[0]!)[0];
+  });
   const mark = (s: Step, state: "done" | "skipped") => atlas.send({ type: "atlas.setup.step", step: s, state });
   const next = (from: Step, state: "done" | "skipped") => {
     mark(from, state);
@@ -232,6 +238,11 @@ function BrainStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
 function ConnectStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
   const view = atlas.state.view!;
   const tested = atlas.state.tests.calendar;
+  const connected = Boolean(view.secrets.icloud);
+  // Connecting checks at once, so the owner sees what Atlas found (or why it couldn't) without pressing Test.
+  useEffect(() => {
+    if (connected) atlas.test("calendar", { type: "atlas.test", what: "calendar" });
+  }, [connected]);
   return (
     <>
       <h1 className="disp">Your calendar</h1>
@@ -252,13 +263,24 @@ function LookStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
   const look = atlas.state.look;
   const [areas, setAreas] = useState<Set<string>>(new Set());
   const [people, setPeople] = useState<Set<string>>(new Set());
+  /** New names for proposed areas; two given the same name become one area. */
+  const [names, setNames] = useState<Record<string, string>>({});
   const result = look && look !== "pending" ? look : null;
   useEffect(() => {
     if (result?.look) {
       setAreas(new Set(result.look.areas.map((a) => a.name)));
       setPeople(new Set(result.look.people.map((p) => p.name)));
+      setNames({});
     }
   }, [result?.look]);
+  // The look takes up to two minutes; if the answer was lost (a dropped connection), say so instead of waiting forever.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (look !== "pending") return;
+    const t = setTimeout(() => setSlow(true), 150_000);
+    return () => clearTimeout(t);
+  }, [look]);
   const toggle = (set: Set<string>, v: string, put: (s: Set<string>) => void) => {
     const n = new Set(set);
     if (n.has(v)) n.delete(v);
@@ -267,7 +289,7 @@ function LookStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
   };
   const keep = () => {
     for (const a of result?.look?.areas ?? [])
-      if (areas.has(a.name)) atlas.send({ type: "atlas.area.create", name: a.name, about: a.about });
+      if (areas.has(a.name)) atlas.send({ type: "atlas.area.create", name: (names[a.name] ?? a.name).trim() || a.name, about: a.about });
     const kept = (result?.look?.people ?? []).filter((p) => people.has(p.name));
     if (kept.length) atlas.send({ type: "atlas.setup.people", people: kept });
   };
@@ -289,6 +311,11 @@ function LookStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
         <div className="row">
           <span className="mono spin ac" aria-hidden />
           <span className="muted">Reading your calendar</span>
+          {slow && (
+            <button className="link" onClick={atlas.firstLook}>
+              This is taking too long. Try again
+            </button>
+          )}
         </div>
       )}
       {result?.error && (
@@ -313,18 +340,26 @@ function LookStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
           )}
           {result.look.areas.length > 0 && (
             <div className="field">
-              <span>Areas I can see. Keep the ones that fit.</span>
+              <span>Areas I can see. Keep the ones that fit; rename any, and give two the same name to make them one.</span>
               {result.look.areas.map((a) => (
-                <label key={a.name} className="row small">
+                <div key={a.name} className="row small" style={{ flexWrap: "nowrap" }}>
                   <input
                     type="checkbox"
-                    style={{ height: "auto" }}
+                    aria-label={`Keep ${a.name}`}
+                    style={{ height: "auto", flex: "none" }}
                     checked={areas.has(a.name)}
                     onChange={() => toggle(areas, a.name, setAreas)}
                   />
-                  <strong>{a.name}</strong>
+                  <input
+                    aria-label={`Name for ${a.name}`}
+                    maxLength={60}
+                    value={names[a.name] ?? a.name}
+                    disabled={!areas.has(a.name)}
+                    onChange={(e) => setNames({ ...names, [a.name]: e.target.value })}
+                    style={{ width: 160, flex: "none", fontWeight: 500 }}
+                  />
                   <span className="muted">{a.about}</span>
-                </label>
+                </div>
               ))}
             </div>
           )}

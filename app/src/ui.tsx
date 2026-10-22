@@ -1,7 +1,7 @@
 // The parts every page is built from (docs/ui/README.md §5): icons, the stage
 // frame and its sheet, pill tabs, area chips, and the ASCII diamond.
 
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { AreaView } from "../../core/src/protocol";
 
 // --- icons (the locked line set) ----------------------------------------------------------
@@ -137,6 +137,41 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
 
 export const areaColor = (a: Pick<AreaView, "color"> | undefined) => (a ? `var(--a${a.color % 8})` : "var(--tx3)");
 
+/** Closes a popover on a tap or click outside it, or on Escape; works the same by touch, mouse and keyboard. */
+export function useDismiss<T extends HTMLElement>(open: boolean, close: () => void) {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) close();
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", down);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("pointerdown", down);
+      document.removeEventListener("keydown", key);
+    };
+  }, [open]);
+  return ref;
+}
+
+/** Makes a row that opens on click reachable by keyboard too: focusable, and Enter or Space opens it. */
+export function pressable(fn: () => void) {
+  return {
+    role: "button",
+    tabIndex: 0,
+    onClick: fn,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+      e.preventDefault();
+      fn();
+    },
+  } as const;
+}
+
 export function AreaDot({ area, square }: { area?: AreaView; square?: boolean }) {
   return <span className={`dot ${square ? "sq" : ""}`} style={{ background: areaColor(area) }} />;
 }
@@ -144,6 +179,7 @@ export function AreaDot({ area, square }: { area?: AreaView; square?: boolean })
 /** The area chip on anything tagged; tapping it moves the item (§6.3). */
 export function AreaChip({ ids, areas, onMove }: { ids: string[]; areas: AreaView[]; onMove?: (ids: string[]) => void }) {
   const [open, setOpen] = useState(false);
+  const ref = useDismiss<HTMLSpanElement>(open, () => setOpen(false));
   const shown = ids.map((id) => areas.find((a) => a.id === id)).filter((a): a is AreaView => a != null);
   const label = shown.length ? shown.map((a) => a.name).join(", ") : "No area";
   if (!onMove) {
@@ -155,13 +191,13 @@ export function AreaChip({ ids, areas, onMove }: { ids: string[]; areas: AreaVie
     ) : null;
   }
   return (
-    <span style={{ position: "relative" }}>
-      <button className="chip" onClick={() => setOpen(!open)} title="Move to another area">
+    <span style={{ position: "relative" }} ref={ref}>
+      <button className="chip" onClick={() => setOpen(!open)} title="Move to another area" aria-expanded={open}>
         <AreaDot area={shown[0]} />
         {label}
       </button>
       {open && (
-        <span className="pop rise" style={{ left: 0, top: 22 }} onMouseLeave={() => setOpen(false)}>
+        <span className="pop rise" style={{ left: 0, top: 22 }}>
           <span className="head">
             <span className="lab">Move to</span>
           </span>

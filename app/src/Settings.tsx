@@ -49,6 +49,7 @@ export function SettingsPage({
   const section = (SECTIONS.flatMap((g) => g.items.map(([id]) => id)).includes(detail as Section) ? detail : "character") as Section;
   const [draft, setDraft] = useState<SettingsT | null>(view?.settings ?? null);
   const [dirty, setDirty] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
   useEffect(() => {
     if (view && !dirty) setDraft(view.settings);
   }, [view, dirty]);
@@ -58,9 +59,18 @@ export function SettingsPage({
     if (!draft) return;
     setDraft({ ...draft, ...p });
     setDirty(true);
+    setProblem(null);
   };
   const save = () => {
-    if (draft) atlas.send({ type: "atlas.settings.update", patch: draft });
+    if (!draft || !view) return;
+    const why = draftProblem(draft);
+    // Kept as it is, so nothing typed is lost; the banner says what to fix.
+    if (why) return setProblem(why);
+    // Only what changed, so a change made elsewhere meanwhile (a pin, a sign-in) isn't undone.
+    const changed = Object.fromEntries(
+      Object.entries(draft).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(view.settings[k as keyof SettingsT])),
+    );
+    if (Object.keys(changed).length) atlas.send({ type: "atlas.settings.update", patch: changed });
     setDirty(false);
   };
 
@@ -74,8 +84,14 @@ export function SettingsPage({
         <div className="dock slim">
           {dirty && (
             <div className="banner rise">
-              <span className="grow">You have changes that aren't saved.</span>
-              <button className="btn" onClick={() => setDirty(false)}>
+              <span className={`grow ${problem ? "err" : ""}`}>{problem ?? "You have changes that aren't saved."}</span>
+              <button
+                className="btn"
+                onClick={() => {
+                  setDirty(false);
+                  setProblem(null);
+                }}
+              >
                 Discard
               </button>
               <button className="btn primary" onClick={save}>
@@ -162,6 +178,13 @@ function Character({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settings
   const setC = (p: Partial<SettingsT["character"]>) => edit({ character: { ...c, ...p } });
   const sample = atlas.state.tests.sample;
   const [asked, setAsked] = useState(false);
+  // Once tried, the sample follows the preset and scales as they move.
+  const shape = JSON.stringify(c);
+  useEffect(() => {
+    if (!asked) return;
+    const t = setTimeout(() => atlas.test("sample", { type: "atlas.test", what: "sample", character: c }), 700);
+    return () => clearTimeout(t);
+  }, [shape]);
   useEffect(() => {
     if (view.secrets.elevenlabs_api_key) atlas.send({ type: "atlas.voices.list" });
   }, [view.secrets.elevenlabs_api_key]);
@@ -180,12 +203,17 @@ function Character({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settings
       />
       <Row label="Name">
         <div className="row">
-          <input value={draft.assistant_name} onChange={(e) => edit({ assistant_name: e.target.value })} style={{ maxWidth: 220 }} />
+          <input
+            maxLength={40}
+            value={draft.assistant_name}
+            onChange={(e) => edit({ assistant_name: e.target.value })}
+            style={{ maxWidth: 220 }}
+          />
           <span className="muted small">It answers to this name, out loud too.</span>
         </div>
         <label className="field">
           <span>What it calls you</span>
-          <input value={draft.owner_name} onChange={(e) => edit({ owner_name: e.target.value })} style={{ maxWidth: 220 }} />
+          <input maxLength={80} value={draft.owner_name} onChange={(e) => edit({ owner_name: e.target.value })} style={{ maxWidth: 220 }} />
         </label>
       </Row>
       <Row label="Preset">
@@ -225,6 +253,7 @@ function Character({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settings
           <span>Anything else, in your words</span>
           <textarea
             rows={2}
+            maxLength={2_000}
             value={c.notes}
             placeholder="Call me Max. Swear if you like. Don't ask me how I'm feeling."
             onChange={(e) => setC({ notes: e.target.value })}
@@ -242,7 +271,7 @@ function Character({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settings
             ) : sample ? (
               sample.message
             ) : (
-              <span className="faint">Press Hear it to try this character before saving.</span>
+              <span className="faint">Press Try it to see how this character answers, before saving.</span>
             )}
           </span>
         </div>
@@ -254,7 +283,7 @@ function Character({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settings
               atlas.test("sample", { type: "atlas.test", what: "sample", character: c });
             }}
           >
-            Hear it
+            Try it
           </button>
           <TestRow
             label="Check character"
@@ -464,6 +493,18 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
       </Row>
     </>
   );
+}
+
+/** What would make the server refuse a draft, in plain words, or null. Mirrors the limits in core's settings. */
+function draftProblem(d: SettingsT): string | null {
+  if (!d.assistant_name.trim()) return "Give Atlas a name before saving.";
+  if (d.assistant_name.length > 40) return "Atlas's name can be at most 40 characters.";
+  if (d.owner_name.length > 80) return "Your name can be at most 80 characters.";
+  if (d.character.notes.length > 2_000) return "The notes can be at most 2,000 characters.";
+  for (const role of ["main", "voice"] as const) {
+    if (d.brains[role].some((b) => !b.model.trim())) return "Every brain in a chain needs a model name.";
+  }
+  return null;
 }
 
 // --- Devices ----------------------------------------------------------------------------------
@@ -832,7 +873,7 @@ export function Chain({
       )}
       {chain.map((b, i) => {
         const h = view.health[`${b.provider}:${b.model}`];
-        const key = `brain:${role}:${i}`;
+        const key = `brain:${role}:${b.provider}:${b.model}`;
         return (
           <div key={i} style={{ marginBottom: 8 }}>
             <div className="chain-row">
@@ -876,7 +917,7 @@ export function Chain({
         );
       })}
       {chain.length < 5 && (
-        <button className="link" onClick={() => onChange([...chain, { provider: "workers-ai", model: "" }])}>
+        <button className="link" onClick={() => onChange([...chain, { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" }])}>
           Add a fallback
         </button>
       )}

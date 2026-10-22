@@ -134,8 +134,15 @@ function reduce(s: State, a: Action): State {
       // What a run in progress has said so far comes back with the snapshot, so a refresh mid-answer picks up there.
       for (const r of m.running)
         live[r.run_id] = { text: r.text ?? s.live[r.run_id]?.text ?? "", status: r.status ?? null, surface: r.surface };
+      // A message Atlas never took (no run) was lost with the old socket: say so, with its words, so it can be sent again.
+      const lost = s.pending.filter((p) => !p.run_id);
+      const pending = s.pending.filter((p) => p.run_id && !m.thread.some((r) => r.kind === "message.in" && r.run_id === p.run_id));
       return {
         ...s,
+        pending,
+        ...(lost.length
+          ? { error: `This didn't reach Atlas before the connection dropped: "${lost.map((p) => p.text).join(" / ")}". Send it again.` }
+          : {}),
         rows: mergeRows([], m.thread),
         agenda: m.agenda,
         view: m.view,
@@ -148,14 +155,20 @@ function reduce(s: State, a: Action): State {
       };
     }
     case "atlas.rows": {
-      let { live, pending } = s;
+      let { live, pending, recordsVersion } = s;
+      // A fact saved, corrected or forgotten from any composer, or undone from a chip: Library reads again.
+      if (
+        m.rows.some((r) => r.kind === "record.change" || (r.kind === "tool.result" && ["remember", "forget"].includes(String(r.body.name))))
+      ) {
+        recordsVersion += 1;
+      }
       for (const r of m.rows) {
         if (!r.run_id) continue;
         if (r.kind === "message.out") live = without(live, r.run_id);
         if (r.kind === "message.in") pending = pending.filter((p) => p.run_id !== r.run_id);
       }
       const noOlder = m.older && (m.has_more === false || m.rows.length === 0) ? true : s.noOlder;
-      return { ...s, rows: mergeRows(s.rows, m.rows), live, pending, noOlder };
+      return { ...s, rows: mergeRows(s.rows, m.rows), live, pending, noOlder, recordsVersion };
     }
     case "atlas.delta": {
       const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app" };
@@ -254,6 +267,10 @@ export function useAtlas() {
       }
       if (m && typeof m === "object" && typeof m.type === "string" && m.type.startsWith("atlas.")) {
         dispatch({ type: "server", msg: m });
+        // A job changed or a run failed: what's waiting in the Inbox may have too.
+        if (m.type === "atlas.jobs" || (m.type === "atlas.run" && m.state === "failed")) {
+          c.sendJSON({ type: "atlas.inbox" } satisfies ClientMessage);
+        }
       }
     });
     c.addEventListener("statuschange", (status) => {

@@ -799,6 +799,12 @@ button.chip:hover {
   gap: 8px;
   padding: 7px 8px 7px 14px;
 }
+/* A long hint is cut with an ellipsis instead of wrapping into a clipped second line. */
+.composer textarea::placeholder {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .composer textarea {
   flex: 1;
   border: 0;
@@ -1329,7 +1335,8 @@ button.chip:hover {
 .center {
   height: 100%;
   display: flex;
-  align-items: center;
+  /* "safe" keeps a tall card's top reachable by scrolling instead of cut off above the screen. */
+  align-items: safe center;
   justify-content: center;
   padding: 16px;
   background-color: var(--bg);
@@ -1404,6 +1411,14 @@ button.chip:hover {
   .side {
     display: none;
   }
+  /* The model field gets its own line, so it's wide enough to read. */
+  .chain-row {
+    grid-template-columns: 12px 1fr auto;
+  }
+  .chain-row > input {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
   .tabbar {
     display: flex;
     position: fixed;
@@ -1416,8 +1431,13 @@ button.chip:hover {
     border-top: 1px solid var(--sep);
     z-index: 20;
   }
-  .tabbar a {
+  .tabbar > a,
+  .tabbar > .tab {
     flex: 1;
+    background: none;
+    border: 0;
+    font: inherit;
+    cursor: pointer;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1428,7 +1448,8 @@ button.chip:hover {
     text-decoration: none;
     position: relative;
   }
-  .tabbar a.on {
+  .tabbar > a.on,
+  .tabbar > .tab.on {
     color: var(--tx);
   }
   .tabbar .badge {
@@ -1503,7 +1524,25 @@ button.chip:hover {
     border-right: 0;
     border-bottom: 1px solid var(--sep);
     flex-direction: row;
+    flex-wrap: nowrap;
     overflow-x: auto;
+    padding: 10px 8px;
+  }
+  .setup {
+    grid-template-rows: auto 1fr;
+  }
+  .setup-steps {
+    align-items: center;
+  }
+  .setup-steps > .row {
+    display: none;
+  }
+  .setup-steps button {
+    flex: none;
+    white-space: nowrap;
+  }
+  .setup-steps > .grow {
+    display: none;
   }
   .form-row {
     grid-template-columns: 1fr;

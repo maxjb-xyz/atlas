@@ -130,13 +130,10 @@ function SignIn({ first, onDone }: { first: boolean; onDone: () => void }) {
 function Signed() {
   const atlas = useAtlas();
   const [setupOpen, setSetupOpen] = useState<boolean | null>(null);
-  const setup = atlas.state.view?.setup;
-  // A fresh Atlas opens on setup until every step is done or skipped.
-  useEffect(() => {
-    if (setup && setupOpen === null) setSetupOpen(!setup.finished);
-  }, [setup?.finished]);
   if (!atlas.state.view) return <div className="center muted">Connecting to Atlas.</div>;
-  if (setupOpen) return <Setup atlas={atlas} onDone={() => setSetupOpen(false)} />;
+  // A fresh Atlas opens on setup until every step is done or skipped; decided before the first paint, so the shell doesn't flash.
+  const open = setupOpen ?? !atlas.state.view.setup.finished;
+  if (open) return <Setup atlas={atlas} onDone={() => setSetupOpen(false)} />;
   return <ShellApp atlas={atlas} onSetup={() => setSetupOpen(true)} />;
 }
 

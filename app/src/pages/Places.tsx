@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { CalendarEventView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Composer, compose } from "../Shell";
-import { addDays, AreaChip, clock, dayName, Empty, Sheet, shortDay, Stage, startOfDay } from "../ui";
+import { addDays, AreaChip, clock, dayName, Empty, pressable, Sheet, shortDay, Stage, startOfDay } from "../ui";
 import { eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
 // --- Inbox: everything waiting on you ------------------------------------------------------
@@ -15,15 +15,16 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
   const [open, setOpen] = useState<string | null>(null);
   useEffect(() => {
     atlas.send({ type: "atlas.inbox" });
-  }, [atlas.voice.connected, s.jobs.length]);
-  // Oldest first, one open at a time (docs/ui §3).
-  const items = [...(s.inbox ?? [])].reverse().filter((i) => tab === "all" || i.kind === tab);
+  }, [atlas.voice.connected]);
+  // Oldest first, one open at a time (docs/ui §3). The scope switcher narrows it to one area.
+  const items = [...(s.inbox ?? [])].reverse().filter((i) => (tab === "all" || i.kind === tab) && (!s.scope || i.areas.includes(s.scope)));
   const current = items.find((i) => i.id === open) ?? items[0];
 
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      if (t?.closest("input, textarea, select, [contenteditable]")) return;
+      // Keys on a focused control are that control's, and shortcuts with a modifier are someone else's.
+      if (e.metaKey || e.ctrlKey || e.altKey || t?.closest("input, textarea, select, button, a, [role=button], [contenteditable]")) return;
       const i = items.findIndex((x) => x.id === current?.id);
       if (e.key === "j") setOpen(items[Math.min(items.length - 1, i + 1)]?.id ?? null);
       if (e.key === "k") setOpen(items[Math.max(0, i - 1)]?.id ?? null);
@@ -69,7 +70,7 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                   key={i.id}
                   className="r"
                   style={{ flexDirection: "column", alignItems: "stretch", gap: 8, cursor: "pointer" }}
-                  onClick={() => setOpen(i.id)}
+                  {...pressable(() => setOpen(i.id))}
                 >
                   <div className="row" style={{ flexWrap: "nowrap" }}>
                     <span className={`tag ${i.kind === "failed" ? "ac" : ""}`}>

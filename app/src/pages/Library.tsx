@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import type { AreaView, RecordView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Composer } from "../Shell";
-import { AreaChip, AreaDot, areaColor, Empty, Icon, Sheet, shortDay, Stage } from "../ui";
+import { AreaChip, areaColor, AreaDot, Empty, Icon, pressable, Sheet, shortDay, Stage } from "../ui";
 
 type LibTab = "overview" | "people" | "places" | "memory" | "areas" | "files";
 
@@ -217,6 +217,8 @@ function RecordRow({ atlas, r }: { atlas: Atlas; r: RecordView }) {
   const [editing, setEditing] = useState(false);
   const [fact, setFact] = useState(r.fact);
   const s = atlas.state;
+  // A person, place or organization has a name and a fact; Correct edits the fact, not the name.
+  const named = ["person", "place", "organization"].includes(r.type);
   return (
     <div className="r" style={{ alignItems: "flex-start", flexWrap: "wrap" }}>
       <div className="grow" style={{ minWidth: 220 }}>
@@ -229,7 +231,13 @@ function RecordRow({ atlas, r }: { atlas: Atlas; r: RecordView }) {
               setEditing(false);
             }}
           >
-            <input autoFocus value={fact} onChange={(e) => setFact(e.target.value)} />
+            <input
+              autoFocus
+              maxLength={600}
+              value={fact}
+              placeholder={named ? `What Atlas should know about ${r.name}` : undefined}
+              onChange={(e) => setFact(e.target.value)}
+            />
             <button className="btn primary sm">Save</button>
             <button type="button" className="btn sm" onClick={() => setEditing(false)}>
               Cancel
@@ -237,7 +245,7 @@ function RecordRow({ atlas, r }: { atlas: Atlas; r: RecordView }) {
           </form>
         ) : (
           <>
-            {["person", "place", "organization"].includes(r.type) ? (
+            {named ? (
               <p>
                 <strong style={{ fontWeight: 500 }}>{r.name}</strong>
                 {r.fact && <span className="muted"> · {r.fact}</span>}
@@ -267,7 +275,7 @@ function RecordRow({ atlas, r }: { atlas: Atlas; r: RecordView }) {
           <button
             className="link"
             onClick={() => {
-              setFact(r.fact || r.name);
+              setFact(named ? r.fact : r.fact || r.name);
               setEditing(true);
             }}
           >
@@ -396,12 +404,21 @@ function Areas({ atlas }: { atlas: Atlas }) {
 
 function AreaRow({ atlas, area, others }: { atlas: Atlas; area: AreaView; others: AreaView[] }) {
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState({ name: area.name, about: area.about, tone: area.settings.tone });
-  useEffect(() => setDraft({ name: area.name, about: area.about, tone: area.settings.tone }), [area]);
+  const saved = { name: area.name, about: area.about, tone: area.settings.tone };
+  const [draft, setDraft] = useState(saved);
+  // Typing marks the draft as the owner's; until then it follows the saved area as it changes.
+  const [typing, setTyping] = useState(false);
+  useEffect(() => {
+    if (!typing) setDraft(saved);
+  }, [area.name, area.about, area.settings.tone]);
+  const change = (p: Partial<typeof draft>) => {
+    setDraft({ ...draft, ...p });
+    setTyping(true);
+  };
   const dirty = draft.name !== area.name || draft.about !== area.about || draft.tone !== area.settings.tone;
   return (
     <div className="r" style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
-      <div className="row" style={{ cursor: "pointer", flexWrap: "nowrap" }} onClick={() => setOpen(!open)}>
+      <div className="row" style={{ cursor: "pointer", flexWrap: "nowrap" }} {...pressable(() => setOpen(!open))} aria-expanded={open}>
         <AreaDot area={area} square />
         <span style={{ fontWeight: 500 }}>{area.name}</span>
         <span className="muted small grow" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -417,27 +434,40 @@ function AreaRow({ atlas, area, others }: { atlas: Atlas; area: AreaView; others
         <div className="rise" style={{ display: "grid", gap: 10, paddingLeft: 18 }}>
           <label className="field">
             <span>Name</span>
-            <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+            <input maxLength={60} value={draft.name} onChange={(e) => change({ name: e.target.value })} />
           </label>
           <label className="field">
             <span>What it is, and your role in it</span>
             <input
+              maxLength={500}
               value={draft.about}
-              onChange={(e) => setDraft({ ...draft, about: e.target.value })}
+              onChange={(e) => change({ about: e.target.value })}
               placeholder="My video studio; I run it with Jordan"
             />
           </label>
           <label className="field">
             <span>Tone here</span>
-            <input value={draft.tone} onChange={(e) => setDraft({ ...draft, tone: e.target.value })} placeholder="Formal with clients" />
+            <input
+              maxLength={300}
+              value={draft.tone}
+              onChange={(e) => change({ tone: e.target.value })}
+              placeholder="Formal with clients"
+            />
           </label>
           <div className="row">
             <button
               className="btn primary sm"
               disabled={!dirty || !draft.name.trim()}
-              onClick={() =>
-                atlas.send({ type: "atlas.area.update", id: area.id, name: draft.name, about: draft.about, settings: { tone: draft.tone } })
-              }
+              onClick={() => {
+                atlas.send({
+                  type: "atlas.area.update",
+                  id: area.id,
+                  name: draft.name,
+                  about: draft.about,
+                  settings: { tone: draft.tone },
+                });
+                setTyping(false);
+              }}
             >
               Save
             </button>

@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import type { HistoryFilter, LogRow } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Composer } from "../Shell";
-import { AreaChip, clock, dayName, Diamond, Empty, Sheet, Stage, startOfDay } from "../ui";
+import { AreaChip, clock, dayName, Diamond, Empty, pressable, Sheet, Stage, startOfDay } from "../ui";
 
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : JSON.stringify(v));
 
@@ -192,7 +192,8 @@ function Entry({ atlas, row, open, onToggle }: { atlas: Atlas; row: LogRow; open
   const s = atlas.state;
   const d = describe(row);
   const receipt = row.body.receipt as { text?: string; undo?: unknown } | undefined;
-  const undone = s.rows.some((r) => r.body.undo_of === row.id);
+  // The undo may be older than the thread holds; History's own rows have it too.
+  const undone = s.rows.some((r) => r.body.undo_of === row.id) || Boolean(s.history?.rows.some((r) => r.body.undo_of === row.id));
   useEffect(() => {
     if (open && row.run_id) atlas.send({ type: "atlas.run.detail", run_id: row.run_id });
   }, [open]);
@@ -214,7 +215,7 @@ function Entry({ atlas, row, open, onToggle }: { atlas: Atlas; row: LogRow; open
         paddingLeft: open ? 10 : 0,
       }}
     >
-      <div className="row" style={{ flexWrap: "nowrap", cursor: "pointer" }} onClick={onToggle}>
+      <div className="row" style={{ flexWrap: "nowrap", cursor: "pointer" }} {...pressable(onToggle)} aria-expanded={open}>
         <span className="mono faint small" style={{ width: 64, flex: "none" }}>
           {clock(row.at)}
         </span>

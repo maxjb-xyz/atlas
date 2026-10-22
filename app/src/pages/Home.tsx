@@ -88,7 +88,9 @@ function greeting(d: Date): string {
 function Now({ atlas }: { atlas: Atlas }) {
   const s = atlas.state;
   const today = startOfDay(new Date());
-  const cal = useCalendar(atlas, "now", today, addDays(today, 7));
+  // From Monday, so the week's load counts the days already gone, through a week from today for Next.
+  const monday = weekStart(today);
+  const cal = useCalendar(atlas, "now", monday, addDays(today, 8));
   const events = (cal?.events ?? []).filter((e) => eventEnd(e).getTime() > Date.now());
   const next = events.find((e) => !e.all_day) ?? events[0];
   const reminder = s.agenda.find((a) => a.kind === "reminder" && a.state === "scheduled");
@@ -96,17 +98,20 @@ function Now({ atlas }: { atlas: Atlas }) {
   const inbox = s.inbox ?? [];
   const running = s.jobs.filter((j) => j.state === "running");
   const load = Array.from({ length: 7 }, (_, i) => {
-    const d = addDays(weekStart(new Date()), i);
+    const d = addDays(monday, i);
     const e = addDays(d, 1);
     return (cal?.events ?? []).filter((x) => eventStart(x) < e && eventEnd(x) > d).length;
   });
   const busiest = load.indexOf(Math.max(...load));
   const max = Math.max(1, ...load);
-  const line = next
-    ? `Nothing on the calendar until ${dayName(eventStart(next))}${next.all_day ? "" : ` at ${clock(eventStart(next))}`}.`
-    : s.view?.secrets.icloud
-      ? "Nothing on the calendar this week."
-      : "Connect a calendar in Settings and I'll keep an eye on your week.";
+  const underway = next && !next.all_day && eventStart(next).getTime() <= Date.now();
+  const line = underway
+    ? `Now: ${next.title}, until ${clock(eventEnd(next))}.`
+    : next
+      ? `Nothing on the calendar until ${dayName(eventStart(next))}${next.all_day ? "" : ` at ${clock(eventStart(next))}`}.`
+      : s.view?.secrets.icloud
+        ? "Nothing on the calendar this week."
+        : "Connect a calendar in Settings and I'll keep an eye on your week.";
 
   return (
     <Sheet>

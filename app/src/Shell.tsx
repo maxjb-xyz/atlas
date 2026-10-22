@@ -6,7 +6,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { LogRow, RecordView } from "../../core/src/protocol";
 import type { Atlas } from "./connection";
 import { Thread } from "./Thread";
-import { AreaChip, AreaDot, Diamond, Icon, type Place, shortDay } from "./ui";
+import { AreaChip, AreaDot, Diamond, Icon, type Place, shortDay, useDismiss } from "./ui";
 
 const NAV: Array<{ id: Place; label: string; icon: "home" | "inbox" | "agenda" | "automations" | "library" | "history"; gap?: boolean }> = [
   { id: "home", label: "Home", icon: "home" },
@@ -124,6 +124,7 @@ export function Sidebar({ atlas, place, go }: { atlas: Atlas; place: Place; go: 
 /** The phone's tab bar: Home, Inbox, Agenda, Library, and the rest under More (§21.10). */
 export function TabBar({ atlas, place }: { atlas: Atlas; place: Place }) {
   const [more, setMore] = useState(false);
+  const moreRef = useDismiss<HTMLElement>(more, () => setMore(false));
   const inbox = atlas.state.inbox?.length ?? 0;
   const tabs: Array<{ id: Place; label: string; icon: "home" | "inbox" | "agenda" | "library" }> = [
     { id: "home", label: "Home", icon: "home" },
@@ -132,7 +133,7 @@ export function TabBar({ atlas, place }: { atlas: Atlas; place: Place }) {
     { id: "library", label: "Library", icon: "library" },
   ];
   return (
-    <nav className="tabbar" aria-label="Places">
+    <nav className="tabbar" aria-label="Places" ref={moreRef}>
       {tabs.map((t) => (
         <a key={t.id} href={`#/${t.id}`} className={place === t.id ? "on" : ""}>
           <Icon name={t.icon} size={18} />
@@ -140,30 +141,28 @@ export function TabBar({ atlas, place }: { atlas: Atlas; place: Place }) {
           {t.id === "inbox" && inbox > 0 && <span className="badge">{inbox}</span>}
         </a>
       ))}
-      <a
-        href="#more"
-        className={["automations", "history", "settings"].includes(place) ? "on" : ""}
-        onClick={(e) => {
-          e.preventDefault();
-          setMore(!more);
-        }}
+      <button
+        type="button"
+        className={`tab ${["automations", "history", "settings"].includes(place) ? "on" : ""}`}
+        aria-expanded={more}
+        onClick={() => setMore(!more)}
       >
         <Icon name="more" size={18} />
         More
-        {more && (
-          <span className="pop rise" style={{ bottom: 60, top: "auto", right: 6, position: "fixed" }}>
-            <a className="item" href="#/automations" onClick={() => setMore(false)}>
-              Automations
-            </a>
-            <a className="item" href="#/history" onClick={() => setMore(false)}>
-              History
-            </a>
-            <a className="item" href="#/settings" onClick={() => setMore(false)}>
-              Atlas settings
-            </a>
-          </span>
-        )}
-      </a>
+      </button>
+      {more && (
+        <div className="pop rise" role="menu" style={{ bottom: 60, top: "auto", right: 6, position: "fixed" }}>
+          <a className="item" role="menuitem" href="#/automations" onClick={() => setMore(false)}>
+            Automations
+          </a>
+          <a className="item" role="menuitem" href="#/history" onClick={() => setMore(false)}>
+            History
+          </a>
+          <a className="item" role="menuitem" href="#/settings" onClick={() => setMore(false)}>
+            Atlas settings
+          </a>
+        </div>
+      )}
     </nav>
   );
 }
@@ -175,10 +174,12 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
   const scoped = s.areas.find((a) => a.id === s.scope);
   const live = s.areas.filter((a) => a.state !== "archived");
   const running = s.jobs.filter((j) => j.state === "running");
+  const scopeRef = useDismiss<HTMLDivElement>(scopeOpen, () => setScopeOpen(false));
+  const jobsRef = useDismiss<HTMLDivElement>(jobsOpen, () => setJobsOpen(false));
 
   return (
     <header className="toolbar">
-      <div style={{ position: "relative" }}>
+      <div style={{ position: "relative" }} ref={scopeRef}>
         <button className={`tb ${scopeOpen ? "on" : ""}`} onClick={() => setScopeOpen(!scopeOpen)} aria-expanded={scopeOpen}>
           <span className="dots">
             {scoped ? (
@@ -193,7 +194,7 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
           <Icon name="down" size={12} style={{ color: "var(--tx3)" }} />
         </button>
         {scopeOpen && (
-          <div className="pop rise" style={{ left: 0 }} onMouseLeave={() => setScopeOpen(false)}>
+          <div className="pop rise" style={{ left: 0 }}>
             <div className="head">
               <span className="lab">Focus on</span>
             </div>
@@ -235,13 +236,13 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
       <span className="conn lab">{atlas.voice.connected ? "" : "Reconnecting"}</span>
       <span className="grow" />
       {s.jobs.length > 0 && (
-        <div style={{ position: "relative" }}>
+        <div style={{ position: "relative" }} ref={jobsRef}>
           <button className={`tb ${jobsOpen ? "on" : ""}`} onClick={() => setJobsOpen(!jobsOpen)} aria-expanded={jobsOpen}>
             {running.length > 0 && <span className="mono spin" aria-hidden style={{ color: "var(--ac)", width: 9 }} />}
             <span>{running.length > 0 ? `${running.length} ${running.length === 1 ? "job" : "jobs"} running` : "Jobs"}</span>
           </button>
           {jobsOpen && (
-            <div className="pop rise" style={{ right: 0, width: 340 }} onMouseLeave={() => setJobsOpen(false)}>
+            <div className="pop rise" style={{ right: 0, width: 340 }}>
               <div className="head">
                 <span className="lab">{running.length ? "Running now" : "Lately"}</span>
               </div>
@@ -274,7 +275,7 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
         {atlas.inCall ? "End" : "Talk"}
         <span className="kbd">Space</span>
       </button>
-      <button className="tb search" onClick={onSearch}>
+      <button className="tb search" onClick={onSearch} aria-label="Search">
         <Icon name="search" size={14} />
         <span className="grow label">Search</span>
         <span className="kbd">⌘K</span>
@@ -302,7 +303,8 @@ export function Composer({ atlas, placeholder, chip = true }: { atlas: Atlas; pl
 
   function submit() {
     const t = text.trim();
-    if (!t) return;
+    // While the socket is down the words stay here, rather than going nowhere.
+    if (!t || !atlas.voice.connected) return;
     atlas.say(t);
     setText("");
     ref.current?.focus();
@@ -327,7 +329,7 @@ export function Composer({ atlas, placeholder, chip = true }: { atlas: Atlas; pl
         ref={ref}
         rows={1}
         value={text}
-        placeholder={placeholder}
+        placeholder={atlas.voice.connected ? placeholder : "Reconnecting to Atlas. What you type waits here."}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
