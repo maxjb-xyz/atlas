@@ -8,6 +8,7 @@ import { type StageView, StageView as StageViewSchema, stageTitle } from "../sta
 import { findAutomation } from "../automations";
 import { findPage, listPages, pageVersion } from "../pages";
 import { findFile, listFiles } from "../files";
+import { getApp } from "../mcp";
 import { getArea, listAreas } from "../store/areas";
 import { findRecords, getRecord, recordsNamed } from "../store/records";
 import { defineTool, fail, type ToolResult } from "./types";
@@ -99,6 +100,10 @@ export function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Re
     case "code":
     case "app":
       return { view, names: {} };
+    case "mcp_app":
+      return getApp(sql, view.call)
+        ? { view, names: {} }
+        : { error: "That page isn't kept any more. Call its tool again with mcp_call to show it." };
     case "chart":
     case "compare": {
       const error = view.kind === "chart" ? chartProblem(view) : compareProblem(view);

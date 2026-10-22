@@ -267,6 +267,8 @@ describe("automations", () => {
       "agenda_list",
       "calendar_read",
       "file_read",
+      "mcp_call",
+      "mcp_tools",
       "page_read",
       "recall",
       "skill_read",

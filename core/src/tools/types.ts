@@ -15,6 +15,8 @@ import type { Receipt } from "../store/log";
 import type { Settings } from "../store/settings";
 import type { LookOut, Page, SearchResult } from "../web";
 import type { BrowserAction, BrowserPage, PageElement } from "../browser";
+import type { McpServer } from "../mcp";
+import type { StageView } from "../stage";
 
 /** What kind of action a tool takes decides when Atlas asks first (§12.1). */
 export type { ToolKind } from "../approvals";
@@ -55,6 +57,8 @@ export interface ToolContext {
   workspace: WorkspaceApi | null;
   /** The browser (§9.1), for runs that may drive it; null elsewhere. */
   browser: BrowserApi | null;
+  /** Connected MCP servers (§9.2); absent or null where they can't be used. */
+  mcp?: McpApi | null;
   /** Automations, for owner runs; null elsewhere. */
   automations: AutomationsApi | null;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
@@ -93,6 +97,18 @@ export interface BrowserApi {
   takeOver(why: string): Promise<void>;
   close(): Promise<void>;
   where(): { open: boolean; url: string; title: string };
+}
+
+/** Connected MCP servers, as tools reach them (§9.2). */
+export interface McpApi {
+  servers(): McpServer[];
+  /** Calls a tool that only reads, now, through the outbox; a tool with a page puts it on the stage. */
+  call(
+    server: string,
+    tool: string,
+    args: Record<string, unknown>,
+    o: { run_id: string },
+  ): Promise<{ ok: boolean; text: string; view?: StageView }>;
 }
 
 /** What a command in the workspace did. */

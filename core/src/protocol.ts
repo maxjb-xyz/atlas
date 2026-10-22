@@ -67,7 +67,7 @@ export interface CalendarEventView {
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete" | "browser" | "vault" | "site";
+  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -180,7 +180,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
     yes: z.boolean(),
     hold: z.boolean().optional(),
     edits: z
-      .array(z.object({ index: z.number().int().min(0).max(20), message: z.string().max(1_000) }))
+      .array(z.object({ index: z.number().int().min(0).max(20), message: z.string().max(4_000) }))
       .max(20)
       .optional(),
   }),
@@ -318,6 +318,28 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** The workspace (§9.1): keep a file from it in Library, or take back a site it may reach. */
   z.object({ type: z.literal("atlas.workspace.keep"), path: z.string().min(1).max(500) }),
   z.object({ type: z.literal("atlas.workspace.site.remove"), site: z.string().min(1).max(200) }),
+  /**
+   * Connected MCP servers (§9.2): the list, adding one by its address (with a
+   * token for servers that take one instead of a sign-in), and removing one.
+   */
+  z.object({ type: z.literal("atlas.mcp") }),
+  z.object({
+    type: z.literal("atlas.mcp.add"),
+    name: z.string().trim().min(1).max(60),
+    url: z.string().url().max(500),
+    token: z.string().max(4_000).optional(),
+  }),
+  z.object({ type: z.literal("atlas.mcp.remove"), id: z.string().max(64) }),
+  /** An MCP App on the stage (§21.6): its page, and what the page asks of its server. `req` is echoed back. */
+  z.object({ type: z.literal("atlas.mcp.app"), req: z.string().max(64), call: z.string().max(64) }),
+  z.object({
+    type: z.literal("atlas.mcp.app.call"),
+    req: z.string().max(64),
+    call: z.string().max(64),
+    name: z.string().min(1).max(200),
+    arguments: z.record(z.string(), z.unknown()).optional(),
+  }),
+  z.object({ type: z.literal("atlas.mcp.app.read"), req: z.string().max(64), call: z.string().max(64), uri: z.string().min(1).max(2_000) }),
   /** Library's files (§21.7), and deleting one. */
   z.object({ type: z.literal("atlas.files") }),
   z.object({ type: z.literal("atlas.file.delete"), id: z.string().max(64) }),
@@ -375,6 +397,30 @@ export interface SkillView {
   versions: Array<{ n: number; at: number; by: "owner" | "atlas"; note: string }>;
   /** The whole thing as a SKILL.md, to edit or take elsewhere. */
   md: string;
+}
+
+/** A connected MCP server as Settings shows it (§9.2): never its token. */
+export interface McpServerView {
+  id: string;
+  name: string;
+  url: string;
+  state: string;
+  error: string | null;
+  /** Where the owner signs in, while the server waits for it. */
+  auth_url: string | null;
+  tools: Array<{ name: string; title: string | null; description: string; reads: boolean; page: boolean }>;
+}
+
+/** An MCP App's page and the call it shows, for the frame on the stage (§21.6). */
+export interface McpAppPage {
+  server: string;
+  html: string;
+  /** The Content-Security-Policy its page runs under: nothing outside it unless its server declared the domain. */
+  csp: string;
+  border: boolean;
+  tool: Record<string, unknown>;
+  input: Record<string, unknown>;
+  result: Record<string, unknown>;
 }
 
 /** Settings as the app sees them: values, plus whether each secret is set (never the secret). */
@@ -464,6 +510,10 @@ export type ServerMessage =
   | { type: "atlas.pages"; pages: PageSummary[] }
   | { type: "atlas.files"; files: import("./stage").FileRow[] }
   | { type: "atlas.skills"; skills: SkillView[] }
+  | { type: "atlas.mcp.servers"; servers: McpServerView[] }
+  | { type: "atlas.mcp.app.result"; req: string; page?: McpAppPage; error?: string }
+  /** What the page's own tool call or read answered: MCP's result as-is, or why it didn't happen. */
+  | { type: "atlas.mcp.app.answer"; req: string; result?: Record<string, unknown>; error?: string }
   /** What a command in the workspace prints, as it prints it (a progress hint; the tool's result is the truth). */
   | { type: "atlas.workspace.out"; run_id: string; text: string }
   /** Keep worked: the new page, so the view can say where it went. */

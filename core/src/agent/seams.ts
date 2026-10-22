@@ -25,6 +25,8 @@ export const seams: {
   browser: import("../browser").BrowserDriver | null | undefined;
   /** The workspace: undefined uses its Durable Object, null means none. */
   workspace: import("../agent").WorkspaceStub | null | undefined;
+  /** Connected MCP servers: undefined uses the Agents SDK's client, null means none. */
+  mcp: import("../mcp").McpClient | null | undefined;
 } = {
   makeBrain: null,
   calendar: undefined,
@@ -35,4 +37,5 @@ export const seams: {
   websearch: undefined,
   browser: undefined,
   workspace: undefined,
+  mcp: undefined,
 };

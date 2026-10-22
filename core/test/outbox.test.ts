@@ -86,6 +86,7 @@ function outbox(sql: Sql, f: typeof fetch, opts: { looking?: boolean; inCall?: b
     hold: async (at, row) => void held.push({ at, row }),
     fetch: f,
     browser: () => null,
+    mcp: () => null,
   };
   return { box: new Outbox(sql, channels), held, shown };
 }

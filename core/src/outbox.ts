@@ -15,6 +15,7 @@ import { getState, setState } from "./store/state";
 import { deleteRecord, findRecords } from "./store/records";
 import { hostOf, type LookOut } from "./web";
 import type { BrowserDriver } from "./browser";
+import { findServer, type McpClient, type McpResult, type McpServer, resultText } from "./mcp";
 import { FIELDS, fillsOn, findEntry, hiddenValues, siteFor, touchEntry, valueOf } from "./vault";
 import { quietUntil, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import { callWebhook, webhooks, webhookView } from "./webhooks";
@@ -193,6 +194,8 @@ export interface Channels {
   fetch: typeof fetch;
   /** The browser (§9.1), or null where there isn't one. */
   browser(): BrowserDriver | null;
+  /** Connected MCP servers (§9.2), or null where there's no client. */
+  mcp(): McpClient | null;
 }
 
 export class Outbox {
@@ -392,6 +395,14 @@ export class Outbox {
     o: { run_id: string | null; by: "approved" | "trusted" | "owner" | "automation" },
   ): Promise<{ ok: boolean; text: string }> {
     if (a.kind === "browser") return this.#submit(a, o);
+    if (a.kind === "mcp") {
+      const out = await this.mcp({ server: a.server, tool: a.tool, args: a.arguments, run_id: o.run_id, by: o.by });
+      return {
+        ok: out.ok,
+        text: out.ok ? `${a.name} answered: ${clip(out.text, 4_000)}` : `${a.name} didn't work: ${clip(out.text, 1_000)}`,
+      };
+    }
+    if (a.kind === "mcp_add") return this.#connect(a, o);
     if (a.kind === "vault") return this.#fill(a, o);
     if (a.kind === "site") {
       const sites = getState<string[]>(this.sql, "workspace_sites") ?? [];
@@ -431,6 +442,83 @@ export class Outbox {
     });
     if (!out.ok) console.error(JSON.stringify({ at: "webhook", name: hook.name, error: out.answer }));
     return { ok: out.ok, text: out.ok ? `Called ${hook.name}: ${out.answer}.` : `${hook.name} didn't work: ${out.answer}.` };
+  }
+
+  /**
+   * Calls a tool on a connected MCP server (§9.2): a look when the server
+   * says it only reads, else what the owner's OK or earned trust allowed.
+   * Its arguments pass the secrets check first. A delivery receipt keeps the
+   * server, the tool, how it went and, on failure, the server's own words.
+   */
+  async mcp(o: {
+    server: string;
+    tool: string;
+    args: Record<string, unknown>;
+    run_id: string | null;
+    by: string;
+  }): Promise<{ ok: boolean; text: string; result?: McpResult; server?: McpServer }> {
+    const base = { channel: "mcp", to: o.server, text: o.tool, by: o.by };
+    const fail = (error: string, extra: Record<string, unknown> = {}) => {
+      this.receipt(o.run_id, { ...base, ok: false, error, ...extra });
+      console.error(JSON.stringify({ at: "mcp.call", server: o.server, tool: o.tool, error }));
+      return { ok: false, text: error };
+    };
+    const client = this.channels.mcp();
+    if (!client) return fail("This deployment has no MCP client.");
+    const s = findServer(client.servers(), o.server);
+    if (!s) return fail(`There's no connected server called ${o.server}.`);
+    if (s.state !== "ready") {
+      return fail(
+        s.state === "authenticating"
+          ? `${s.name} is waiting for the owner to sign in, in Settings → Connections → MCP servers.`
+          : `${s.name} isn't ready (${s.state})${s.error ? `: ${s.error}` : ""}.`,
+      );
+    }
+    const args = JSON.stringify(o.args);
+    if (scrub(args, this.secrets()) !== args) {
+      return fail(`Not sent: what it would send to ${s.name} held one of your secrets.`, { checks: { secrets: "failed" } });
+    }
+    try {
+      const result = await client.call(s.id, o.tool, o.args);
+      const text = resultText(result);
+      const ok = !result.isError;
+      this.receipt(o.run_id, {
+        ...base,
+        to: s.name,
+        ok,
+        ...(ok ? { answer: clip(text, 300) } : { error: clip(text, 1_000) }),
+        checks: { secrets: "passed" },
+      });
+      if (!ok) console.error(JSON.stringify({ at: "mcp.call", server: s.name, tool: o.tool, error: clip(text, 1_000) }));
+      return { ok, text, result, server: s };
+    } catch (err) {
+      return fail(`${s.name} (${hostOf(s.url)}) didn't answer: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** Connects an MCP server once the owner said yes (§9.2). An OAuth server then waits for the owner to sign in. */
+  async #connect(
+    a: Extract<Action, { kind: "mcp_add" }>,
+    o: { run_id: string | null; by: string },
+  ): Promise<{ ok: boolean; text: string }> {
+    const base = { channel: "mcp", to: a.name, text: `Connect ${a.url}`, by: o.by };
+    const client = this.channels.mcp();
+    if (!client) return { ok: false, text: "This deployment has no MCP client." };
+    try {
+      const r = await client.add({ name: a.name, url: a.url });
+      const tools = client.servers().find((s) => s.id === r.id)?.tools.length ?? 0;
+      const text =
+        r.state === "authenticating"
+          ? `${a.name} is added and needs the owner to sign in: ${r.auth_url ?? "Settings → Connections → MCP servers has Sign in"}.`
+          : `Connected ${a.name}, with ${tools} tool${tools === 1 ? "" : "s"}.`;
+      this.receipt(o.run_id, { ...base, ok: true, answer: r.state === "authenticating" ? "Waiting for sign-in" : `${tools} tools` });
+      return { ok: true, text };
+    } catch (err) {
+      const error = `${a.name} (${hostOf(a.url)}) didn't connect: ${err instanceof Error ? err.message : String(err)}`;
+      this.receipt(o.run_id, { ...base, ok: false, error });
+      console.error(JSON.stringify({ at: "mcp.add", url: a.url, error }));
+      return { ok: false, text: error };
+    }
   }
 
   /**

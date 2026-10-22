@@ -211,6 +211,13 @@ export const AppStage = z.object({
   data: z.unknown().optional().describe("Data the app needs, as JSON: it reads it as window.ATLAS_DATA."),
 });
 
+/** An MCP App (§21.6): the page a connected server's tool brings, for one call of it. It appears when the tool is called. */
+export const McpAppStage = z.object({
+  kind: z.literal("mcp_app"),
+  call: z.string().max(64).describe("The `page` id mcp_call gave."),
+  title: z.string().max(120),
+});
+
 /** Atlas's workspace (§9.1): its terminal, files and recent commands. There's one. */
 export const WorkspaceStage = z.object({ kind: z.literal("workspace") });
 
@@ -242,6 +249,7 @@ export const StageView = z.discriminatedUnion("kind", [
   CompareStage,
   KitStage,
   AppStage,
+  McpAppStage,
 ]);
 export type StageView = z.infer<typeof StageView>;
 export type StageKind = StageView["kind"];
@@ -410,6 +418,7 @@ export function stageTitle(
     case "compare":
     case "kit":
     case "app":
+    case "mcp_app":
       return v.title;
     case "browser":
       return "Browser";

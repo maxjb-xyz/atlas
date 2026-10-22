@@ -54,14 +54,39 @@ export type Action =
       press?: { ref: string; text: string };
     }
   /** Letting the workspace reach a website (§9.1), asked once per site and remembered; `key` is a vault key it will carry there. */
-  | { kind: "site"; host: string; name: string; why: string; key?: { entry: string; name: string } };
+  | { kind: "site"; host: string; name: string; why: string; key?: { entry: string; name: string } }
+  /**
+   * A tool on a connected MCP server that does more than read (§9.2). `name`
+   * says it for the card ("create_issue on GitHub"); `destructive` is the
+   * server's own word that it can't be undone.
+   */
+  | {
+      kind: "mcp";
+      server: string;
+      name: string;
+      tool: string;
+      arguments: Record<string, Json>;
+      destructive: boolean;
+      what: string;
+      /** The server's name and host, for the card. */
+      where: string;
+    }
+  /** Connecting a new MCP server (§9.2: growing its own abilities, with the owner's OK). */
+  | { kind: "mcp_add"; name: string; url: string; why: string };
 
 /** Sending a form can't be taken back (VISION §12.1 lists submit with the things that can't be undone). */
 export const kindOf = (a: Action): ToolKind =>
-  a.kind === "webhook" || a.kind === "site" || (a.kind === "vault" && !a.card) ? "outside" : "irreversible";
+  a.kind === "webhook" ||
+  a.kind === "site" ||
+  a.kind === "mcp_add" ||
+  (a.kind === "vault" && !a.card) ||
+  (a.kind === "mcp" && !a.destructive)
+    ? "outside"
+    : "irreversible";
 
 /** What earned trust is counted by: each webhook on its own. Nothing that can't be undone is ever trusted. */
-export const trustKey = (a: Action): string | null => (a.kind === "webhook" ? `webhook:${a.webhook}` : null);
+export const trustKey = (a: Action): string | null =>
+  a.kind === "webhook" ? `webhook:${a.webhook}` : a.kind === "mcp" ? `mcp:${a.server}:${a.tool}` : null;
 
 export const needsHold = (actions: Action[]) => actions.some((a) => ASKS[kindOf(a)].hold);
 
@@ -149,7 +174,15 @@ export function openApproval(sql: Sql, runId: string): AgendaItem | null {
 export const titleOf = (actions: Action[]) =>
   actions
     .map((a) =>
-      a.kind === "webhook" ? a.name : a.kind === "delete" ? `Delete ${a.name}` : a.kind === "vault" ? `Use ${a.name} on ${a.host}` : a.name,
+      a.kind === "webhook"
+        ? a.name
+        : a.kind === "delete"
+          ? `Delete ${a.name}`
+          : a.kind === "vault"
+            ? `Use ${a.name} on ${a.host}`
+            : a.kind === "mcp_add"
+              ? `Connect ${a.name}`
+              : a.name,
     )
     .join(", then ");
 

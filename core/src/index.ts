@@ -39,6 +39,12 @@ export default {
       return env.WORKSPACE.getByName(OWNER).fetch(request);
     }
 
+    // A sign-in to an MCP server comes back here (§9.2). It's a link from the service, so no sign-in cookie
+    // comes with it (they're SameSite=Strict); the agent accepts only a sign-in it started, by its state.
+    if (path === "/mcp/callback" && request.method === "GET") {
+      return (await getAgentByName(env.PersonAgent, OWNER)).fetch(request);
+    }
+
     if (path.startsWith("/api/")) {
       const auth = await handleAuth(request, env, path, () => authStore(env));
       if (auth) return auth;

@@ -528,6 +528,9 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
         />
         <Webhooks atlas={atlas} view={view} />
       </Row>
+      <Row label="MCP servers">
+        <McpServers atlas={atlas} />
+      </Row>
       <Row label="Google, Microsoft, email">
         <p className="muted small">Not yet. Atlas connects to Google and Microsoft calendars, and reads mail, in a later version.</p>
       </Row>
@@ -920,6 +923,152 @@ function State({ on, bad, text, what }: { on: boolean; bad?: boolean; text: stri
       <span style={{ fontWeight: 500 }}>{text}</span>
       <span className="muted small">{what}</span>
     </div>
+  );
+}
+
+/**
+ * MCP servers (§9.2): services Atlas can use through their own tools. A
+ * server with a sign-in waits for you to sign in; one that takes a token
+ * gets it here. Tools a server marks as only reading run without asking;
+ * the rest ask first, like a webhook.
+ */
+function McpServers({ atlas }: { atlas: Atlas }) {
+  const servers = atlas.state.mcpServers;
+  useEffect(() => {
+    if (atlas.voice.connected) atlas.send({ type: "atlas.mcp" });
+  }, [atlas.voice.connected]);
+  const blank = { name: "", url: "", token: "" };
+  const [form, setForm] = useState(blank);
+  const [adding, setAdding] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
+  const ready = servers?.filter((s) => s.state === "ready").length ?? 0;
+  const label = (state: string) =>
+    state === "ready"
+      ? "Connected"
+      : state === "authenticating"
+        ? "Waiting for you to sign in"
+        : state === "failed"
+          ? "Failed"
+          : "Connecting";
+  return (
+    <>
+      <State
+        on={ready > 0}
+        text={servers?.length ? `${ready} of ${servers.length} connected` : "None yet"}
+        what="Other services' own tools. Atlas can also ask to add one when a task needs it."
+      />
+      <div className="rows">
+        {(servers ?? []).map((s) => (
+          <div className="r" key={s.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <button className="link" style={{ fontWeight: 500 }} onClick={() => setOpen(open === s.id ? null : s.id)}>
+                {s.name}
+              </button>
+              <span className={`tag ${s.state === "ready" ? "ok" : s.state === "failed" ? "ac" : ""}`}>{label(s.state)}</span>
+              <span className="grow" />
+              {s.auth_url && (
+                <a className="btn primary" href={s.auth_url} target="_blank" rel="noopener noreferrer">
+                  Sign in
+                </a>
+              )}
+              <button className="link" onClick={() => atlas.send({ type: "atlas.mcp.remove", id: s.id })}>
+                Remove
+              </button>
+            </div>
+            <span className="mono faint small">
+              {s.url} · {s.tools.length} {s.tools.length === 1 ? "tool" : "tools"}
+            </span>
+            {s.error && <p className="err small">{s.error}</p>}
+            {open === s.id && (
+              <div className="rows">
+                {s.tools.map((t) => (
+                  <div className="r" key={t.name} style={{ alignItems: "flex-start" }}>
+                    <span className="grow small">
+                      <span className="mono">{t.title ?? t.name}</span>
+                      {t.description && (
+                        <span className="muted" style={{ display: "block" }}>
+                          {t.description}
+                        </span>
+                      )}
+                    </span>
+                    {t.page && <span className="tag">Has a page</span>}
+                    <span className={`tag ${t.reads ? "ok" : ""}`}>{t.reads ? "Only reads" : "Asks first"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {adding ? (
+        <form
+          style={{ display: "flex", flexDirection: "column", gap: 10 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            atlas.send({
+              type: "atlas.mcp.add",
+              name: form.name.trim(),
+              url: form.url.trim(),
+              ...(form.token.trim() ? { token: form.token.trim() } : {}),
+            });
+            setForm(blank);
+            setAdding(false);
+          }}
+        >
+          <label className="field">
+            <span>Name</span>
+            <input value={form.name} maxLength={60} placeholder="Linear" onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </label>
+          <label className="field">
+            <span>Its MCP address</span>
+            <input
+              className="mono"
+              type="url"
+              autoComplete="off"
+              spellCheck={false}
+              value={form.url}
+              placeholder="https://mcp.example.com/mcp"
+              onChange={(e) => setForm({ ...form, url: e.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>Token, if it takes one instead of a sign-in</span>
+            <input
+              className="mono"
+              type="password"
+              autoComplete="off"
+              value={form.token}
+              placeholder="Leave empty to sign in"
+              onChange={(e) => setForm({ ...form, token: e.target.value })}
+            />
+          </label>
+          <div className="row">
+            <button className="btn primary" disabled={!form.name.trim() || !/^https:\/\/./.test(form.url.trim())}>
+              Add
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setForm(blank);
+                setAdding(false);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="muted small">
+            A server with a sign-in shows Sign in here once it's added. A token is kept with the server and never shown again.
+          </p>
+        </form>
+      ) : (
+        <div className="row">
+          <button className="btn" onClick={() => setAdding(true)}>
+            Add a server
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 

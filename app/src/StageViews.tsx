@@ -13,6 +13,7 @@ import type { Atlas } from "./connection";
 import { AreaChip, AreaDot, Diamond, Empty, Icon, pressable, Sheet, shortDay } from "./ui";
 import { AutomationFlow } from "./pages/Automations";
 import { AppFrame, ChartBody, CompareBody, KitBody } from "./ChartViews";
+import { McpAppFrame } from "./McpApp";
 
 /** A view on the stage: the receipt it came from (or a local id), the view, and its title. */
 export interface Shown {
@@ -28,6 +29,8 @@ export function shownFrom(row: LogRow): Shown | null {
   // There's one workspace and one browser: their tab goes by that, not by what was run or opened.
   if (r.view.kind === "workspace") return { id: row.id, view: r.view, title: "Workspace" };
   if (r.view.kind === "browser") return { id: row.id, view: r.view, title: "Browser" };
+  // An MCP App goes by its tool's title.
+  if (r.view.kind === "mcp_app") return { id: row.id, view: r.view, title: r.view.title };
   // "Showing · X", "Made page · X", "Changed page · X · version 2": the view goes by X.
   const title = String(r.text ?? "")
     .replace(/^(Showing|Made page|Changed page) · /, "")
@@ -99,7 +102,7 @@ export function StageSheet({
   onClose?: () => void;
 }) {
   const v = shown.view;
-  const keep = v.kind !== "page" && v.kind !== "browser" && v.kind !== "file" && v.kind !== "workspace";
+  const keep = v.kind !== "page" && v.kind !== "browser" && v.kind !== "file" && v.kind !== "workspace" && v.kind !== "mcp_app";
   return (
     <Sheet className="pick" key={shown.id}>
       <div className={`sheet-in ${onClose ? "closable" : ""} ${keep ? "keepable" : ""}`}>
@@ -137,7 +140,7 @@ function ViewBody({
       {v.kind === "document" && <DocumentView view={v} onClose={onClose} />}
       {v.kind === "code" && <CodeView view={v} onClose={onClose} />}
       {v.kind === "workspace" && <WorkspaceView atlas={atlas} view={v} onClose={onClose} />}
-      {(v.kind === "chart" || v.kind === "compare" || v.kind === "kit" || v.kind === "app") && (
+      {(v.kind === "chart" || v.kind === "compare" || v.kind === "kit" || v.kind === "app" || v.kind === "mcp_app") && (
         <>
           <div className="sheet-title">
             <Icon name="grid" />
@@ -150,6 +153,7 @@ function ViewBody({
           {v.kind === "compare" && <CompareBody compare={v} />}
           {v.kind === "kit" && <KitBody kit={v} />}
           {v.kind === "app" && <AppFrame app={v} />}
+          {v.kind === "mcp_app" && <McpAppFrame atlas={atlas} call={v.call} title={v.title} />}
         </>
       )}
       {v.kind === "page" && <PageView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
@@ -1309,6 +1313,7 @@ const KIND: Record<StageView["kind"], string> = {
   compare: "Compare",
   kit: "View",
   app: "App",
+  mcp_app: "App",
 };
 
 export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown; onOpen: () => void }) {
@@ -1345,20 +1350,22 @@ export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown
                           ? `${v.blocks.length} parts`
                           : v.kind === "app"
                             ? "A small app."
-                            : v.kind === "workspace"
-                              ? "Atlas's computer: its terminal and files."
-                              : v.kind === "file"
-                                ? (atlas.state.files?.find((f) => f.id === v.file)?.note ?? "A file to open or download.")
-                                : v.kind === "document"
-                                  ? v.text.slice(0, 160)
-                                  : v.kind === "code"
-                                    ? `${v.language} · ${v.code.split("\n").length} lines`
-                                    : v.kind === "research"
-                                      ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"} · ${v.sources
-                                          .slice(0, 3)
-                                          .map((x) => hostOf(x.url))
-                                          .join(", ")}`
-                                      : "What Atlas knows about them, and where they came up.";
+                            : v.kind === "mcp_app"
+                              ? "A page from a connected service."
+                              : v.kind === "workspace"
+                                ? "Atlas's computer: its terminal and files."
+                                : v.kind === "file"
+                                  ? (atlas.state.files?.find((f) => f.id === v.file)?.note ?? "A file to open or download.")
+                                  : v.kind === "document"
+                                    ? v.text.slice(0, 160)
+                                    : v.kind === "code"
+                                      ? `${v.language} · ${v.code.split("\n").length} lines`
+                                      : v.kind === "research"
+                                        ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"} · ${v.sources
+                                            .slice(0, 3)
+                                            .map((x) => hostOf(x.url))
+                                            .join(", ")}`
+                                        : "What Atlas knows about them, and where they came up.";
   return (
     <div className="stage-card rise">
       <span className="lab">

@@ -564,6 +564,7 @@ const VIEW_WORD: Record<string, string> = {
   compare: "comparison",
   kit: "view",
   app: "app",
+  mcp_app: "app",
   workspace: "workspace",
 };
 

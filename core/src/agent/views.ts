@@ -409,7 +409,10 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
   const actions = actionsOf(item);
   const asked = item.source.log_id ? getRow(sql, item.source.log_id) : null;
   const secrets = secretValues(sql);
-  const secretsOk = actions.every((a) => a.kind !== "webhook" || !a.message || scrub(a.message, secrets) === a.message);
+  const clean = (s: string) => scrub(s, secrets) === s;
+  const secretsOk = actions.every((a) =>
+    a.kind === "webhook" ? !a.message || clean(a.message) : a.kind === "mcp" ? clean(JSON.stringify(a.arguments)) : true,
+  );
   const hold = needsHold(actions);
   return {
     id: item.id,
@@ -431,6 +434,27 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
 }
 
 function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
+  if (a.kind === "mcp") {
+    return {
+      kind: "mcp",
+      title: a.name,
+      detail: a.what,
+      where: a.where,
+      undo: a.destructive
+        ? "Its server says this can't be undone."
+        : "It reaches one of your connected services, and only that service can undo it. After five yeses as it was, Atlas offers to stop asking.",
+      message: JSON.stringify(a.arguments, null, 2).slice(0, 4_000),
+    };
+  }
+  if (a.kind === "mcp_add") {
+    return {
+      kind: "mcp_add",
+      title: `Connect ${a.name}`,
+      detail: `${a.why} Atlas gets the tools this server offers; ones that do more than read still ask you first.`,
+      where: a.url,
+      undo: "Remove it any time in Settings → Connections → MCP servers.",
+    };
+  }
   if (a.kind === "site") {
     return {
       kind: "site",

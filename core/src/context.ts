@@ -4,6 +4,7 @@
 // surface), then every message since that summary. Compaction (§4.1) keeps
 // that last part in bounds; recall finds the rest, on demand.
 
+import { type McpServer, serversLine } from "./mcp";
 import { listPages } from "./pages";
 import { listFiles } from "./files";
 import { listSkills } from "./skills";
@@ -64,6 +65,8 @@ export function systemPrompt(opts: {
   /** Only what was known before this point in the log counts (runs wait in line). */
   beforeSeq?: number;
   extra?: string;
+  /** Connected MCP servers, for runs that can use them (§9.2). */
+  mcp?: McpServer[];
 }): string {
   const { settings, tz, now, surface, sql } = opts;
   const summary = latestSummary(sql, opts.beforeSeq);
@@ -87,6 +90,7 @@ export function systemPrompt(opts: {
     focusLine(sql, tz),
     pagesLine(sql),
     skillsLine(sql),
+    serversLine(opts.mcp ?? []),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     areaContext(sql, opts.beforeSeq),
     exitsContext(sql, tz, now),

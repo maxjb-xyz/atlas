@@ -2156,3 +2156,7 @@ button.chip:hover {
   border-radius: 8px;
   background: var(--win);
 }
+.app-frame.bare {
+  border: none;
+  border-radius: 0;
+}
