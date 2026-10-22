@@ -1974,3 +1974,13 @@ button.chip:hover {
 .r.on {
   background: var(--hover);
 }
+
+/* Atlas's browser, live (M3): the frame fills the sheet's width at a page's shape. */
+.browser-live {
+  display: block;
+  width: 100%;
+  height: min(70vh, 720px);
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--win);
+}

@@ -17,7 +17,7 @@ export const show = defineTool({
   description: [
     "Put a view on the stage of the owner's app, beside your reply.",
     "Use it when the owner asks to see something, when they ask what's going on with one of their areas or who someone is, and when the answer is several items that read better as a list or a table than as sentences.",
-    "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `automation` (one of the owner's automations, as When → Do → Report with its runs), `page` (one of the owner's kept pages), `list` and `table` (things you've put together in this turn), `draft` (words for the owner to copy and send themselves, such as an email or a post), `plan` (steps toward something, each with whether it's to do, under way, done or waiting) and `research` (an answer from the web, with the sources you searched or read).",
+    "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `automation` (one of the owner's automations, as When → Do → Report with its runs), `page` (one of the owner's kept pages), `list` and `table` (things you've put together in this turn), `draft` (words for the owner to copy and send themselves, such as an email or a post), `plan` (steps toward something, each with whether it's to do, under way, done or waiting) `research` (an answer from the web, with the sources you searched or read) and `browser` (your browser, live).",
     "Fill a list, table or research view only with what you've looked up or what's in the conversation, never with guesses, and say where it came from in `source` (for research, in its `sources`).",
     "The owner sees the view as you answer, so keep your reply to what matters most and don't read the view out. In a voice conversation, say a sentence or two and let the stage show the rest.",
   ].join(" "),
@@ -96,6 +96,7 @@ export function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Re
     case "draft":
     case "plan":
     case "research":
+    case "browser":
       return { view, names: {} };
     case "page": {
       const p = findPage(sql, view.page);

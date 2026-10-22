@@ -6,6 +6,10 @@
 import { parse, type Sql } from "./db";
 
 export type StateName =
+  /** Atlas's browser (§9.1): its Browser Run session, tab, and where it is. */
+  | "browser"
+  /** Set while the owner has the browser: why, since when, and whether Atlas asked for it. */
+  | "browser_taken"
   /** Atlas's copy of the iCloud calendars: the home, each calendar's change tag and events, and when it was synced. */
   | "icloud_copy"
   /** Set when iCloud refuses the sign-in: when, why, how many times in a row, and when Atlas tries again. */

@@ -41,6 +41,7 @@ function ctx(sql: Sql, opts: { embed?: Embedder | null; source?: string | null }
     exit: null,
     automations: null,
     web: null,
+    browser: null,
   };
 }
 

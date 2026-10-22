@@ -55,6 +55,7 @@ import {
   needsHold,
   requestApproval,
   setTrust,
+  titleOf,
 } from "./approvals";
 import { removeWebhook, saveWebhook, webhooks } from "./webhooks";
 import { AutomationDesk } from "./agent/automations";
@@ -63,12 +64,15 @@ import { seedRoutines } from "./routines";
 import { focusTool, setFocus } from "./tools/focus";
 import { pageRead, pageTools } from "./tools/pages";
 import { webFetch, webSearch, webTools } from "./tools/web";
+import { browserTools } from "./tools/browser";
+import { type BrowserDriver, type BrowserPage, BrowserRunDriver } from "./browser";
+import type { BrowserStagePage } from "./stage";
 import { fetchPage, hostOf, PROVIDERS, search, type WebSearchBinding } from "./web";
 import { deletePage, getPage, listPages, pageSummaries, pageVersion, savePage, viewBlock } from "./pages";
 import { noticeAsk, openSuggestions, settleSuggestion } from "./suggestions";
 import { deleteAutomation, getAutomation, listAutomations, matchPhrase, saveAutomation, setAutomationState } from "./automations";
 import { automationView } from "./agent/views";
-import type { ExitApi, Tool, ToolContext, ToolResult, WebApi } from "./tools/types";
+import type { BrowserApi, ExitApi, Tool, ToolContext, ToolResult, WebApi } from "./tools/types";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
@@ -101,13 +105,14 @@ const TOOLS: Record<Actor, Tool[]> = {
     ...pageTools,
     ...automationTools,
     ...webTools,
+    ...browserTools,
   ],
   atlas: [calendarRead, ...agendaTools, recall, ...webTools],
   system: [],
 };
 
 /** What an automation's Atlas step can reach: what the clock's runs can, and the owner's webhooks (§13.1). */
-const AUTOMATION_TOOLS: Tool[] = [calendarRead, ...agendaTools, recall, webhookCall, focusTool, ...pageTools, ...webTools];
+const AUTOMATION_TOOLS: Tool[] = [calendarRead, ...agendaTools, recall, webhookCall, focusTool, ...pageTools, ...webTools, ...browserTools];
 /** A test run only looks: it changes nothing, and webhooks only say what they'd do (§13.4). */
 const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall, pageRead, webSearch, webFetch];
 
@@ -168,7 +173,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       makeBrain: (c) => this.#makeBrain(c),
       toolContext: (runId) => {
         const settings = readSettings(this.#sql);
-        return { ...this.#toolContext(settings, new Date(), "helper", null), helpers: null, exit: null, automations: null, run_id: runId };
+        return {
+          ...this.#toolContext(settings, new Date(), "helper", null),
+          helpers: null,
+          exit: null,
+          automations: null,
+          browser: null,
+          run_id: runId,
+        };
       },
       launch: async (job) => {
         const child = await this.dynamicAgents.get(HelperAgent, job.id);
@@ -213,6 +225,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         await this.#clock.schedule(item);
       },
       fetch: (...args) => (seams.fetch ?? fetch)(...args),
+      browser: () => this.#driver(),
     });
     this.#automations = new AutomationDesk({
       sql: this.#sql,
@@ -629,7 +642,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         return;
       }
       case "atlas.stage":
-        this.#send(connection, { type: "atlas.stage.page", ref: msg.ref, page: stagePage(this.#sql, msg.view) });
+        this.#send(connection, {
+          type: "atlas.stage.page",
+          ref: msg.ref,
+          page: msg.view.kind === "browser" ? await this.#browserPage() : stagePage(this.#sql, msg.view),
+        });
+        return;
+      case "atlas.browser":
+        await this.#browserButton(msg.action);
         return;
       case "atlas.pages":
         this.#send(connection, { type: "atlas.pages", pages: pageSummaries(this.#sql) });
@@ -1058,6 +1078,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       via,
       exit: this.#exit,
       web: this.#web,
+      browser: this.#browserApi,
       automations: {
         run: (a, o) => this.#automations.run(a, { why: o.why, inputs: o.inputs }),
         arm: (id) => this.#automations.arm(id),
@@ -1736,6 +1757,133 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     );
   }
 
+  // --- the browser (§9.1) ----------------------------------------------------------------
+
+  #driverMade: BrowserDriver | null | undefined;
+  /** The last live link, reused for four minutes (they last about five). */
+  #liveLink: { control: boolean; url: string; at: number } | null = null;
+
+  /** Atlas's browser: Browser Run, or a fake in tests (never the real one). */
+  #driver(): BrowserDriver | null {
+    if (seams.browser !== undefined) return seams.browser;
+    if (this.#driverMade === undefined) {
+      const binding = (this.env as { BROWSER?: BrowserRun }).BROWSER;
+      this.#driverMade =
+        this.env.ATLAS_TEST || !binding
+          ? null
+          : new BrowserRunDriver(binding, {
+              get: () => getState(this.#sql, "browser"),
+              set: (s) => setState(this.#sql, "browser", s),
+            });
+    }
+    return this.#driverMade;
+  }
+
+  #taken = () => getState<{ why: string; at: number; asked: boolean }>(this.#sql, "browser_taken");
+
+  /** The browser for tools: refuses while the owner has it, and sends what leaves Atlas through the outbox. */
+  #browserApi: BrowserApi = {
+    open: async (url, o) => {
+      const d = this.#usable();
+      const out = await this.#outbox.look({ what: "browse", text: url, to: hostOf(url), run_id: o.run_id }, async () => {
+        try {
+          return { ok: true, status: 200, value: await d.open(url, { start: o.start }) };
+        } catch (err) {
+          return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
+        }
+      });
+      if (!out.ok) throw new Error(out.error);
+      return out.value;
+    },
+    look: (o) => this.#usable().look(o),
+    act: async (a, o) => {
+      const d = this.#usable();
+      if (a.act !== "type") return d.act(a);
+      // What Atlas types into a page leaves it, so it passes the same checks as a search.
+      const out = await this.#outbox.look({ what: "type", text: a.text, to: hostOf(d.where().url), run_id: o.run_id }, async () => {
+        try {
+          return { ok: true, status: 200, value: await d.act(a) };
+        } catch (err) {
+          return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
+        }
+      });
+      if (!out.ok) throw new Error(out.error);
+      return out.value;
+    },
+    find: (ref) => this.#usable().find(ref),
+    takeOver: async (why) => {
+      const d = this.#usable();
+      if (!d.where().open) throw new Error("The browser isn't open. Open the page first.");
+      setState(this.#sql, "browser_taken", { why, at: Date.now(), asked: true });
+      this.#liveLink = null;
+      await this.#browserShown();
+    },
+    close: async () => {
+      await this.#driver()?.close();
+      setState(this.#sql, "browser_taken", null);
+      this.#liveLink = null;
+      await this.#browserShown();
+    },
+    where: () => this.#driver()?.where() ?? { open: false, url: "", title: "" },
+  };
+
+  #usable(): BrowserDriver {
+    const d = this.#driver();
+    if (!d) throw new Error("This deployment has no browser: Browser Run isn't bound to the Worker.");
+    const t = this.#taken();
+    if (t) throw new Error(`The owner has the browser (${t.why}). Wait until they hand it back.`);
+    return d;
+  }
+
+  /** The browser as its stage view shows it, with a live link: read-only while Atlas drives, one to drive while the owner has it. */
+  async #browserPage(): Promise<BrowserStagePage> {
+    const d = this.#driver();
+    const none = { kind: "browser" as const, open: false, url: "", title: "", live: null, taken: null };
+    if (!d) return { ...none, error: "This deployment has no browser: Browser Run isn't bound to the Worker." };
+    const where = d.where();
+    const taken = this.#taken();
+    if (!where.open) {
+      if (taken) setState(this.#sql, "browser_taken", null);
+      return none;
+    }
+    const control = taken != null;
+    const fresh = this.#liveLink && this.#liveLink.control === control && Date.now() - this.#liveLink.at < 4 * 60_000;
+    try {
+      if (!fresh) this.#liveLink = { control, url: await d.live(control), at: Date.now() };
+      return { kind: "browser", ...where, live: this.#liveLink!.url, taken: taken ? { why: taken.why, at: taken.at } : null };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      console.error(JSON.stringify({ at: "browser.live", error }));
+      return { kind: "browser", ...where, live: null, taken: taken ? { why: taken.why, at: taken.at } : null, error };
+    }
+  }
+
+  /** Tells every open app how the browser is now. */
+  async #browserShown(): Promise<void> {
+    this.#broadcast({ type: "atlas.stage.page", ref: "browser", page: await this.#browserPage() });
+  }
+
+  /** The owner's buttons on the browser's view: take it over, hand it back, or close it. */
+  async #browserButton(action: "take" | "give" | "close"): Promise<void> {
+    if (action === "close") return this.#browserApi.close();
+    const taken = this.#taken();
+    if (action === "take") {
+      if (!taken) setState(this.#sql, "browser_taken", { why: "You took it over", at: Date.now(), asked: false });
+      this.#liveLink = null;
+      return this.#browserShown();
+    }
+    if (!taken) return;
+    setState(this.#sql, "browser_taken", null);
+    this.#liveLink = null;
+    await this.#browserShown();
+    // Atlas asked for it, so handing it back is a message: Atlas carries on from where the owner left it.
+    if (taken.asked) {
+      const w = this.#driver()?.where();
+      const where = w?.open ? ` It's on ${w.title || w.url} (${w.url}).` : "";
+      void this.keepAliveWhile(() => this.#textTurn(`I'm done in the browser.${where} Over to you.`, `browser-${Date.now()}`));
+    }
+  }
+
   // --- approvals (§12) -----------------------------------------------------------
 
   /** The way out for tools: does an action now when its kind and earned trust allow, or puts it on this run's card. */
@@ -1747,7 +1895,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         return {
           ok: true,
           output: {
-            test_run: `Would ${action.kind === "webhook" ? `call ${action.name}` : `ask to delete ${action.name}`}. Nothing was sent.`,
+            test_run: `Would ${action.kind === "webhook" ? `call ${action.name}` : action.kind === "delete" ? `ask to delete ${action.name}` : `ask to ${action.name}`}. Nothing was sent.`,
           },
         };
       }
@@ -1789,7 +1937,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             ? "Not done yet. It can't be undone, so the owner has to hold to confirm on the card in the app. Tell them it's waiting in Inbox."
             : "Not done yet. The owner sees a card and decides. Tell them in a few words it's waiting for their OK.",
         },
-        receipt: { text: `Waiting for your OK · ${action.kind === "delete" ? `Delete ${action.name}` : action.name}`, approval: item.id },
+        receipt: { text: `Waiting for your OK · ${titleOf([action])}`, approval: item.id },
       };
     },
     decide: (id, yes, by) => this.#decide(id, { yes, by }),

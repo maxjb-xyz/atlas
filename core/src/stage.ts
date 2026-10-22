@@ -103,6 +103,9 @@ export const ResearchStage = z.object({
     .describe("Only pages you searched or read in this conversation, numbered in this order."),
 });
 
+/** Atlas's browser, live (§9.1): there's one, so the view only says to show it. */
+export const BrowserStage = z.object({ kind: z.literal("browser") });
+
 export const PageStage = z.object({
   kind: z.literal("page"),
   page: z.string().min(1).max(80).describe("The page's name or id."),
@@ -119,6 +122,7 @@ export const StageView = z.discriminatedUnion("kind", [
   PlanStage,
   PageStage,
   ResearchStage,
+  BrowserStage,
 ]);
 export type StageView = z.infer<typeof StageView>;
 export type StageKind = StageView["kind"];
@@ -210,12 +214,29 @@ export interface PagePage {
   };
 }
 
+/** The browser as its view shows it: where it is, and a live link (§9.1). */
+/** What a live view of the browser needs: where it is, and a link the app can show. */
+export interface BrowserState {
+  open: boolean;
+  url: string;
+  title: string;
+  /** A link to watch it live (read-only), or to drive it when the owner has taken it over. */
+  live: string | null;
+  /** Set while the owner has it: why Atlas handed it over, and when. */
+  taken: { why: string; at: number } | null;
+  error?: string;
+}
+
+export type BrowserStagePage = BrowserState & { kind: "browser" };
+
 /** What a view needs from the agent, or why it can't be shown any more. */
-export type StagePage = AreaPage | PersonPage | AutomationPage | PagePage | { kind: "missing"; why: string };
+export type StagePage = AreaPage | PersonPage | AutomationPage | PagePage | BrowserStagePage | { kind: "missing"; why: string };
 
 /** The few words a view goes by: on its tab, its receipt and its compact card. */
 export function stageTitle(v: StageView, names: { area?: string; person?: string; automation?: string; page?: string } = {}): string {
   switch (v.kind) {
+    case "browser":
+      return "Browser";
     case "area":
       return names.area ?? v.area;
     case "person":

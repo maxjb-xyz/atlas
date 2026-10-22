@@ -14,6 +14,7 @@ import type { Sql } from "../store/db";
 import type { Receipt } from "../store/log";
 import type { Settings } from "../store/settings";
 import type { LookOut, Page, SearchResult } from "../web";
+import type { BrowserAction, BrowserPage, PageElement } from "../browser";
 
 /** What kind of action a tool takes decides when Atlas asks first (§12.1). */
 export type { ToolKind } from "../approvals";
@@ -42,6 +43,8 @@ export interface ToolContext {
   exit: ExitApi | null;
   /** The web (§9.1), through the outbox's checks; null where the web isn't reachable. */
   web: WebApi | null;
+  /** The browser (§9.1), for runs that may drive it; null elsewhere. */
+  browser: BrowserApi | null;
   /** Automations, for owner runs; null elsewhere. */
   automations: AutomationsApi | null;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
@@ -65,6 +68,21 @@ export interface WebApi {
     o: { run_id: string | null; count: number; fresh?: "day" | "week" | "month" | "year" },
   ): Promise<LookOut<SearchResult[]>>;
   fetch(url: string, o: { run_id: string; start?: number; links?: boolean }): Promise<LookOut<Page>>;
+}
+
+/**
+ * The browser as tools reach it. Opening and typing leave Atlas, so they
+ * pass the outbox's checks with a receipt; while the owner has taken it
+ * over, everything but `where` says so and waits.
+ */
+export interface BrowserApi {
+  open(url: string, o: { run_id: string; start?: number }): Promise<BrowserPage>;
+  look(o: { start?: number }): Promise<BrowserPage>;
+  act(a: Exclude<BrowserAction, { act: "submit" }>, o: { run_id: string }): Promise<BrowserPage>;
+  find(ref: string): Promise<PageElement | null>;
+  takeOver(why: string): Promise<void>;
+  close(): Promise<void>;
+  where(): { open: boolean; url: string; title: string };
 }
 
 export interface ExitApi {

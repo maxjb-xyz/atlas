@@ -418,6 +418,15 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
 }
 
 function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
+  if (a.kind === "browser") {
+    return {
+      kind: "browser",
+      title: a.name,
+      detail: a.what,
+      where: a.url,
+      undo: "Can't be taken back once the form is sent.",
+    };
+  }
   if (a.kind === "delete") {
     return {
       kind: "delete",

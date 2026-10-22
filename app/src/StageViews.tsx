@@ -41,7 +41,9 @@ export const pageRef = (v: StageView) =>
         ? `automation:${v.automation}`
         : v.kind === "page"
           ? `page:${v.page}:${v.version ?? ""}`
-          : null;
+          : v.kind === "browser"
+            ? "browser"
+            : null;
 
 /** The live page behind an area or person view: undefined while it loads. Asked again when what it's built from changes. */
 function usePage(atlas: Atlas, view: StageView) {
@@ -85,7 +87,7 @@ export function StageSheet({
   onClose?: () => void;
 }) {
   const v = shown.view;
-  const keep = v.kind !== "page";
+  const keep = v.kind !== "page" && v.kind !== "browser";
   return (
     <Sheet className="pick" key={shown.id}>
       <div className={`sheet-in ${onClose ? "closable" : ""} ${keep ? "keepable" : ""}`}>
@@ -118,6 +120,7 @@ function ViewBody({
       {v.kind === "draft" && <DraftView view={v} onClose={onClose} />}
       {v.kind === "plan" && <PlanView view={v} onClose={onClose} />}
       {v.kind === "research" && <ResearchView view={v} onClose={onClose} />}
+      {v.kind === "browser" && <BrowserView atlas={atlas} view={v} onClose={onClose} />}
       {v.kind === "page" && <PageView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
     </>
   );
@@ -661,12 +664,87 @@ function ResearchView({ view, onClose }: { view: Extract<StageView, { kind: "res
   );
 }
 
+/**
+ * Atlas's browser, live (§9.1). While Atlas drives, the frame is read-only;
+ * Take over gives the owner one they can drive, for a login or a captcha,
+ * and Hand back gives it to Atlas again, which carries on from there.
+ */
+function BrowserView({ atlas, view, onClose }: { atlas: Atlas; view: Extract<StageView, { kind: "browser" }>; onClose?: () => void }) {
+  const page = usePage(atlas, view);
+  const [shownAt, setShownAt] = useState(Date.now());
+  // Live links last about five minutes: ask for a fresh one every four while it's on screen.
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (atlas.voice.connected) atlas.send({ type: "atlas.stage", ref: "browser", view });
+      setShownAt(Date.now());
+    }, 4 * 60_000);
+    return () => clearInterval(t);
+  }, [atlas.voice.connected]);
+  const b = page && page.kind === "browser" ? page : null;
+  const button = (action: "take" | "give" | "close") => atlas.send({ type: "atlas.browser", action });
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="search" />
+        <h1 className="disp clamp">{b?.title || "Browser"}</h1>
+        <span className="grow" />
+        {b?.open &&
+          (b.taken ? (
+            <button className="btn sm primary" onClick={() => button("give")}>
+              Hand back
+            </button>
+          ) : (
+            <button className="btn sm" onClick={() => button("take")}>
+              Take over
+            </button>
+          ))}
+        {b?.open && (
+          <button className="btn sm" onClick={() => button("close")}>
+            Close browser
+          </button>
+        )}
+        <Close onClose={onClose} />
+      </div>
+      {b === null ? (
+        <p className="muted">Opening the browser.</p>
+      ) : !b.open ? (
+        <p className="muted">
+          {b.error ?? "The browser is closed. It closes by itself after ten minutes without use; ask Atlas to open a page."}
+        </p>
+      ) : (
+        <>
+          <p className="lab faint clamp" style={{ marginTop: -6, marginBottom: 10 }}>
+            {b.url}
+          </p>
+          {b.taken && (
+            <p className="banner rise" style={{ marginBottom: 10 }}>
+              <span className="grow">{b.taken.why}. It's yours to drive; press Hand back when you're done.</span>
+            </p>
+          )}
+          {b.live ? (
+            <iframe
+              key={`${b.live}-${shownAt}`}
+              className="browser-live"
+              src={b.live}
+              title="Atlas's browser, live"
+              allow="clipboard-read; clipboard-write"
+            />
+          ) : (
+            <p className="err small">{b.error ?? "No live view right now."}</p>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
 /** A view's name in a page's editor, where views can be moved out but not rewritten. */
 function viewLabel(atlas: Atlas, v: StageView): string {
   if (v.kind === "area") return atlas.state.areas.find((a) => a.id === v.area)?.name ?? "An area";
   if (v.kind === "person") return "A person";
   if (v.kind === "automation") return atlas.state.automations?.find((a) => a.id === v.automation)?.name ?? "An automation";
   if (v.kind === "page") return "A page";
+  if (v.kind === "browser") return "The browser";
   return v.title;
 }
 
@@ -877,6 +955,7 @@ const KIND: Record<StageView["kind"], string> = {
   plan: "Plan",
   page: "Page",
   research: "Research",
+  browser: "Browser",
 };
 
 export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown; onOpen: () => void }) {
@@ -903,12 +982,14 @@ export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown
                     .join(" · ")}`
                 : v.kind === "page"
                   ? atlas.state.pages?.find((p) => p.id === v.page)?.preview || "A page you keep."
-                  : v.kind === "research"
-                    ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"} · ${v.sources
-                        .slice(0, 3)
-                        .map((x) => hostOf(x.url))
-                        .join(", ")}`
-                    : "What Atlas knows about them, and where they came up.";
+                  : v.kind === "browser"
+                    ? "Atlas's browser, live."
+                    : v.kind === "research"
+                      ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"} · ${v.sources
+                          .slice(0, 3)
+                          .map((x) => hostOf(x.url))
+                          .join(", ")}`
+                      : "What Atlas knows about them, and where they came up.";
   return (
     <div className="stage-card rise">
       <span className="lab">

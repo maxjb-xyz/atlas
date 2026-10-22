@@ -34,9 +34,13 @@ export const ASKS: Record<ToolKind, { asks: "never" | "until_trusted" | "always"
 
 /** Something Atlas will do once the owner says yes. Executed by the outbox (§4.4), never by the tool that asked. */
 export type Action =
-  { kind: "webhook"; webhook: string; name: string; message?: string } | { kind: "delete"; record: string; name: string; fact: string };
+  | { kind: "webhook"; webhook: string; name: string; message?: string }
+  | { kind: "delete"; record: string; name: string; fact: string }
+  /** Sending a form in the browser (§9.1): pressing its button, or Enter in its field, on the page it was asked on. */
+  | { kind: "browser"; ref: string; name: string; url: string; what: string };
 
-export const kindOf = (a: Action): ToolKind => (a.kind === "delete" ? "irreversible" : "outside");
+/** Sending a form can't be taken back (VISION §12.1 lists submit with the things that can't be undone). */
+export const kindOf = (a: Action): ToolKind => (a.kind === "webhook" ? "outside" : "irreversible");
 
 /** What earned trust is counted by: each webhook on its own. Nothing that can't be undone is ever trusted. */
 export const trustKey = (a: Action): string | null => (a.kind === "webhook" ? `webhook:${a.webhook}` : null);
@@ -124,7 +128,8 @@ export function openApproval(sql: Sql, runId: string): AgendaItem | null {
   return r ? getItem(sql, r.id) : null;
 }
 
-export const titleOf = (actions: Action[]) => actions.map((a) => (a.kind === "webhook" ? a.name : `Delete ${a.name}`)).join(", then ");
+export const titleOf = (actions: Action[]) =>
+  actions.map((a) => (a.kind === "webhook" ? a.name : a.kind === "delete" ? `Delete ${a.name}` : a.name)).join(", then ");
 
 /** Adds an action to this run's approval, making the approval if it's the first. */
 export function requestApproval(

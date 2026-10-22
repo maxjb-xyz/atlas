@@ -21,4 +21,15 @@ export const seams: {
   decide: Decider | null | undefined;
   /** Cloudflare's web search: undefined uses the AI binding, null means none. */
   websearch: WebSearchBinding | null | undefined;
-} = { makeBrain: null, calendar: undefined, fetch: null, embed: undefined, contextWindow: null, decide: undefined, websearch: undefined };
+  /** The browser: undefined uses Browser Run, null means none. */
+  browser: import("../browser").BrowserDriver | null | undefined;
+} = {
+  makeBrain: null,
+  calendar: undefined,
+  fetch: null,
+  embed: undefined,
+  contextWindow: null,
+  decide: undefined,
+  websearch: undefined,
+  browser: undefined,
+};

@@ -41,8 +41,8 @@ export function ApprovalCard({ atlas, a }: { atlas: Atlas; a: ApprovalView }) {
               <span style={{ fontWeight: 500 }} className="grow">
                 {s.title}
               </span>
-              <span className={`tag ${s.kind === "delete" ? "ac" : ""}`}>
-                {s.kind === "delete" ? "Can't be undone" : "Reaches outside"}
+              <span className={`tag ${s.kind !== "webhook" ? "ac" : ""}`}>
+                {s.kind === "delete" ? "Can't be undone" : s.kind === "browser" ? "Sends a form" : "Reaches outside"}
               </span>
             </div>
             <p className="small">{s.detail}</p>

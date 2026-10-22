@@ -13,7 +13,8 @@ import { append, get as getRow, type LogRow, type Surface } from "./store/log";
 import { readSettings, secretValues } from "./store/settings";
 import { getState, setState } from "./store/state";
 import { deleteRecord, findRecords } from "./store/records";
-import type { LookOut } from "./web";
+import { hostOf, type LookOut } from "./web";
+import type { BrowserDriver } from "./browser";
 import { quietUntil, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import { callWebhook, webhooks, webhookView } from "./webhooks";
 
@@ -189,6 +190,8 @@ export interface Channels {
   /** Puts a held notification on the one clock (§4.3), to be released at `at`. */
   hold(at: Date, note: Note): Promise<void>;
   fetch: typeof fetch;
+  /** The browser (§9.1), or null where there isn't one. */
+  browser(): BrowserDriver | null;
 }
 
 export class Outbox {
@@ -345,13 +348,13 @@ export class Outbox {
    * went: the status, the host and on failure the service's own words.
    */
   async look<T>(
-    o: { what: "search" | "fetch"; text: string; to: string; run_id: string | null },
+    o: { what: "search" | "fetch" | "browse" | "type"; text: string; to: string; run_id: string | null },
     go: (f: typeof fetch) => Promise<LookOut<T>>,
   ): Promise<LookOut<T>> {
     const base = { channel: "web", what: o.what, to: o.to, text: clip(o.text, 500) };
     const found = privateIn(this.sql, o.text, this.secrets());
     if (found) {
-      const error = `Not sent: it held ${found}. Private details never go into a web ${o.what === "search" ? "search" : "address"}.`;
+      const error = `Not sent: it held ${found}. Private details never go into ${{ search: "a web search", fetch: "a web address", browse: "a web address", type: "a web page" }[o.what]}.`;
       const secret = found === SECRET_FOUND;
       this.receipt(o.run_id, {
         ...base,
@@ -387,6 +390,7 @@ export class Outbox {
     a: Action,
     o: { run_id: string | null; by: "approved" | "trusted" | "owner" | "automation" },
   ): Promise<{ ok: boolean; text: string }> {
+    if (a.kind === "browser") return this.#submit(a, o);
     if (a.kind === "delete") {
       const touched = deleteRecord(this.sql, a.record, { via: "owner", ...(o.run_id ? { run_id: o.run_id } : {}) });
       // Open apps get the blanked rows at once, so the deleted words don't linger on screen.
@@ -418,6 +422,35 @@ export class Outbox {
     });
     if (!out.ok) console.error(JSON.stringify({ at: "webhook", name: hook.name, error: out.answer }));
     return { ok: out.ok, text: out.ok ? `Called ${hook.name}: ${out.answer}.` : `${hook.name} didn't work: ${out.answer}.` };
+  }
+
+  /**
+   * Sends a form in the browser, once the owner said yes. Only on the page
+   * it was asked on, and only if the button or field is still the one the
+   * card showed; otherwise nothing is sent and the receipt says why.
+   */
+  async #submit(a: Extract<Action, { kind: "browser" }>, o: { run_id: string | null; by: string }): Promise<{ ok: boolean; text: string }> {
+    const host = hostOf(a.url);
+    const base = { channel: "browser", to: host, text: a.name, by: o.by };
+    const fail = (error: string) => {
+      this.receipt(o.run_id, { ...base, ok: false, error });
+      console.error(JSON.stringify({ at: "browser.submit", host, error }));
+      return { ok: false, text: `${a.name} didn't happen: ${error}` };
+    };
+    const driver = this.channels.browser();
+    if (!driver) return fail("This deployment has no browser.");
+    const here = driver.where();
+    if (!here.open) return fail("The browser closed before your OK (it closes after ten minutes without use). Ask Atlas to do it again.");
+    if (here.url !== a.url) return fail(`The browser moved on to ${here.url} since you were asked, so nothing was sent.`);
+    try {
+      const el = await driver.find(a.ref);
+      if (!el || el.text !== a.what) return fail("The page changed since you were asked, so nothing was sent. Ask Atlas to do it again.");
+      const page = await driver.act({ act: "submit", ref: a.ref });
+      this.receipt(o.run_id, { ...base, ok: true, answer: `Now on ${page.title || hostOf(page.url)}` });
+      return { ok: true, text: `Sent it on ${host}. The page now says: ${page.title || page.url}.` };
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
   }
 
   /** A delivery receipt in the log (§4.2), shown in History. */

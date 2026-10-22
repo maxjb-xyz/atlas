@@ -67,7 +67,7 @@ export interface CalendarEventView {
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete";
+  kind: "webhook" | "delete" | "browser";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -293,6 +293,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.inbox.done"), id: z.string().max(64) }),
   /** The live page behind an area or person view on the stage, or in Library (§21.6). `ref` is echoed back. */
   z.object({ type: z.literal("atlas.stage"), ref: z.string().max(200), view: StageView }),
+  /** The owner's buttons on the browser's view (§9.1): take it over, hand it back to Atlas, or close it. */
+  z.object({ type: z.literal("atlas.browser"), action: z.enum(["take", "give", "close"]) }),
   /** Library's pages (§21.7). */
   z.object({ type: z.literal("atlas.pages") }),
   /** Keep: saves a view on the stage as a new page. */
