@@ -89,6 +89,10 @@ export interface State {
   mcpServers: import("../../core/src/protocol").McpServerView[] | null;
   /** The page Keep just made, so the view can say where it went. */
   kept: { id: string; name: string } | null;
+  /** Bumped when the situation changes, so Now and the situation, weather and place views ask again. */
+  situationVersion: number;
+  /** OwnTracks' setup, shown once in Settings → Devices. */
+  ownTracks: { url: string; user: string; password: string; link: string } | null;
 }
 
 const initial: State = {
@@ -122,6 +126,8 @@ const initial: State = {
   skills: null,
   mcpServers: null,
   kept: null,
+  situationVersion: 0,
+  ownTracks: null,
 };
 
 type Action =
@@ -278,6 +284,10 @@ function reduce(s: State, a: Action): State {
     }
     case "atlas.page.kept":
       return { ...s, kept: { id: m.id, name: m.name } };
+    case "atlas.situation":
+      return { ...s, situationVersion: s.situationVersion + 1 };
+    case "atlas.location.setup":
+      return { ...s, ownTracks: { url: m.url, user: m.user, password: m.password, link: m.link } };
   }
   return s;
 }

@@ -17,6 +17,8 @@ import type { LookOut, Page, SearchResult } from "../web";
 import type { BrowserAction, BrowserPage, PageElement } from "../browser";
 import type { McpServer } from "../mcp";
 import type { StageView } from "../stage";
+import type { Found, PlaceKind, Point, Route, Travel } from "../maps";
+import type { Weather } from "../weather";
 
 /** What kind of action a tool takes decides when Atlas asks first (§12.1). */
 export type { ToolKind } from "../approvals";
@@ -59,6 +61,8 @@ export interface ToolContext {
   browser: BrowserApi | null;
   /** Connected MCP servers (§9.2); absent or null where they can't be used. */
   mcp?: McpApi | null;
+  /** Maps and weather (§19.1), through the outbox's checks; absent or null where they can't be reached. */
+  maps?: MapsApi | null;
   /** Automations, for owner runs; null elsewhere. */
   automations: AutomationsApi | null;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
@@ -97,6 +101,24 @@ export interface BrowserApi {
   takeOver(why: string): Promise<void>;
   close(): Promise<void>;
   where(): { open: boolean; url: string; title: string };
+}
+
+/**
+ * Maps and weather, as tools reach them. Each call leaves Atlas, so it
+ * passes the outbox's checks and leaves a receipt; `label` is what the
+ * receipt says it was about, in words ("Gym to Home"), not coordinates.
+ */
+export interface MapsApi {
+  provider(): import("../maps").MapsProvider;
+  geocode(q: string, o: { run_id: string | null; near?: Point }): Promise<LookOut<Found[]>>;
+  reverse(p: Point, o: { run_id: string | null }): Promise<LookOut<Found>>;
+  route(via: Point[], travel: Travel, o: { run_id: string | null; label: string }): Promise<LookOut<Route>>;
+  nearby(
+    q: { kind?: PlaceKind; name?: string; near: Point; along?: Array<[number, number]>; within: number; limit: number },
+    o: { run_id: string | null; label: string },
+  ): Promise<LookOut<Found[]>>;
+  /** The forecast for a rough area around a point (rounded here, so a caller can't send more). */
+  weather(p: Point, o: { run_id: string | null; label: string }): Promise<LookOut<Weather>>;
 }
 
 /** Connected MCP servers, as tools reach them (§9.2). */

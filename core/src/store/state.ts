@@ -64,7 +64,13 @@ export type StateName =
   /** Automations Atlas suggests from requests the owner repeats (§13.4): what they said, how often, and whether they made it or set it aside. */
   | "suggestions"
   /** Focus (§14): until when things that can wait are held, and what it's for. */
-  | "focus";
+  | "focus"
+  /** Where the owner is (§10.1): the last fix from the phone, the saved place they're at, and the regions the phone has. */
+  | "location"
+  /** The situation's cache (§10.2): today's events, the weather for a rough area, the travel time to the next event with a place. */
+  | "situation"
+  /** Nudges Atlas sent on its own (§10.3), lately: their kind, what they were about, and how the owner reacted. */
+  | "nudges";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

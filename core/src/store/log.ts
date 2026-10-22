@@ -36,7 +36,11 @@ export type LogKind =
   /** A file was made, replaced or deleted (§21.7). */
   | "file.change"
   /** A skill was learned, patched, archived or brought back (§9.3). */
-  | "skill.change";
+  | "skill.change"
+  /** Something a sense noticed (§10.1): arriving at or leaving a place, a real move, location turned off or on. */
+  | "sense"
+  /** What awareness made of a sense event or a rhythm moment (§10.3): stopped by a rule, decided not to matter, or woke Atlas, and what it chose; and the owner's reaction to a nudge. */
+  | "awareness";
 
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */
 export interface Receipt {

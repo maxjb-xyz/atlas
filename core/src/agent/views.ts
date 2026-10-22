@@ -8,9 +8,12 @@ import { FIELDS, findEntry } from "../vault";
 import { type Action, actionsOf, ASKS, kindOf, needsHold, TRUST_AFTER, trustTable, waitingApprovals } from "../approvals";
 import type { AgendaItem } from "../store/agenda";
 import { scrub } from "../outbox";
-import { secretValues } from "../store/settings";
+import { readSettings, secretValues } from "../store/settings";
+import { here, pinOf } from "../location";
+import { MAPS } from "../maps";
+import { situationPage, weatherPage } from "../situation";
 import { webhooks, webhookView } from "../webhooks";
-import type { AreaPage, AutomationView, PersonPage, StageMessage, StagePage, StageView } from "../stage";
+import type { AreaPage, AutomationView, PersonPage, PlacePage, StageMessage, StagePage, StageView } from "../stage";
 import { type Automation, getAutomation, needsTest, stepText, whenText } from "../automations";
 import { getArea } from "../store/areas";
 import { parse, type Sql } from "../store/db";
@@ -94,7 +97,42 @@ export function stagePage(sql: Sql, view: StageView): StagePage | null {
     return a ? { kind: "automation", automation: automationView(sql, a) } : { kind: "missing", why: "That automation was deleted." };
   }
   if (view.kind === "page") return pagePage(sql, view.page, view.version);
+  if (view.kind === "situation") return situationPage(sql, readSettings(sql));
+  if (view.kind === "weather") return weatherPage(sql, readSettings(sql));
+  if (view.kind === "place") return placePage(sql, view.place);
   return null;
+}
+
+/** A saved place's page: what Atlas knows, its pin, and the owner's visits from the log. */
+export function placePage(sql: Sql, id: string): PlacePage | { kind: "missing"; why: string } {
+  const r = getRecord(sql, id);
+  if (!r || r.state !== "active") return { kind: "missing", why: "That place isn't saved any more." };
+  const pin = pinOf(r);
+  const rows = sql
+    .exec<{ at: number; body: string }>(
+      `SELECT at, body FROM log WHERE kind = 'sense' AND json_extract(body, '$.place.id') = ? AND json_extract(body, '$.event') IN ('arrived', 'left') ORDER BY seq DESC LIMIT 200`,
+      r.id,
+    )
+    .toArray()
+    .map((x) => ({ at: x.at, body: parse<{ event?: string; stayed_ms?: number }>(x.body, {}) }));
+  const visits: PlacePage["visits"] = [];
+  // Newest first: a departure is paired with the arrival before it.
+  let stayed: number | null = null;
+  for (const x of rows) {
+    if (x.body.event === "left") stayed = x.body.stayed_ms ?? null;
+    else {
+      visits.push({ at: x.at, stayed_ms: stayed });
+      stayed = null;
+    }
+  }
+  return {
+    kind: "place",
+    place: recordView(sql, r),
+    pin: pin ? { lat: pin.lat, lon: pin.lon, radius_m: pin.radius_m } : null,
+    visits: visits.slice(0, 50),
+    here: here(sql).place?.id === r.id,
+    credit: MAPS[readSettings(sql).maps.provider].credit,
+  };
 }
 
 /** A page at one version, with its parts and every version's line (§21.7). */

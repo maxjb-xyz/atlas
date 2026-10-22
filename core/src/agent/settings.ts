@@ -19,6 +19,8 @@ import { webhooks, webhookView } from "../webhooks";
 import { vault, vaultView } from "../vault";
 import type { VapidKeys } from "../push";
 import type { ChatGPTSignIn } from "./chatgpt";
+import { here, nearest, ownTracksLogin, pins } from "../location";
+import type { LocationView } from "../protocol";
 
 export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar: CalendarSense; router: BrainRouter }): SettingsView {
   const passkeys = (getState<StoredPasskey[]>(sql, "passkeys") ?? []).map((p) => ({
@@ -37,6 +39,7 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
       tavily_api_key: Boolean(getSecret(sql, "tavily_api_key")),
       brave_api_key: Boolean(getSecret(sql, "brave_api_key")),
       exa_api_key: Boolean(getSecret(sql, "exa_api_key")),
+      mapbox_token: Boolean(getSecret(sql, "mapbox_token")),
       icloud: icloud
         ? { username: icloud.username, refused: refusal ? { ...refusal, note: parts.calendar.note(refusal, settings) } : null }
         : null,
@@ -59,6 +62,32 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
     health: parts.router.snapshot(),
     passkeys,
     setup: setupView(sql),
+    location: locationView(sql),
+  };
+}
+
+function locationView(sql: Sql): LocationView {
+  const h = here(sql);
+  const login = ownTracksLogin(sql);
+  const all = pins(sql);
+  const f = h.fix;
+  const n = f && !h.place ? nearest(all, f) : null;
+  return {
+    set_up: login != null,
+    made_at: login?.made_at ?? null,
+    fix: f
+      ? {
+          at: f.at,
+          acc: Math.round(f.acc),
+          ...(f.batt != null ? { batt: f.batt } : {}),
+          ...(f.charging != null ? { charging: f.charging } : {}),
+          ...(f.conn ? { conn: f.conn } : {}),
+        }
+      : null,
+    place: h.place ? { name: h.place.name, since: h.place.since } : null,
+    near: n ? { name: n.pin.name, m: Math.round(n.m) } : null,
+    refused: h.refused,
+    pins: all.length,
   };
 }
 

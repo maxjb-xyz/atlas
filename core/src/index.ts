@@ -22,6 +22,10 @@ interface OwnerApi {
   apiWorkspaceGate(): Promise<{ allow: string[]; inject: Record<string, string> }>;
 }
 
+interface SenseApi {
+  apiOwnTracks(authorization: string | null, text: string): Promise<{ status: number; body: unknown }>;
+}
+
 /** Passkeys, challenges and sessions live in the owner's agent. */
 const authStore = async (env: Env) => (await getAgentByName(env.PersonAgent, OWNER)) as unknown as AuthStore;
 
@@ -43,6 +47,18 @@ export default {
     // comes with it (they're SameSite=Strict); the agent accepts only a sign-in it started, by its state.
     if (path === "/mcp/callback" && request.method === "GET") {
       return (await getAgentByName(env.PersonAgent, OWNER)).fetch(request);
+    }
+
+    // OwnTracks on the owner's phone (§10.1). It signs in with its own user and password, which the agent checks;
+    // they open nothing else.
+    if (path === "/owntracks" && request.method === "POST") {
+      const agent = (await getAgentByName(env.PersonAgent, OWNER)) as unknown as SenseApi;
+      const text = await request.text();
+      if (text.length > 64_000) return json({ error: "That's too big for one OwnTracks post." }, 413);
+      const out = await agent.apiOwnTracks(request.headers.get("authorization"), text);
+      const res = json(out.body, out.status);
+      if (out.status === 401) res.headers.set("www-authenticate", 'Basic realm="Atlas"');
+      return res;
     }
 
     if (path.startsWith("/api/")) {

@@ -6,7 +6,20 @@
 import { append } from "./log";
 import { type Json, newId, parse, type Sql } from "./db";
 
-export type AgendaKind = "reminder" | "promise" | "job" | "notify" | "approval" | "automation" | "skills";
+export type AgendaKind =
+  | "reminder"
+  | "promise"
+  | "job"
+  | "notify"
+  | "approval"
+  | "automation"
+  | "skills"
+  /** Something to do when you're near the right kind of place (§10.3), with no time unless it has a deadline. */
+  | "errand"
+  /** A rhythm moment (§10.3): start of day, evening, or a look before leaving for an event. */
+  | "rhythm"
+  /** The situation's refresh (§10.2): the weather and travel time, kept current while they're needed. */
+  | "situation";
 export type AgendaState = "scheduled" | "running" | "done" | "cancelled" | "failed";
 
 export interface AgendaSource {

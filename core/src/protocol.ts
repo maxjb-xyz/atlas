@@ -154,6 +154,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
       z.object({ name: z.literal("tavily_api_key"), value: z.string().min(8).max(200).nullable() }),
       z.object({ name: z.literal("brave_api_key"), value: z.string().min(8).max(200).nullable() }),
       z.object({ name: z.literal("exa_api_key"), value: z.string().min(8).max(200).nullable() }),
+      z.object({ name: z.literal("mapbox_token"), value: z.string().min(20).max(400).nullable() }),
       z.object({
         name: z.literal("icloud"),
         value: z.object({ username: z.string().min(3).max(200), app_password: z.string().min(4).max(64) }).nullable(),
@@ -230,6 +231,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.push.remove"), device: z.string().min(1).max(64) }),
   /** Focus for a while (§14), or end it with 0 minutes. */
   z.object({ type: z.literal("atlas.focus"), minutes: z.number().int().min(0).max(720), about: z.string().max(80).optional() }),
+  /** Settings → Devices → Set up OwnTracks: makes OwnTracks' own user and password (replacing any before) and its setup link. */
+  z.object({ type: z.literal("atlas.location.setup") }),
   /** "Sign in with ChatGPT": start, then paste the address the browser landed on. */
   z.object({ type: z.literal("atlas.chatgpt.start") }),
   z.object({ type: z.literal("atlas.chatgpt.finish"), url: z.string().min(1).max(8000) }),
@@ -365,7 +368,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
-    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push", "webhook", "search"]),
+    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push", "webhook", "search", "maps"]),
     /** For "push": the device to send the test notification to. */
     device: z.string().max(64).optional(),
     /** For "webhook": which one to call. */
@@ -435,6 +438,7 @@ export interface SettingsView {
     tavily_api_key: boolean;
     brave_api_key: boolean;
     exa_api_key: boolean;
+    mapbox_token: boolean;
     /**
      * `refused` says when and why iCloud last refused the sign-in, how many times in a row, and when Atlas tries
      * again by itself; `note` says all that in a sentence. Meanwhile Atlas answers from its copy of the calendar.
@@ -468,6 +472,20 @@ export interface SettingsView {
   /** Focus in force, if any (§14). */
   focus: { until: number; about: string } | null;
   setup: { done: string[]; skipped: string[]; finished: boolean };
+  /** Location (Settings → Devices, §10.1): whether OwnTracks is set up, the last fix and place, and the last refused post. */
+  location: LocationView;
+}
+
+export interface LocationView {
+  set_up: boolean;
+  made_at: number | null;
+  fix: { at: number; acc: number; batt?: number; charging?: boolean; conn?: string } | null;
+  place: { name: string; since: number } | null;
+  /** The nearest saved place, when not at one. */
+  near: { name: string; m: number } | null;
+  refused: { at: number; n: number } | null;
+  /** Saved places with a pin, which the phone has as regions. */
+  pins: number;
 }
 
 export type ChatGPTView =
@@ -535,6 +553,10 @@ export type ServerMessage =
   /** Helpers' jobs: running ones, and ones that ended in the last hour (§21.4). */
   | { type: "atlas.jobs"; jobs: JobView[] }
   | { type: "atlas.view"; view: SettingsView }
+  /** The situation changed (a sense event, a refresh): views showing it, and Now, ask again. */
+  | { type: "atlas.situation" }
+  /** OwnTracks' setup, shown once: where it posts, its user and password, and the link that fills them in. */
+  | { type: "atlas.location.setup"; url: string; user: string; password: string; link: string }
   | { type: "atlas.test.result"; what: string; ref?: string; ok: boolean; message: string; detail?: unknown }
   | { type: "atlas.error"; message: string }
   /** This socket's sign-in was ended; the app goes back to signing in. */

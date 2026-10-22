@@ -21,6 +21,10 @@ import { type AtlasRecord, standingFacts } from "./store/records";
 import { get as getRow, type LogRow, type Surface } from "./store/log";
 import type { Settings } from "./store/settings";
 import { isoLocal, longLocal, shortLocal } from "./time";
+import { situationLines } from "./situation";
+import { openErrands } from "./tools/places";
+import { KINDS, type PlaceKind } from "./maps";
+import { speakingLine } from "./agent/senses";
 
 /**
  * The context window Atlas plans for, in tokens. Providers don't say what
@@ -87,11 +91,14 @@ export function systemPrompt(opts: {
     .map((i) => `- ${isoLocal(new Date(i.due_at), tz)}: ${i.kind === "promise" ? "your promise: " : ""}${i.title} (id ${i.id})`);
   const fresh = [
     `Now: ${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}.`,
+    situationLines(sql, settings, now.getTime()),
     focusLine(sql, tz),
     pagesLine(sql),
     skillsLine(sql),
     serversLine(opts.mcp ?? []),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
+    errandsLine(sql, tz),
+    speakingLine(settings),
     areaContext(sql, opts.beforeSeq),
     exitsContext(sql, tz, now),
     jobsLine(sql, now),
@@ -217,6 +224,20 @@ function skillsLine(sql: Sql): string {
         .map((s) => `- ${s.name}: ${s.description}${s.checked && !s.checked.ok ? " (its last check failed)" : ""}`)
         .join("\n")}`
     : "";
+}
+
+/** Open errands (§10.3): things to do near the right kind of place, which Atlas suggests on the way. */
+function errandsLine(sql: Sql, tz: string): string {
+  const open = openErrands({ sql }).slice(0, 20);
+  if (!open.length) return "";
+  return `Open errands (you suggest a stop when the owner's on the way; errand_done when they've done it):\n${open
+    .map((e) => {
+      const k = e.source.detail?.place_kind;
+      const at = typeof k === "string" && k in KINDS ? ` (at ${KINDS[k as PlaceKind].words})` : "";
+      const by = e.due_at < 8_000_000_000_000 ? `, by ${shortLocal(new Date(e.due_at), tz)}` : "";
+      return `- ${e.title}${at}${by} (id ${e.id})`;
+    })
+    .join("\n")}`;
 }
 
 function pagesLine(sql: Sql): string {

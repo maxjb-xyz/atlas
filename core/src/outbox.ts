@@ -38,6 +38,8 @@ const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/;
  * "407.555.0134"), or an international number with its +. A run of digits
  * with no breaks isn't one: page addresses are full of timestamps and ids.
  */
+/** Coordinates: where someone is, to within a street ("28.6024, -81.2001"). */
+const COORDS = /-?\b\d{1,2}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}\b/;
 const PHONE = /(?:\+?1[\s.-]?)?(?:\(\d{3}\)\s?|\b\d{3}[\s.-])\d{3}[\s.-]\d{4}\b|\+\d{1,3}[\s.-]\d{2,4}(?:[\s.-]\d{2,4}){2,4}\b/;
 
 const SECRET_FOUND = "one of the owner's secrets";
@@ -52,10 +54,12 @@ const squash = (s: string) =>
  * The public-query check (§4.4): private details never go into a web
  * search or a page's address. Returns what was found, in words Atlas can
  * act on, or null. Private means one of the owner's secrets, an email
- * address, a phone number, or a street address Atlas keeps in a record.
- * Names, places and topics are not (decided with the owner, 2026-10-22).
+ * address, a phone number, or a street address Atlas keeps in a record,
+ * or coordinates. Names, places and topics are not (decided with the owner,
+ * 2026-10-22). With `places`, for the maps services only (§4.4), saved
+ * addresses and coordinates may go.
  */
-export function privateIn(sql: Sql, text: string, secrets: string[]): string | null {
+export function privateIn(sql: Sql, text: string, secrets: string[], o: { places?: boolean } = {}): string | null {
   let t = text;
   try {
     // In a page's address, + is a space and %40 is an @.
@@ -67,6 +71,8 @@ export function privateIn(sql: Sql, text: string, secrets: string[]): string | n
   if (scrub(t, secrets) !== t || scrub(text, secrets) !== text) return SECRET_FOUND;
   if (both(EMAIL)) return "an email address";
   if (both(PHONE)) return "a phone number";
+  if (o.places) return null;
+  if (both(COORDS)) return "where you are (coordinates)";
   const q = ` ${squash(t)} `;
   for (const r of [...findRecords(sql, "person"), ...findRecords(sql, "place"), ...findRecords(sql, "organization")]) {
     for (const v of Object.values(r.fields)) {
@@ -155,6 +161,8 @@ export interface Delivery {
   interrupted?: boolean;
   usage?: unknown;
   trigger?: string;
+  /** A nudge Atlas sent on its own (§10.3): its kind, and the errand or thing it was about. */
+  nudge?: { kind: string; about?: string };
   /** For spoken replies: when the status line and the answer were ready. */
   timing?: Record<string, unknown>;
 }
@@ -232,6 +240,7 @@ export class Outbox {
         ...(d.interrupted ? { interrupted: true } : {}),
         ...(d.usage ? { usage: d.usage as never } : {}),
         ...(d.trigger ? { trigger: d.trigger } : {}),
+        ...(d.nudge ? { nudge: d.nudge } : {}),
         ...(d.timing ? { timing: d.timing as never } : {}),
       },
     });
@@ -352,13 +361,21 @@ export class Outbox {
    * went: the status, the host and on failure the service's own words.
    */
   async look<T>(
-    o: { what: "search" | "fetch" | "browse" | "type"; text: string; to: string; run_id: string | null },
+    o: {
+      what: LookWhat;
+      text: string;
+      to: string;
+      run_id: string | null;
+      /** Maps and weather have channels of their own; the web is the default. */
+      channel?: "web" | "maps" | "weather";
+    },
     go: (f: typeof fetch) => Promise<LookOut<T>>,
   ): Promise<LookOut<T>> {
-    const base = { channel: "web", what: o.what, to: o.to, text: clip(o.text, 500) };
-    const found = privateIn(this.sql, o.text, this.secrets());
+    const base = { channel: o.channel ?? "web", what: o.what, to: o.to, text: clip(o.text, 500) };
+    // Places may go to the maps services and nowhere else (§4.4); weather gets a rough area, checked by its caller.
+    const found = privateIn(this.sql, o.text, this.secrets(), { places: o.channel === "maps" || o.channel === "weather" });
     if (found) {
-      const error = `Not sent: it held ${found}. Private details never go into ${{ search: "a web search", fetch: "a web address", browse: "a web address", type: "a web page" }[o.what]}.`;
+      const error = `Not sent: it held ${found}. Private details never go into ${WHERE[o.what]}.`;
       const secret = found === SECRET_FOUND;
       this.receipt(o.run_id, {
         ...base,
@@ -615,5 +632,19 @@ export class Outbox {
     return row;
   }
 }
+
+export type LookWhat = "search" | "fetch" | "browse" | "type" | "geocode" | "reverse" | "route" | "nearby" | "weather";
+
+const WHERE: Record<LookWhat, string> = {
+  search: "a web search",
+  fetch: "a web address",
+  browse: "a web address",
+  type: "a web page",
+  geocode: "a map search",
+  reverse: "a map search",
+  route: "a route",
+  nearby: "a map search",
+  weather: "a weather look",
+};
 
 const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
