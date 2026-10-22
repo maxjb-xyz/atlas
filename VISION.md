@@ -728,7 +728,8 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
 ### 19.3 Costs and caveats
 
 - **Plan.** It needs a Cloudflare account on the Workers paid plan, because sandboxes and sending email require it. Model usage is a separate cost, set by the owner's choices.
-- **Previews.** Some pieces are still previews: the Agents SDK's sub-agents, the voice package, Clairic, Artifacts. We wrap each one behind a small interface and keep a stable path ready.
+- **Previews.** Some pieces are still previews: the Agents SDK's sub-agents, the voice package, Clairic, Artifacts, Cloudflare Web Search, and the containers' Durable Object scheduling and snapshots that the workspace runs on. We wrap each one behind a small interface and keep a stable path ready.
+- **The workspace is a Sandbox the 1.0 way** (decided 2026-10-22). Sandbox SDK 1.0 has no ready-made class: the workspace is Atlas's own Durable Object driving a container (`ctx.container`), started from Cloudflare's managed Debian image so deploying needs no Docker, with Python and the rest installed on first start and kept as a snapshot.
 - **Not Project Think.** Think owns its own agent loop, model calls (through the AI SDK), message store and compaction, and offers no way to use Atlas's log as its store. Using it would mean a second log and a second loop (rule 3). Atlas uses the plain Agents SDK, whose fibers, sub-agents and Workflows don't need Think. ThinkWorkflow needs a Think agent, so it's out too. (Decided 2026-10-22.) M2 built automations without Workflows: their steps run in the agent, on the agenda, and a restart is covered by the agenda's lease and wake.
 - **Self-hosting.** People who want everything on their own hardware will prefer Hermes or OpenClaw.
   - The core stays plain TypeScript behind small interfaces (storage, scheduler, sandbox, browser, models, speech), so a self-hosted build is possible later.
