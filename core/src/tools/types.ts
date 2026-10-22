@@ -45,6 +45,12 @@ export interface ToolContext {
   web: WebApi | null;
   /** Where files' bytes live (§21.7): R2, or null where there's no bucket. */
   files: R2Bucket | null;
+  /** The tools this run has, for a program that calls them (Code Mode, §9.1). */
+  tools?: Tool[];
+  /** Runs Code Mode's programs in Dynamic Workers; null where programs can't run. */
+  loader?: WorkerLoader | null;
+  /** Logs a tool call a program made, with its receipt, as a row of this run. */
+  record?: (name: string, input: unknown, result: ToolResult) => Promise<void>;
   /** The workspace (§9.1): a container with a shell; null where it isn't reachable. */
   workspace: WorkspaceApi | null;
   /** The browser (§9.1), for runs that may drive it; null elsewhere. */

@@ -68,6 +68,7 @@ import { browserTools } from "./tools/browser";
 import { vaultFill } from "./tools/vault";
 import { fileRead, fileTools } from "./tools/files";
 import { workspaceTools } from "./tools/workspace";
+import { codeRun } from "./tools/code";
 import type { RunEvent } from "./workspace";
 import { deleteFile, filePage, getFile, keyOf, listFiles, saveFile } from "./files";
 import { type BrowserDriver, type BrowserPage, BrowserRunDriver } from "./browser";
@@ -125,6 +126,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     vaultFill,
     ...fileTools,
     ...workspaceTools,
+    codeRun,
   ],
   atlas: [calendarRead, ...agendaTools, recall, ...webTools, fileRead],
   system: [],
@@ -143,6 +145,7 @@ const AUTOMATION_TOOLS: Tool[] = [
   vaultFill,
   ...fileTools,
   ...workspaceTools,
+  codeRun,
 ];
 /** A test run only looks: it changes nothing, and webhooks only say what they'd do (§13.4). */
 const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall, pageRead, webSearch, webFetch, fileRead];
@@ -1147,7 +1150,30 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         log: logTo(this.#sql),
         router: this.#router,
         chain: settings.brains[o.role],
-        toolContext: this.#toolContext(settings, now, via, o.sourceLogId),
+        toolContext: {
+          ...this.#toolContext(settings, now, via, o.sourceLogId),
+          // Code Mode (§9.1): a program calls this run's own tools, and each call is a row of this run, with its receipt.
+          tools: o.tools ?? TOOLS[o.actor],
+          loader: (this.env as { LOADER?: WorkerLoader }).LOADER ?? null,
+          record: async (name, input, res) => {
+            const row = append(this.#sql, {
+              actor: "atlas",
+              kind: "tool.result",
+              run_id: o.runId,
+              surface: o.surface,
+              body: {
+                call_id: `code:${crypto.randomUUID().slice(0, 8)}`,
+                name,
+                via: "code",
+                ok: res.ok,
+                input: JSON.stringify(input ?? {}).slice(0, 2_000),
+                output: JSON.stringify(res.output ?? null).slice(0, 2_000),
+                ...(res.receipt ? { receipt: res.receipt as never } : {}),
+              },
+            });
+            o.emit({ type: "row", row });
+          },
+        },
       },
       {
         runId: o.runId,
