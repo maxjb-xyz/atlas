@@ -6,7 +6,7 @@ import { BrainRouter } from "../src/brains/router";
 import { compact, KEEP_MESSAGES, planCompaction, SAVE_NOTE, SUMMARY_NOTE } from "../src/compaction";
 import { history, latestSummary, systemPrompt } from "../src/context";
 import { migrate, type Sql } from "../src/store/db";
-import { append, thread } from "../src/store/log";
+import { append, logTo, thread } from "../src/store/log";
 import { standingFacts } from "../src/store/records";
 import { readSettings } from "../src/store/settings";
 import { startRun } from "../src/store/runs";
@@ -102,8 +102,9 @@ function deps(sql: Sql, brain: Brain) {
     embed: fakeEmbedder(),
     source_log_id: null,
     via: "compaction",
+    helpers: null,
   };
-  return { sql, router: new BrainRouter(() => brain), chain: [{ provider: "chatgpt" as const, model: "fake" }], toolContext };
+  return { log: logTo(sql), router: new BrainRouter(() => brain), chain: [{ provider: "chatgpt" as const, model: "fake" }], toolContext };
 }
 
 afterEach(() => {

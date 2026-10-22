@@ -8,6 +8,8 @@ export default defineConfig({
       remoteBindings: false,
       miniflare: {
         bindings: { ATLAS_OWNER_SECRET: "test-owner-secret-not-real", ATLAS_TEST: "1" },
+        // Test-only: lets the test runtime host helpers as sub-agents. Production needs no binding.
+        durableObjects: { HELPER_AGENT: { className: "HelperAgent", useSQLite: true } },
       },
     }),
   ],

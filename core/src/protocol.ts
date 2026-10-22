@@ -9,6 +9,17 @@ import { BrainChoice, SettingsPatch } from "./store/settings";
 
 export type { LogRow, AgendaItem };
 
+/** A helper's job as the app shows it (§21.4). */
+export interface JobView {
+  id: string;
+  title: string;
+  state: "running" | "done" | "failed" | "cancelled";
+  /** What the helper is doing right now, such as "Thinking back." */
+  status: string | null;
+  steps: number;
+  started_at: number;
+}
+
 // --- app -> agent ----------------------------------------------------------
 
 export const ClientMessage = z.discriminatedUnion("type", [
@@ -37,6 +48,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.chatgpt.finish"), url: z.string().min(1).max(8000) }),
   z.object({ type: z.literal("atlas.chatgpt.cancel") }),
   z.object({ type: z.literal("atlas.chatgpt.signout") }),
+  /** Stop a helper's job (Stop on the Jobs tab). */
+  z.object({ type: z.literal("atlas.job.stop"), id: z.string().max(64) }),
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
@@ -82,6 +95,7 @@ export type ServerMessage =
       agenda: AgendaItem[];
       view: SettingsView;
       running: Array<{ run_id: string; surface: string }>;
+      jobs: JobView[];
     }
   /** A new or older thread row. The saved truth: it replaces any streamed text for its run. */
   | { type: "atlas.rows"; rows: LogRow[]; older?: boolean; has_more?: boolean }
@@ -91,6 +105,8 @@ export type ServerMessage =
   | { type: "atlas.status"; run_id: string; text: string | null }
   | { type: "atlas.run"; run_id: string; state: RunState; surface: string; client_id?: string }
   | { type: "atlas.agenda"; agenda: AgendaItem[] }
+  /** Helpers' jobs: running ones, and ones that ended in the last hour (§21.4). */
+  | { type: "atlas.jobs"; jobs: JobView[] }
   | { type: "atlas.view"; view: SettingsView }
   | { type: "atlas.test.result"; what: string; ref?: string; ok: boolean; message: string; detail?: unknown }
   | { type: "atlas.error"; message: string };

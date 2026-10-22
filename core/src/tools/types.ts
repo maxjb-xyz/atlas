@@ -28,11 +28,19 @@ export interface ToolContext {
   source_log_id: string | null;
   /** How this run came to be, in plain words, for the sources of what it saves: "chat", "voice", "compaction". */
   via: string;
+  /** Hands work to a helper (§8.1); null where helpers aren't allowed, such as inside a helper. */
+  helpers: HelperDeskApi | null;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
   clock: {
     schedule(item: AgendaItem): Promise<void>;
     unschedule(item: AgendaItem): Promise<void>;
   };
+}
+
+export interface HelperDeskApi {
+  start(o: { title: string; brief: string; tools: string[] }): Promise<{ id: string }>;
+  /** The job's result, or null if it's still running after `ms` (it's then reported when it ends). */
+  wait(id: string, ms: number): Promise<{ state: "done" | "failed" | "cancelled"; text: string; error?: string } | null>;
 }
 
 export interface ToolResult {

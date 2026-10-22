@@ -6,6 +6,8 @@ import { OWNER } from "./agent";
 import { handleAuth, isOwner, sameOrigin } from "./auth";
 
 export { PersonAgent } from "./agent";
+// Helpers are sub-agents of the person agent; the class must be exported by this name.
+export { HelperAgent } from "./helper";
 
 /** The agent's HTTP-facing methods, typed narrowly (RPC stubs can't infer the log's recursive JSON type). */
 interface OwnerApi {

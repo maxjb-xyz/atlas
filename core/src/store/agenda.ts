@@ -1,16 +1,19 @@
-// One clock (VISION §4.3). In M0 the agenda holds reminders. Promises,
-// automations and watches join in M2 as more kinds of the same row.
+// One clock (VISION §4.3). The agenda holds reminders, and since M1 the
+// jobs helpers run in the background (§8.1). Promises, automations and
+// watches join in M2 as more kinds of the same row.
 
 import { append } from "./log";
-import { newId, parse, type Sql } from "./db";
+import { type Json, newId, parse, type Sql } from "./db";
 
-export type AgendaKind = "reminder";
+export type AgendaKind = "reminder" | "job";
 export type AgendaState = "scheduled" | "running" | "done" | "cancelled" | "failed";
 
 export interface AgendaSource {
   run_id?: string;
   log_id?: string;
   via: string;
+  /** What the item needs beyond its title: for a job, the helper's brief and run. */
+  detail?: Record<string, Json>;
 }
 
 export interface AgendaItem {
@@ -70,15 +73,19 @@ export function due(sql: Sql, now: number): AgendaItem[] {
     .map(fromRaw);
 }
 
-export function createItem(sql: Sql, item: { kind: AgendaKind; title: string; due_at: number; source: AgendaSource }): AgendaItem {
+export function createItem(
+  sql: Sql,
+  item: { kind: AgendaKind; title: string; due_at: number; source: AgendaSource; state?: "scheduled" | "running" },
+): AgendaItem {
   const id = newId("ag");
   const now = Date.now();
   sql.exec(
-    `INSERT INTO agenda (id, kind, title, due_at, state, source, created_at, updated_at) VALUES (?, ?, ?, ?, 'scheduled', ?, ?, ?)`,
+    `INSERT INTO agenda (id, kind, title, due_at, state, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     item.kind,
     item.title,
     item.due_at,
+    item.state ?? "scheduled",
     JSON.stringify(item.source),
     now,
     now,

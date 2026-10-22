@@ -19,7 +19,9 @@ export type LogKind =
   | "voice.problem"
   | "settings.change"
   /** Atlas's summary of the conversation before a point, which replaces it in context (§4.1). */
-  | "context.summary";
+  | "context.summary"
+  /** What a helper handed back when its job ended (§8.1). */
+  | "job.result";
 
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */
 export interface Receipt {
@@ -103,6 +105,12 @@ export function append(sql: Sql, row: Append): LogRow {
   );
   return get(sql, id)!;
 }
+
+/** A log writer for the loop, over this agent's own log. */
+export const logTo =
+  (sql: Sql) =>
+  async (row: Append): Promise<LogRow> =>
+    append(sql, row);
 
 export function get(sql: Sql, id: string): LogRow | null {
   const r = sql.exec<RawRow>(`SELECT * FROM log WHERE id = ?`, id).toArray()[0];

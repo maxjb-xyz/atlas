@@ -37,6 +37,7 @@ function ctx(sql: Sql, opts: { embed?: Embedder | null; source?: string | null }
     embed: opts.embed === undefined ? fakeEmbedder() : opts.embed,
     source_log_id: opts.source ?? null,
     via: "chat",
+    helpers: null,
   };
 }
 

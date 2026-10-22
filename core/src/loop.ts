@@ -4,8 +4,7 @@
 
 import { BrainError, type BrainEvent, brainKey, type Message, type ToolCall, type Usage } from "./brains/types";
 import type { BrainRouter } from "./brains/router";
-import type { Sql } from "./store/db";
-import { append, type LogRow, type Surface } from "./store/log";
+import type { Append, LogRow, Surface } from "./store/log";
 import type { FinalState } from "./store/runs";
 import type { BrainChoice } from "./store/settings";
 import { type Tool, type ToolContext, type ToolResult, fail, toSpec } from "./tools/types";
@@ -41,10 +40,22 @@ export interface RunSpec {
   effort?: "low" | "medium";
   /** How long a brain gets to start answering before the next one is tried. */
   firstEventMs: number;
+  /** Where to pick up from, after a restart cut a durable run short. */
+  resume?: Checkpoint;
+  /** Called after each step that ran tools, so a durable run can save where it is. */
+  checkpoint?: (c: Checkpoint) => void;
+}
+
+/** Where a run stands between steps: enough to carry on after a restart. */
+export interface Checkpoint {
+  messages: Message[];
+  steps: number;
+  text: string;
 }
 
 export interface LoopDeps {
-  sql: Sql;
+  /** Writes a row to the one log: the agent's own, or for a helper, its parent's. */
+  log: (row: Append) => Promise<LogRow>;
   router: BrainRouter;
   chain: BrainChoice[];
   toolContext: Omit<ToolContext, "run_id">;
@@ -75,10 +86,10 @@ const MAX_TOOL_OUTPUT = 16_000;
 
 export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent) => void): Promise<LoopResult> {
   const started = Date.now();
-  const messages: Message[] = [...spec.messages];
+  const messages: Message[] = [...(spec.resume?.messages ?? spec.messages)];
   const usage: Usage = { input: 0, output: 0, cached: 0 };
-  let text = "";
-  let steps = 0;
+  let text = spec.resume?.text ?? "";
+  let steps = spec.resume?.steps ?? 0;
   let lastBrain: LoopResult["brain"] = null;
   let fellBack = false;
 
@@ -133,6 +144,7 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
       }
       emit({ type: "status", text: null, speakable: false });
       emit({ type: "tools", names: step.calls.map((c) => c.name) });
+      spec.checkpoint?.({ messages: [...messages], steps, text });
     }
   } catch (err) {
     emit({ type: "status", text: null, speakable: false });
@@ -225,7 +237,7 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
       failures.push(`${brainKey(brain)}: ${reason}`);
       const nextBrain = brains[i + 1];
       if (nextBrain) {
-        const row = append(deps.sql, {
+        const row = await deps.log({
           actor: "system",
           kind: "brain.fallback",
           run_id: spec.runId,
@@ -256,7 +268,7 @@ async function firstEvent(it: AsyncIterator<BrainEvent>, ms: number, attempt: Ab
 
 async function runTool(deps: LoopDeps, spec: RunSpec, call: ToolCall, emit: (e: LoopEvent) => void): Promise<string> {
   const tool = spec.tools.find((t) => t.name === call.name);
-  append(deps.sql, {
+  await deps.log({
     actor: "atlas",
     kind: "tool.call",
     run_id: spec.runId,
@@ -281,7 +293,7 @@ async function runTool(deps: LoopDeps, spec: RunSpec, call: ToolCall, emit: (e: 
   }
 
   const content = truncate(JSON.stringify(res.output ?? null), MAX_TOOL_OUTPUT);
-  const row = append(deps.sql, {
+  const row = await deps.log({
     actor: "atlas",
     kind: "tool.result",
     run_id: spec.runId,

@@ -5,7 +5,7 @@ import { BrainError } from "../src/brains/types";
 import { type LoopEvent, runLoop, type RunSpec } from "../src/loop";
 import { upcoming } from "../src/store/agenda";
 import { migrate, type Sql } from "../src/store/db";
-import { forRun, thread } from "../src/store/log";
+import { forRun, logTo, thread } from "../src/store/log";
 import { correctRecord, createRecord, recordHistory } from "../src/store/records";
 import { readSettings, secretValues, setSecret, writeSettings } from "../src/store/settings";
 import { endRun, getRun, startRun, sweepStaleRuns } from "../src/store/runs";
@@ -55,6 +55,7 @@ function setup(sql: Sql, steps: Step[], opts: Partial<RunSpec> = {}, extraBrains
     embed: null,
     source_log_id: null,
     via: "chat",
+    helpers: null,
   };
   const runId = startRun(sql, { actor: "owner", trigger: "message", surface: "app", role: "main" });
   const events: LoopEvent[] = [];
@@ -70,7 +71,7 @@ function setup(sql: Sql, steps: Step[], opts: Partial<RunSpec> = {}, extraBrains
     firstEventMs: 2_000,
     ...opts,
   };
-  const deps = { sql, router, chain: brains.map((b) => ({ provider: b.brain.provider, model: b.brain.model })), toolContext };
+  const deps = { log: logTo(sql), router, chain: brains.map((b) => ({ provider: b.brain.provider, model: b.brain.model })), toolContext };
   return { main, others, router, scheduled, runId, events, run: () => runLoop(deps, spec, (e) => events.push(e)) };
 }
 
