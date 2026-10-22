@@ -57,7 +57,47 @@ export const AutomationStage = z.object({
   automation: z.string().min(1).max(80).describe("The automation's name or id."),
 });
 
-export const StageView = z.discriminatedUnion("kind", [AreaStage, PersonStage, ListStage, TableStage, AutomationStage]);
+export const DraftStage = z.object({
+  kind: z.literal("draft"),
+  title,
+  for: z.string().max(200).optional().describe("Who or where it's for, in a few words: 'An email to the landlord', 'The Riverside quote'."),
+  text: z.string().min(1).max(8_000).describe("The draft itself, ready to copy. Markdown is fine."),
+  source,
+});
+
+export const PlanStage = z.object({
+  kind: z.literal("plan"),
+  title,
+  steps: z
+    .array(
+      z.object({
+        text: z.string().min(1).max(300),
+        note: z.string().max(300).optional(),
+        when: z.string().max(60).optional().describe("When it happens, in a few words: 'Friday', 'after the quote'."),
+        state: z.enum(["todo", "doing", "done", "waiting"]).default("todo").describe("Waiting means it waits on someone or something."),
+      }),
+    )
+    .min(1)
+    .max(30),
+  source,
+});
+
+export const PageStage = z.object({
+  kind: z.literal("page"),
+  page: z.string().min(1).max(80).describe("The page's name or id."),
+  version: z.number().int().min(1).optional().describe("An older version to show; leave out for the newest."),
+});
+
+export const StageView = z.discriminatedUnion("kind", [
+  AreaStage,
+  PersonStage,
+  ListStage,
+  TableStage,
+  AutomationStage,
+  DraftStage,
+  PlanStage,
+  PageStage,
+]);
 export type StageView = z.infer<typeof StageView>;
 export type StageKind = StageView["kind"];
 
@@ -132,11 +172,27 @@ export interface AutomationPage {
   automation: AutomationView;
 }
 
+/** A page as it opens (§21.7): one version, its body in parts, and the list of versions. */
+export interface PagePage {
+  kind: "page";
+  page: {
+    id: string;
+    name: string;
+    made_by: "owner" | "atlas";
+    created_at: number;
+    /** The newest version, and the one shown. */
+    version: number;
+    shown: { n: number; at: number; by: "owner" | "atlas"; note: string };
+    segments: import("./pages").Segment[];
+    versions: Array<{ n: number; at: number; by: "owner" | "atlas"; note: string }>;
+  };
+}
+
 /** What a view needs from the agent, or why it can't be shown any more. */
-export type StagePage = AreaPage | PersonPage | AutomationPage | { kind: "missing"; why: string };
+export type StagePage = AreaPage | PersonPage | AutomationPage | PagePage | { kind: "missing"; why: string };
 
 /** The few words a view goes by: on its tab, its receipt and its compact card. */
-export function stageTitle(v: StageView, names: { area?: string; person?: string; automation?: string } = {}): string {
+export function stageTitle(v: StageView, names: { area?: string; person?: string; automation?: string; page?: string } = {}): string {
   switch (v.kind) {
     case "area":
       return names.area ?? v.area;
@@ -144,8 +200,12 @@ export function stageTitle(v: StageView, names: { area?: string; person?: string
       return names.person ?? v.person;
     case "list":
     case "table":
+    case "draft":
+    case "plan":
       return v.title;
     case "automation":
       return names.automation ?? v.automation;
+    case "page":
+      return names.page ?? v.page;
   }
 }

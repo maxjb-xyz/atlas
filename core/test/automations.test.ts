@@ -263,7 +263,13 @@ describe("automations", () => {
     expect(v.runs[0]).toMatchObject({ test: true, ok: true, text: "Two meetings today, nothing urgent." });
     expect(v.runs[0]!.results[1]).toMatchObject({ ok: true, text: "Would call Lights off." });
     expect(fetched).toEqual([]); // a test sends nothing
-    expect(test.requests[0]!.tools.map((x) => x.name).sort()).toEqual(["agenda_list", "calendar_read", "recall", "webhook_call"]);
+    expect(test.requests[0]!.tools.map((x) => x.name).sort()).toEqual([
+      "agenda_list",
+      "calendar_read",
+      "page_read",
+      "recall",
+      "webhook_call",
+    ]);
     expect(String(test.requests[0]!.messages.filter((m) => m.role === "user").at(-1)!.content)).toContain("This is a test run");
 
     s.send({ type: "atlas.automation.set", id: v.id, on: true });

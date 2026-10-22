@@ -6,6 +6,7 @@ import { z } from "zod";
 import { areaPage, personPage } from "../agent/views";
 import { type StageView, StageView as StageViewSchema, stageTitle } from "../stage";
 import { findAutomation } from "../automations";
+import { findPage, listPages, pageVersion } from "../pages";
 import { getArea, listAreas } from "../store/areas";
 import { findRecords, getRecord, recordsNamed } from "../store/records";
 import { defineTool, fail, type ToolResult } from "./types";
@@ -16,7 +17,7 @@ export const show = defineTool({
   description: [
     "Put a view on the stage of the owner's app, beside your reply.",
     "Use it when the owner asks to see something, when they ask what's going on with one of their areas or who someone is, and when the answer is several items that read better as a list or a table than as sentences.",
-    "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `automation` (one of the owner's automations, as When → Do → Report with its runs), `list` and `table` (things you've put together in this turn).",
+    "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `automation` (one of the owner's automations, as When → Do → Report with its runs), `page` (one of the owner's kept pages), `list` and `table` (things you've put together in this turn), `draft` (words for the owner to copy and send themselves, such as an email or a post) and `plan` (steps toward something, each with whether it's to do, under way, done or waiting).",
     "Fill a list or table only with what you've looked up or what's in the conversation, never with guesses, and say where it came from in `source`.",
     "The owner sees the view as you answer, so keep your reply to what matters most and don't read the view out. In a voice conversation, say a sentence or two and let the stage show the rest.",
   ].join(" "),
@@ -34,10 +35,11 @@ export const show = defineTool({
   },
 });
 
-type Resolved = { view: StageView; names: { area?: string; person?: string; automation?: string }; what?: unknown } | { error: string };
+type Resolved =
+  { view: StageView; names: { area?: string; person?: string; automation?: string; page?: string }; what?: unknown } | { error: string };
 
-/** Turns a name into the id the view keeps, and checks a table's rows fit its columns. */
-function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Resolved {
+/** Turns a name into the id the view keeps, and checks a table's rows fit its columns. Pages use it for the views they keep. */
+export function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Resolved {
   switch (view.kind) {
     case "area": {
       const all = listAreas(sql, { all: true });
@@ -91,7 +93,22 @@ function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Resolved 
       return { view, names: {} };
     }
     case "list":
+    case "draft":
+    case "plan":
       return { view, names: {} };
+    case "page": {
+      const p = findPage(sql, view.page);
+      if (!p) {
+        const names = listPages(sql).map((x) => x.name);
+        return {
+          error: names.length
+            ? `There's no page called "${view.page}". The owner's pages are: ${names.slice(0, 30).join(", ")}.`
+            : `There's no page called "${view.page}"; the owner has no pages yet.`,
+        };
+      }
+      if (view.version && !pageVersion(sql, p.id, view.version)) return { error: `${p.name} has no version ${view.version}.` };
+      return { view: { kind: "page", page: p.id, ...(view.version ? { version: view.version } : {}) }, names: { page: p.name } };
+    }
     case "automation": {
       const a = findAutomation(sql, view.automation);
       if (!a) return { error: `There's no automation called "${view.automation}".` };

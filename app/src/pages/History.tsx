@@ -85,6 +85,15 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         what: `${{ made: "Made", changed: "Changed", on: "Turned on", paused: "Paused", deleted: "Deleted" }[str(b.change)] ?? "Changed"} the automation ${str(b.name)}${b.why ? `: ${str(b.why)}` : ""}`,
         kind: `automation.${str(b.change)}`,
       };
+    case "page.change":
+      return {
+        who: r.actor === "owner" ? "You" : "Atlas",
+        what:
+          b.change === "deleted"
+            ? `Deleted the page ${str(b.name)}`
+            : `${b.change === "made" ? "Made" : `Version ${str(b.version)} of`} the page ${str(b.name)}${b.note && b.change !== "made" ? `: ${str(b.note)}` : ""}`,
+        kind: `page.${str(b.change)}`,
+      };
     case "delivery": {
       const where =
         b.channel === "push"
@@ -119,7 +128,11 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
                     ? `Webhook ${str(b.webhook)}: ${str(b.name)}`
                     : b.trust
                       ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
-                      : "Changed settings";
+                      : b.focus
+                        ? b.focus === "on"
+                          ? `Focus until ${new Date(Number(b.until)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${b.about ? `: ${str(b.about)}` : ""}`
+                          : "Ended focus"
+                        : "Changed settings";
       return { who: r.actor === "owner" ? "You" : "Atlas", what, kind: "settings.change" };
     }
     default:

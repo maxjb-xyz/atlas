@@ -30,7 +30,9 @@ export type LogKind =
   /** An automation ran, or ran as a test: each step's result, how long, and what it cost (§13.4). */
   | "automation.run"
   /** Something left Atlas on a channel beyond the thread (a push, a webhook call), or was held or refused at the exit (§4.4). */
-  | "delivery";
+  | "delivery"
+  /** A page was made, given a new version, or deleted (§21.7). */
+  | "page.change";
 
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */
 export interface Receipt {
@@ -47,7 +49,9 @@ export type Undo =
   | { kind: "reminder.cancel"; id: string }
   | { kind: "record.forget"; id: string }
   | { kind: "record.restore"; id: string }
-  | { kind: "record.revert"; id: string; history: number };
+  | { kind: "record.revert"; id: string; history: number }
+  /** Undoes a page's version `version`: back to the one before, or no page when it was the first. */
+  | { kind: "page.undo"; id: string; version: number };
 
 export interface LogRow {
   seq: number;

@@ -4,6 +4,7 @@
 // surface), then every message since that summary. Compaction (§4.1) keeps
 // that last part in bounds; recall finds the rest, on demand.
 
+import { listPages } from "./pages";
 import { focusNow } from "./outbox";
 import type { Message } from "./brains/types";
 import { character, TEXT_PROFILE, VOICE_PROFILE } from "./character";
@@ -81,6 +82,7 @@ export function systemPrompt(opts: {
   const fresh = [
     `Now: ${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}.`,
     focusLine(sql, tz),
+    pagesLine(sql),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     areaContext(sql, opts.beforeSeq),
     exitsContext(sql, tz, now),
@@ -198,6 +200,13 @@ export function hat(sql: Sql, beforeSeq?: number): Area[] {
  * waiting for their OK, and what was settled in the last two hours, so
  * Atlas never says something is done that's still waiting, or the reverse.
  */
+function pagesLine(sql: Sql): string {
+  const pages = listPages(sql).slice(0, 20);
+  return pages.length
+    ? `The owner's pages (newest first; page_read to read one): ${pages.map((p) => `${p.name} (${p.id})`).join(", ")}.`
+    : "";
+}
+
 function focusLine(sql: Sql, tz: string): string {
   const f = focusNow(sql);
   return f

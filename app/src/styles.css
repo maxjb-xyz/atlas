@@ -1905,3 +1905,72 @@ button.chip:hover {
   font-weight: 600;
   background: var(--sel);
 }
+
+/* --- drafts, plans and pages (§21.6, §21.7) ------------------------------------------------ */
+
+/* Keep sits beside the close button; the title leaves room for both. */
+.view-keep {
+  position: absolute;
+  top: 18px;
+  right: 16px;
+}
+.sheet-in.closable .view-keep {
+  right: 52px;
+}
+.sheet-in.keepable > .sheet-title {
+  padding-right: 84px;
+}
+.sheet-in.keepable.closable > .sheet-title {
+  padding-right: 120px;
+}
+.draft-text {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.plan-mark {
+  width: 22px;
+  flex: none;
+  color: var(--tx3);
+}
+.plan-mark.done {
+  color: var(--ok);
+}
+.plan-mark.doing {
+  color: var(--ac);
+}
+.page-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.page-view {
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.page-view .sheet-title h1.disp {
+  font-size: 19px;
+}
+.page-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+.page-edit textarea {
+  width: 100%;
+}
+.page-chip {
+  width: 100%;
+  border: 1px dashed var(--sep2);
+  border-radius: 8px;
+  padding: 8px 12px;
+  gap: 10px;
+}
+.panel.suggest {
+  margin-bottom: 14px;
+  border-color: var(--ac);
+}
+.r.on {
+  background: var(--hover);
+}

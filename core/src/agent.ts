@@ -61,6 +61,8 @@ import { AutomationDesk } from "./agent/automations";
 import { automationTools } from "./tools/automations";
 import { seedRoutines } from "./routines";
 import { focusTool, setFocus } from "./tools/focus";
+import { pageRead, pageTools } from "./tools/pages";
+import { deletePage, getPage, listPages, pageSummaries, pageVersion, savePage, viewBlock } from "./pages";
 import { noticeAsk, openSuggestions, settleSuggestion } from "./suggestions";
 import { deleteAutomation, getAutomation, listAutomations, matchPhrase, saveAutomation, setAutomationState } from "./automations";
 import { automationView } from "./agent/views";
@@ -84,15 +86,27 @@ const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
  * and nobody is looking at the stage when they run, so they can't `show`.
  */
 const TOOLS: Record<Actor, Tool[]> = {
-  owner: [calendarRead, ...agendaTools, ...memoryTools, delegate, show, webhookCall, deleteForGood, approve, focusTool, ...automationTools],
+  owner: [
+    calendarRead,
+    ...agendaTools,
+    ...memoryTools,
+    delegate,
+    show,
+    webhookCall,
+    deleteForGood,
+    approve,
+    focusTool,
+    ...pageTools,
+    ...automationTools,
+  ],
   atlas: [calendarRead, ...agendaTools, recall],
   system: [],
 };
 
 /** What an automation's Atlas step can reach: what the clock's runs can, and the owner's webhooks (§13.1). */
-const AUTOMATION_TOOLS: Tool[] = [calendarRead, ...agendaTools, recall, webhookCall, focusTool];
+const AUTOMATION_TOOLS: Tool[] = [calendarRead, ...agendaTools, recall, webhookCall, focusTool, ...pageTools];
 /** A test run only looks: it changes nothing, and webhooks only say what they'd do (§13.4). */
-const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall];
+const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall, pageRead];
 
 /**
  * The most history a voice turn reads, in tokens: about M0's last 40
@@ -225,7 +239,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
     });
     // The default routines are made once; then every automation that's on has its next run on the clock (a missing one is put back).
-    seedRoutines(this.#sql);
+    try {
+      seedRoutines(this.#sql);
+    } catch (err) {
+      console.error(JSON.stringify({ at: "routines.seed", error: err instanceof Error ? err.message : String(err) }));
+    }
     for (const a of listAutomations(this.#sql)) void this.#automations.arm(a.id).catch(() => {});
     // The key that signs push notifications, made once, so Settings can offer them straight away.
     void vapidKeys(this.#sql).catch((err: unknown) =>
@@ -609,6 +627,19 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       }
       case "atlas.stage":
         this.#send(connection, { type: "atlas.stage.page", ref: msg.ref, page: stagePage(this.#sql, msg.view) });
+        return;
+      case "atlas.pages":
+        this.#send(connection, { type: "atlas.pages", pages: pageSummaries(this.#sql) });
+        return;
+      case "atlas.page.keep":
+      case "atlas.page.save":
+      case "atlas.page.restore":
+      case "atlas.page.delete":
+        try {
+          this.#pageChange(connection, msg);
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
         return;
       case "atlas.inbox.done":
         inboxDone(this.#sql, msg.id);
@@ -1570,6 +1601,35 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
     this.#broadcast({ type: "atlas.rows", rows: [out.row] });
     if (out.agenda) this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+    if (out.row.kind === "page.change") this.#broadcast({ type: "atlas.pages", pages: pageSummaries(this.#sql) });
+  }
+
+  /** The owner's hands on pages: Keep, an edit, bringing back a version, and delete (§21.7). */
+  #pageChange(
+    connection: Connection,
+    msg: Extract<ClientMessage, { type: "atlas.page.keep" | "atlas.page.save" | "atlas.page.restore" | "atlas.page.delete" }>,
+  ): void {
+    let row: LogRow | null = null;
+    if (msg.type === "atlas.page.keep") {
+      if (msg.view.kind === "page") throw new Error("That's already a page.");
+      const taken = new Set(listPages(this.#sql).map((p) => p.name.toLowerCase()));
+      let name = msg.name;
+      for (let i = 2; taken.has(name.toLowerCase()); i++) name = `${msg.name} ${i}`;
+      const out = savePage(this.#sql, { name, body: viewBlock(msg.view), note: "Kept from the stage", by: "owner" });
+      row = out.row;
+      this.#send(connection, { type: "atlas.page.kept", id: out.page.id, name: out.page.name });
+    } else if (msg.type === "atlas.page.save") {
+      row = savePage(this.#sql, { id: msg.id, name: msg.name, body: msg.body, note: msg.note ?? "Edited", by: "owner" }).row;
+    } else if (msg.type === "atlas.page.restore") {
+      const p = getPage(this.#sql, msg.id);
+      const v = p ? pageVersion(this.#sql, p.id, msg.version) : null;
+      if (!p || !v) throw new Error("That version isn't there.");
+      row = savePage(this.#sql, { id: p.id, name: p.name, body: v.body, note: `Back to version ${v.n}`, by: "owner" }).row;
+    } else {
+      row = deletePage(this.#sql, msg.id, "owner");
+    }
+    if (row) this.#broadcast({ type: "atlas.rows", rows: [row] });
+    this.#broadcast({ type: "atlas.pages", pages: pageSummaries(this.#sql) });
   }
 
   async #test(connection: Connection, msg: Extract<ClientMessage, { type: "atlas.test" }>): Promise<void> {

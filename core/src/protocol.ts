@@ -3,6 +3,19 @@
 // message type starts with "atlas." so the two never collide.
 
 import type { SuggestionView } from "./suggestions";
+
+/** A page as Library lists it (§21.7). */
+export interface PageSummary {
+  id: string;
+  name: string;
+  version: number;
+  updated_at: number;
+  made_by: "owner" | "atlas";
+  /** The first words of its text. */
+  preview: string;
+  /** The kinds of view kept in it. */
+  views: string[];
+}
 import { z } from "zod";
 import type { LogRow } from "./store/log";
 import type { AgendaItem } from "./store/agenda";
@@ -277,6 +290,21 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.inbox.done"), id: z.string().max(64) }),
   /** The live page behind an area or person view on the stage, or in Library (§21.6). `ref` is echoed back. */
   z.object({ type: z.literal("atlas.stage"), ref: z.string().max(200), view: StageView }),
+  /** Library's pages (§21.7). */
+  z.object({ type: z.literal("atlas.pages") }),
+  /** Keep: saves a view on the stage as a new page. */
+  z.object({ type: z.literal("atlas.page.keep"), view: StageView, name: z.string().trim().min(1).max(80) }),
+  /** The owner's edit: a new version with this body. */
+  z.object({
+    type: z.literal("atlas.page.save"),
+    id: z.string().max(64),
+    name: z.string().trim().min(1).max(80),
+    body: z.string().max(60_000),
+    note: z.string().max(300).optional(),
+  }),
+  /** A new version that brings an older one back. */
+  z.object({ type: z.literal("atlas.page.restore"), id: z.string().max(64), version: z.number().int().min(1) }),
+  z.object({ type: z.literal("atlas.page.delete"), id: z.string().max(64) }),
   /** Stop a helper's job (Stop on the Jobs tab). */
   z.object({ type: z.literal("atlas.job.stop"), id: z.string().max(64) }),
   /** Live checks for Settings (§22: every check is a live test). */
@@ -380,6 +408,9 @@ export type ServerMessage =
   | { type: "atlas.inbox.items"; items: InboxItem[] }
   | { type: "atlas.stage.page"; ref: string; page: StagePage | null }
   | { type: "atlas.automations"; automations: AutomationView[]; suggestions: SuggestionView[] }
+  | { type: "atlas.pages"; pages: PageSummary[] }
+  /** Keep worked: the new page, so the view can say where it went. */
+  | { type: "atlas.page.kept"; id: string; name: string }
   | {
       type: "atlas.voices";
       voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>;

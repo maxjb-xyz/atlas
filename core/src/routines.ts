@@ -3,7 +3,7 @@
 // pause or delete. Each is one Atlas step with a note, so what it says comes
 // from the calendar, the agenda and what was said, looked up when it runs.
 
-import { type AutomationInput, saveAutomation } from "./automations";
+import { type AutomationInput, listAutomations, saveAutomation } from "./automations";
 import type { Sql } from "./store/db";
 import { getState, setState } from "./store/state";
 
@@ -64,19 +64,13 @@ export const ROUTINES: AutomationInput[] = [
 
 /**
  * Makes the default routines once per deployment. A routine the owner
- * deleted stays deleted, and a name they already use is left alone.
- * Returns the ids it made, for arming.
+ * deleted stays deleted, and a name they already use is left alone (they
+ * made their own). Returns the ids it made, for arming.
  */
 export function seedRoutines(sql: Sql): string[] {
   if (getState(sql, "routines")) return [];
-  const made: string[] = [];
-  for (const r of ROUTINES) {
-    try {
-      made.push(saveAutomation(sql, r, "default").id);
-    } catch {
-      // A name already taken: the owner made their own.
-    }
-  }
+  const taken = new Set(listAutomations(sql).map((a) => a.name.toLowerCase()));
+  const made = ROUTINES.filter((r) => !taken.has(r.name.toLowerCase())).map((r) => saveAutomation(sql, r, "default").id);
   setState(sql, "routines", { made_at: Date.now(), ids: made });
   return made;
 }

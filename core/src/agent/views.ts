@@ -2,6 +2,7 @@
 // Inbox's waiting items. Each is a read of the one log or the records, shaped
 // for its page; nothing here changes anything except marking Inbox items done.
 
+import { getPage, pageVersion, pageVersions, segments } from "../pages";
 import type { ApprovalView, HistoryFilter, HistoryStats, InboxItem, RecordView } from "../protocol";
 import { type Action, actionsOf, ASKS, kindOf, needsHold, TRUST_AFTER, trustTable, waitingApprovals } from "../approvals";
 import type { AgendaItem } from "../store/agenda";
@@ -91,7 +92,29 @@ export function stagePage(sql: Sql, view: StageView): StagePage | null {
     const a = getAutomation(sql, view.automation);
     return a ? { kind: "automation", automation: automationView(sql, a) } : { kind: "missing", why: "That automation was deleted." };
   }
+  if (view.kind === "page") return pagePage(sql, view.page, view.version);
   return null;
+}
+
+/** A page at one version, with its parts and every version's line (§21.7). */
+export function pagePage(sql: Sql, id: string, n?: number): StagePage {
+  const p = getPage(sql, id);
+  if (!p) return { kind: "missing", why: "That page was deleted." };
+  const v = pageVersion(sql, p.id, n) ?? pageVersion(sql, p.id);
+  if (!v) return { kind: "missing", why: "That page has no versions." };
+  return {
+    kind: "page",
+    page: {
+      id: p.id,
+      name: p.name,
+      made_by: p.made_by,
+      created_at: p.created_at,
+      version: p.version,
+      shown: { n: v.n, at: v.at, by: v.by, note: v.note },
+      segments: segments(v.body),
+      versions: pageVersions(sql, p.id),
+    },
+  };
 }
 
 /** An automation as the app shows it: its parts in words, when it runs next, and its last runs. */
@@ -247,8 +270,9 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
     "delivery",
     "automation.run",
     "automation.change",
+    "page.change",
   ],
-  actions: ["tool.result", "record.change", "agenda.change", "area.change", "delivery", "automation.change"],
+  actions: ["tool.result", "record.change", "agenda.change", "area.change", "delivery", "automation.change", "page.change"],
   conversations: ["message.in", "message.out"],
   jobs: ["job.result", "agenda.change", "automation.run"],
 };

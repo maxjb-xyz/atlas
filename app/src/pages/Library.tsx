@@ -25,12 +25,14 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
   const s = atlas.state;
   // An area's or a person's page opens in place: "area:<id>" under Areas, "person:<id>" under People (§21.2).
   const [head, rest = ""] = [detail.split(":")[0]!, detail.split(":").slice(1).join(":")];
-  const page = head === "area" || head === "person" ? { kind: head, id: rest } : null;
+  const page = head === "area" || head === "person" || head === "page" ? { kind: head, id: rest } : null;
   const tab = (
     page
       ? page.kind === "area"
         ? "areas"
-        : "people"
+        : page.kind === "page"
+          ? "files"
+          : "people"
       : ["overview", "people", "places", "memory", "areas", "files"].includes(head)
         ? head
         : "overview"
@@ -47,7 +49,7 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
         { id: "places", label: "Places", badge: counts.place || null },
         { id: "areas", label: "Areas", badge: s.areas.filter((a) => a.state !== "archived").length || null },
         { id: "memory", label: "Memory", badge: counts.all || null },
-        { id: "files", label: "Files" },
+        { id: "files", label: "Pages", badge: s.pages?.length || null },
       ]}
       tab={tab}
       onTab={(t) => go(t === "overview" ? "" : t)}
@@ -63,10 +65,15 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
           atlas={atlas}
           shown={{
             id: detail,
-            view: page.kind === "area" ? { kind: "area", area: page.id } : { kind: "person", person: page.id },
+            view:
+              page.kind === "area"
+                ? { kind: "area", area: page.id }
+                : page.kind === "page"
+                  ? { kind: "page", page: page.id }
+                  : { kind: "person", person: page.id },
             title: "",
           }}
-          onClose={() => go(page.kind === "area" ? "areas" : "people")}
+          onClose={() => go(page.kind === "area" ? "areas" : page.kind === "page" ? "files" : "people")}
           onOpen={(v) => {
             if (v.kind === "person") go(`person:${v.person}`);
           }}
@@ -77,11 +84,7 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
       {tab === "places" && <Records atlas={atlas} type="place" title="Places" go={go} />}
       {tab === "memory" && <Records atlas={atlas} title="Everything Atlas knows" focus={detail.split(":")[1]} search go={go} />}
       {!page && tab === "areas" && <Areas atlas={atlas} go={go} />}
-      {tab === "files" && (
-        <Sheet>
-          <Empty title="No files yet">Files Atlas reads or makes for you will live here.</Empty>
-        </Sheet>
-      )}
+      {!page && tab === "files" && <Pages atlas={atlas} go={go} />}
     </Stage>
   );
 }
@@ -535,5 +538,63 @@ function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; ot
         </div>
       )}
     </div>
+  );
+}
+
+const VIEW_WORD: Record<string, string> = {
+  area: "area",
+  person: "person",
+  list: "list",
+  table: "table",
+  automation: "automation",
+  draft: "draft",
+  plan: "plan",
+};
+
+/** Pages Atlas made or you kept (§21.7). Files Atlas makes join them in M3. */
+function Pages({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
+  const s = atlas.state;
+  useEffect(() => {
+    if (atlas.voice.connected) atlas.send({ type: "atlas.pages" });
+  }, [atlas.voice.connected, s.rows.length]);
+  const pages = s.pages;
+  return (
+    <Sheet>
+      <div className="sheet-in">
+        <div className="sheet-title">
+          <h1 className="disp">Pages</h1>
+          <span className="muted">Things you keep: press Keep on a view, or ask Atlas to write one up.</span>
+        </div>
+        {pages == null ? (
+          <p className="lab">Looking</p>
+        ) : pages.length ? (
+          <div className="rows">
+            {pages.map((p) => (
+              <div key={p.id} className="r pickable" {...pressable(() => go(`page:${p.id}`))} style={{ alignItems: "flex-start" }}>
+                <Icon name="file" size={14} />
+                <span className="grow" style={{ minWidth: 0 }}>
+                  <span style={{ fontWeight: 500 }}>{p.name}</span>
+                  <span className="muted small clamp" style={{ display: "block" }}>
+                    {p.preview || (p.views.length ? `A kept ${p.views.map((v) => VIEW_WORD[v] ?? v).join(", ")}` : "Empty")}
+                  </span>
+                </span>
+                <span className="lab faint hide-phone">{p.made_by === "owner" ? "You" : "Atlas"}</span>
+                <span className="mono faint small" style={{ flex: "none" }}>
+                  v{p.version} · {shortDay(p.updated_at)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <Empty title="No pages yet">
+            Press Keep on anything Atlas shows on the stage, or say "write up the Riverside shoot plan as a page". Pages keep their
+            versions, and the areas and people in them stay current.
+          </Empty>
+        )}
+        <p className="faint small" style={{ marginTop: 16 }}>
+          Files Atlas makes, such as PDFs, come later and will live here too.
+        </p>
+      </div>
+    </Sheet>
   );
 }

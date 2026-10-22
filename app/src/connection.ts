@@ -20,6 +20,7 @@ import type {
   SettingsView,
   StagePage,
   AutomationView,
+  PageSummary,
 } from "../../core/src/protocol";
 
 /** One calendar read for a page: the events, why it failed, or how old Atlas's copy is when iCloud couldn't be asked. */
@@ -78,6 +79,10 @@ export interface State {
   automations: AutomationView[] | null;
   /** Automations Atlas suggests from requests the owner repeats, shown at the top of Automations. */
   suggestions: SuggestionView[];
+  /** The owner's pages (§21.7), once asked for. */
+  pages: PageSummary[] | null;
+  /** The page Keep just made, so the view can say where it went. */
+  kept: { id: string; name: string } | null;
 }
 
 const initial: State = {
@@ -105,6 +110,8 @@ const initial: State = {
   stage: {},
   automations: null,
   suggestions: [],
+  pages: null,
+  kept: null,
 };
 
 type Action =
@@ -247,6 +254,10 @@ function reduce(s: State, a: Action): State {
       return { ...s, stage: { ...s.stage, [m.ref]: m.page } };
     case "atlas.automations":
       return { ...s, automations: m.automations, suggestions: m.suggestions };
+    case "atlas.pages":
+      return { ...s, pages: m.pages };
+    case "atlas.page.kept":
+      return { ...s, kept: { id: m.id, name: m.name } };
   }
   return s;
 }

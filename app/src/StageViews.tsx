@@ -4,9 +4,11 @@
 // opens it on Home's stage. Library's area and person pages are these same
 // views (§21.2).
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import type { Segment } from "../../core/src/pages";
 import type { LogRow, RecordView } from "../../core/src/protocol";
-import type { AreaPage, PersonPage, StageMessage, StageView } from "../../core/src/stage";
+import type { AreaPage, PagePage, PersonPage, StageMessage, StageView } from "../../core/src/stage";
+import { Markdown } from "./Markdown";
 import type { Atlas } from "./connection";
 import { AreaChip, AreaDot, Diamond, Empty, Icon, pressable, Sheet, shortDay } from "./ui";
 import { AutomationFlow } from "./pages/Automations";
@@ -22,7 +24,11 @@ export interface Shown {
 export function shownFrom(row: LogRow): Shown | null {
   const r = row.body.receipt as { text?: string; view?: StageView } | undefined;
   if (!r?.view || row.body.ok === false) return null;
-  return { id: row.id, view: r.view, title: String(r.text ?? "").replace(/^Showing · /, "") };
+  // "Showing · X", "Made page · X", "Changed page · X · version 2": the view goes by X.
+  const title = String(r.text ?? "")
+    .replace(/^(Showing|Made page|Changed page) · /, "")
+    .replace(/ · version \d+$/, "");
+  return { id: row.id, view: r.view, title };
 }
 
 /** The ref an area or person view asks for its page under, so every copy of one view shares it. */
@@ -33,7 +39,9 @@ export const pageRef = (v: StageView) =>
       ? `person:${v.person}`
       : v.kind === "automation"
         ? `automation:${v.automation}`
-        : null;
+        : v.kind === "page"
+          ? `page:${v.page}:${v.version ?? ""}`
+          : null;
 
 /** The live page behind an area or person view: undefined while it loads. Asked again when what it's built from changes. */
 function usePage(atlas: Atlas, view: StageView) {
@@ -55,6 +63,10 @@ export function titleOf(atlas: Atlas, shown: Shown): string {
     const id = shown.view.automation;
     return atlas.state.automations?.find((a) => a.id === id)?.name ?? shown.title;
   }
+  if (shown.view.kind === "page") {
+    const id = shown.view.page;
+    return atlas.state.pages?.find((p) => p.id === id)?.name ?? shown.title;
+  }
   return shown.title;
 }
 
@@ -73,16 +85,65 @@ export function StageSheet({
   onClose?: () => void;
 }) {
   const v = shown.view;
+  const keep = v.kind !== "page";
   return (
     <Sheet className="pick" key={shown.id}>
-      <div className={`sheet-in ${onClose ? "closable" : ""}`}>
-        {v.kind === "area" && <AreaView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
-        {v.kind === "person" && <PersonView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
-        {v.kind === "list" && <ListView view={v} onClose={onClose} />}
-        {v.kind === "table" && <TableView view={v} onClose={onClose} />}
-        {v.kind === "automation" && <AutomationStage atlas={atlas} view={v} onClose={onClose} />}
+      <div className={`sheet-in ${onClose ? "closable" : ""} ${keep ? "keepable" : ""}`}>
+        {keep && <Keep atlas={atlas} shown={shown} />}
+        <ViewBody atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />
       </div>
     </Sheet>
+  );
+}
+
+/** One view's content: on the stage's sheet, or inside a page. */
+function ViewBody({
+  atlas,
+  view: v,
+  onOpen,
+  onClose,
+}: {
+  atlas: Atlas;
+  view: StageView;
+  onOpen: (v: StageView, title: string) => void;
+  onClose?: () => void;
+}) {
+  return (
+    <>
+      {v.kind === "area" && <AreaView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
+      {v.kind === "person" && <PersonView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
+      {v.kind === "list" && <ListView view={v} onClose={onClose} />}
+      {v.kind === "table" && <TableView view={v} onClose={onClose} />}
+      {v.kind === "automation" && <AutomationStage atlas={atlas} view={v} onClose={onClose} />}
+      {v.kind === "draft" && <DraftView view={v} onClose={onClose} />}
+      {v.kind === "plan" && <PlanView view={v} onClose={onClose} />}
+      {v.kind === "page" && <PageView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
+    </>
+  );
+}
+
+/** Keep: saves the view as a page, which lives in Library (§21.7). */
+function Keep({ atlas, shown }: { atlas: Atlas; shown: Shown }) {
+  const [asked, setAsked] = useState(false);
+  const kept = asked ? atlas.state.kept : null;
+  if (kept)
+    return (
+      <a className="link small view-keep" href={`#/library/${encodeURIComponent(`page:${kept.id}`)}`}>
+        Kept · Open
+      </a>
+    );
+  return (
+    <button
+      className="btn sm view-keep"
+      disabled={asked}
+      title="Keep this as a page in Library"
+      onClick={() => {
+        setAsked(true);
+        atlas.send({ type: "atlas.page.keep", view: shown.view, name: titleOf(atlas, shown) || "Kept view" });
+      }}
+    >
+      <Diamond size={11} /> Keep
+    </button>
   );
 }
 
@@ -454,9 +515,314 @@ function TableView({ view, onClose }: { view: Extract<StageView, { kind: "table"
   );
 }
 
+function Source({ text }: { text?: string }) {
+  if (!text) return null;
+  return (
+    <p className="lab faint" style={{ marginTop: -10, marginBottom: 12 }}>
+      {text}
+    </p>
+  );
+}
+
+/** Words for the owner to copy and send themselves (§21.6). Sending for them comes with the channels (M5). */
+function DraftView({ view, onClose }: { view: Extract<StageView, { kind: "draft" }>; onClose?: () => void }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="file" />
+        <h1 className="disp">{view.title}</h1>
+        <span className="grow" />
+        <Close onClose={onClose} />
+      </div>
+      {view.for && (
+        <p className="muted" style={{ marginTop: -6, marginBottom: 10 }}>
+          {view.for}
+        </p>
+      )}
+      <Source text={view.source} />
+      <div className="panel draft-text">
+        <Markdown text={view.text} />
+      </div>
+      <div className="row" style={{ marginTop: 10 }}>
+        <button
+          className="btn sm"
+          onClick={() =>
+            void navigator.clipboard?.writeText(view.text).then(
+              () => setCopied(true),
+              () => setCopied(false),
+            )
+          }
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+        <span className="faint small">Atlas doesn't send it: copy it, or ask for changes.</span>
+      </div>
+    </>
+  );
+}
+
+const STEP_MARK = { done: "✓", doing: "▸", waiting: "…", todo: "○" } as const;
+const STEP_WORD = { done: "Done", doing: "Under way", waiting: "Waiting", todo: "To do" } as const;
+
+/** Steps toward something, each with where it stands (§21.6). */
+function PlanView({ view, onClose }: { view: Extract<StageView, { kind: "plan" }>; onClose?: () => void }) {
+  const done = view.steps.filter((s) => s.state === "done").length;
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="grid" />
+        <h1 className="disp">{view.title}</h1>
+        <span className="muted">
+          {done} of {view.steps.length} done
+        </span>
+        <span className="grow" />
+        <Close onClose={onClose} />
+      </div>
+      <Source text={view.source} />
+      <div className="rows">
+        {view.steps.map((s, i) => (
+          <div className="r" key={i} style={{ alignItems: "flex-start" }}>
+            <span className={`mono plan-mark ${s.state}`} aria-label={STEP_WORD[s.state ?? "todo"]} title={STEP_WORD[s.state ?? "todo"]}>
+              {STEP_MARK[s.state ?? "todo"]}
+            </span>
+            <span className="grow" style={{ minWidth: 0 }}>
+              <span className={s.state === "done" ? "faint" : ""}>{s.text}</span>
+              {s.note && (
+                <span className="muted small" style={{ display: "block", marginTop: 2 }}>
+                  {s.note}
+                </span>
+              )}
+            </span>
+            {s.when && (
+              <span className="lab faint" style={{ flex: "none" }}>
+                {s.when}
+              </span>
+            )}
+            {s.state === "waiting" && <span className="tag ac">Waiting</span>}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** A view's name in a page's editor, where views can be moved out but not rewritten. */
+function viewLabel(atlas: Atlas, v: StageView): string {
+  if (v.kind === "area") return atlas.state.areas.find((a) => a.id === v.area)?.name ?? "An area";
+  if (v.kind === "person") return "A person";
+  if (v.kind === "automation") return atlas.state.automations?.find((a) => a.id === v.automation)?.name ?? "An automation";
+  if (v.kind === "page") return "A page";
+  return v.title;
+}
+
+const bodyOf = (parts: Segment[]) =>
+  parts
+    .filter((s) => s.kind === "view" || s.text.trim())
+    .map((s) => (s.kind === "text" ? s.text.trim() : "```view\n" + JSON.stringify(s.view) + "\n```"))
+    .join("\n\n");
+
+/**
+ * A page you keep (§21.7): its text, and the views kept in it, which open
+ * as they are now when they point at what Atlas knows. Edit changes the
+ * text and can take views out; Versions lists every version and brings
+ * one back as a new version.
+ */
+function PageView({
+  atlas,
+  view,
+  onOpen,
+  onClose,
+}: {
+  atlas: Atlas;
+  view: Extract<StageView, { kind: "page" }>;
+  onOpen: (v: StageView, title: string) => void;
+  onClose?: () => void;
+}) {
+  const page = usePage(atlas, view);
+  const [editing, setEditing] = useState<{ name: string; parts: Segment[] } | null>(null);
+  const [versions, setVersions] = useState(false);
+  const [shownN, setShownN] = useState<number | undefined>(view.version);
+  const [deleting, setDeleting] = useState(false);
+  const old = usePage(atlas, { kind: "page", page: view.page, ...(shownN ? { version: shownN } : {}) });
+  if (page === undefined) return <Loading />;
+  if (!page || page.kind !== "page")
+    return <Missing why={page?.kind === "missing" ? page.why : "That page was deleted."} onClose={onClose} />;
+  const p: PagePage["page"] = (old && old.kind === "page" ? old : page).page;
+  const latest = p.shown.n === p.version;
+
+  if (editing) {
+    const set = (i: number, s: Segment | null) =>
+      setEditing({ ...editing, parts: editing.parts.flatMap((x, j) => (j === i ? (s ? [s] : []) : [x])) });
+    return (
+      <>
+        <div className="sheet-title">
+          <input
+            className="disp grow"
+            value={editing.name}
+            maxLength={80}
+            aria-label="Page name"
+            onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+            style={{ fontSize: 22 }}
+          />
+          <Close onClose={onClose} />
+        </div>
+        <div className="page-edit">
+          {editing.parts.map((s, i) =>
+            s.kind === "text" ? (
+              <textarea
+                key={i}
+                value={s.text}
+                rows={Math.min(16, Math.max(3, s.text.split("\n").length + 1))}
+                onChange={(e) => set(i, { kind: "text", text: e.target.value })}
+              />
+            ) : (
+              <div key={i} className="page-chip row">
+                <span className="lab">{KIND[s.view.kind]}</span>
+                <span className="grow">{viewLabel(atlas, s.view)}</span>
+                <button className="link small" onClick={() => set(i, null)}>
+                  Take out
+                </button>
+              </div>
+            ),
+          )}
+          <button className="btn sm" onClick={() => setEditing({ ...editing, parts: [...editing.parts, { kind: "text", text: "" }] })}>
+            <Icon name="plus" size={12} /> Add text
+          </button>
+        </div>
+        <div className="row" style={{ marginTop: 14 }}>
+          <button
+            className="btn primary"
+            disabled={!editing.name.trim()}
+            onClick={() => {
+              atlas.send({ type: "atlas.page.save", id: p.id, name: editing.name.trim(), body: bodyOf(editing.parts) });
+              setEditing(null);
+              setShownN(undefined);
+            }}
+          >
+            Save as version {p.version + 1}
+          </button>
+          <button className="btn" onClick={() => setEditing(null)}>
+            Cancel
+          </button>
+          <span className="faint small">Markdown works in the text. For bigger changes, ask Atlas.</span>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="sheet-title">
+        <Diamond size={14} />
+        <h1 className="disp">{p.name}</h1>
+        <span className="tag">v{p.shown.n}</span>
+        <span className="grow" />
+        <div className="row" style={{ gap: 6 }}>
+          {latest && (
+            <button
+              className="btn sm"
+              onClick={() => setEditing({ name: p.name, parts: p.segments.length ? p.segments : [{ kind: "text", text: "" }] })}
+            >
+              Edit
+            </button>
+          )}
+          <button className={`btn sm ${versions ? "on" : ""}`} onClick={() => setVersions(!versions)}>
+            Versions · {p.versions.length}
+          </button>
+        </div>
+        <Close onClose={onClose} />
+      </div>
+      <p className="lab faint" style={{ marginTop: -10, marginBottom: 12 }}>
+        Version {p.shown.n} · {p.shown.by === "owner" ? "you" : "Atlas"} · {shortDay(p.shown.at)}
+        {p.shown.note ? ` · ${p.shown.note}` : ""}
+      </p>
+      {!latest && (
+        <div className="panel row" style={{ marginBottom: 14 }}>
+          <span className="grow small">This is an older version. The newest is version {p.version}.</span>
+          <button
+            className="btn sm"
+            onClick={() => {
+              atlas.send({ type: "atlas.page.restore", id: p.id, version: p.shown.n });
+              setShownN(undefined);
+            }}
+          >
+            Bring this one back
+          </button>
+          <button className="link small" onClick={() => setShownN(undefined)}>
+            Newest
+          </button>
+        </div>
+      )}
+      {versions && (
+        <div className="rows" style={{ marginBottom: 16 }}>
+          {p.versions.map((v) => (
+            <div
+              key={v.n}
+              className={`r small pickable ${v.n === p.shown.n ? "on" : ""}`}
+              {...pressable(() => setShownN(v.n === p.version ? undefined : v.n))}
+            >
+              <span className="mono" style={{ width: 34, flex: "none" }}>
+                v{v.n}
+              </span>
+              <span className="grow">{v.note}</span>
+              <span className="lab faint">{v.by === "owner" ? "You" : "Atlas"}</span>
+              <span className="mono faint">{shortDay(v.at)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="page-body">
+        {p.segments.map((s, i) =>
+          s.kind === "text" ? (
+            <Markdown key={i} text={s.text} />
+          ) : (
+            <div key={i} className="page-view">
+              <ViewBody atlas={atlas} view={s.view} onOpen={onOpen} />
+            </div>
+          ),
+        )}
+        {!p.segments.length && <p className="muted">Nothing on this page yet.</p>}
+      </div>
+      <p className="small" style={{ marginTop: 18 }}>
+        {deleting ? (
+          <>
+            Delete {p.name} and all its versions?{" "}
+            <button
+              className="link err"
+              onClick={() => {
+                atlas.send({ type: "atlas.page.delete", id: p.id });
+                onClose?.();
+              }}
+            >
+              Delete
+            </button>{" "}
+            <button className="link" onClick={() => setDeleting(false)}>
+              Keep it
+            </button>
+          </>
+        ) : (
+          <button className="link faint" onClick={() => setDeleting(true)}>
+            Delete this page
+          </button>
+        )}
+      </p>
+    </>
+  );
+}
+
 // --- compact: the card in an exchange or the transcript --------------------------------------
 
-const KIND: Record<StageView["kind"], string> = { area: "Area", person: "Person", list: "List", table: "Table", automation: "Automation" };
+const KIND: Record<StageView["kind"], string> = {
+  area: "Area",
+  person: "Person",
+  list: "List",
+  table: "Table",
+  automation: "Automation",
+  draft: "Draft",
+  plan: "Plan",
+  page: "Page",
+};
 
 export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown; onOpen: () => void }) {
   const v = shown.view;
@@ -472,7 +838,17 @@ export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown
           ? atlas.state.areas.find((a) => a.id === v.area)?.about || "Its people, plans and what was said lately."
           : v.kind === "automation"
             ? atlas.state.automations?.find((a) => a.id === v.automation)?.when_text || "When it runs, what it does, and where it reports."
-            : "What Atlas knows about them, and where they came up.";
+            : v.kind === "draft"
+              ? v.for || v.text.slice(0, 160)
+              : v.kind === "plan"
+                ? `${v.steps.filter((s) => s.state === "done").length} of ${v.steps.length} done · ${v.steps
+                    .filter((s) => s.state !== "done")
+                    .slice(0, 2)
+                    .map((s) => s.text)
+                    .join(" · ")}`
+                : v.kind === "page"
+                  ? atlas.state.pages?.find((p) => p.id === v.page)?.preview || "A page you keep."
+                  : "What Atlas knows about them, and where they came up.";
   return (
     <div className="stage-card rise">
       <span className="lab">
