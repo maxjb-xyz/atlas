@@ -50,6 +50,18 @@ export const Settings = z.object({
       elevenlabs_voice_id: "JBFqnCBsd6RMkjVDRZzb",
       elevenlabs_model: "eleven_v4_turbo",
     }),
+  /** The character (§23.1): a preset, four scales, and the owner's own words. */
+  character: z
+    .object({
+      preset: z.enum(["atlas", "butler", "coach", "friend", "quiet"]).default("atlas"),
+      warmth: z.number().int().min(1).max(5).default(4),
+      humor: z.number().int().min(1).max(5).default(3),
+      directness: z.number().int().min(1).max(5).default(4),
+      initiative: z.number().int().min(1).max(5).default(3),
+      /** Anything else, in the owner's words: "Call me Max. Swear if you like." */
+      notes: z.string().max(2_000).default(""),
+    })
+    .default({ preset: "atlas", warmth: 4, humor: 3, directness: 4, initiative: 3, notes: "" }),
   calendar: z
     .object({
       /** Calendar names to leave out of what Atlas reads. Empty means read them all. */

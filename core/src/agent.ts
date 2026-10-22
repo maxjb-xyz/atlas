@@ -18,6 +18,7 @@ import { BrainRouter } from "./brains/router";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
 import { cleanCredentials } from "./calendar/caldav";
+import { runCharacterCheck, summary as characterSummary } from "./character-check";
 import { compact, planCompaction } from "./compaction";
 import { CONTEXT_TOKENS, history, systemPrompt, tokens, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
@@ -579,6 +580,19 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     await this.keepAliveWhile(() => this.#helpers.done(jobId, outcome));
   }
 
+  /** The character eval over HTTP, for `npm run eval:character` against a deployment. */
+  async apiCharacterCheck(): Promise<{ ok: boolean; message: string; detail?: unknown }> {
+    const settings = readSettings(this.#sql);
+    const brains = [...settings.brains.main, ...settings.brains.voice]
+      .filter((c, i, all) => all.findIndex((x) => brainKey(x) === brainKey(c)) === i)
+      .map((c) => this.#makeBrain(c))
+      .filter((b): b is Brain => b != null);
+    const system = systemPrompt({ settings, tz: zoneOf(settings), now: new Date(), surface: "app", sql: this.#sql });
+    const checks = await this.keepAliveWhile(() => runCharacterCheck(brains, system));
+    const ok = checks.length > 0 && checks.every((c) => !c.note && c.results.every((r) => r.verdict.passed));
+    return { ok, message: `Character check: ${characterSummary(checks)}.`, detail: checks };
+  }
+
   /** For tests: the jobs as the app sees them. */
   async apiJobs(): Promise<JobView[]> {
     return this.#helpers.list();
@@ -930,6 +944,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           if (!audio) return { ok: false, message: "The voice came back empty." };
           if (this.#inCall.has(connection.id)) await this.speak(connection, sample);
           return { ok: true, message: `${(this.tts as { label?: string }).label ?? "voice"} spoke in ${Date.now() - t0} ms.` };
+        },
+        systemFor: (character) => {
+          const settings = readSettings(this.#sql);
+          const s = character ? { ...settings, character } : settings;
+          return systemPrompt({ settings: s, tz: zoneOf(s), now: new Date(), surface: "app", sql: this.#sql });
         },
       },
       msg,

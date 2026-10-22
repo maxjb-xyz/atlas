@@ -15,7 +15,8 @@
     "dev": "npm run build && npm run dev -w core",
     "deploy": "npm run build && npm run deploy -w core",
     "bench": "npm run bench -w bench --",
-    "format": "prettier --write \"core/src/**/*.ts\" \"core/test/**/*.ts\" \"app/src/**/*.{ts,tsx,css}\" \"bench/*.ts\""
+    "format": "prettier --write \"core/src/**/*.ts\" \"core/test/**/*.ts\" \"app/src/**/*.{ts,tsx,css}\" \"bench/*.ts\"",
+    "eval:character": "npm run eval:character -w bench --"
   },
   "engines": {
     "node": ">=22"

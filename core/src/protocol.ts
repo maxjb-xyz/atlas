@@ -5,7 +5,7 @@
 import { z } from "zod";
 import type { LogRow } from "./store/log";
 import type { AgendaItem } from "./store/agenda";
-import { BrainChoice, SettingsPatch } from "./store/settings";
+import { BrainChoice, Settings, SettingsPatch } from "./store/settings";
 
 export type { LogRow, AgendaItem };
 
@@ -84,13 +84,15 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
-    what: z.enum(["calendar", "brain", "voice"]),
+    what: z.enum(["calendar", "brain", "voice", "character", "sample"]),
     /** Echoed back on the result, so the app knows which button it answers. */
     ref: z.string().max(64).optional(),
     /** A brain to test: a spot in a saved chain, or an unsaved choice. */
     role: z.enum(["main", "voice"]).optional(),
     index: z.number().int().optional(),
     choice: BrainChoice.optional(),
+    /** For "sample": an unsaved character to hear before saving it. */
+    character: Settings.shape.character.optional(),
   }),
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;

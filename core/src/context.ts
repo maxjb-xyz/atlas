@@ -61,7 +61,7 @@ export function systemPrompt(opts: {
   const { settings, tz, now, surface, sql } = opts;
   const summary = latestSummary(sql, opts.beforeSeq);
   const stable = [
-    character(settings.assistant_name, settings.owner_name),
+    character(settings.assistant_name, settings.owner_name, settings.character),
     facts(sql, settings.owner_name),
     summary
       ? `Earlier in this conversation (your own summary, written ${shortLocal(new Date(summary.at), tz)}; recall has the full messages):\n${summary.text}`

@@ -14,6 +14,7 @@ interface OwnerApi {
   apiTurn(text: string): Promise<unknown>;
   apiRunsSince(seq: number): Promise<unknown[]>;
   apiLastSeq(): Promise<number>;
+  apiCharacterCheck(): Promise<unknown>;
 }
 
 const json = (body: unknown, status = 200) =>
@@ -34,6 +35,9 @@ export default {
         const body = (await request.json().catch(() => ({}))) as { text?: unknown };
         if (typeof body.text !== "string" || !body.text.trim()) return json({ error: 'Send {"text": "..."}.' }, 400);
         return json(await agent.apiTurn(body.text.slice(0, 20_000)));
+      }
+      if (path === "/api/character-check" && request.method === "POST") {
+        return json(await agent.apiCharacterCheck());
       }
       if (path === "/api/log" && request.method === "GET") {
         const since = Number(url.searchParams.get("since") ?? "0");
