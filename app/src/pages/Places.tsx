@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { CalendarEventView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
+import { Markdown } from "../Markdown";
 import { Composer, compose } from "../Shell";
 import { addDays, AreaChip, clock, dayName, Empty, pressable, Sheet, shortDay, Stage, startOfDay } from "../ui";
 import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
@@ -84,9 +85,7 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                   </div>
                   {on && (
                     <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      <div className="panel" style={{ whiteSpace: "pre-wrap" }}>
-                        {i.text || "No details."}
-                      </div>
+                      <div className="panel">{i.text ? <Markdown text={i.text} /> : "No details."}</div>
                       <div className="chain">
                         <span className="tag">{i.kind === "failed" ? "Atlas" : "Helper"}</span>
                         <span className="dash" />

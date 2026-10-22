@@ -147,6 +147,12 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
   }, [atlas.voice.connected]);
 
   useEffect(() => {
+    const open = () => setTranscript(true);
+    window.addEventListener("atlas:transcript", open);
+    return () => window.removeEventListener("atlas:transcript", open);
+  }, []);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "k") {

@@ -193,11 +193,15 @@ describe("icloudCalendar", () => {
     expect(seen.length).toBe(before);
   });
 
-  it("explains a rejected sign-in in owner words", async () => {
-    const fetchFn = (async () => new Response("", { status: 401 })) as typeof fetch;
-    const err = await failure(icloudCalendar(CREDS, { fetch: fetchFn }).list(WEEK));
-    expect(err.code).toBe("auth");
-    expect(err.message).toMatch(/app-specific password/);
+  it("explains a rejected sign-in in owner words, and says when Apple didn't ask for the password again", async () => {
+    const challenged = (async () =>
+      new Response("", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="MMCalDav"' } })) as typeof fetch;
+    const a = await failure(icloudCalendar(CREDS, { fetch: challenged }).list(WEEK));
+    expect(a.code).toBe("auth");
+    expect(a.message).toBe("iCloud didn't accept the Apple ID and app-specific password (HTTP 401 at caldav.icloud.com)");
+    const quiet = (async () => new Response("", { status: 401 })) as typeof fetch;
+    const b = await failure(icloudCalendar(CREDS, { fetch: quiet }).list(WEEK));
+    expect(b.message).toContain("Apple didn't ask for the password again");
   });
 
   it("reports network failures and timeouts as network errors", async () => {

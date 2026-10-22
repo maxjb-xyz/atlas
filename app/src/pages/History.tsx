@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import type { HistoryFilter, LogRow } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
+import { Markdown } from "../Markdown";
 import { Composer } from "../Shell";
 import { AreaChip, clock, dayName, Diamond, Empty, pressable, Sheet, Stage, startOfDay } from "../ui";
 
@@ -268,11 +269,15 @@ function Entry({ atlas, row, open, onToggle }: { atlas: Atlas; row: LogRow; open
             <span className="mono small">{asked ? `You · ${clock(asked.at)} · “${str(asked.body.text)}”` : (run?.trigger ?? "Atlas")}</span>
             <span className="lab">What happened</span>
             <span className="small" style={{ whiteSpace: "pre-wrap" }}>
-              {row.kind === "record.change" && row.body.before
-                ? `${JSON.stringify(row.body.before)} → ${JSON.stringify(row.body.after)}`
-                : row.kind === "message.out" || row.kind === "message.in"
-                  ? str(row.body.text)
-                  : d.what}
+              {row.kind === "record.change" && row.body.before ? (
+                `${JSON.stringify(row.body.before)} → ${JSON.stringify(row.body.after)}`
+              ) : row.kind === "message.out" ? (
+                <Markdown text={str(row.body.text)} />
+              ) : row.kind === "message.in" ? (
+                str(row.body.text)
+              ) : (
+                d.what
+              )}
             </span>
             {run?.detail?.brain && (
               <>

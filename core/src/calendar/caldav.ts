@@ -201,7 +201,11 @@ class CalDavClient {
           // Which server refused matters: a refusal after the first hop means the password was accepted there.
           const first = new URL(this.#start).host;
           const where = host === first ? ` at ${host}` : ` at ${host}, after ${first} accepted the sign-in`;
-          throw new CalendarError(`${AUTH_REASON} (HTTP 401${where}).`, "auth");
+          // Apple asks for the password again when it rejects it. Without that, it may be turning sign-ins away for a while.
+          const hint = res.headers.has("WWW-Authenticate")
+            ? ""
+            : "; Apple didn't ask for the password again, which can mean it's turning sign-ins away for a while rather than rejecting this password";
+          throw new CalendarError(`${AUTH_REASON} (HTTP 401${where}${hint})`, "auth");
         }
         throw new CalendarError(`iCloud refused the request at ${host} (HTTP 403${said ? `: ${said}` : ""}).`, "protocol");
       }

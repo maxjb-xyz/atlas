@@ -1555,3 +1555,86 @@ button.chip:hover {
     grid-template-columns: 90px 1fr;
   }
 }
+
+/* --- Atlas's words, from their markdown ---------------------------------------------------- */
+.md {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.md p,
+.md li {
+  white-space: normal;
+}
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 1em;
+  font-weight: 600;
+  margin-top: 4px;
+}
+.md h3 {
+  font-size: 1.1em;
+}
+.md ul,
+.md ol {
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.md li.sub {
+  margin-left: 18px;
+  list-style-type: circle;
+}
+.md code {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 0.9em;
+  background: var(--sel);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.md pre {
+  background: var(--sel);
+  padding: 8px 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.md pre code {
+  background: none;
+  padding: 0;
+  white-space: pre;
+}
+.md blockquote {
+  border-left: 2px solid var(--sep2);
+  padding-left: 10px;
+  color: var(--tx2);
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--sep);
+}
+.md a {
+  color: var(--ac);
+}
+.md-table {
+  overflow-x: auto;
+}
+.md table {
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+.md th,
+.md td {
+  border: 1px solid var(--sep);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.md th {
+  font-weight: 600;
+  background: var(--sel);
+}

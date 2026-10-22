@@ -306,6 +306,7 @@ export function useAtlas() {
       const client_id = crypto.randomUUID();
       dispatch({ type: "say", pending: { client_id, text, at: Date.now() } });
       send({ type: "atlas.say", text, client_id });
+      return client_id;
     },
     [send],
   );

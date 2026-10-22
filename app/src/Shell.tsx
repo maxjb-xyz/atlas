@@ -5,6 +5,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { LogRow, RecordView } from "../../core/src/protocol";
 import type { Atlas } from "./connection";
+import { Markdown } from "./Markdown";
 import { Thread } from "./Thread";
 import { AreaChip, AreaDot, Diamond, Icon, type Place, shortDay, useDismiss } from "./ui";
 
@@ -286,10 +287,40 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
 
 // --- talking to Atlas -----------------------------------------------------------------
 
-export function Composer({ atlas, placeholder, chip = true }: { atlas: Atlas; placeholder: string; chip?: boolean }) {
+/** Opens the full transcript from anywhere (⌘J does the same). */
+export const openTranscript = () => window.dispatchEvent(new CustomEvent("atlas:transcript"));
+
+/**
+ * The composer. Off Home, where the console shows the latest exchange, it
+ * shows the one sent from it (`reply`), so what you asked and Atlas's
+ * answer stay in view on the page you asked from.
+ */
+export function Composer({
+  atlas,
+  placeholder,
+  chip = true,
+  reply = true,
+}: {
+  atlas: Atlas;
+  placeholder: string;
+  chip?: boolean;
+  reply?: boolean;
+}) {
   const [text, setText] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
   const s = atlas.state;
+  const [sent, setSent] = useState<{ client_id: string; text: string; at: number; run_id: string | null } | null>(null);
+
+  // Learn the sent message's run as soon as Atlas takes it; failing that, find its row in the thread.
+  const fromPending = sent && !sent.run_id ? s.pending.find((p) => p.client_id === sent.client_id)?.run_id : undefined;
+  const fromRows =
+    sent && !sent.run_id && !fromPending
+      ? [...s.rows].reverse().find((r) => r.kind === "message.in" && r.body.text === sent.text && r.at >= sent.at - 5_000)?.run_id
+      : undefined;
+  useEffect(() => {
+    const run = fromPending ?? fromRows;
+    if (sent && !sent.run_id && run) setSent({ ...sent, run_id: run });
+  }, [fromPending, fromRows]);
 
   useEffect(() => {
     // Other parts of the app can put words in the composer ("Ask about this").
@@ -305,12 +336,13 @@ export function Composer({ atlas, placeholder, chip = true }: { atlas: Atlas; pl
     const t = text.trim();
     // While the socket is down the words stay here, rather than going nowhere.
     if (!t || !atlas.voice.connected) return;
-    atlas.say(t);
+    const client_id = atlas.say(t);
+    if (reply) setSent({ client_id, text: t, at: Date.now(), run_id: null });
     setText("");
     ref.current?.focus();
   }
 
-  return (
+  const form = (
     <form
       className="composer"
       onSubmit={(e) => {
@@ -356,6 +388,13 @@ export function Composer({ atlas, placeholder, chip = true }: { atlas: Atlas; pl
       </button>
     </form>
   );
+  if (!sent) return form;
+  return (
+    <div className="console">
+      <Exchange atlas={atlas} runId={sent.run_id} asked={sent.text} onTranscript={openTranscript} onClose={() => setSent(null)} />
+      {form}
+    </div>
+  );
 }
 
 /** Puts words in the composer from anywhere ("Ask about this"). */
@@ -374,54 +413,94 @@ export function Console({ atlas, onTranscript, onReceipt }: { atlas: Atlas; onTr
   const lastIn = [...s.rows].reverse().find((r) => r.kind === "message.in");
   const pending = s.pending.at(-1);
   const runId = liveRun?.[0] ?? lastIn?.run_id ?? null;
-  const out = runId
-    ? s.rows.find((r) => r.kind === "message.out" && r.run_id === runId)
-    : [...s.rows].reverse().find((r) => r.kind === "message.out");
   const asked =
     pending && !pending.run_id ? pending.text : str(s.rows.find((r) => r.kind === "message.in" && r.run_id === runId)?.body.text);
+  return (
+    <div className="console">
+      <Exchange atlas={atlas} runId={runId} asked={asked} onTranscript={onTranscript} onReceipt={onReceipt} latest />
+      <Composer atlas={atlas} placeholder={`Message ${name}`} reply={false} />
+    </div>
+  );
+}
+
+/**
+ * One exchange: what the owner asked, Atlas's answer as it streams, and the
+ * receipts for what it did. Home's console shows the latest; other pages show
+ * the one sent from their composer, so a message never just disappears.
+ */
+function Exchange({
+  atlas,
+  runId,
+  asked,
+  onTranscript,
+  onReceipt,
+  onClose,
+  latest = false,
+}: {
+  atlas: Atlas;
+  runId: string | null;
+  asked: string;
+  onTranscript: () => void;
+  onReceipt?: (row: LogRow) => void;
+  onClose?: () => void;
+  /** With no run yet, show the latest answer (Home); otherwise wait for this one. */
+  latest?: boolean;
+}) {
+  const s = atlas.state;
+  const name = s.view?.settings.assistant_name ?? "Atlas";
+  const lastIn = [...s.rows].reverse().find((r) => r.kind === "message.in");
+  const liveRun = runId ? ([runId, s.live[runId]] as const) : undefined;
+  const out = runId
+    ? s.rows.find((r) => r.kind === "message.out" && r.run_id === runId)
+    : latest
+      ? [...s.rows].reverse().find((r) => r.kind === "message.out")
+      : undefined;
   const receipts = runId ? s.rows.filter((r) => r.run_id === runId && r.kind === "tool.result" && r.body.receipt) : [];
   const undone = new Set(s.rows.filter((r) => r.body.undo_of).map((r) => String(r.body.undo_of)));
   const live = liveRun?.[1];
   const failed = !live && !out && runId ? s.rows.find((r) => r.kind === "run.end" && r.run_id === runId) : undefined;
   const said = live ? live.text : str(out?.body.text);
-  const at = out?.at ?? lastIn?.at;
+  const at = out?.at ?? (latest ? lastIn?.at : undefined);
+  // Sent, and nothing back yet: say Atlas is on it.
+  const waiting = !latest && !said && !failed;
 
+  if (!(asked || said || live)) return null;
   return (
-    <div className="console">
-      {(asked || said || live) && (
-        <div className="exchange rise" key={runId ?? "none"}>
-          <div className="head">
-            <span className="lab">
-              {name}
-              {at ? ` · ${shortDay(at)}` : ""}
-            </span>
-            <span className="grow" />
-            <button className="chip" onClick={onTranscript}>
-              Transcript <span className="kbd">⌘J</span>
-            </button>
-          </div>
-          {asked && <p className="asked">You: {asked}</p>}
-          {said && <p className="said">{said}</p>}
-          {live && (live.status || !live.text) && (
-            <p className="lab" style={{ marginTop: 6 }}>
-              {live.status ?? "Thinking"}
-            </p>
-          )}
-          {failed && (
-            <p className="err small" style={{ marginTop: 4 }}>
-              Didn't finish. {str(failed.body.error) || "The run failed."}
-            </p>
-          )}
-          {receipts.length > 0 && (
-            <div className="receipts">
-              {receipts.map((r) => (
-                <Receipt key={r.id} row={r} atlas={atlas} undone={undone.has(r.id)} onOpen={() => onReceipt(r)} />
-              ))}
-            </div>
-          )}
+    <div className="exchange rise" key={runId ?? "none"}>
+      <div className="head">
+        <span className="lab">
+          {name}
+          {at ? ` · ${shortDay(at)}` : ""}
+        </span>
+        <span className="grow" />
+        <button className="chip" onClick={onTranscript}>
+          Transcript <span className="kbd">⌘J</span>
+        </button>
+        {onClose && (
+          <button className="icon" aria-label="Close" onClick={onClose}>
+            ×
+          </button>
+        )}
+      </div>
+      {asked && <p className="asked">You: {asked}</p>}
+      {said && <Markdown className="said" text={said} />}
+      {((live && (live.status || !live.text)) || (waiting && !live)) && (
+        <p className="lab" style={{ marginTop: 6 }}>
+          {live?.status ?? "Thinking"}
+        </p>
+      )}
+      {failed && (
+        <p className="err small" style={{ marginTop: 4 }}>
+          Didn't finish. {str(failed.body.error) || "The run failed."}
+        </p>
+      )}
+      {receipts.length > 0 && (
+        <div className="receipts">
+          {receipts.map((r) => (
+            <Receipt key={r.id} row={r} atlas={atlas} undone={undone.has(r.id)} onOpen={onReceipt ? () => onReceipt(r) : undefined} />
+          ))}
         </div>
       )}
-      <Composer atlas={atlas} placeholder={`Message ${name}`} />
     </div>
   );
 }
@@ -529,7 +608,18 @@ export function Palette({ atlas, go, onClose }: { atlas: Atlas; go: (p: Place, d
       ),
       run: () => go("library", `memory:${r.id}`),
     })),
-    ...(q.trim() ? [{ label: <>Ask: “{q.trim()}”</>, run: () => atlas.say(q.trim()) }] : []),
+    // Asked from search: the transcript opens, so the answer is in view wherever this was asked.
+    ...(q.trim()
+      ? [
+          {
+            label: <>Ask: “{q.trim()}”</>,
+            run: () => {
+              atlas.say(q.trim());
+              openTranscript();
+            },
+          },
+        ]
+      : []),
   ];
   const pick = (i: number) => {
     items[i]?.run();

@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import type { LogRow } from "../../core/src/protocol";
 import type { Atlas } from "./connection";
 import { Receipt } from "./Shell";
+import { Markdown } from "./Markdown";
 import { AreaChip, Diamond, clock } from "./ui";
 
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : JSON.stringify(v));
@@ -67,7 +68,7 @@ export function Thread({ atlas, name }: { atlas: Atlas; name: string }) {
         <div key={runId} className="msg atlas">
           <Diamond size={16} />
           <div>
-            {l.text && <p>{l.text}</p>}
+            {l.text && <Markdown text={l.text} />}
             {(l.status || !l.text) && <p className="lab">{l.status ?? "Thinking"}</p>}
           </div>
         </div>
@@ -100,7 +101,7 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
         <div className="msg atlas">
           <Diamond size={16} />
           <div>
-            <p>{str(b.text)}</p>
+            <Markdown text={str(b.text)} />
             <span className="lab when">
               {voiceTag}
               {b.interrupted ? <span className="tag">Interrupted</span> : null}
