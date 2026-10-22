@@ -601,11 +601,22 @@ In the app, Atlas settings → Notifications shows channels per urgency, quiet h
 Channels are the text surfaces where people reach Atlas or a face:
 - SMS and calls (Telnyx or Twilio);
 - email;
-- Telegram, Discord, WhatsApp and Slack;
+- Telegram, Discord, WhatsApp, Signal and Slack;
 - iMessage, through a Mac node;
 - the website widget.
 
-Each channel is an adapter (§17). A stage view sent to a text-only channel arrives as a link that opens that view.
+Each channel is an adapter (§17). In a messaging thread Atlas texts like a person who has things to show you, the way messaging-native agents such as Instinct do: it sends what the channel can carry, not a link to everything.
+- **Rich where the channel allows.** An adapter says what its channel carries (images, files, reactions, effects, buttons, voice notes, formatting, length), and each stage view goes out in the richest form that fits:
+  - a chart, comparison, table or custom layout as an image drawn from the view's contract, with a line of text and a link that opens the live view;
+  - a list, plan, draft or research answer as text, with its sources as links;
+  - a file as an attachment (a PDF, a spreadsheet), and a document as a file or a link to its page;
+  - the browser as a screenshot;
+  - small apps and MCP Apps, which are for using, as a link.
+  SMS falls back to MMS images and links; email gets attachments.
+- **Texts like a person.** A reaction instead of a reply that would only be noise, emphasis only for what matters, voice notes in and out, and photos and files you send read like any message.
+- **Never silent for long.** A task that takes more than a moment gets a short note that Atlas is on it, a typing indicator where the channel has one, and the result when it's done (§8.1).
+- **Approvals in the thread.** Atlas asks in a sentence, and a "yes" or "no" reply decides, or a button where the channel has them. What needs a hold (§12.1), and anything secret (a card number, a password, the vault, §15), goes through a secure link to the app, never through the chat.
+- **Links open the app,** signed in on your own devices.
 
 ### 16.2 Atlas's own email
 
@@ -981,7 +992,7 @@ Atlas should feel like the future: alive, fast, a little magical.
 - **Web app first,** installable to your home screen, with push notifications.
 - **Desktop app** (Tauri): the same app, plus a node and a voice overlay you open with a hotkey.
 - **Phone:** the web app at first, with OwnTracks for location. It uses a tab bar (Home, Inbox, Agenda, Library), with History and settings under Library; this isn't drawn yet. A native app comes later, for location, health data, lock-screen voice and widgets.
-- **Text channels** (SMS, iMessage, Telegram, email): stage views arrive as links.
+- **Text channels** (SMS, iMessage, Telegram, Discord, Signal, WhatsApp, email): stage views arrive in the richest form the channel carries (§16.1): images, files, text, and links for what has to be used in the app.
 
 ---
 
