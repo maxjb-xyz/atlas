@@ -79,6 +79,23 @@ export const ClientMessage = z.discriminatedUnion("type", [
     ref: z.string().regex(/^(log|rec):[\w-]+$/),
     areas: z.array(z.string().max(64)).max(10),
   }),
+  /** Setup (§22): mark a step done, skipped, or open again. */
+  z.object({
+    type: z.literal("atlas.setup.step"),
+    step: z.enum(["passkey", "meet", "brain", "connect", "look"]),
+    state: z.enum(["done", "skipped", "open"]),
+  }),
+  /** Setup step 5: Atlas reads the calendar and proposes areas, people and things worth knowing. */
+  z.object({ type: z.literal("atlas.setup.look") }),
+  /** Save the people the owner kept from Atlas's first look. */
+  z.object({
+    type: z.literal("atlas.setup.people"),
+    people: z.array(z.object({ name: z.string().min(1).max(80), why: z.string().max(300) })).max(20),
+  }),
+  /** The voices the owner can pick from, with samples. */
+  z.object({ type: z.literal("atlas.voices.list") }),
+  /** Remove a passkey (Settings → Devices). */
+  z.object({ type: z.literal("atlas.passkey.remove"), id: z.string().max(512) }),
   /** Stop a helper's job (Stop on the Jobs tab). */
   z.object({ type: z.literal("atlas.job.stop"), id: z.string().max(64) }),
   /** Live checks for Settings (§22: every check is a live test). */
@@ -110,6 +127,9 @@ export interface SettingsView {
   chatgpt: ChatGPTView;
   /** Provider health, by "provider:model". */
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
+  /** The owner's passkeys, without their keys (Settings → Devices). */
+  passkeys: Array<{ id: string; name: string; created_at: number; last_used: number | null }>;
+  setup: { done: string[]; skipped: string[]; finished: boolean };
 }
 
 export type ChatGPTView =
@@ -142,6 +162,16 @@ export type ServerMessage =
   | { type: "atlas.run"; run_id: string; state: RunState; surface: string; client_id?: string }
   | { type: "atlas.agenda"; agenda: AgendaItem[] }
   | { type: "atlas.areas"; areas: AreaView[]; scope: string | null }
+  | {
+      type: "atlas.voices";
+      voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>;
+      error?: string;
+    }
+  | {
+      type: "atlas.setup.look.result";
+      look: { areas: Array<{ name: string; about: string }>; people: Array<{ name: string; why: string }>; notes: string[] } | null;
+      error?: string;
+    }
   /** Helpers' jobs: running ones, and ones that ended in the last hour (§21.4). */
   | { type: "atlas.jobs"; jobs: JobView[] }
   | { type: "atlas.view"; view: SettingsView }

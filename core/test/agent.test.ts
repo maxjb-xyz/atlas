@@ -309,6 +309,54 @@ describe("the thread", () => {
   });
 });
 
+describe("setup", () => {
+  it("records steps, lists voices, and takes Atlas's first look", async () => {
+    brains([
+      call("calendar_read", { start: "2099-01-01", end: "2099-01-15" }),
+      say(
+        '{"areas": [{"name": "Keyframes", "about": "video studio"}], "people": [{"name": "Dana", "why": "producer"}], "notes": ["Two clashes Thursday."]}',
+      ),
+    ]);
+    seams.fetch = (async (url: string) => {
+      if (String(url).startsWith("https://api.elevenlabs.io/v2/voices"))
+        return Response.json({
+          voices: [{ voice_id: "v1", name: "George", preview_url: "https://x/p.mp3", labels: { accent: "british" } }],
+        });
+      return new Response("nope", { status: 404 });
+    }) as unknown as typeof fetch;
+    const s = await connect();
+    s.send({ type: "atlas.setup.step", step: "passkey", state: "done" });
+    s.send({ type: "atlas.setup.step", step: "connect", state: "skipped" });
+    const view = await s.next("atlas.view", (m) => m.view.setup.skipped.includes("connect"));
+    expect(view.view.setup).toMatchObject({ done: ["passkey"], skipped: ["connect"], finished: false });
+
+    s.send({ type: "atlas.voices.list" });
+    expect((await s.next("atlas.voices")).error).toContain("Add an ElevenLabs API key");
+    s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: "sk_eleven_test_key" } });
+    await s.next("atlas.view");
+    s.send({ type: "atlas.voices.list" });
+    expect((await s.next("atlas.voices", (m) => m.voices.length > 0)).voices).toEqual([
+      { id: "v1", name: "George", preview_url: "https://x/p.mp3", description: "british" },
+    ]);
+
+    s.send({ type: "atlas.setup.look" });
+    const look = await s.next("atlas.setup.look.result");
+    expect(look.look).toEqual({
+      areas: [{ name: "Keyframes", about: "video studio" }],
+      people: [{ name: "Dana", why: "producer" }],
+      notes: ["Two clashes Thursday."],
+    });
+    s.send({ type: "atlas.setup.people", people: [{ name: "Dana", why: "producer" }] });
+    s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: null } });
+    await s.next("atlas.view");
+    const people = await runInDurableObject(owner(), (_i: PersonAgent, state) =>
+      state.storage.sql.exec<{ name: string }>(`SELECT name FROM records WHERE type = 'person'`).toArray(),
+    );
+    expect(people.map((p) => p.name)).toContain("Dana");
+    s.ws.close();
+  });
+});
+
 describe("sign in with chatgpt", () => {
   it("signs in from the pasted address and points the chains at a model the account has", async () => {
     const openai = await fakeOpenAI();

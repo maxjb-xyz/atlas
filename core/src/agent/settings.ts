@@ -8,10 +8,19 @@ import type { ClientMessage, SettingsView } from "../protocol";
 import type { Sql } from "../store/db";
 import { runCharacterCheck, summary } from "../character-check";
 import { type BrainChoice, getSecret, readSettings, type Settings } from "../store/settings";
+import type { StoredPasskey } from "../passkeys";
+import { getState } from "../store/state";
 import type { CalendarSense } from "./calendar";
+import { setupView } from "./setup";
 import type { ChatGPTSignIn } from "./chatgpt";
 
 export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar: CalendarSense; router: BrainRouter }): SettingsView {
+  const passkeys = (getState<StoredPasskey[]>(sql, "passkeys") ?? []).map((p) => ({
+    id: p.id,
+    name: p.name,
+    created_at: p.created_at,
+    last_used: p.last_used,
+  }));
   const icloud = getSecret<ICloudCredentials>(sql, "icloud");
   return {
     settings: readSettings(sql),
@@ -21,6 +30,8 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
     },
     chatgpt: parts.chatgpt.view(),
     health: parts.router.snapshot(),
+    passkeys,
+    setup: setupView(sql),
   };
 }
 

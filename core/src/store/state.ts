@@ -21,7 +21,13 @@ export type StateName =
   /** The area the owner is focused on with the scope switcher. */
   | "scope"
   /** Messages that fit no area but seemed to be about something ongoing, toward discovering new areas. */
-  | "unfiled";
+  | "unfiled"
+  /** The owner's passkeys: public keys only, so not secrets. */
+  | "passkeys"
+  /** The WebAuthn challenge in flight, with when it expires. */
+  | "passkey_challenge"
+  /** Which setup steps are done or skipped (§22). */
+  | "setup";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

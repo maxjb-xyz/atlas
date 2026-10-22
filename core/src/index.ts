@@ -4,6 +4,7 @@
 import { getAgentByName, routeAgentRequest } from "agents";
 import { OWNER } from "./agent";
 import { handleAuth, isOwner, sameOrigin } from "./auth";
+import type { PasskeyStore } from "./passkeys";
 
 export { PersonAgent } from "./agent";
 // Helpers are sub-agents of the person agent; the class must be exported by this name.
@@ -17,6 +18,9 @@ interface OwnerApi {
   apiCharacterCheck(): Promise<unknown>;
 }
 
+/** The owner's passkeys live in their agent. */
+const passkeyStore = async (env: Env) => (await getAgentByName(env.PersonAgent, OWNER)) as unknown as PasskeyStore;
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -26,7 +30,7 @@ export default {
     const path = url.pathname;
 
     if (path.startsWith("/api/")) {
-      const auth = await handleAuth(request, env, path);
+      const auth = await handleAuth(request, env, path, () => passkeyStore(env));
       if (auth) return auth;
       if (!(await isOwner(request, env))) return json({ error: "Sign in first." }, 401);
       const agent = (await getAgentByName(env.PersonAgent, OWNER)) as unknown as OwnerApi;

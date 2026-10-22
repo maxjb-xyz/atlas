@@ -7,6 +7,8 @@ import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } f
 import { CalendarSense } from "./agent/calendar";
 import { correctAreas, DISCOVER_AFTER, discoveryPrompt, startDiscovered, tagPending, unfiled } from "./agent/areas";
 import { HelperDesk } from "./agent/helpers";
+import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup";
+import { createRecord, findRecords } from "./store/records";
 import { type Decider, workersAIDecider } from "./brains/decide";
 import { createArea, getScope, listAreas, mergeAreas, setScope, type Tagged, updateArea } from "./store/areas";
 import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
@@ -19,6 +21,7 @@ import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
 import { cleanCredentials } from "./calendar/caldav";
 import { runCharacterCheck, summary as characterSummary } from "./character-check";
+import type { StoredPasskey } from "./passkeys";
 import { compact, planCompaction } from "./compaction";
 import { CONTEXT_TOKENS, history, systemPrompt, tokens, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
@@ -244,6 +247,42 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         }
         this.#areasChanged();
         return;
+      case "atlas.setup.step":
+        markStep(this.#sql, msg.step, msg.state);
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      case "atlas.setup.look":
+        void this.keepAliveWhile(() => this.#inLine(() => this.#firstLook()));
+        return;
+      case "atlas.setup.people":
+        for (const p of msg.people) {
+          if (findRecords(this.#sql, "person", p.name).length) continue;
+          createRecord(this.#sql, { type: "person", name: p.name, fields: p.why ? { fact: p.why } : {}, source: { via: "setup" } });
+        }
+        void this.#tendMemory();
+        return;
+      case "atlas.voices.list": {
+        const key = getSecret<string>(this.#sql, "elevenlabs_api_key");
+        if (!key) {
+          this.#send(connection, {
+            type: "atlas.voices",
+            voices: [],
+            error: "Add an ElevenLabs API key to choose a voice. Until then Atlas speaks with Workers AI's Aura.",
+          });
+          return;
+        }
+        try {
+          this.#send(connection, { type: "atlas.voices", voices: await elevenLabsVoices(key, seams.fetch ?? fetch) });
+        } catch (err) {
+          this.#send(connection, { type: "atlas.voices", voices: [], error: err instanceof Error ? err.message : String(err) });
+        }
+        return;
+      }
+      case "atlas.passkey.remove": {
+        const list = await this.passkeys();
+        await this.savePasskeys(list.filter((p) => p.id !== msg.id));
+        return;
+      }
       case "atlas.job.stop":
         if (!this.#helpers.stop(msg.id)) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
         return;
@@ -415,6 +454,30 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
   }
 
+  /** Setup step 5: Atlas reads the calendar and proposes areas, people and things worth knowing (§22). */
+  async #firstLook(): Promise<void> {
+    const runId = startRun(this.#sql, { actor: "atlas", trigger: "setup", surface: "none", role: "main" });
+    const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
+    const res = await this.#converse({
+      runId,
+      actor: "atlas",
+      sourceLogId: null,
+      surface: "none",
+      role: "main",
+      input: LOOK_NOTE,
+      beforeSeq: lastSeq,
+      budget: { steps: 8, ms: 120_000 },
+      emit: () => {},
+    }).catch((err: unknown) => ({ state: "failed" as const, text: "", steps: 0, error: err instanceof Error ? err.message : String(err) }));
+    const look = res.state === "replied" ? parseLook(res.text) : null;
+    endRun(this.#sql, runId, look ? "replied" : "failed", res.steps, look ? {} : { error: res.error ?? "Atlas's answer wasn't readable." });
+    this.#broadcast({
+      type: "atlas.setup.look.result",
+      look,
+      ...(look ? {} : { error: res.error ?? `Atlas's answer wasn't readable: ${res.text.slice(0, 200)}` }),
+    });
+  }
+
   /** A helper's job ended while nobody was waiting for it: tell the owner what it found. */
   async #reportJob(item: AgendaItem, result: { state: "done" | "failed"; text: string }): Promise<void> {
     const note =
@@ -578,6 +641,35 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   async helperDone(jobId: string, outcome: HelperOutcome): Promise<void> {
     await this.keepAliveWhile(() => this.#helpers.done(jobId, outcome));
+  }
+
+  // --- passkeys (the Worker's sign-in routes keep them here) -----------------------------
+
+  async passkeys(): Promise<StoredPasskey[]> {
+    return getState<StoredPasskey[]>(this.#sql, "passkeys") ?? [];
+  }
+
+  async savePasskeys(list: StoredPasskey[]): Promise<void> {
+    const before = await this.passkeys();
+    setState(this.#sql, "passkeys", list);
+    if (list.length !== before.length) {
+      append(this.#sql, { actor: "owner", kind: "settings.change", body: { passkeys: list.length } });
+      this.#broadcast({ type: "atlas.view", view: this.#view() });
+    }
+  }
+
+  async setChallenge(c: { value: string; kind: "register" | "login"; expires: number } | null): Promise<void> {
+    setState(this.#sql, "passkey_challenge", c);
+  }
+
+  async takeChallenge(): Promise<{ value: string; kind: "register" | "login"; expires: number } | null> {
+    const c = getState<{ value: string; kind: "register" | "login"; expires: number }>(this.#sql, "passkey_challenge");
+    setState(this.#sql, "passkey_challenge", null);
+    return c;
+  }
+
+  async ownerName(): Promise<string> {
+    return readSettings(this.#sql).owner_name;
   }
 
   /** The character eval over HTTP, for `npm run eval:character` against a deployment. */

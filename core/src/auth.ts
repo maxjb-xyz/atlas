@@ -1,6 +1,10 @@
-// M0 sign-in: one owner secret, set at deploy time with
-// `wrangler secret put ATLAS_OWNER_SECRET`. The app trades it once for a
-// signed session cookie. Passkeys replace this in M1 setup (§22).
+// Sign-in (§20, §22). The owner signs in with a passkey. The owner secret,
+// set at deploy, is the setup code: it adds the first passkey, gets the
+// owner back in if every passkey is lost, and works as a bearer token for
+// scripts. Either way, the app ends up with a signed session cookie.
+
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
+import { loginOptions, type PasskeyStore, registrationOptions, verifyLogin, verifyRegistration } from "./passkeys";
 
 const COOKIE = "atlas_session";
 const SESSION_DAYS = 30;
@@ -85,10 +89,55 @@ export function sameOrigin(request: Request): boolean {
 const json = (body: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), { ...init, headers: { "content-type": "application/json", ...init.headers } });
 
-export async function handleAuth(request: Request, env: Env, path: string): Promise<Response | null> {
+async function sessionCookie(secret: string, secure: string): Promise<string> {
+  return `${COOKIE}=${await makeSession(secret)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_DAYS * 86_400}${secure}`;
+}
+
+export async function handleAuth(request: Request, env: Env, path: string, store: () => Promise<PasskeyStore>): Promise<Response | null> {
   const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
   if (path === "/api/session" && request.method === "GET") {
-    return json({ configured: Boolean(env.ATLAS_OWNER_SECRET), signed_in: await isOwner(request, env) });
+    const configured = Boolean(env.ATLAS_OWNER_SECRET);
+    return json({
+      configured,
+      signed_in: await isOwner(request, env),
+      passkeys: configured ? (await (await store()).passkeys()).length : 0,
+    });
+  }
+  if (path.startsWith("/api/passkey/")) {
+    const secret = env.ATLAS_OWNER_SECRET;
+    if (!secret) return json({ error: "ATLAS_OWNER_SECRET isn't set on this deployment." }, { status: 503 });
+    if (!sameOrigin(request)) return json({ error: "Wrong origin." }, { status: 403 });
+    const body = (await request.json().catch(() => ({}))) as { secret?: unknown; response?: unknown; name?: unknown };
+    const s = await store();
+    if (path === "/api/passkey/register/options" && request.method === "POST") {
+      // Adding a passkey takes being signed in, or the setup code, which also signs you in.
+      const bySecret = typeof body.secret === "string" && (await sameSecret(body.secret, secret));
+      if (!bySecret && !(await isOwner(request, env))) {
+        return json({ error: typeof body.secret === "string" ? "That isn't the setup code." : "Sign in first." }, { status: 401 });
+      }
+      const options = await registrationOptions(s, request);
+      return json(options, bySecret ? { headers: { "set-cookie": await sessionCookie(secret, secure) } } : {});
+    }
+    if (path === "/api/passkey/register/verify" && request.method === "POST") {
+      if (!(await isOwner(request, env))) return json({ error: "Sign in first." }, { status: 401 });
+      const out = await verifyRegistration(
+        s,
+        request,
+        body.response as RegistrationResponseJSON,
+        typeof body.name === "string" ? body.name : "",
+      );
+      return out.ok ? json({ name: out.passkey.name }) : json({ error: out.message }, { status: out.status });
+    }
+    if (path === "/api/passkey/login/options" && request.method === "POST") {
+      if (!(await s.passkeys()).length) return json({ error: "There's no passkey yet. Use your setup code." }, { status: 404 });
+      return json(await loginOptions(s, request));
+    }
+    if (path === "/api/passkey/login/verify" && request.method === "POST") {
+      const out = await verifyLogin(s, request, body.response as AuthenticationResponseJSON);
+      if (!out.ok) return json({ error: out.message }, { status: out.status });
+      return new Response(null, { status: 204, headers: { "set-cookie": await sessionCookie(secret, secure) } });
+    }
+    return json({ error: "Not found." }, { status: 404 });
   }
   if (path === "/api/login" && request.method === "POST") {
     const secret = env.ATLAS_OWNER_SECRET;
@@ -96,15 +145,9 @@ export async function handleAuth(request: Request, env: Env, path: string): Prom
     if (!sameOrigin(request)) return json({ error: "Wrong origin." }, { status: 403 });
     const body = (await request.json().catch(() => ({}))) as { secret?: unknown };
     if (typeof body.secret !== "string" || !(await sameSecret(body.secret, secret))) {
-      return json({ error: "That isn't the owner secret." }, { status: 401 });
+      return json({ error: "That isn't the setup code." }, { status: 401 });
     }
-    const value = await makeSession(secret);
-    return new Response(null, {
-      status: 204,
-      headers: {
-        "set-cookie": `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_DAYS * 86_400}${secure}`,
-      },
-    });
+    return new Response(null, { status: 204, headers: { "set-cookie": await sessionCookie(secret, secure) } });
   }
   if (path === "/api/logout" && request.method === "POST") {
     return new Response(null, {
