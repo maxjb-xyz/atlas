@@ -52,6 +52,9 @@ export { seams };
 /** The one owner in M0. Members get their own agents in M5. */
 export const OWNER = "owner";
 
+/** A Workers AI model on every plan (Kimi K2.6 needs Workers Paid), used as a last-resort judge for the character check. */
+const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
+
 /**
  * What each kind of run can reach. Runs Atlas starts itself (the clock, and
  * later automations and helpers) can't save facts about the owner (§5.4).
@@ -898,7 +901,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       .map((c) => this.#makeBrain(c))
       .filter((b): b is Brain => b != null);
     const system = systemPrompt({ settings, tz: zoneOf(settings), now: new Date(), surface: "app", sql: this.#sql });
-    const checks = await this.keepAliveWhile(() => runCharacterCheck(brains, system));
+    const checks = await this.keepAliveWhile(() => runCharacterCheck(brains, system, { judges: this.#judges() }));
     const ok = checks.length > 0 && checks.every((c) => !c.note && c.results.every((r) => r.verdict.passed));
     return { ok, message: `Character check: ${characterSummary(checks)}.`, detail: checks };
   }
@@ -1237,6 +1240,28 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     this.#broadcast({ type: "atlas.view", view: this.#view() });
   }
 
+  /**
+   * Judges for the character check beyond the chains: other models on the
+   * ChatGPT plan, then a Workers AI model every plan has, so a brain can be
+   * judged by a different one even when the chains hold a single usable brain.
+   */
+  #judges(): Brain[] {
+    const settings = readSettings(this.#sql);
+    const inChains = new Set([...settings.brains.main, ...settings.brains.voice].map((c) => brainKey(c)));
+    const choices: BrainChoice[] = [
+      ...(() => {
+        const v = this.#chatgpt.view();
+        return v.state === "signed_in" ? v.models.map((model): BrainChoice => ({ provider: "chatgpt", model })) : [];
+      })(),
+      { provider: "workers-ai", model: FREE_JUDGE },
+    ];
+    return choices
+      .filter((c) => !inChains.has(brainKey(c)))
+      .slice(0, 3)
+      .map((c) => this.#makeBrain(c))
+      .filter((b): b is Brain => b != null);
+  }
+
   #makeBrain(choice: BrainChoice): Brain | null {
     if (seams.makeBrain) return seams.makeBrain(choice);
     // Tests never reach a real provider (CLAUDE.md), even from background work that outlives a test's fake.
@@ -1267,6 +1292,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         calendar: this.#calendar,
         router: this.#router,
         makeBrain: (c) => this.#makeBrain(c),
+        judges: () => this.#judges(),
         speakSample: async () => {
           const t0 = Date.now();
           const sample = "Hi, this is how I sound.";

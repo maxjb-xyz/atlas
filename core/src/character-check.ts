@@ -192,50 +192,74 @@ async function ask(brain: Brain, system: string, user: string, ms: number): Prom
 
 /**
  * Every brain answers every prompt under `system` (Atlas's own prompt), and
- * the next brain in the list judges it. A brain is never its own judge; a
- * single brain is reported as not checked. Nothing is written to the log.
+ * a different brain judges it: the next one in the list, else one of
+ * `judges` (models only used to judge, such as another model on the
+ * ChatGPT plan). A brain that can't answer its first prompt isn't checked,
+ * with its reason, and isn't used as a judge; a judge that fails is
+ * replaced by the next. Nothing is written to the log.
  */
 export async function runCharacterCheck(
   brains: Brain[],
   system: string,
-  opts: { prompts?: CharacterPrompt[]; ms?: number } = {},
+  opts: { prompts?: CharacterPrompt[]; ms?: number; judges?: Brain[] } = {},
 ): Promise<BrainCheck[]> {
   const prompts = opts.prompts ?? PROMPTS;
+  const ms = opts.ms ?? 60_000;
+  const why = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 300);
+  /** Brains that failed to answer, with the reason, so they aren't asked to judge. */
+  const down = new Map<string, string>();
   const out: BrainCheck[] = [];
   for (const [i, brain] of brains.entries()) {
-    const judge =
-      brains
-        .slice(i + 1)
-        .concat(brains.slice(0, i))
-        .find((b) => brainKey(b) !== brainKey(brain)) ?? null;
-    const check: BrainCheck = { brain: brainKey(brain), judge: judge ? brainKey(judge) : null, results: [] };
+    const key = brainKey(brain);
+    const candidates = () =>
+      [...brains.slice(i + 1), ...brains.slice(0, i), ...(opts.judges ?? [])].filter(
+        (b, j, all) => brainKey(b) !== key && !down.has(brainKey(b)) && all.findIndex((x) => brainKey(x) === brainKey(b)) === j,
+      );
+    const check: BrainCheck = { brain: key, judge: candidates()[0] ? brainKey(candidates()[0]!) : null, results: [] };
     out.push(check);
-    if (!judge) {
+    // Already failed as a judge: its reason stands, without asking it again.
+    const known = down.get(key);
+    if (known) {
+      check.note = `couldn't answer: ${known}`;
+      continue;
+    }
+    if (!check.judge) {
       check.note = "no other brain to judge it; add a second brain to the chain";
       continue;
     }
-    for (const p of prompts) {
+    for (const [n, p] of prompts.entries()) {
       let reply = "";
-      let verdict: Verdict;
-      const why = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 300);
       try {
-        reply = await ask(brain, system, p.owner, opts.ms ?? 60_000);
+        reply = await ask(brain, system, p.owner, ms);
       } catch (err) {
+        if (n === 0) {
+          // Can't answer at all: say why once, rather than sixteen times.
+          down.set(key, why(err));
+          check.note = `couldn't answer: ${why(err)}`;
+          break;
+        }
         check.results.push({ id: p.id, reply, verdict: { passed: false, failed: ["unreachable"], notes: why(err) } });
         continue;
       }
       const structural = structuralVerdict(p.owner, reply);
-      try {
-        const judged = parseVerdict(
-          await ask(judge, "You judge replies carefully and answer with JSON only.", judgePrompt(p.owner, reply), opts.ms ?? 60_000),
-        );
-        const failed = [...new Set([...structural.failed, ...judged.failed])];
-        verdict = { passed: failed.length === 0 && judged.passed, failed, notes: judged.notes };
-      } catch (err) {
-        // The judge failed, not the brain under test: say so, and name the judge.
-        verdict = { passed: false, failed: ["judge_unreachable"], notes: `The judge (${check.judge}) didn't answer: ${why(err)}` };
+      let verdict: Verdict | null = null;
+      let lastError = "";
+      for (const judge of candidates()) {
+        try {
+          const judged = parseVerdict(
+            await ask(judge, "You judge replies carefully and answer with JSON only.", judgePrompt(p.owner, reply), ms),
+          );
+          check.judge = brainKey(judge);
+          const failed = [...new Set([...structural.failed, ...judged.failed])];
+          verdict = { passed: failed.length === 0 && judged.passed, failed, notes: judged.notes };
+          break;
+        } catch (err) {
+          // The judge failed, not the brain under test: try the next judge.
+          down.set(brainKey(judge), why(err));
+          lastError = `The judge (${brainKey(judge)}) didn't answer: ${why(err)}`;
+        }
       }
-      check.results.push({ id: p.id, reply, verdict });
+      check.results.push({ id: p.id, reply, verdict: verdict ?? { passed: false, failed: ["judge_unreachable"], notes: lastError } });
     }
   }
   return out;
@@ -248,7 +272,9 @@ export function summary(checks: BrainCheck[]): string {
       if (c.note) return `${c.brain}: not checked (${c.note})`;
       const passed = c.results.filter((r) => r.verdict.passed).length;
       const missed = [...new Set(c.results.flatMap((r) => r.verdict.failed))].sort();
-      return `${c.brain} ${passed} of ${c.results.length} in character (judged by ${c.judge}${missed.length ? `; missed: ${missed.join(", ")}` : ""})`;
+      // A failure that isn't about character says what went wrong, once.
+      const broke = c.results.find((r) => r.verdict.failed.some((f) => f === "unreachable" || f === "judge_unreachable"));
+      return `${c.brain} ${passed} of ${c.results.length} in character (judged by ${c.judge}${missed.length ? `; missed: ${missed.join(", ")}` : ""}${broke ? `; ${broke.verdict.notes}` : ""})`;
     })
     .join(". ");
 }

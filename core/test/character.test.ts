@@ -77,4 +77,24 @@ describe("the character eval", () => {
     const alone = await runCharacterCheck([scripted([], "chatgpt", "solo").brain], "SYSTEM", { prompts: two });
     expect(alone[0]!.note).toContain("no other brain to judge it");
   });
+
+  it("skips a brain that can't answer, says why once, and judges the rest with another model", async () => {
+    const two = PROMPTS.slice(0, 2);
+    const ok = scripted([say("The Thai place."), say("Thai.")], "chatgpt", "main");
+    const paidOnly = scripted([new Error("Workers AI: 5016: this model requires the Workers Paid plan")], "workers-ai", "kimi-k2.6");
+    const judge = scripted(
+      [say('{"passed": true, "failed_checks": []}'), say('{"passed": true, "failed_checks": []}')],
+      "chatgpt",
+      "other",
+    );
+    const checks = await runCharacterCheck([ok.brain, paidOnly.brain], "SYSTEM", { prompts: two, judges: [judge.brain] });
+    // The refused brain was tried as a judge first, failed, and the extra model took over.
+    expect(checks[0]).toMatchObject({ brain: "chatgpt:main", judge: "chatgpt:other" });
+    expect(checks[0]!.results.map((r) => r.verdict.passed)).toEqual([true, true]);
+    expect(checks[1]!.note).toContain("couldn't answer: Workers AI: 5016");
+    expect(paidOnly.requests).toHaveLength(1);
+    expect(summary(checks)).toBe(
+      "chatgpt:main 2 of 2 in character (judged by chatgpt:other). workers-ai:kimi-k2.6: not checked (couldn't answer: Workers AI: 5016: this model requires the Workers Paid plan)",
+    );
+  });
 });

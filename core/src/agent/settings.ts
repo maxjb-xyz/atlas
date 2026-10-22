@@ -50,6 +50,8 @@ export interface TestDeps {
   calendar: CalendarSense;
   router: BrainRouter;
   makeBrain(choice: BrainChoice): Brain | null;
+  /** Brains that can judge the character check without being checked themselves. */
+  judges(): Brain[];
   /** Speaks the sample out loud, and says which voice and how fast. */
   speakSample(): Promise<TestOutcome>;
   /** Atlas's system prompt for a text reply, with an unsaved character when one is given. */
@@ -108,7 +110,7 @@ export async function liveTest(deps: TestDeps, msg: Extract<ClientMessage, { typ
         .filter((c, i, all) => all.findIndex((x) => brainKey(x) === brainKey(c)) === i)
         .map((c) => deps.makeBrain(c))
         .filter((b): b is Brain => b != null);
-      const checks = await runCharacterCheck(brains, deps.systemFor());
+      const checks = await runCharacterCheck(brains, deps.systemFor(), { judges: deps.judges() });
       const ok = checks.length > 0 && checks.every((c) => !c.note && c.results.every((r) => r.verdict.passed));
       return { ok, message: `Character check: ${summary(checks)}.`, detail: checks };
     }
