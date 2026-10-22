@@ -1,5 +1,5 @@
-// Setup (§22, steps 1 to 5): a passkey, meeting Atlas, a brain, a calendar,
-// and Atlas's first look. Every step can be skipped and picked up again from
+// Setup (§22): a passkey, meeting Atlas, a brain, a calendar, Atlas's first
+// look, and the default routines, each off until the owner turns it on. Every step can be skipped and picked up again from
 // Settings → Your data.
 
 import { useEffect, useState } from "react";
@@ -7,14 +7,17 @@ import { PRESETS, type Preset } from "../../core/src/character";
 import type { Atlas } from "./connection";
 import { AddPasskey, ChatGPT, ICloud, SecretField, TestRow } from "./Settings";
 import { AsciiDiamond, Diamond, Icon } from "./ui";
+import type { AutomationView } from "../../core/src/protocol";
+import { Switch, useAutomations } from "./pages/Automations";
 
-type Step = "passkey" | "meet" | "brain" | "connect" | "look";
+type Step = "passkey" | "meet" | "brain" | "connect" | "look" | "routines";
 const STEPS: Array<[Step, string]> = [
   ["passkey", "Your passkey"],
   ["meet", "Meet Atlas"],
   ["brain", "A brain"],
   ["connect", "Your calendar"],
   ["look", "Atlas looks"],
+  ["routines", "Your routines"],
 ];
 
 export function Setup({ atlas, onDone }: { atlas: Atlas; onDone: () => void }) {
@@ -73,6 +76,7 @@ export function Setup({ atlas, onDone }: { atlas: Atlas; onDone: () => void }) {
           {step === "brain" && <BrainStep atlas={atlas} onNext={next} />}
           {step === "connect" && <ConnectStep atlas={atlas} onNext={next} />}
           {step === "look" && <LookStep atlas={atlas} onNext={next} />}
+          {step === "routines" && <RoutinesStep atlas={atlas} onNext={next} />}
         </div>
       </div>
     </div>
@@ -384,12 +388,77 @@ function LookStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
       )}
       <Footer
         step="look"
-        label={result?.look ? "Keep these and finish" : "Finish"}
+        label={result?.look ? "Keep these" : "Next"}
         onNext={(st, state) => {
           if (state === "done") keep();
           onNext(st, state);
         }}
       />
     </>
+  );
+}
+
+function RoutinesStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
+  const list = useAutomations(atlas);
+  const routines = (list ?? []).filter((a) => a.made_by === "default");
+  return (
+    <>
+      <h1 className="disp">Your routines</h1>
+      <p className="muted">
+        Things I can do on my own, with your calendar, reminders and what we've talked about. They're off until you turn them on, and you
+        can change them any time in Automations.
+      </p>
+      {list == null ? (
+        <p className="lab">Looking</p>
+      ) : routines.length ? (
+        <div className="rows">
+          {routines.map((a) => (
+            <RoutineRow key={a.id} atlas={atlas} a={a} />
+          ))}
+        </div>
+      ) : (
+        <p className="muted small">The default routines were deleted. You can make your own in Automations.</p>
+      )}
+      <Footer step="routines" label="Finish" onNext={onNext} />
+    </>
+  );
+}
+
+/** One routine: what it is, its time, and its switch. A new time is saved when the field is left. */
+function RoutineRow({ atlas, a }: { atlas: Atlas; a: AutomationView }) {
+  const t = a.when;
+  const [at, setAt] = useState(t.kind === "schedule" ? t.at : "");
+  const days = a.when_text.replace(/^At \S+, /, "");
+  const save = () => {
+    if (t.kind !== "schedule" || !at || at === t.at) return;
+    atlas.send({
+      type: "atlas.automation.save",
+      id: a.id,
+      automation: { name: a.name, about: a.about, when: { ...t, at }, do: a.steps.map((s) => s.step), report: a.report },
+    });
+  };
+  return (
+    <div className="r" style={{ alignItems: "center", gap: 12 }}>
+      <span className="grow" style={{ minWidth: 0 }}>
+        <strong>{a.name}</strong>
+        <span className="muted small" style={{ display: "block" }}>
+          {a.about.replace(/^A default routine: /, "").replace(/^./, (c) => c.toUpperCase())}
+        </span>
+      </span>
+      {t.kind === "schedule" && (
+        <span className="row" style={{ gap: 6, flex: "none" }}>
+          <span className="lab faint hide-phone">{days}</span>
+          <input
+            type="time"
+            aria-label={`${a.name} time`}
+            value={at}
+            onChange={(e) => setAt(e.target.value)}
+            onBlur={save}
+            style={{ width: 120 }}
+          />
+        </span>
+      )}
+      <Switch on={a.state === "on"} onChange={(on) => atlas.send({ type: "atlas.automation.set", id: a.id, on })} />
+    </div>
   );
 }

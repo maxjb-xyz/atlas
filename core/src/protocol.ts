@@ -240,7 +240,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Setup (§22): mark a step done, skipped, or open again. */
   z.object({
     type: z.literal("atlas.setup.step"),
-    step: z.enum(["passkey", "meet", "brain", "connect", "look"]),
+    step: z.enum(["passkey", "meet", "brain", "connect", "look", "routines"]),
     state: z.enum(["done", "skipped", "open"]),
   }),
   /** Setup step 5: Atlas reads the calendar and proposes areas, people and things worth knowing. */

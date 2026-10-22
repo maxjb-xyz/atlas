@@ -444,11 +444,14 @@ describe("automations", () => {
     s.close();
   });
 
-  it("include the default routines, made once and on, each with its next run on the clock", async () => {
+  it("include the default routines, made once and off, each on the clock once turned on", async () => {
     const s = await connect();
     const brief = await view(s, "Morning brief");
-    expect(brief).toMatchObject({ made_by: "default", state: "on", can_turn_on: true, when: { kind: "schedule", at: "08:00" } });
-    expect(brief.next_at).not.toBeNull();
+    // Off until the owner turns it on in setup or Automations, with no test run needed.
+    expect(brief).toMatchObject({ made_by: "default", state: "paused", can_turn_on: true, when: { kind: "schedule", at: "08:00" } });
+    expect(brief.next_at).toBeNull();
+    s.send({ type: "atlas.automation.set", id: brief.id, on: true });
+    expect((await view(s, "Morning brief", (a) => a.state === "on")).next_at).not.toBeNull();
     expect((await view(s, "Weekly review")).when).toMatchObject({ kind: "schedule", days: [0] });
     s.send({ type: "atlas.automation.delete", id: (await view(s, "Evening wrap-up")).id });
     await s.next("atlas.automations", (m) => !m.automations.some((a) => a.name === "Evening wrap-up"));

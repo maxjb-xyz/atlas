@@ -219,7 +219,7 @@ function AutomationCard({ atlas, a, open }: { atlas: Atlas; a: AutomationView; o
   );
 }
 
-function Switch({ on, onChange, disabled }: { on: boolean; onChange: (on: boolean) => void; disabled?: boolean }) {
+export function Switch({ on, onChange, disabled }: { on: boolean; onChange: (on: boolean) => void; disabled?: boolean }) {
   return (
     <button
       className={`switch ${on ? "on" : ""}`}

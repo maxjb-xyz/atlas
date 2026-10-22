@@ -167,8 +167,8 @@ export function findAutomation(sql: Sql, nameOrId: string): Automation | null {
 export const needsTest = (a: Pick<Automation, "changed_by" | "tested_at">) => a.changed_by === "atlas" && a.tested_at == null;
 
 /**
- * Saves a new automation or a change. The owner's own (from the form) and
- * the default routines start on; Atlas's start paused, and a change by Atlas
+ * Saves a new automation or a change. The owner's own (from the form) start
+ * on, and the default routines start off without needing a test run; Atlas's start paused, and a change by Atlas
  * pauses one until there's a test run, so nothing Atlas wrote runs
  * unattended before the owner has seen it.
  */
@@ -190,7 +190,8 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: Maker, id?:
   }
   const now = Date.now();
   const atlas = by === "atlas";
-  const state = atlas ? "paused" : (old?.state ?? "on");
+  // The default routines start off: setup offers them, and the owner turns on the ones they want (§13.4, §22).
+  const state = atlas ? "paused" : (old?.state ?? (by === "default" ? "paused" : "on"));
   // What it may call without asking was granted for the steps the owner saw; a change takes it back until they turn it on again.
   const allowed = !atlas && state === "on" ? webhookNames(input) : [];
   if (old) {

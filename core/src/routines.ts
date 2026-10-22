@@ -1,6 +1,7 @@
 // The default routines (§13.4): a morning brief, an evening wrap-up and a
 // weekly review, made once as ordinary automations the owner can change,
-// pause or delete. Each is one Atlas step with a note, so what it says comes
+// turn on or delete. They start off; setup's last step offers each one with
+// its time (§22). Each is one Atlas step with a note, so what it says comes
 // from the calendar, the agenda and what was said, looked up when it runs.
 
 import { type AutomationInput, listAutomations, saveAutomation } from "./automations";
