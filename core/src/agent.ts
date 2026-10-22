@@ -5,7 +5,10 @@
 import { Agent, type Connection, type WSMessage } from "agents";
 import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } from "agents/voice";
 import { CalendarSense } from "./agent/calendar";
+import { correctAreas, DISCOVER_AFTER, discoveryPrompt, startDiscovered, tagPending, unfiled } from "./agent/areas";
 import { HelperDesk } from "./agent/helpers";
+import { type Decider, workersAIDecider } from "./brains/decide";
+import { createArea, getScope, listAreas, mergeAreas, setScope, type Tagged, updateArea } from "./store/areas";
 import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
 import { seams } from "./agent/seams";
 import { liveTest, settingsView } from "./agent/settings";
@@ -19,7 +22,7 @@ import { compact, planCompaction } from "./compaction";
 import { CONTEXT_TOKENS, history, systemPrompt, tokens, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
 import { Outbox, StreamScrubber } from "./outbox";
-import { ClientMessage, type JobView, type ServerMessage, type SettingsView } from "./protocol";
+import { type AreaView, ClientMessage, type JobView, type ServerMessage, type SettingsView } from "./protocol";
 import { type AgendaItem, due, finish, lease, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, type Sql } from "./store/db";
 import { type Actor, append, forRun, get as getRow, type LogRow, logTo, type Surface, thread } from "./store/log";
@@ -172,6 +175,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             .filter((r) => r.surface !== "none")
             .map((r) => ({ run_id: r.id, surface: r.surface })),
           jobs: this.#helpers.list(),
+          areas: this.#areasView(),
+          scope: getScope(this.#sql),
         });
         return;
       }
@@ -215,6 +220,28 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         return;
       case "atlas.test":
         await this.#test(connection, msg);
+        return;
+      case "atlas.scope.set":
+        setScope(this.#sql, msg.area && listAreas(this.#sql).some((a) => a.id === msg.area) ? msg.area : null);
+        this.#areasChanged();
+        return;
+      case "atlas.area.create":
+      case "atlas.area.update":
+      case "atlas.area.merge":
+      case "atlas.areas.set":
+        try {
+          if (msg.type === "atlas.area.create") createArea(this.#sql, { name: msg.name, about: msg.about, by: "owner" });
+          else if (msg.type === "atlas.area.update") updateArea(this.#sql, msg.id, msg, "owner");
+          else if (msg.type === "atlas.area.merge") mergeAreas(this.#sql, msg.from, msg.into, "owner");
+          else {
+            const row = correctAreas(this.#sql, msg.ref as Tagged, msg.areas);
+            const changed = msg.ref.startsWith("log:") ? [msg.ref.slice(4)] : [];
+            this.#broadcast({ type: "atlas.rows", rows: [row, ...changed.map((id) => getRow(this.#sql, id)!).filter(Boolean)] });
+          }
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
+        this.#areasChanged();
         return;
       case "atlas.job.stop":
         if (!this.#helpers.stop(msg.id)) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
@@ -657,6 +684,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   #embedder(): Embedder | null {
     if (seams.embed !== undefined) return seams.embed;
+    if (this.env.ATLAS_TEST) return null;
     return workersAIEmbedder(this.env.AI as never);
   }
 
@@ -673,25 +701,100 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (this.#tendQueued) return this.#tending;
     this.#tendQueued = true;
     const embedder = this.#embedder();
+    const decider = this.#decider();
     const pass = () => {
       this.#tendQueued = false;
-      return this.keepAliveWhile(() => this.#tend(embedder)).catch((err: unknown) => this.#logMemoryError(err));
+      return this.keepAliveWhile(() => this.#tend(embedder, decider)).catch((err: unknown) => this.#logMemoryError(err));
     };
     this.#tending = this.#tending.then(pass, pass);
     return this.#tending;
   }
 
-  async #tend(embedder: Embedder | null): Promise<void> {
+  async #tend(embedder: Embedder | null, decider: Decider | null): Promise<void> {
     try {
       // In batches, letting other work in between: the first start indexes all of M0's thread.
       while (indexNewMessages(this.#sql) > 0) await yieldNow();
-      if (!embedder) return;
-      const down = await embedPending(this.#sql, embedder, { batches: 100, between: yieldNow });
-      // Recall still works by keyword and time; this says why meaning search lags.
-      if (down) this.#logMemoryError(down);
+      if (embedder) {
+        const down = await embedPending(this.#sql, embedder, { batches: 100, between: yieldNow });
+        // Recall still works by keyword and time; this says why meaning search lags.
+        if (down) this.#logMemoryError(down);
+      }
     } catch (err) {
       this.#logMemoryError(err);
     }
+    if (decider) await this.#tendAreas(decider);
+  }
+
+  /** Tags what's new with areas, and starts new areas when enough fits none (§6.3). */
+  async #tendAreas(decider: Decider): Promise<void> {
+    try {
+      for (let i = 0; i < 40; i++) {
+        const pass = await tagPending(this.#sql, decider, { between: yieldNow });
+        if (pass.changed.length) this.#broadcast({ type: "atlas.rows", rows: pass.changed.map((id) => getRow(this.#sql, id)!) });
+        if (pass.tagged === 0 && pass.unfiled === 0 && pass.changed.length === 0) break;
+      }
+      const waiting = unfiled(this.#sql);
+      if (waiting.length >= DISCOVER_AFTER) {
+        const settings = readSettings(this.#sql);
+        const runId = startRun(this.#sql, { actor: "atlas", trigger: "areas", surface: "none", role: "main" });
+        const res = await runLoop(
+          { log: logTo(this.#sql), router: this.#router, chain: settings.brains.main, toolContext: {} as never },
+          {
+            runId,
+            role: "main",
+            surface: "none",
+            system: `You sort ${settings.owner_name.trim() || "the owner"}'s messages into the areas of their life, for ${settings.assistant_name}, their personal AI.`,
+            messages: [{ role: "user", content: discoveryPrompt(this.#sql, waiting) }],
+            tools: [],
+            budget: { steps: 1, ms: 60_000 },
+            joiner: "\n\n",
+            effort: "low",
+            firstEventMs: 25_000,
+          },
+          () => {},
+        );
+        endRun(this.#sql, runId, res.state, res.steps, res.error ? { error: res.error } : {});
+        if (res.state === "replied") {
+          const announced = startDiscovered(this.#sql, waiting, res.text, runId);
+          if (announced.length) {
+            this.#broadcast({ type: "atlas.rows", rows: announced });
+            this.#areasChanged();
+          }
+        }
+      }
+    } catch (err) {
+      console.error(JSON.stringify({ at: "areas", error: err instanceof Error ? err.message : String(err) }));
+    }
+  }
+
+  #decider(): Decider | null {
+    if (seams.decide !== undefined) return seams.decide;
+    // Tests never reach a real provider (CLAUDE.md): without a fake, there's no decide role.
+    if (this.env.ATLAS_TEST) return null;
+    return workersAIDecider(this.env.AI as never);
+  }
+
+  #areasView(): AreaView[] {
+    return listAreas(this.#sql, { all: true }).map((a) => {
+      const like = `%"${a.id}"%`;
+      return {
+        id: a.id,
+        name: a.name,
+        about: a.about,
+        state: a.state,
+        color: a.color,
+        settings: a.settings,
+        messages: this.#sql
+          .exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE kind IN ('message.in', 'message.out') AND areas LIKE ?`, like)
+          .one().n,
+        records: this.#sql.exec<{ n: number }>(`SELECT count(*) AS n FROM records WHERE state = 'active' AND areas LIKE ?`, like).one().n,
+        last_seen: a.last_seen,
+      };
+    });
+  }
+
+  #areasChanged(): void {
+    this.#broadcast({ type: "atlas.areas", areas: this.#areasView(), scope: getScope(this.#sql) });
   }
 
   #logMemoryError(err: unknown): void {

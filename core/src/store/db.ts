@@ -126,6 +126,33 @@ const MIGRATIONS: string[] = [
   -- Keyed by memory's rowid, so updating or dropping an item is a point lookup.
   CREATE VIRTUAL TABLE memory_fts USING fts5(text, tokenize = 'porter unicode61');
   `,
+  // M1: areas (§6). Tags on log rows and records hold area ids. Examples
+  // come from the owner's corrections and teach future tagging.
+  `
+  CREATE TABLE areas (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE,
+    about TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'active',
+    color INTEGER NOT NULL DEFAULT 0,
+    settings TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    last_seen INTEGER
+  );
+  CREATE UNIQUE INDEX areas_name ON areas(name);
+
+  CREATE TABLE area_examples (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    area_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    fits INTEGER NOT NULL,
+    at INTEGER NOT NULL
+  );
+  CREATE INDEX area_examples_area ON area_examples(area_id, seq);
+
+  ALTER TABLE records ADD COLUMN tagged INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

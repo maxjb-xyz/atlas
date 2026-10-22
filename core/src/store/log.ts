@@ -21,7 +21,9 @@ export type LogKind =
   /** Atlas's summary of the conversation before a point, which replaces it in context (§4.1). */
   | "context.summary"
   /** What a helper handed back when its job ended (§8.1). */
-  | "job.result";
+  | "job.result"
+  /** An area was created, changed, merged or archived, or the owner moved an item's areas (§6). */
+  | "area.change";
 
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */
 export interface Receipt {
@@ -143,6 +145,8 @@ export function isThreadRow(row: LogRow): boolean {
   if (row.kind === "run.end") return row.body.state === "failed" && row.body.trigger !== "compaction";
   // An undo from a receipt shows as its own line, so the thread tells the truth.
   if (row.kind === "agenda.change" || row.kind === "record.change") return row.body.undo_of != null;
+  // Atlas starting an area is said once, in the thread (§6.3).
+  if (row.kind === "area.change") return row.body.change === "started";
   return false;
 }
 
@@ -154,6 +158,7 @@ export const THREAD_KINDS: LogKind[] = [
   "run.end",
   "agenda.change",
   "record.change",
+  "area.change",
   "voice.problem",
 ];
 

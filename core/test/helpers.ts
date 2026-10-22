@@ -1,4 +1,5 @@
 import { env as testEnv } from "cloudflare:test";
+import type { Decider } from "../src/brains/decide";
 import type { Embedder } from "../src/brains/embed";
 import type { Brain, BrainEvent, BrainRequest } from "../src/brains/types";
 import { BrainError } from "../src/brains/types";
@@ -173,6 +174,44 @@ export function fakeEmbedder(opts: { fail?: string; refuse?: string } = {}): Emb
         }
         return normalize(v);
       });
+    },
+  };
+}
+
+/**
+ * A fake `decide` role. An area question gets a high probability when the
+ * text has one of that area's words (or its name, or a word from an example
+ * in the question); "ongoing" when the text has any word from `ongoing`.
+ */
+export function fakeDecider(
+  words: Record<string, string[]> = {},
+  ongoing: string[] = [],
+): Decider & { calls: Array<{ state: string; questions: Record<string, string> }> } {
+  const calls: Array<{ state: string; questions: Record<string, string> }> = [];
+  return {
+    model: "fake-decide",
+    calls,
+    async yesNo(state, questions) {
+      calls.push({ state, questions: Object.fromEntries(Object.entries(questions).map(([k, q]) => [k, q.instructions])) });
+      const text = state.toLowerCase();
+      const out: Record<string, number> = {};
+      for (const [id, q] of Object.entries(questions)) {
+        if (id === "ongoing") {
+          out[id] = ongoing.some((w) => text.includes(w)) ? 0.9 : 0.1;
+          continue;
+        }
+        const name = /Is this about (.+?)(?: \(|,)/.exec(q.instructions)?.[1] ?? "";
+        const keys = [name.toLowerCase(), ...(words[name] ?? [])];
+        const shown = [...q.instructions.matchAll(/These belong to [^:]+: (.+?)\.(?: These|$)/g)].flatMap(
+          (m) => m[1]!.toLowerCase().match(/[a-z]{4,}/g) ?? [],
+        );
+        const notShown = [...q.instructions.matchAll(/These don't: (.+?)\.$/g)].flatMap(
+          (m) => m[1]!.toLowerCase().match(/[a-z]{4,}/g) ?? [],
+        );
+        const hit = keys.some((k) => k && text.includes(k)) || shown.some((w) => text.includes(w) && !notShown.includes(w));
+        out[id] = hit ? 0.9 : 0.05;
+      }
+      return out;
     },
   };
 }

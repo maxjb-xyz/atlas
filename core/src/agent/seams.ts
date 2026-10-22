@@ -2,6 +2,7 @@
 // providers. Only the tests set these (CLAUDE.md: never call a real provider
 // from tests).
 
+import type { Decider } from "../brains/decide";
 import type { Embedder } from "../brains/embed";
 import type { Brain } from "../brains/types";
 import type { CalendarSource } from "../calendar/types";
@@ -15,4 +16,6 @@ export const seams: {
   embed: Embedder | null | undefined;
   /** A smaller context window, so tests can reach compaction with a few messages. */
   contextWindow: number | null;
-} = { makeBrain: null, calendar: undefined, fetch: null, embed: undefined, contextWindow: null };
+  /** The `decide` role: undefined uses Workers AI's Clef, null means none. */
+  decide: Decider | null | undefined;
+} = { makeBrain: null, calendar: undefined, fetch: null, embed: undefined, contextWindow: null, decide: undefined };

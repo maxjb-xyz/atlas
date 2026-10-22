@@ -7,6 +7,7 @@
 import type { Message } from "./brains/types";
 import { character, TEXT_PROFILE, VOICE_PROFILE } from "./character";
 import { upcoming } from "./store/agenda";
+import { type Area, getArea, getScope, listAreas } from "./store/areas";
 import { parse, type Sql } from "./store/db";
 import { type AtlasRecord, standingFacts } from "./store/records";
 import { get as getRow, type LogRow, type Surface } from "./store/log";
@@ -75,6 +76,7 @@ export function systemPrompt(opts: {
   const fresh = [
     `Now: ${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}.`,
     reminders.length ? `Upcoming reminders:\n${reminders.join("\n")}` : "No upcoming reminders.",
+    areaContext(sql, opts.beforeSeq),
     surface === "voice" ? VOICE_PROFILE : surface === "none" ? "" : TEXT_PROFILE,
     opts.extra ?? "",
   ]
@@ -163,4 +165,38 @@ export function withMessage(messages: Message[], content: string): Message[] {
   if (last?.role === "user") out[out.length - 1] = { role: "user", content: `${last.content}\n\n${content}` };
   else out.push({ role: "user", content });
   return out;
+}
+
+/**
+ * The "hat" a run wears (§6.2): the area the owner is focused on, or else
+ * the areas of the latest tagged message in the last half hour.
+ */
+export function hat(sql: Sql, beforeSeq?: number): Area[] {
+  const scope = getScope(sql);
+  if (scope) return [getArea(sql, scope)!];
+  const r = sql
+    .exec<{ areas: string }>(
+      `SELECT areas FROM log WHERE kind = 'message.in' AND areas != '[]' AND seq < ? AND at > ? ORDER BY seq DESC LIMIT 1`,
+      beforeSeq ?? Number.MAX_SAFE_INTEGER,
+      Date.now() - 30 * 60_000,
+    )
+    .toArray()[0];
+  return parse<string[]>(r?.areas, [])
+    .map((id) => getArea(sql, id))
+    .filter((a): a is Area => a != null && a.state !== "archived");
+}
+
+/** What a run is told about areas: the hat, its tone, and the owner's other areas. */
+function areaContext(sql: Sql, beforeSeq?: number): string {
+  const all = listAreas(sql).filter((a) => a.state !== "archived");
+  if (!all.length) return "";
+  const worn = hat(sql, beforeSeq);
+  const lines: string[] = [];
+  if (worn.length) {
+    for (const a of worn) {
+      lines.push(`You're acting in ${a.name}${a.about ? ` (${a.about})` : ""}.${a.settings.tone ? ` Tone here: ${a.settings.tone}.` : ""}`);
+    }
+  }
+  lines.push(`The owner's areas: ${all.map((a) => a.name).join(", ")}. You can talk about any of them at any time.`);
+  return lines.join(" ");
 }

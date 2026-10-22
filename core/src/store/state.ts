@@ -15,7 +15,13 @@ export type StateName =
   /** The last log row the memory index has seen. */
   | "memory_seq"
   /** When compaction last failed, so it waits before trying again, across restarts. */
-  | "compaction_failed_at";
+  | "compaction_failed_at"
+  /** The last log row the area tagger has seen. */
+  | "areas_seq"
+  /** The area the owner is focused on with the scope switcher. */
+  | "scope"
+  /** Messages that fit no area but seemed to be about something ongoing, toward discovering new areas. */
+  | "unfiled";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

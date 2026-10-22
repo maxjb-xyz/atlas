@@ -9,6 +9,19 @@ import { BrainChoice, SettingsPatch } from "./store/settings";
 
 export type { LogRow, AgendaItem };
 
+/** An area as the app shows it, in Library → Areas and on chips (§6, §21.3). */
+export interface AreaView {
+  id: string;
+  name: string;
+  about: string;
+  state: "active" | "dormant" | "archived";
+  color: number;
+  settings: { tone: string };
+  messages: number;
+  records: number;
+  last_seen: number | null;
+}
+
 /** A helper's job as the app shows it (§21.4). */
 export interface JobView {
   id: string;
@@ -48,6 +61,24 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.chatgpt.finish"), url: z.string().min(1).max(8000) }),
   z.object({ type: z.literal("atlas.chatgpt.cancel") }),
   z.object({ type: z.literal("atlas.chatgpt.signout") }),
+  /** Focus on one area, or null for all (the scope switcher, §21.3). */
+  z.object({ type: z.literal("atlas.scope.set"), area: z.string().max(64).nullable() }),
+  z.object({ type: z.literal("atlas.area.create"), name: z.string().min(1).max(60), about: z.string().max(500).optional() }),
+  z.object({
+    type: z.literal("atlas.area.update"),
+    id: z.string().max(64),
+    name: z.string().min(1).max(60).optional(),
+    about: z.string().max(500).optional(),
+    state: z.enum(["active", "dormant", "archived"]).optional(),
+    settings: z.object({ tone: z.string().max(300).optional() }).optional(),
+  }),
+  z.object({ type: z.literal("atlas.area.merge"), from: z.string().max(64), into: z.string().max(64) }),
+  /** Move an item to other areas by tapping its chip (§6.3): a message (`log:<id>`) or a record (`rec:<id>`). */
+  z.object({
+    type: z.literal("atlas.areas.set"),
+    ref: z.string().regex(/^(log|rec):[\w-]+$/),
+    areas: z.array(z.string().max(64)).max(10),
+  }),
   /** Stop a helper's job (Stop on the Jobs tab). */
   z.object({ type: z.literal("atlas.job.stop"), id: z.string().max(64) }),
   /** Live checks for Settings (§22: every check is a live test). */
@@ -96,6 +127,9 @@ export type ServerMessage =
       view: SettingsView;
       running: Array<{ run_id: string; surface: string }>;
       jobs: JobView[];
+      areas: AreaView[];
+      /** The area the owner is focused on, or null for all. */
+      scope: string | null;
     }
   /** A new or older thread row. The saved truth: it replaces any streamed text for its run. */
   | { type: "atlas.rows"; rows: LogRow[]; older?: boolean; has_more?: boolean }
@@ -105,6 +139,7 @@ export type ServerMessage =
   | { type: "atlas.status"; run_id: string; text: string | null }
   | { type: "atlas.run"; run_id: string; state: RunState; surface: string; client_id?: string }
   | { type: "atlas.agenda"; agenda: AgendaItem[] }
+  | { type: "atlas.areas"; areas: AreaView[]; scope: string | null }
   /** Helpers' jobs: running ones, and ones that ended in the last hour (§21.4). */
   | { type: "atlas.jobs"; jobs: JobView[] }
   | { type: "atlas.view"; view: SettingsView }
