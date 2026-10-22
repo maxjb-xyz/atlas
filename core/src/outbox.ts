@@ -161,8 +161,8 @@ export interface Delivery {
   interrupted?: boolean;
   usage?: unknown;
   trigger?: string;
-  /** A nudge Atlas sent on its own (§10.3): its kind, and the errand or thing it was about. */
-  nudge?: { kind: string; about?: string };
+  /** A nudge Atlas sent on its own (§10.3): what started it, what it was about in Atlas's words, and the errand or thing, if any. */
+  nudge?: { from: string; about: string; ref?: string };
   /** For spoken replies: when the status line and the answer were ready. */
   timing?: Record<string, unknown>;
 }

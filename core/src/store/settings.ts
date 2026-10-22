@@ -101,16 +101,23 @@ export const Settings = z.object({
   location: z.object({ on: z.boolean().default(true) }).default({ on: true }),
   /** Maps (§19.1): OpenStreetMap's free services, or Mapbox by key (its token is kept with the secrets). */
   maps: z.object({ provider: z.enum(["osm", "mapbox"]).default("osm") }).default({ provider: "osm" }),
-  /** Speaking up (§10.3): what Atlas may tell the owner about on its own, each with a switch, and the rhythm moments' times. */
+  /**
+   * Speaking up (§10.3): whether Atlas may tell the owner things on its own.
+   * `noticing` covers whatever its senses notice (a move, a change on the
+   * calendar, the weather, traffic, a device); `leave` the look before an
+   * event with a place; the moments have a time. `quiet_about` is what the
+   * owner doesn't want to hear about, in their words: Atlas and `decide`
+   * both see it, and the owner edits it in the app.
+   */
   speaking: z
     .object({
-      errands: z.boolean().default(true),
+      noticing: z.boolean().default(true),
       leave: z.boolean().default(true),
       morning: z.object({ on: z.boolean().default(true), at: HHMM.default("08:00") }).default({ on: true, at: "08:00" }),
       evening: z.object({ on: z.boolean().default(false), at: HHMM.default("20:00") }).default({ on: false, at: "20:00" }),
-      noticed: z.boolean().default(true),
+      quiet_about: z.array(z.string().min(1).max(120)).max(30).default([]),
     })
-    .default({ errands: true, leave: true, morning: { on: true, at: "08:00" }, evening: { on: false, at: "20:00" }, noticed: true }),
+    .default({ noticing: true, leave: true, morning: { on: true, at: "08:00" }, evening: { on: false, at: "20:00" }, quiet_about: [] }),
   /** How Atlas says temperatures, speeds and distances. "auto" follows the time zone: US zones get °F and miles. */
   units: z.enum(["auto", "us", "metric"]).default("auto"),
 });

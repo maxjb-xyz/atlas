@@ -1710,11 +1710,16 @@ export function Pair({ atlas, code }: { atlas: Atlas; code: string }) {
   );
 }
 
-/** Speaking up (§10.3): what Atlas may tell you about on its own, each with a switch; the moments have a time. */
+/**
+ * Speaking up (§10.3): whether Atlas tells you things on its own, the looks
+ * it takes at set moments, and what you've asked it not to bring up (it
+ * keeps that list itself when you say stop, and you can change it here).
+ */
 function Speaking({ draft, edit }: { draft: SettingsT; edit: Edit }) {
   const sp = draft.speaking;
+  const [adding, setAdding] = useState("");
   const set = (patch: Partial<SettingsT["speaking"]>) => edit({ speaking: { ...sp, ...patch } });
-  const flag = (k: "errands" | "leave" | "noticed", label: string) => (
+  const flag = (k: "noticing" | "leave", label: string) => (
     <label className="check">
       <input type="checkbox" checked={sp[k]} onChange={(e) => set({ [k]: e.target.checked })} />
       {label}
@@ -1737,16 +1742,54 @@ function Speaking({ draft, edit }: { draft: SettingsT; edit: Edit }) {
       </label>
     </div>
   );
+  const add = () => {
+    const t = adding.trim();
+    if (t && !sp.quiet_about.some((q) => q.toLowerCase() === t.toLowerCase())) set({ quiet_about: [...sp.quiet_about, t] });
+    setAdding("");
+  };
   return (
     <>
-      {flag("errands", "Errands near you, like a store on your way home")}
+      {flag("noticing", "What Atlas notices: where you are and are heading, changes on your calendar, traffic, the weather, your devices")}
       {flag("leave", "When to leave for events with a place, from the travel time")}
       {moment("morning", "A look at the start of the day")}
       {moment("evening", "A look in the evening")}
-      {flag("noticed", "Other things Atlas notices that matter to something open")}
+      <p className="small" style={{ marginTop: 12 }}>
+        Don't bring up
+      </p>
+      {sp.quiet_about.length ? (
+        <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+          {sp.quiet_about.map((q) => (
+            <button
+              key={q}
+              className="chip"
+              title="Let Atlas bring this up again"
+              onClick={() => set({ quiet_about: sp.quiet_about.filter((x) => x !== q) })}
+            >
+              {q} ×
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="muted small">Nothing yet. Saying "stop" to a nudge adds what you meant here.</p>
+      )}
+      <div className="row">
+        <label className="field" style={{ flex: 1 }}>
+          <input
+            aria-label="Something Atlas shouldn't bring up"
+            placeholder="Like: the weather unless it's severe"
+            value={adding}
+            maxLength={120}
+            onChange={(e) => setAdding(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && add()}
+          />
+        </label>
+        <button className="btn sm" onClick={add} disabled={!adding.trim()}>
+          Add
+        </button>
+      </div>
       <p className="muted small">
-        Atlas speaks up only when it matters, and stays silent otherwise; History shows what it decided each time and why. Replying "stop"
-        to one turns its kind off here. These wait for quiet hours and count against the day's interruptions.
+        Atlas speaks up when it would help, and stays quiet otherwise; History shows what it decided each time and why. These wait for quiet
+        hours and count against the day's interruptions.
       </p>
     </>
   );

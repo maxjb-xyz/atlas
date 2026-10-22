@@ -17,7 +17,7 @@ import type { LookOut, Page, SearchResult } from "../web";
 import type { BrowserAction, BrowserPage, PageElement } from "../browser";
 import type { McpServer } from "../mcp";
 import type { StageView } from "../stage";
-import type { Found, PlaceKind, Point, Route, Travel } from "../maps";
+import type { Found, Point, Route, Travel } from "../maps";
 import type { Weather } from "../weather";
 
 /** What kind of action a tool takes decides when Atlas asks first (§12.1). */
@@ -67,6 +67,8 @@ export interface ToolContext {
   devices?: DevicesApi | null;
   /** Automations, for owner runs; null elsewhere. */
   automations: AutomationsApi | null;
+  /** Speaking up changed (`speaking_up`): the moments are put on the clock again. */
+  speaking?: () => Promise<void>;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
   clock: {
     schedule(item: AgendaItem): Promise<void>;
@@ -116,7 +118,7 @@ export interface MapsApi {
   reverse(p: Point, o: { run_id: string | null }): Promise<LookOut<Found>>;
   route(via: Point[], travel: Travel, o: { run_id: string | null; label: string }): Promise<LookOut<Route>>;
   nearby(
-    q: { kind?: PlaceKind; name?: string; near: Point; along?: Array<[number, number]>; within: number; limit: number },
+    q: { kind?: string; name?: string; near: Point; along?: Array<[number, number]>; within: number; limit: number },
     o: { run_id: string | null; label: string },
   ): Promise<LookOut<Found[]>>;
   /** The forecast for a rough area around a point (rounded here, so a caller can't send more). */

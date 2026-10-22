@@ -67,6 +67,24 @@ export const KINDS = {
 export type PlaceKind = keyof typeof KINDS;
 export const PLACE_KINDS = Object.keys(KINDS) as [PlaceKind, ...PlaceKind[]];
 
+/**
+ * Any kind of place: one of the common kinds above, an OpenStreetMap tag
+ * ("shop=florist", "leisure=park"), or a plain word ("florist"), which is
+ * looked for as a shop or an amenity. Mapbox gets the tag's value as its
+ * category. Null when it isn't something a map could look for.
+ */
+export function placeKind(kind: string): { osm: readonly string[]; mapbox: string; words: string } | null {
+  const k = kind.trim().toLowerCase();
+  if (k in KINDS) return KINDS[k as PlaceKind];
+  const tag = /^([a-z_:]{2,30})=([a-z0-9_;:-]{2,40})$/.exec(k);
+  if (tag) return { osm: [k], mapbox: tag[2]!, words: tag[2]!.replace(/_/g, " ") };
+  if (/^[a-z_]{2,40}$/.test(k)) return { osm: [`shop=${k}`, `amenity=${k}`], mapbox: k, words: k.replace(/_/g, " ") };
+  return null;
+}
+
+/** A kind of place in words. */
+export const kindWords = (kind: string) => placeKind(kind)?.words ?? kind;
+
 // --- pacing ---------------------------------------------------------------------------------------
 
 const lastCall = new Map<string, number>();
@@ -251,7 +269,7 @@ export async function nearby(
   o: {
     provider: MapsProvider;
     key: string | null;
-    kind?: PlaceKind;
+    kind?: string;
     name?: string;
     near: Point;
     /** A route to search along, as [lon, lat] pairs. */
@@ -261,9 +279,16 @@ export async function nearby(
     limit: number;
   },
 ): Promise<LookOut<Found[]>> {
-  if (o.provider === "mapbox" && o.kind) {
+  const kind = o.kind ? placeKind(o.kind) : null;
+  if (o.kind && !kind)
+    return {
+      ok: false,
+      status: 0,
+      error: `"${o.kind}" isn't a kind of place a map can look for; try a word like "florist" or a tag like "leisure=park".`,
+    };
+  if (o.provider === "mapbox" && kind) {
     if (!o.key) return { ok: false, status: 0, error: "Mapbox needs its token: Settings → Connections → Maps." };
-    const u = new URL(`https://api.mapbox.com/search/searchbox/v1/category/${KINDS[o.kind].mapbox}`);
+    const u = new URL(`https://api.mapbox.com/search/searchbox/v1/category/${encodeURIComponent(kind.mapbox)}`);
     u.searchParams.set("access_token", o.key);
     u.searchParams.set("proximity", ll(o.near));
     u.searchParams.set("limit", String(Math.min(25, o.limit)));
@@ -286,7 +311,7 @@ export async function nearby(
           address: String(p.full_address ?? p.address ?? p.place_formatted ?? ""),
           lat,
           lon,
-          kind: Array.isArray(p.poi_category) ? String(p.poi_category[0]) : KINDS[o.kind!].mapbox,
+          kind: Array.isArray(p.poi_category) ? String(p.poi_category[0]) : kind.mapbox,
           ...(typeof p.distance === "number" ? { m: Math.round(p.distance) } : {}),
         };
       })
@@ -295,8 +320,8 @@ export async function nearby(
   }
   const pts = o.along?.length ? samples(o.along, Math.max(200, o.within)) : [o.near];
   const around = pts.map((p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join(",");
-  const filters = o.kind
-    ? KINDS[o.kind].osm.map((t) => {
+  const filters = kind
+    ? kind.osm.map((t) => {
         const [k, v] = t.split("=");
         return `["${k}"="${v}"]`;
       })

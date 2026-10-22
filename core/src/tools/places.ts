@@ -6,7 +6,7 @@
 import { z } from "zod";
 import { here, homePin, metres, type Pin, pinOf, pins } from "../location";
 import { distance as say, unitsFor, sky, temp, type Units } from "../weather";
-import { KINDS, minutes, type Found, type Point, PLACE_KINDS, type Travel } from "../maps";
+import { kindWords, minutes, type Found, type Point, PLACE_KINDS, placeKind, type Travel } from "../maps";
 import { createItem, finish, getItem, upcoming } from "../store/agenda";
 import { correctRecord, createRecord, findRecords, getRecord, type AtlasRecord } from "../store/records";
 import { get as getRow } from "../store/log";
@@ -165,9 +165,12 @@ export const placeFind = defineTool({
   ].join(" "),
   input: z.object({
     kind: z
-      .enum(PLACE_KINDS)
+      .string()
+      .max(60)
       .optional()
-      .describe(`A kind of place: ${PLACE_KINDS.join(", ")}.`),
+      .describe(
+        `A kind of place: ${PLACE_KINDS.join(", ")}, or any other as a word ('florist') or an OpenStreetMap tag ('leisure=park', 'amenity=library').`,
+      ),
     name: z.string().max(80).optional().describe("A name to look for instead, like 'Publix' or 'Trader Joe's'."),
     near: z.string().max(200).default("here").describe("'here', 'home', a saved place, or an address."),
     on_the_way_to: z.string().max(200).optional().describe("'home', a saved place or an address, to find places along the way there."),
@@ -186,7 +189,9 @@ export const placeFind = defineTool({
     const from = await resolve(ctx, input.near);
     if (!from.ok) return fail(from.error);
     const u = unitsOf(ctx);
-    const what = input.kind ? KINDS[input.kind].words : input.name!;
+    if (input.kind && !placeKind(input.kind))
+      return fail(`"${input.kind}" isn't a kind of place a map can look for; try a plain word or a tag.`);
+    const what = input.kind ? kindWords(input.kind) : input.name!;
     if (!input.on_the_way_to) {
       const out = await ctx.maps.nearby(
         {
@@ -337,16 +342,17 @@ export const errandAdd = defineTool({
   name: "errand_add",
   kind: "change_own",
   description: [
-    "Keep an errand: something the owner needs to do or get when they're near the right kind of place ('I need oat milk', 'drop off the package').",
-    "Atlas notices when they leave somewhere or pass by, and suggests a stop on the way. Use it whenever the owner mentions something to pick up or drop off without a time; with a time, use reminder_create instead.",
+    "Keep an errand: something the owner needs to do or get somewhere, with no set time ('I need oat milk', 'drop off the package', 'get the car washed').",
+    "You keep it in mind as they move about, and suggest it when it fits: on their way, nearby, or a good moment. Use it whenever they mention something like that; with a time, use reminder_create instead.",
     "The owner sees an 'Errand' chip with Undo, and the errand in Agenda.",
   ].join(" "),
   input: z.object({
     what: z.string().min(1).max(200).describe("The errand in a few words: 'Oat milk'."),
     kind: z
-      .enum(PLACE_KINDS)
+      .string()
+      .max(60)
       .optional()
-      .describe(`The kind of place it can be done at: ${PLACE_KINDS.join(", ")}.`),
+      .describe(`The kind of place it can be done at: ${PLACE_KINDS.join(", ")}, or any other, as for place_find.`),
     place: z.string().max(120).optional().describe("A particular saved place or store, when it has to be that one."),
     by: z.string().optional().describe("A deadline, if there is one, as a local date-time YYYY-MM-DDTHH:mm."),
   }),
@@ -375,7 +381,7 @@ export const errandAdd = defineTool({
       output: {
         id: item.id,
         errand: item.title,
-        ...(input.kind ? { at: KINDS[input.kind].words } : {}),
+        ...(input.kind ? { at: kindWords(input.kind) } : {}),
         ...(deadline ? { by: isoLocal(deadline, ctx.tz) } : {}),
       },
       receipt: {

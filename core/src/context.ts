@@ -23,7 +23,7 @@ import type { Settings } from "./store/settings";
 import { isoLocal, longLocal, shortLocal } from "./time";
 import { situationLines } from "./situation";
 import { openErrands } from "./tools/places";
-import { KINDS, type PlaceKind } from "./maps";
+import { kindWords } from "./maps";
 import { speakingLine } from "./agent/senses";
 import { nodesLine } from "./nodes";
 
@@ -235,7 +235,7 @@ function errandsLine(sql: Sql, tz: string): string {
   return `Open errands (you suggest a stop when the owner's on the way; errand_done when they've done it):\n${open
     .map((e) => {
       const k = e.source.detail?.place_kind;
-      const at = typeof k === "string" && k in KINDS ? ` (at ${KINDS[k as PlaceKind].words})` : "";
+      const at = typeof k === "string" ? ` (at ${kindWords(k)})` : "";
       const by = e.due_at < 8_000_000_000_000 ? `, by ${shortLocal(new Date(e.due_at), tz)}` : "";
       return `- ${e.title}${at}${by} (id ${e.id})`;
     })

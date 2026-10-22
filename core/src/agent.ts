@@ -128,7 +128,7 @@ import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
 import type { Append } from "./store/log";
-import { NUDGE_WORDS, nudgeTool, SenseDesk } from "./agent/senses";
+import { NUDGE_WORDS, nudgeTool, SenseDesk, speakingUp } from "./agent/senses";
 import { errandDone, openErrands, placeLooks, placeTools, NO_DEADLINE } from "./tools/places";
 import {
   type AtlasToNode,
@@ -223,6 +223,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     ...mcpToolset,
     ...placeTools,
     deviceCall,
+    speakingUp,
   ],
   atlas: [calendarRead, ...agendaTools, recall, ...webTools, fileRead, skillRead, mcpTools, mcpCall, ...placeLooks, errandDone, deviceCall],
   system: [],
@@ -449,6 +450,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       decider: () => this.#decider(),
       wake: (o) => this.#wake(o),
       rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
+      background: (fn) => void this.keepAliveWhile(fn).catch(() => {}),
       changed: () => this.#broadcast({ type: "atlas.situation" }),
     });
     void this.#senses.armRhythm().catch(() => {});
@@ -1376,7 +1378,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
     if (m.type === "node.event") {
       const n = updateNode(this.#sql, id, (x) => ({ ...x, last_seen: Date.now(), state: { ...x.state, [m.event]: summary(m.body) } }));
-      if (n) this.#broadcast({ type: "atlas.rows", rows: [logNode(this.#sql, n, m.event, { body: m.body as never })] });
+      if (n) {
+        const row = logNode(this.#sql, n, m.event, { body: m.body as never });
+        this.#broadcast({ type: "atlas.rows", rows: [row] });
+        // A device's event is news for the senses, like a move.
+        void this.keepAliveWhile(() => this.#senses.sensed([row]));
+      }
       return;
     }
     // hello: what the device is and offers; anything it was asked while offline runs now.
@@ -1624,13 +1631,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #wake(o: {
     trigger: string;
     note: string;
-    kind: keyof typeof NUDGE_WORDS;
-    about?: string;
+    from: keyof typeof NUDGE_WORDS;
+    ref?: string;
   }): Promise<{ run_id: string; nudged: boolean; error?: string }> {
     return this.#inLine(async () => {
       const runId = startRun(this.#sql, { actor: "atlas", trigger: o.trigger, surface: "none", role: "main" });
       let nudged = false;
-      const nudge = nudgeTool(async (text) => {
+      const nudge = nudgeTool(async (text, about) => {
         if (nudged) return { ok: false, text: "You've already nudged in this run; one is enough." };
         nudged = true;
         const row = await this.#outbox.deliver(
@@ -1640,14 +1647,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             channel: "app",
             urgency: "normal",
             trigger: o.trigger,
-            nudge: { kind: o.kind, ...(o.about ? { about: o.about } : {}) },
+            nudge: { from: o.from, about, ...(o.ref ? { ref: o.ref } : {}) },
           },
           { alreadyStreamed: false },
         );
         this.#senses.sent({
           id: row.id,
-          kind: o.kind,
-          ...(o.about ? { about: o.about } : {}),
+          from: o.from,
+          about,
+          ...(o.ref ? { ref: o.ref } : {}),
           at: row.at,
           text: String(row.body.text ?? text),
         });
@@ -1853,6 +1861,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       automations: {
         run: (a, o) => this.#automations.run(a, { why: o.why, inputs: o.inputs }),
         arm: (id) => this.#automations.arm(id),
+      },
+      speaking: async () => {
+        await this.#senses.armRhythm();
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
       },
       helpers: {
         start: async (o) => {
@@ -2435,6 +2447,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     this.#broadcast({ type: "atlas.rows", rows: [out.row] });
     if (out.agenda) this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
     if (out.row.kind === "page.change") this.#broadcast({ type: "atlas.pages", pages: pageSummaries(this.#sql) });
+    if (out.row.kind === "settings.change") {
+      await this.#senses.armRhythm().catch(() => {});
+      this.#broadcast({ type: "atlas.view", view: this.#view() });
+    }
   }
 
   /** The owner's hands on pages: Keep, an edit, bringing back a version, and delete (§21.7). */

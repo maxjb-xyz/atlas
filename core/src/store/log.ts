@@ -61,7 +61,9 @@ export type Undo =
   /** Undoes a page's version `version`: back to the one before, or no page when it was the first. */
   | { kind: "page.undo"; id: string; version: number }
   /** Undoes a skill's version `version`: back to the one before, or archived when it was the first. */
-  | { kind: "skill.undo"; id: string; version: number };
+  | { kind: "skill.undo"; id: string; version: number }
+  /** Puts Speaking up back the way it was before Atlas changed it. */
+  | { kind: "speaking.restore"; before: unknown };
 
 export interface LogRow {
   seq: number;

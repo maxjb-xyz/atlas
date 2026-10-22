@@ -8,9 +8,7 @@ import { Markdown } from "../Markdown";
 import { Composer, compose } from "../Shell";
 import { addDays, AreaChip, clock, dayName, Empty, pressable, Sheet, shortDay, Stage, startOfDay } from "../ui";
 import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
-import { KINDS } from "../../../core/src/maps";
-
-const KIND_WORDS: Record<string, string> = Object.fromEntries(Object.entries(KINDS).map(([k, v]) => [k, v.words]));
+import { kindWords } from "../../../core/src/maps";
 
 // --- Inbox: everything waiting on you ------------------------------------------------------
 
@@ -290,7 +288,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                           <span style={{ flex: "1 1 220px", minWidth: 0 }}>
                             {e.title}
                             <span className="faint small" style={{ display: "block", marginTop: 2 }}>
-                              {typeof kind === "string" ? `At ${KIND_WORDS[kind] ?? kind}` : "Anywhere"}
+                              {typeof kind === "string" ? `At ${kindWords(kind)}` : "Anywhere"}
                               {by ? ` · by ${shortDay(by)}` : ""} · Atlas suggests a stop when you're on the way
                             </span>
                           </span>

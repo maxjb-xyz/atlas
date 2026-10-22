@@ -176,7 +176,10 @@ describe("the gym-to-store moment", () => {
         const found = String(req.messages.at(-1)!.content);
         expect(found).toContain("Publix");
         expect(found).toContain('"minutes_off_the_way":4');
-        return call("nudge", { text: "There's a Publix four minutes off your way home. Still need oat milk?" });
+        return call("nudge", {
+          text: "There's a Publix four minutes off your way home. Still need oat milk?",
+          about: "oat milk on the way home",
+        });
       },
       say("Nudged about the Publix."),
     ]);
@@ -191,9 +194,10 @@ describe("the gym-to-store moment", () => {
     await post(fixAt(GYM, Date.now() - 50 * 60_000), auth);
     await post(fixAt(north(GYM, 600)), auth);
     const nudge = await waitFor("the nudge", async () =>
-      (await rowsSince(from, "message.out")).find((r) => (r.nudge as { kind?: string } | undefined)?.kind === "errands"),
+      (await rowsSince(from, "message.out")).find((r) => (r.nudge as { from?: string } | undefined)?.from === "noticing"),
     );
     expect(nudge.text).toContain("Publix");
+    expect(nudge.nudge).toMatchObject({ about: "oat milk on the way home", ref: expect.stringMatching(/^ag_|./) });
     const aware = await waitFor("the awareness row", async () => (await rowsSince(from, "awareness")).find((r) => r.step === "woke"));
     expect(aware).toMatchObject({ outcome: "nudged", event: expect.stringContaining("left Gym") });
     expect(aware.run_id).toBe(nudge.run_id);
@@ -217,10 +221,13 @@ describe("the gym-to-store moment", () => {
     brain([say("Glad it helped.")]);
     await turn(s, "thanks, got it");
     const reaction = await waitFor("the reaction", async () => (await rowsSince(from, "awareness")).find((r) => r.reaction));
-    expect(reaction).toMatchObject({ reaction: "thanks", kind: "errands" });
+    expect(reaction).toMatchObject({ reaction: "thanks", from: "noticing", about: "oat milk on the way home" });
+    // The next look sees how that landed.
+    const n = await inOwner((_a, sql) => sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = 'nudges'`).one().value);
+    expect(n).toContain('"reaction":"thanks"');
   });
 
-  it("stays quiet when nothing is open, and when decide says it doesn't matter, without waking Atlas", async () => {
+  it("stays quiet when decide says an event isn't worth a thought, open errand or not, without waking Atlas", async () => {
     const d = decider({ errand: 0.1 });
     seams.decide = d;
     const b = brain([]);
@@ -230,8 +237,10 @@ describe("the gym-to-store moment", () => {
     const quiet = await waitFor("the quiet row", async () =>
       (await rowsSince(from, "awareness")).find((r) => String(r.event).includes("arrived at Home")),
     );
-    expect(quiet).toMatchObject({ step: "rules", outcome: "quiet", why: "Nothing open it could matter to." });
+    expect(quiet).toMatchObject({ step: "decide", outcome: "not relevant", scores: { "worth a thought": 0.01 } });
     expect(quiet.ms as number).toBeLessThan(1_000);
+    // Decide was asked its own question, with nothing open.
+    expect(Object.keys(d.asked.at(-1)!)).toEqual(["worth_a_thought"]);
 
     await inOwner(async (_a, sql) => {
       const { createItem } = await import("../src/store/agenda");
@@ -245,23 +254,81 @@ describe("the gym-to-store moment", () => {
     const from2 = await lastSeq();
     await post(fixAt(north(HOME, 2_000)), auth);
     const nope = await waitFor("the decide row", async () => (await rowsSince(from2, "awareness")).find((r) => r.step === "decide"));
-    expect(nope).toMatchObject({ outcome: "not relevant", scores: { Stamps: 0.1 } });
+    expect(nope).toMatchObject({ outcome: "not relevant", scores: { Stamps: 0.1, "worth a thought": 0.01 } });
     expect(b.requests).toHaveLength(0);
   });
 
-  it("'stop' turns that kind of nudge off, says so to Atlas, and Speaking up shows it", async () => {
+  it("on 'stop', Atlas works out what to stop and changes Speaking up itself, with Undo", async () => {
     seams.decide = decider({ errand: 0.9 });
     await inOwner((_a, sql) =>
       sql.exec(
         `INSERT OR REPLACE INTO state (key, value, updated_at) VALUES ('nudges', ?, 0)`,
-        JSON.stringify([{ id: "lg_x", kind: "errands", at: Date.now() - 60_000, text: "There's a Publix on your way." }]),
+        JSON.stringify([
+          { id: "lg_x", from: "noticing", about: "a store on the way", at: Date.now() - 60_000, text: "There's a Publix on your way." },
+        ]),
       ),
     );
-    const b = brain([say("Okay, I'll stop.")]);
-    await turn(s, "stop telling me about stores");
-    expect(b.requests[0]!.system).toContain("The owner just said stop to your nudges about errands near you");
-    expect(b.requests[0]!.system).toContain("off for errands near you");
-    expect((await inOwner((_a, sql) => readSettings(sql))).speaking.errands).toBe(false);
+    const b = brain([call("speaking_up", { quiet_about_add: ["stores on the way home"] }), say("Got it, no more store tips.")]);
+    const t = await turn(s, "stop telling me about stores");
+    expect(b.requests[0]!.system).toContain("seems to be saying stop to the nudge you sent");
+    expect(b.requests[0]!.tools.map((x) => x.name)).toContain("speaking_up");
+    const receipt = t.results[0]!;
+    expect(receipt.body.receipt).toMatchObject({ text: "Speaking up · won't bring up stores on the way home" });
+    expect((await inOwner((_a, sql) => readSettings(sql))).speaking).toMatchObject({
+      noticing: true,
+      quiet_about: ["stores on the way home"],
+    });
+    // Atlas sees it in every prompt, and so does decide.
+    const b2 = brain([say("Sure.")]);
+    await turn(s, "ok");
+    expect(b2.requests[0]!.system).toContain("The owner asked you not to bring up: stores on the way home.");
+    // Undo puts it back.
+    const receiptId = await inOwner(
+      (_a, sql) =>
+        sql
+          .exec<{ id: string }>(
+            `SELECT id FROM log WHERE kind = 'tool.result' AND json_extract(body, '$.name') = 'speaking_up' ORDER BY seq DESC LIMIT 1`,
+          )
+          .one().id,
+    );
+    s.send({ type: "atlas.undo", log_id: receiptId });
+    await waitFor("the undo", async () => (await inOwner((_a, sql) => readSettings(sql))).speaking.quiet_about.length === 0);
+  });
+
+  it("notices a change on the calendar, and asks decide whether it's worth a thought", async () => {
+    const d = decider({ errand: 0 });
+    seams.decide = d;
+    const events: Parameters<typeof fakeCalendar>[0] = [];
+    seams.calendar = fakeCalendar(events);
+    brain([say("Noted."), say("Nothing to say.")]);
+    await turn(s, "hi");
+    const from = await lastSeq();
+    const start = new Date(Date.now() + 3 * 3_600_000);
+    events.push({
+      id: "ev_new",
+      title: "Lunch with Sam",
+      start: start.toISOString(),
+      end: new Date(start.getTime() + 3_600_000).toISOString(),
+      all_day: false,
+      calendar: "Home",
+    } as never);
+    await turn(s, "anything new?");
+    const sense = await waitFor("the calendar sense", async () => (await rowsSince(from, "sense")).find((r) => r.event === "calendar"));
+    expect(sense.what).toContain('"Lunch with Sam" was added to the calendar');
+    const row = await waitFor("its decision", async () =>
+      (await rowsSince(from, "awareness")).find((r) => String(r.event).includes("Lunch with Sam")),
+    );
+    expect(row).toMatchObject({ step: "decide", outcome: "not relevant" });
+    // The same change isn't news twice.
+    await turn(s, "and now?");
+    expect((await rowsSince(from, "sense")).filter((r) => r.event === "calendar")).toHaveLength(1);
+  });
+
+  it("finds any kind of place, as a word or a map tag", async () => {
+    brain([call("place_find", { kind: "florist", near: "home" }), say("There's a Publix, oddly.")]);
+    const t = await turn(s, "any florists near home?");
+    expect(t.results[0]!.body.ok).toBe(true);
+    expect(world.asked.some((a) => a.includes("overpass-api.de") && a.includes(encodeURIComponent('["shop"="florist"]')))).toBe(true);
   });
 });
 
@@ -472,5 +539,48 @@ describe("weather and routes, read", () => {
         500,
       ).length,
     ).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("what changed in the situation", () => {
+  it("notices a moved event, a trip that now needs an earlier start, and weather that newly matters", async () => {
+    const { changes } = await import("../src/situation");
+    const settings = await inOwner((_a, sql) => readSettings(sql));
+    const now = Date.now();
+    const at = (h: number) => new Date(now + h * 3_600_000).toISOString();
+    const ev = { id: "e1", title: "Dentist", start: at(2), end: at(3), all_day: false, location: "1 Main St" };
+    const hour = (pop: number) => ({
+      t: now + 3_600_000,
+      temp_c: 25,
+      pop,
+      precip_mm: pop > 50 ? 2 : 0,
+      code: pop > 50 ? 63 : 2,
+      wind_kmh: 5,
+    });
+    const weather = (pop: number) =>
+      ({
+        at: now,
+        area: { lat: 28.6, lon: -81.2 },
+        now: { temp_c: 25, feels_c: 25, code: 2, wind_kmh: 5 },
+        hours: [hour(pop)],
+        days: [{ max_c: 27, min_c: 20, uv: 5 }],
+      }) as never;
+    const trip = (leave_by: number) => ({ event_id: "e1", title: "Dentist", leave_by, s: 1200, traffic: true }) as never;
+    const before = { events: [ev], events_at: now, weather: weather(5), travel: trip(now + 90 * 60_000), places: {} };
+    const after = {
+      events: [{ ...ev, start: at(1.5) }],
+      events_at: now,
+      weather: { ...(weather(80) as object), at: now + 1 } as never,
+      travel: trip(now + 70 * 60_000),
+      places: {},
+    };
+    const out = changes(before, after, settings, now);
+    expect(out.map((c) => c.event)).toEqual(["calendar", "travel", "weather"]);
+    expect(out[0]!.what).toContain('"Dentist" moved on the calendar');
+    expect(out[1]!.what).toContain("leave by");
+    expect(out[2]!.what).toMatch(/^The forecast changed: rain likely/);
+    // Nothing on a first look, and nothing when nothing changed.
+    expect(changes({ ...before, events_at: 0, weather: null, travel: null }, after, settings, now)).toEqual([]);
+    expect(changes(after, after, settings, now)).toEqual([]);
   });
 });

@@ -5,7 +5,8 @@
 import { getSkill, restoreSkill, setSkillState } from "../skills";
 import { finish, getItem } from "../store/agenda";
 import type { Sql } from "../store/db";
-import { get as getRow, type LogRow, type Receipt } from "../store/log";
+import { append, get as getRow, type LogRow, type Receipt } from "../store/log";
+import { SettingsPatch, writeSettings } from "../store/settings";
 import { forgetRecord, getRecord, restoreRecord, revertRecord } from "../store/records";
 import type { ToolContext } from "../tools/types";
 import { deletePage, getPage, pageVersion, savePage } from "../pages";
@@ -66,6 +67,13 @@ export async function undoReceipt(sql: Sql, logId: string, clock: ToolContext["c
           : restoreSkill(sql, s.id, undo.version - 1, "owner", `Undid version ${undo.version}.`);
       return row ? { ok: true, row, agenda: false } : { ok: false, message: "There was nothing to undo." };
     }
+    case "speaking.restore": {
+      const before = SettingsPatch.shape.speaking.safeParse(undo.before);
+      if (!before.success || !before.data) return { ok: false, message: "That change to Speaking up can't be undone from here." };
+      writeSettings(sql, { speaking: before.data });
+      const row = append(sql, { actor: "owner", kind: "settings.change", body: { keys: ["speaking"], ...mark } });
+      return { ok: true, row, agenda: false };
+    }
     case "page.undo": {
       const p = getPage(sql, undo.id);
       if (!p) return { ok: false, message: "That page was deleted." };
@@ -90,7 +98,7 @@ export async function undoReceipt(sql: Sql, logId: string, clock: ToolContext["c
 function undoneBy(sql: Sql, logId: string): LogRow | null {
   const r = sql
     .exec<{ id: string }>(
-      `SELECT id FROM log WHERE kind IN ('agenda.change', 'record.change', 'page.change') AND json_extract(body, '$.undo_of') = ? LIMIT 1`,
+      `SELECT id FROM log WHERE kind IN ('agenda.change', 'record.change', 'page.change', 'settings.change') AND json_extract(body, '$.undo_of') = ? LIMIT 1`,
       logId,
     )
     .toArray()[0];

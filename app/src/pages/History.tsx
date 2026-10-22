@@ -114,6 +114,10 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         kind: `file.${str(b.change)}`,
       };
     case "sense": {
+      if (b.source === "situation") {
+        const who = { calendar: "Calendar", travel: "Traffic", weather: "Weather" }[str(b.event)] ?? "Situation";
+        return { who, what: str(b.what), kind: `sense.${str(b.event)}` };
+      }
       if (b.source === "node") {
         const device = str((b.node as { name?: string } | undefined)?.name);
         const what =
