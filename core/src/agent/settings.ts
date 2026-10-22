@@ -22,11 +22,15 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
     last_used: p.last_used,
   }));
   const icloud = getSecret<ICloudCredentials>(sql, "icloud");
+  const refusal = parts.calendar.refusal();
+  const settings = readSettings(sql);
   return {
-    settings: readSettings(sql),
+    settings,
     secrets: {
       elevenlabs_api_key: Boolean(getSecret(sql, "elevenlabs_api_key")),
-      icloud: icloud ? { username: icloud.username, refused: parts.calendar.refusal() } : null,
+      icloud: icloud
+        ? { username: icloud.username, refused: refusal ? { ...refusal, note: parts.calendar.note(refusal, settings) } : null }
+        : null,
     },
     chatgpt: parts.chatgpt.view(),
     health: parts.router.snapshot(),

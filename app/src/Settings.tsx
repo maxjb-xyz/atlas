@@ -750,11 +750,7 @@ export function ICloud({ view, atlas }: { view: SettingsView; atlas: Atlas }) {
         </div>
       </label>
       {connected?.refused && (
-        <p className="err small">
-          Atlas stopped asking iCloud after it refused the password at{" "}
-          {new Date(connected.refused.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}, so Apple doesn't lock the
-          account. Paste a new app-specific password and press Connect, or press Test to try once.
-        </p>
+        <p className="err small">{connected.refused.note} Until then, Atlas answers from its copy of your calendar. Test tries once now.</p>
       )}
     </>
   );

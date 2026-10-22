@@ -257,21 +257,40 @@ describe("the thread", () => {
     s.send({ type: "atlas.test", what: "calendar", ref: "cal" });
     const res = await s.next("atlas.test.result", (m) => m.ref === "cal");
     expect(res.ok).toBe(false);
-    expect(res.message).toContain("signing in as owner@icloud.com with a 16-character password not in Apple's");
-    expect(res.message).not.toContain("abcdefghijklmnop");
+    expect(res.message).toContain("signing in as owner@icloud.com with an app-specific password in Apple's xxxx-xxxx-xxxx-xxxx form");
+    expect(res.message).not.toContain("abcd");
+
+    // The Apple ID's own password pasted by mistake is named as the likely cause.
+    s.send({
+      type: "atlas.secret.set",
+      secret: { name: "icloud", value: { username: "owner@icloud.com", app_password: "Hunter2-secret" } },
+    });
+    await s.next("atlas.view", (m) => m.view.secrets.icloud?.refused === null);
+    s.send({ type: "atlas.test", what: "calendar", ref: "cal2" });
+    const res2 = await s.next("atlas.test.result", (m) => m.ref === "cal2");
+    expect(res2.message).toContain("a 14-character password that isn't in Apple's xxxx-xxxx-xxxx-xxxx form");
+    expect(res2.message).not.toContain("Hunter2");
     s.ws.close();
   });
 
-  it("stops asking iCloud after it refuses the password, until the owner reconnects", async () => {
+  it("after iCloud refuses, answers from its copy, waits before trying again, and recovers by itself", async () => {
     let asked = 0;
+    let refuse = true;
+    const copyAt = Date.now() - 3_600_000;
+    const held = [
+      { id: "e1", calendar: "Home", title: "Dentist", start: new Date().toISOString(), end: new Date().toISOString(), all_day: false },
+    ];
     seams.calendar = {
       list: async () => {
         asked += 1;
-        throw new CalendarError("iCloud didn't accept the Apple ID and app-specific password.", "auth");
+        if (refuse)
+          throw new CalendarError("iCloud didn't accept the Apple ID and app-specific password (HTTP 401 at caldav.icloud.com)", "auth");
+        return held;
       },
+      held: () => ({ events: held, as_of: copyAt }),
       check: async () => ({ calendars: [], events_next_30_days: 0 }),
     };
-    brains([call("calendar_read", {}, "c1"), call("calendar_read", {}, "c2"), say("iCloud refused the password.")]);
+    brains([call("calendar_read", {}, "c1"), call("calendar_read", {}, "c2"), say("You have the dentist.")]);
     const s = await connect();
     s.send({
       type: "atlas.secret.set",
@@ -280,19 +299,57 @@ describe("the thread", () => {
     await s.next("atlas.view");
     s.send({ type: "atlas.say", text: "what's on today?", client_id: "c9" });
     const refused = await s.next("atlas.view", (m) => Boolean(m.view.secrets.icloud?.refused));
-    expect(refused.view.secrets.icloud!.refused!.message).toContain("didn't accept");
+    const r = refused.view.secrets.icloud!.refused!;
+    expect(r.message).toContain("didn't accept");
+    expect(r.next_try - r.at).toBe(30 * 60_000);
     await s.next("atlas.run", (m) => m.state === "replied");
-    expect(asked).toBe(1); // the brain asked twice; iCloud was only asked once
+    // The brain read twice; iCloud was asked once, and both reads were answered from the copy, with its age and why.
+    expect(asked).toBe(1);
+    const results = await runInDurableObject(owner(), async (_a: PersonAgent, state) =>
+      state.storage.sql
+        .exec<{ body: string }>(`SELECT body FROM log WHERE kind = 'tool.result' ORDER BY seq DESC LIMIT 2`)
+        .toArray()
+        .map((x) => JSON.parse(JSON.parse(x.body).output) as { events: unknown[]; as_of?: string; why_not_live?: string }),
+    );
+    for (const out of results) {
+      expect(out.events).toHaveLength(1);
+      expect(out.as_of).toBeTruthy();
+      expect(out.why_not_live).toContain("Atlas will try again by itself after");
+    }
 
-    // Reconnecting lets Atlas ask again.
-    s.send({
-      type: "atlas.secret.set",
-      secret: { name: "icloud", value: { username: "owner@icloud.com", app_password: "wxyz-wxyz-wxyz-wxyz" } },
+    // Once the wait is over, the next read tries iCloud again; it accepts, and the refusal clears with no help from the owner.
+    refuse = false;
+    await runInDurableObject(owner(), async (_a: PersonAgent, state) => {
+      const row = state.storage.sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = 'icloud_refused'`).one();
+      const waiting = JSON.parse(row.value) as { next_try: number };
+      waiting.next_try = Date.now() - 1;
+      state.storage.sql.exec(`UPDATE state SET value = ? WHERE key = 'icloud_refused'`, JSON.stringify(waiting));
     });
-    const fresh = await s.next("atlas.view", (m) => m.view.secrets.icloud?.refused === null);
-    expect(fresh.view.secrets.icloud!.username).toBe("owner@icloud.com");
+    const today = new Date().toISOString().slice(0, 10);
+    s.send({ type: "atlas.calendar", ref: "now", start: today, end: today + "T23:59" });
+    const ok = await s.next("atlas.calendar.events", (m) => m.ref === "now");
+    expect(ok.stale).toBeUndefined();
+    expect(asked).toBe(2);
+    await s.next("atlas.view", (m) => m.view.secrets.icloud?.refused === null);
+
+    // New credentials always let Atlas ask at once.
     s.send({ type: "atlas.secret.set", secret: { name: "icloud", value: null } });
     await s.next("atlas.view");
+    s.ws.close();
+  });
+
+  it("says the calendar can't be read when it holds no copy to answer from", async () => {
+    seams.calendar = {
+      list: async () => {
+        throw new CalendarError("iCloud Calendar didn't answer in time. Try again in a minute.", "network");
+      },
+      check: async () => ({ calendars: [], events_next_30_days: 0 }),
+    };
+    const s = await connect();
+    s.send({ type: "atlas.calendar", ref: "x", start: "2026-10-22", end: "2026-10-23" });
+    const res = await s.next("atlas.calendar.events", (m) => m.ref === "x");
+    expect(res.events).toEqual([]);
+    expect(res.error).toContain("didn't answer in time");
     s.ws.close();
   });
 

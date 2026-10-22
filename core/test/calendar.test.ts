@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { calendarQuery, cleanCredentials, davTime, icloudCalendar, type RememberedCalendars } from "../src/calendar/caldav";
+import { type CalendarCopy, calendarQuery, cleanCredentials, copySpan, davTime, FRESH_MS, icloudCalendar } from "../src/calendar/caldav";
 import { parseDuration, parseEvents, resolveZone, unfold, zonedToUtc } from "../src/calendar/ical";
 import { CalendarError } from "../src/calendar/types";
 import { multistatus, parseXml, find } from "../src/calendar/xml";
@@ -17,6 +17,7 @@ interface Seen {
   url: string;
   depth: string | null;
   auth: string | null;
+  agent: string | null;
   body: string;
 }
 
@@ -31,7 +32,7 @@ async function failure(p: Promise<unknown>): Promise<CalendarError> {
 }
 
 /** A fake iCloud: discovery on caldav.icloud.com, a redirect to the p42 host, then the home. */
-function fakeICloud() {
+function fakeICloud(listing: () => string = () => calendarsXml) {
   const seen: Seen[] = [];
   const xml = (body: string, status = 207) => new Response(body, { status, headers: { "Content-Type": "text/xml" } });
   const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -39,13 +40,13 @@ function fakeICloud() {
     const headers = new Headers(init?.headers);
     const body = String(init?.body ?? "");
     const method = init?.method ?? "GET";
-    seen.push({ method, url, depth: headers.get("Depth"), auth: headers.get("Authorization"), body });
+    seen.push({ method, url, depth: headers.get("Depth"), auth: headers.get("Authorization"), agent: headers.get("User-Agent"), body });
     if (method === "PROPFIND" && url === "https://caldav.icloud.com/") return xml(principalXml);
     if (method === "PROPFIND" && url === "https://caldav.icloud.com/123456789/principal/") {
       return new Response(null, { status: 302, headers: { Location: "https://p42-caldav.icloud.com/123456789/principal/" } });
     }
     if (method === "PROPFIND" && url === "https://p42-caldav.icloud.com/123456789/principal/") return xml(homeXml);
-    if (method === "PROPFIND" && url === "https://p42-caldav.icloud.com/123456789/calendars/") return xml(calendarsXml);
+    if (method === "PROPFIND" && url === "https://p42-caldav.icloud.com/123456789/calendars/") return xml(listing());
     if (method === "REPORT" && url.endsWith("/calendars/home/")) return xml(homeEventsXml);
     if (method === "REPORT" && url.endsWith("/calendars/work%20cal/")) return xml(workEventsXml);
     if (method === "REPORT" && url.endsWith("/calendars/birthdays/")) return xml(EMPTY);
@@ -160,6 +161,7 @@ describe("icloudCalendar", () => {
     ]);
     expect(propfinds.map((s) => s.depth)).toEqual(["0", "0", "0", "1"]);
     expect(seen.every((s) => s.auth === `Basic ${btoa("owner@icloud.com:abcd-efgh-ijkl-mnop")}`)).toBe(true);
+    expect(seen.every((s) => s.agent?.startsWith("Atlas/"))).toBe(true);
     // Next 30 days from Oct 21: standup Oct 26, trip, dentist (once), review, call, gym. Not the Oct 19 standup.
     expect(result.events_next_30_days).toBe(6);
   });
@@ -176,16 +178,19 @@ describe("icloudCalendar", () => {
       "Home: Trip to Austin",
       "Home: Standup",
     ]);
+    // Each calendar is read once, for the copy's whole span, recurrences expanded by iCloud.
+    const { from, to } = copySpan(Date.now());
+    const span = `start="${davTime(new Date(from))}" end="${davTime(new Date(to))}"`;
     const report = seen.find((s) => s.method === "REPORT")!;
     expect(report.depth).toBe("1");
-    expect(report.body).toContain('<c:expand start="20261021T120000Z" end="20261027T000000Z"/>');
-    expect(report.body).toContain('<c:time-range start="20261021T120000Z" end="20261027T000000Z"/>');
+    expect(report.body).toContain(`<c:expand ${span}/>`);
+    expect(report.body).toContain(`<c:time-range ${span}/>`);
     expect(seen.filter((s) => s.method === "REPORT")).toHaveLength(3);
 
-    // Discovery is cached: a second list only sends REPORTs.
-    const before = seen.filter((s) => s.method === "PROPFIND").length;
-    await cal.list(WEEK);
-    expect(seen.filter((s) => s.method === "PROPFIND").length).toBe(before);
+    // Another question right away is answered from the copy, without asking iCloud.
+    const before = seen.length;
+    expect((await cal.list(WEEK)).length).toBeGreaterThan(0);
+    expect(seen.length).toBe(before);
   });
 
   it("explains a rejected sign-in in owner words", async () => {
@@ -236,11 +241,15 @@ describe("icloudCalendar", () => {
     await expect(cal.check()).rejects.toMatchObject({ code: "auth" });
   });
 
-  it("trims pasted spaces from the Apple ID and the app-specific password", async () => {
-    expect(cleanCredentials({ username: " owner@icloud.com\n", app_password: "abcd efgh-ijkl-mnop " })).toEqual({
-      username: "owner@icloud.com",
-      app_password: "abcdefgh-ijkl-mnop",
-    });
+  it("sends the app-specific password in Apple's form however it was pasted", async () => {
+    for (const pasted of ["abcd efgh-ijkl-mnop ", "abcdefghijklmnop", "ABCD-EFGH-IJKL-MNOP", "abcd efgh ijkl mnop"]) {
+      expect(cleanCredentials({ username: " owner@icloud.com\n", app_password: pasted })).toEqual({
+        username: "owner@icloud.com",
+        app_password: "abcd-efgh-ijkl-mnop",
+      });
+    }
+    // Anything that isn't one is only trimmed, so the owner's own words reach iCloud.
+    expect(cleanCredentials({ username: "a@b.c", app_password: " My Password1 " }).app_password).toBe("MyPassword1");
     const { fetchFn, seen } = fakeICloud();
     await icloudCalendar({ username: " owner@icloud.com ", app_password: " abcd-efgh-ijkl-mnop\n" }, { fetch: fetchFn }).check();
     expect(seen[0]!.auth).toBe(`Basic ${btoa("owner@icloud.com:abcd-efgh-ijkl-mnop")}`);
@@ -266,8 +275,9 @@ describe("icloudCalendar", () => {
     expect((b as CalendarError).message).toBe("iCloud refused the request at caldav.icloud.com (HTTP 403: Forbidden for this account).");
   });
 
-  it("remembers the calendar list between wakes, reads two calendars at a time, and reuses a fresh answer", async () => {
-    const { fetchFn, seen } = fakeICloud();
+  it("keeps a copy between wakes, and after that checks every calendar with one request, reading only what changed", async () => {
+    let homeTag = "HwoQEgwAAA-home-1";
+    const { fetchFn, seen } = fakeICloud(() => calendarsXml.replace("HwoQEgwAAA-home-1", homeTag));
     let inFlight = 0;
     let most = 0;
     const counted = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -280,22 +290,50 @@ describe("icloudCalendar", () => {
         inFlight -= 1;
       }
     }) as typeof fetch;
-    let stored: RememberedCalendars | null = null;
-    const remember = { load: () => stored, save: (c: RememberedCalendars | null) => (stored = c) };
+    let stored: CalendarCopy | null = null;
+    const store = { load: () => stored, save: (c: CalendarCopy | null) => (stored = c) };
 
-    await icloudCalendar(CREDS, { fetch: counted, remember }).list(WEEK);
-    expect(stored!.calendars.length).toBeGreaterThan(1);
+    // Two questions at once share one sync, and calendars are read two at a time.
+    const first = icloudCalendar(CREDS, { fetch: counted, store });
+    await Promise.all([first.list(WEEK), first.list(WEEK)]);
+    expect(seen.filter((r) => r.method === "REPORT")).toHaveLength(3);
     expect(most).toBeLessThanOrEqual(2);
+    expect(stored!.calendars.map((c) => c.tag)).toEqual([
+      "HwoQEgwAAA-home-1",
+      "HwoQEgwAAA-work-1",
+      "https://caldav.icloud.com/sync/birthdays-1",
+    ]);
 
-    // A new instance (the agent woke up) skips discovery.
+    // The agent woke up: a fresh copy answers without asking iCloud at all.
     seen.length = 0;
-    const woke = icloudCalendar(CREDS, { fetch: counted, remember });
-    await woke.list(WEEK);
-    expect(seen.some((r) => r.method === "PROPFIND")).toBe(false);
+    const woke = icloudCalendar(CREDS, { fetch: counted, store });
+    const events = await woke.list(WEEK);
+    expect(seen).toEqual([]);
+    expect(woke.held!(WEEK)).toEqual({ events, as_of: stored!.synced_at });
 
-    // The same question asked again at once (twice in one reply) doesn't ask iCloud again.
-    const before = seen.length;
+    // Later, one request lists every calendar's tag; nothing changed, so nothing is read again.
+    vi.setSystemTime(Date.now() + FRESH_MS + 1);
     await woke.list(WEEK);
-    expect(seen.length).toBe(before);
+    expect(seen.map((r) => `${r.method} ${r.url}`)).toEqual(["PROPFIND https://p42-caldav.icloud.com/123456789/calendars/"]);
+
+    // An event changed on Home: only Home is read again.
+    seen.length = 0;
+    homeTag = "HwoQEgwAAA-home-2";
+    vi.setSystemTime(Date.now() + FRESH_MS + 1);
+    await woke.list(WEEK);
+    expect(seen.map((r) => r.method)).toEqual(["PROPFIND", "REPORT"]);
+    expect(seen[1]!.url).toContain("/calendars/home/");
+  });
+
+  it("reads a range outside the copy straight from iCloud", async () => {
+    const { fetchFn, seen } = fakeICloud();
+    const cal = icloudCalendar(CREDS, { fetch: fetchFn });
+    await cal.list(WEEK);
+    seen.length = 0;
+    const later = { start: new Date("2027-06-01T00:00:00Z"), end: new Date("2027-06-08T00:00:00Z") };
+    await cal.list(later);
+    expect(seen.map((r) => r.method)).toEqual(["REPORT", "REPORT", "REPORT"]);
+    expect(seen[0]!.body).toContain('<c:expand start="20270601T000000Z" end="20270608T000000Z"/>');
+    expect(cal.held!(later)).toBeNull();
   });
 });

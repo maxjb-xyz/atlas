@@ -5,7 +5,7 @@
 import { z } from "zod";
 import type { ToolSpec } from "../brains/types";
 import type { Embedder } from "../brains/embed";
-import type { CalendarSource } from "../calendar/types";
+import type { Calendar } from "../calendar/types";
 import type { AgendaItem } from "../store/agenda";
 import type { Sql } from "../store/db";
 import type { Receipt } from "../store/log";
@@ -21,7 +21,7 @@ export interface ToolContext {
   tz: string;
   now: Date;
   /** The calendar sense, or null when it isn't connected. */
-  calendar: CalendarSource | null;
+  calendar: Calendar | null;
   /** The `embed` role, for meaning search; null when there isn't one. */
   embed: Embedder | null;
   /** The owner's message that started this run, so saved records can point back to it. */

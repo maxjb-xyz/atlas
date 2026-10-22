@@ -376,8 +376,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           return;
         }
         try {
-          const events = await source.list({ start, end });
-          this.#send(connection, { type: "atlas.calendar.events", ref: msg.ref, events: events.map(({ notes: _n, ...e }) => e) });
+          const { events, stale } = await source.read({ start, end });
+          this.#send(connection, {
+            type: "atlas.calendar.events",
+            ref: msg.ref,
+            events: events.map(({ notes: _n, ...e }) => e),
+            ...(stale ? { stale } : {}),
+          });
         } catch (err) {
           this.#send(connection, {
             type: "atlas.calendar.events",

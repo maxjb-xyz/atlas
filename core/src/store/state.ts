@@ -1,14 +1,14 @@
 // What Atlas keeps between wakes that isn't a setting or a secret: the
-// iCloud calendar list, a refused sign-in, the ChatGPT client's details.
+// copy of the iCloud calendar, a refused sign-in, the ChatGPT client's details.
 // Settings are for people (rule 5) and secrets never leave, so these live
 // here, where neither rule has to bend.
 
 import { parse, type Sql } from "./db";
 
 export type StateName =
-  /** The iCloud calendar list, found afresh every 6 hours and on Test. */
-  | "icloud_calendars"
-  /** Set when iCloud refuses the password; Atlas stops asking until the owner reconnects. */
+  /** Atlas's copy of the iCloud calendars: the home, each calendar's change tag and events, and when it was synced. */
+  | "icloud_copy"
+  /** Set when iCloud refuses the sign-in: when, why, how many times in a row, and when Atlas tries again. */
   | "icloud_refused"
   /** This deployment's ChatGPT client: host id, signed-in email, the plan's models and the last ID token as a sign-in hint. */
   | "chatgpt_client"

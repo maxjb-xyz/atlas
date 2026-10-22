@@ -18,6 +18,9 @@ import type {
   SettingsView,
 } from "../../core/src/protocol";
 
+/** One calendar read for a page: the events, why it failed, or how old Atlas's copy is when iCloud couldn't be asked. */
+export type CalendarState = { events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } };
+
 export type Look = Extract<ServerMessage, { type: "atlas.setup.look.result" }>["look"];
 
 export type VoiceStatus = "idle" | "listening" | "thinking" | "speaking";
@@ -63,7 +66,7 @@ export interface State {
   recordsVersion: number;
   history: { filter: HistoryFilter; rows: LogRow[]; has_more: boolean; stats?: HistoryStats } | null;
   runDetail: Record<string, { run: Record<string, unknown> | null; rows: LogRow[] }>;
-  calendar: Record<string, { events: CalendarEventView[]; error?: string }>;
+  calendar: Record<string, CalendarState>;
   inbox: InboxItem[] | null;
 }
 
@@ -218,7 +221,13 @@ function reduce(s: State, a: Action): State {
     case "atlas.run.detail.result":
       return { ...s, runDetail: { ...s.runDetail, [m.run_id]: { run: m.run, rows: m.rows } } };
     case "atlas.calendar.events":
-      return { ...s, calendar: { ...s.calendar, [m.ref]: { events: m.events, ...(m.error ? { error: m.error } : {}) } } };
+      return {
+        ...s,
+        calendar: {
+          ...s.calendar,
+          [m.ref]: { events: m.events, ...(m.error ? { error: m.error } : {}), ...(m.stale ? { stale: m.stale } : {}) },
+        },
+      };
     case "atlas.inbox.items":
       return { ...s, inbox: m.items };
   }

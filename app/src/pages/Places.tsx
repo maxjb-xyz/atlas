@@ -5,7 +5,7 @@ import type { CalendarEventView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Composer, compose } from "../Shell";
 import { addDays, AreaChip, clock, dayName, Empty, pressable, Sheet, shortDay, Stage, startOfDay } from "../ui";
-import { eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
+import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
 // --- Inbox: everything waiting on you ------------------------------------------------------
 
@@ -178,7 +178,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
               <div className="sheet-title">
                 <h1 className="disp">This week</h1>
               </div>
-              {week?.error && <p className={`small ${s.view?.secrets.icloud ? "err" : "muted"}`}>{week.error}</p>}
+              <CalendarNote atlas={atlas} cal={week} />
               <WeekGrid events={week?.events ?? []} agenda={s.agenda} start={start} />
             </>
           ) : (
@@ -207,11 +207,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                   );
                 })}
               </div>
-              {cal?.error && (
-                <p className={`small ${atlas.state.view?.secrets.icloud ? "err" : "muted"}`} style={{ marginBottom: 10 }}>
-                  {cal.error}
-                </p>
-              )}
+              <CalendarNote atlas={atlas} cal={cal} />
               {!shown.length && <Empty title="Nothing on the clock">Events, reminders and Atlas's background jobs show here.</Empty>}
               {[...byDay].map(([d, list]) => (
                 <div key={d}>

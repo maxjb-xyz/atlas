@@ -6,7 +6,7 @@ import type { LogRow } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Console, VoiceStrip } from "../Shell";
 import { addDays, AsciiDiamond, clock, dayName, Empty, Sheet, shortDay, Stage, startOfDay, useNow } from "../ui";
-import { eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
+import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
 type HomeTab = "now" | "week" | "jobs" | "receipt";
 
@@ -232,11 +232,7 @@ function WeekTab({ atlas }: { atlas: Atlas }) {
             Later
           </button>
         </div>
-        {cal?.error && (
-          <p className={`small ${atlas.state.view?.secrets.icloud ? "err" : "muted"}`} style={{ marginBottom: 10 }}>
-            {cal.error}
-          </p>
-        )}
+        <CalendarNote atlas={atlas} cal={cal} />
         <WeekGrid events={cal?.events ?? []} agenda={atlas.state.agenda} start={start} />
       </div>
     </Sheet>

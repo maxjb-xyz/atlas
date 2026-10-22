@@ -3,7 +3,7 @@
 
 import { useEffect } from "react";
 import type { AgendaItem, CalendarEventView } from "../../../core/src/protocol";
-import type { Atlas } from "../connection";
+import type { Atlas, CalendarState } from "../connection";
 import { addDays, clock, localDate, startOfDay } from "../ui";
 
 const FIRST_HOUR = 7;
@@ -17,12 +17,7 @@ export function weekStart(d: Date): Date {
 }
 
 /** Asks for the calendar in a range under `ref`, again whenever the calendar might have changed. */
-export function useCalendar(
-  atlas: Atlas,
-  ref: string,
-  start: Date,
-  end: Date,
-): { events: CalendarEventView[]; error?: string } | undefined {
+export function useCalendar(atlas: Atlas, ref: string, start: Date, end: Date): CalendarState | undefined {
   const connected = Boolean(atlas.state.view?.secrets.icloud);
   const key = `${localDate(start)}|${localDate(end)}`;
   useEffect(() => {
@@ -30,6 +25,23 @@ export function useCalendar(
     atlas.send({ type: "atlas.calendar", ref, start: localDate(start), end: localDate(end) });
   }, [key, connected, atlas.voice.connected]);
   return atlas.state.calendar[ref];
+}
+
+/** Under a calendar: why it couldn't be read, or that it's Atlas's copy from earlier because iCloud couldn't be asked. */
+export function CalendarNote({ atlas, cal }: { atlas: Atlas; cal: CalendarState | undefined }) {
+  if (cal?.error) {
+    return (
+      <p className={`small ${atlas.state.view?.secrets.icloud ? "err" : "muted"}`} style={{ marginBottom: 10 }}>
+        {cal.error}
+      </p>
+    );
+  }
+  if (!cal?.stale) return null;
+  return (
+    <p className="small muted" style={{ marginBottom: 10 }} title={cal.stale.why}>
+      Showing Atlas's copy from {clock(new Date(cal.stale.as_of))}; iCloud can't be asked right now. Settings → Connections says why.
+    </p>
+  );
 }
 
 export const eventStart = (e: CalendarEventView) => (e.all_day ? new Date(`${e.start}T00:00`) : new Date(e.start));

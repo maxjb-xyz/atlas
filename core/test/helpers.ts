@@ -3,7 +3,7 @@ import type { Decider } from "../src/brains/decide";
 import type { Embedder } from "../src/brains/embed";
 import type { Brain, BrainEvent, BrainRequest } from "../src/brains/types";
 import { BrainError } from "../src/brains/types";
-import type { CalendarEvent, CalendarSource } from "../src/calendar/types";
+import type { Calendar, CalendarEvent, CalendarRange, CalendarSource } from "../src/calendar/types";
 import { normalize } from "../src/store/memory";
 
 export const env = testEnv as unknown as Env;
@@ -48,13 +48,18 @@ export const call = (name: string, input: unknown, id = `call_${name}`): BrainEv
   { type: "done", finish: "tool_calls" },
 ];
 
-export function fakeCalendar(events: CalendarEvent[]): CalendarSource & { ranges: Array<{ start: Date; end: Date }> } {
+/** A calendar for tests: usable as a source behind the guard (`seams.calendar`) or directly as a run's calendar. */
+export function fakeCalendar(events: CalendarEvent[]): CalendarSource & Calendar & { ranges: Array<{ start: Date; end: Date }> } {
   const ranges: Array<{ start: Date; end: Date }> = [];
+  const list = async (range: CalendarRange) => {
+    ranges.push(range);
+    return events.filter((e) => new Date(e.end) > range.start && new Date(e.start) < range.end);
+  };
   return {
     ranges,
-    async list(range) {
-      ranges.push(range);
-      return events.filter((e) => new Date(e.end) > range.start && new Date(e.start) < range.end);
+    list,
+    async read(range) {
+      return { events: await list(range) };
     },
     async check() {
       return { calendars: ["Home", "Work"], events_next_30_days: events.length };

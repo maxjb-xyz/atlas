@@ -209,8 +209,14 @@ export interface SettingsView {
   settings: import("./store/settings").Settings;
   secrets: {
     elevenlabs_api_key: boolean;
-    /** `refused` says when and why iCloud refused the password; Atlas doesn't ask iCloud again until the owner reconnects. */
-    icloud: { username: string; refused: { at: number; message: string } | null } | null;
+    /**
+     * `refused` says when and why iCloud last refused the sign-in, how many times in a row, and when Atlas tries
+     * again by itself; `note` says all that in a sentence. Meanwhile Atlas answers from its copy of the calendar.
+     */
+    icloud: {
+      username: string;
+      refused: { at: number; message: string; tries: number; next_try: number; note: string } | null;
+    } | null;
   };
   chatgpt: ChatGPTView;
   /** Provider health, by "provider:model". */
@@ -256,7 +262,8 @@ export type ServerMessage =
   | { type: "atlas.records.changed" }
   | { type: "atlas.history.rows"; filter: HistoryFilter; rows: LogRow[]; has_more: boolean; older: boolean; stats?: HistoryStats }
   | { type: "atlas.run.detail.result"; run_id: string; run: Record<string, unknown> | null; rows: LogRow[] }
-  | { type: "atlas.calendar.events"; ref: string; events: CalendarEventView[]; error?: string }
+  /** `stale` is set when iCloud couldn't be asked: the events are Atlas's copy from `as_of`, and `why` says why. */
+  | { type: "atlas.calendar.events"; ref: string; events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } }
   | { type: "atlas.inbox.items"; items: InboxItem[] }
   | {
       type: "atlas.voices";

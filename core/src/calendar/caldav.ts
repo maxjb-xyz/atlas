@@ -29,28 +29,52 @@ export interface CalDavOptions {
   baseUrl?: string;
   /** The owner's zone, for the rare floating (zone-less) event time. Defaults to UTC. */
   timezone?: string;
-  /**
-   * Somewhere to keep the calendar list between wakes, so a sleeping agent
-   * doesn't sign in three extra times to find the calendars again.
-   */
-  remember?: { load(): RememberedCalendars | null; save(calendars: RememberedCalendars | null): void };
+  /** Where the copy of the calendar is kept between wakes. */
+  store?: { load(): CalendarCopy | null; save(copy: CalendarCopy | null): void };
 }
 
-/** At most this many calendars are read at once, so a question isn't a burst of sign-ins. */
+/** At most this many calendars are read at once, so a sync isn't a burst of sign-ins. */
 export const MAX_PARALLEL_READS = 2;
-/** The same range asked again this soon (the brain asking twice in one reply) is answered from the last read. */
-export const REUSE_MS = 15_000;
-/** The remembered calendar list is found afresh after this long, so new calendars show up. */
-export const REDISCOVER_MS = 6 * 3_600_000;
+/** A copy checked with iCloud this recently answers without asking again. */
+export const FRESH_MS = 60_000;
+/** The copy covers a week back through ten weeks ahead, moving once a week. */
+const WEEK_MS = 7 * 86_400_000;
 
-export interface RememberedCalendars {
-  at: number;
-  calendars: DavCalendar[];
+/**
+ * Atlas's copy of the owner's calendars (§10.1: a sense, kept, not fetched
+ * per question). Every request to iCloud carries the Apple ID and password,
+ * so each one counts as a sign-in; with a copy, a question costs at most one
+ * request (each calendar's change tag, in one listing), and only calendars
+ * that changed are read again.
+ */
+export interface CalendarCopy {
+  /** The calendar home, found once through the principal. */
+  home: string;
+  /** The span the copy holds, in ms since the epoch. */
+  from: number;
+  to: number;
+  /** The zone floating times were read in. */
+  tz: string;
+  /** When iCloud last answered a sync. */
+  synced_at: number;
+  calendars: CopiedCalendar[];
+}
+
+export interface CopiedCalendar extends DavCalendar {
+  /** iCloud's change tag for the calendar: unchanged means its events are too. */
+  tag: string | null;
+  events: CalendarEvent[];
 }
 
 export interface DavCalendar {
   url: string;
   name: string;
+}
+
+/** The span a copy made at `now` holds: from the start of last week through ten weeks on. */
+export function copySpan(now: number): { from: number; to: number } {
+  const week = Math.floor(now / WEEK_MS) * WEEK_MS;
+  return { from: week - WEEK_MS, to: week + 10 * WEEK_MS };
 }
 
 const PROPFIND_PRINCIPAL = `<?xml version="1.0" encoding="utf-8"?>
@@ -60,8 +84,8 @@ const PROPFIND_HOME = `<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><c:calendar-home-set/></d:prop></d:propfind>`;
 
 const PROPFIND_CALENDARS = `<?xml version="1.0" encoding="utf-8"?>
-<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
-  <d:prop><d:resourcetype/><d:displayname/><c:supported-calendar-component-set/></d:prop>
+<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/">
+  <d:prop><d:resourcetype/><d:displayname/><c:supported-calendar-component-set/><cs:getctag/><d:sync-token/></d:prop>
 </d:propfind>`;
 
 /** "20261022T140000Z", the CalDAV time-range form. */
@@ -82,10 +106,21 @@ export function calendarQuery(range: CalendarRange): string {
 </c:calendar-query>`;
 }
 
-/** The credentials as iCloud expects them: no stray spaces from copying and pasting. */
+/**
+ * The credentials as iCloud expects them. An app-specific password is 16
+ * letters that Apple shows as xxxx-xxxx-xxxx-xxxx; however it was pasted or
+ * typed (spaces, no dashes, capitals), it's sent in that form.
+ */
 export function cleanCredentials(creds: ICloudCredentials): ICloudCredentials {
-  return { username: creds.username.trim(), app_password: creds.app_password.replace(/\s+/g, "") };
+  const letters = creds.app_password.replace(/[\s-]+/g, "");
+  const app_password = /^[a-z]{16}$/i.test(letters)
+    ? (letters.toLowerCase().match(/.{4}/g) ?? []).join("-")
+    : creds.app_password.replace(/\s+/g, "");
+  return { username: creds.username.trim(), app_password };
 }
+
+/** Atlas says who it is, as well-behaved CalDAV clients do. */
+const USER_AGENT = "Atlas/1.0 (CalDAV; +https://github.com/maxjb-xyz/atlas)";
 
 function basicAuth(creds: ICloudCredentials): string {
   const c = cleanCredentials(creds);
@@ -95,8 +130,7 @@ function basicAuth(creds: ICloudCredentials): string {
   return `Basic ${btoa(bin)}`;
 }
 
-const AUTH_REASON =
-  "iCloud didn't accept the Apple ID and app-specific password. Make a new app-specific password at account.apple.com (Sign-In and Security) and paste it in Settings. Your normal Apple ID password won't work here.";
+const AUTH_REASON = "iCloud didn't accept the Apple ID and app-specific password";
 
 class CalDavClient {
   #fetch: typeof fetch;
@@ -124,6 +158,7 @@ class CalDavClient {
             "Content-Type": "application/xml; charset=utf-8",
             Depth: depth,
             Accept: "application/xml, text/xml",
+            "User-Agent": USER_AGENT,
           },
           body,
           redirect: "manual",
@@ -148,12 +183,25 @@ class CalDavClient {
           .replace(/\s+/g, " ")
           .trim()
           .slice(0, 160);
-        console.error(JSON.stringify({ event: "caldav.refused", method, host, status: res.status, said }));
+        // Apple's own markers, so a refusal can be told apart later: whether it asked for a password again
+        // (a missing challenge points at Apple limiting sign-ins rather than a wrong password), its request id and partition.
+        console.error(
+          JSON.stringify({
+            event: "caldav.refused",
+            method,
+            host,
+            status: res.status,
+            challenge: res.headers.get("WWW-Authenticate") ?? "none",
+            apple_request: res.headers.get("X-Apple-Request-UUID"),
+            partition: res.headers.get("X-Apple-User-Partition"),
+            said,
+          }),
+        );
         if (res.status === 401) {
           // Which server refused matters: a refusal after the first hop means the password was accepted there.
           const first = new URL(this.#start).host;
           const where = host === first ? ` at ${host}` : ` at ${host}, after ${first} accepted the sign-in`;
-          throw new CalendarError(`${AUTH_REASON} iCloud answered HTTP 401${where}.`, "auth");
+          throw new CalendarError(`${AUTH_REASON} (HTTP 401${where}).`, "auth");
         }
         throw new CalendarError(`iCloud refused the request at ${host} (HTTP 403${said ? `: ${said}` : ""}).`, "protocol");
       }
@@ -233,52 +281,75 @@ export function icloudCalendar(creds: ICloudCredentials, opts: CalDavOptions = {
   const base = opts.baseUrl ?? ICLOUD_CALDAV;
   const client = new CalDavClient(creds, opts.fetch ?? fetch, base);
   const hidden = new Set((opts.hidden ?? []).map((n) => n.trim().toLowerCase()));
-  const remembered = opts.remember?.load();
-  const fresh = remembered && Array.isArray(remembered.calendars) && Date.now() - remembered.at < REDISCOVER_MS;
-  let cached: Promise<DavCalendar[]> | null = fresh && remembered.calendars.length ? Promise.resolve(remembered.calendars) : null;
-  let foundAt = fresh ? remembered.at : 0;
-  const recent = new Map<string, { at: number; events: CalendarEvent[] }>();
+  const tz = opts.timezone ?? "UTC";
+  let copy = usable(opts.store?.load() ?? null);
+  let syncing: Promise<CalendarCopy> | null = null;
 
-  async function discover(): Promise<DavCalendar[]> {
+  /** A stored copy from an older version, or in another zone, is only kept for its calendar home. */
+  function usable(c: CalendarCopy | null): CalendarCopy | null {
+    if (!c || typeof c.home !== "string" || !Array.isArray(c.calendars)) return null;
+    return c.tz === tz ? c : { ...c, synced_at: 0, calendars: c.calendars.map((cal) => ({ ...cal, tag: null })) };
+  }
+
+  async function findHome(): Promise<string> {
     const principal = await client.multistatus("PROPFIND", base, PROPFIND_PRINCIPAL, "0");
     const principalUrl = hrefIn(principal.responses, "current-user-principal", principal.url);
     const home = await client.multistatus("PROPFIND", principalUrl, PROPFIND_HOME, "0");
-    const homeUrl = hrefIn(home.responses, "calendar-home-set", home.url);
-    const listing = await client.multistatus("PROPFIND", homeUrl, PROPFIND_CALENDARS, "1");
-    const out: DavCalendar[] = [];
+    return hrefIn(home.responses, "calendar-home-set", home.url);
+  }
+
+  /** Every event calendar in the home, with its change tag: one request. */
+  async function listCalendars(home: string): Promise<Array<DavCalendar & { tag: string | null }>> {
+    const listing = await client.multistatus("PROPFIND", home, PROPFIND_CALENDARS, "1");
+    const out: Array<DavCalendar & { tag: string | null }> = [];
     for (const r of listing.responses) {
       if (!r.href) continue;
       const url = new URL(r.href, listing.url).toString();
-      if (sameUrl(url, homeUrl) || !isEventCalendar(r.props)) continue;
+      if (sameUrl(url, home) || !isEventCalendar(r.props)) continue;
       const name = textOf(r.props, "displayname") || lastSegment(url);
-      if (hidden.has(name.trim().toLowerCase())) continue;
-      out.push({ url, name });
+      out.push({ url, name, tag: textOf(r.props, "getctag") || textOf(r.props, "sync-token") || null });
     }
     return out;
   }
 
-  function calendars(): Promise<DavCalendar[]> {
-    if (cached && foundAt && Date.now() - foundAt > REDISCOVER_MS) cached = null;
-    if (!cached) {
-      const p = discover();
-      cached = p;
-      p.then(
-        (cals) => {
-          foundAt = Date.now();
-          opts.remember?.save({ at: foundAt, calendars: cals });
-        },
-        () => {
-          if (cached === p) cached = null; // try discovery again next time
-        },
-      );
+  /**
+   * Brings the copy up to date: the calendar list with change tags, then
+   * only the calendars whose tag moved (or every one, once a week, when the
+   * span moves). `rediscover` finds the calendar home again first.
+   */
+  async function sync(rediscover = false): Promise<CalendarCopy> {
+    let home = !rediscover && copy?.home ? copy.home : await findHome();
+    let cals: Array<DavCalendar & { tag: string | null }>;
+    try {
+      cals = await listCalendars(home);
+    } catch (err) {
+      // A remembered home that moved: find it again, once.
+      if (!(err instanceof CalendarError) || err.code !== "protocol" || home !== copy?.home) throw err;
+      home = await findHome();
+      cals = await listCalendars(home);
     }
-    return cached;
+    const { from, to } = copySpan(Date.now());
+    const same = copy && copy.from === from && copy.to === to ? copy : null;
+    const before = new Map((same?.calendars ?? []).map((c) => [c.url, c]));
+    const calendars = await inBatches(cals, MAX_PARALLEL_READS, async (c): Promise<CopiedCalendar> => {
+      const had = before.get(c.url);
+      if (had && c.tag && had.tag === c.tag) return { ...had, name: c.name };
+      return { ...c, events: await eventsIn(c, { start: new Date(from), end: new Date(to) }) };
+    });
+    const next: CalendarCopy = { home, from, to, tz, synced_at: Date.now(), calendars };
+    copy = next;
+    opts.store?.save(next);
+    return next;
   }
 
-  /** A calendar moved or vanished: forget the list so the next read finds them again. */
-  function forget(): void {
-    cached = null;
-    opts.remember?.save(null);
+  /** One sync at a time: questions that arrive together share it. */
+  function syncOnce(rediscover = false): Promise<CalendarCopy> {
+    if (!syncing) {
+      syncing = sync(rediscover).finally(() => {
+        syncing = null;
+      });
+    }
+    return syncing;
   }
 
   async function eventsIn(cal: DavCalendar, range: CalendarRange): Promise<CalendarEvent[]> {
@@ -286,49 +357,57 @@ export function icloudCalendar(creds: ICloudCredentials, opts: CalDavOptions = {
     const events: CalendarEvent[] = [];
     for (const r of res.responses) {
       const data = textOf(r.props, "calendar-data");
-      if (data) events.push(...parseEvents(data, cal.name, opts.timezone));
+      if (data) events.push(...parseEvents(data, cal.name, tz));
     }
     return events;
   }
 
-  async function list(range: CalendarRange): Promise<CalendarEvent[]> {
-    const key = `${range.start.getTime()}|${range.end.getTime()}`;
-    const hit = recent.get(key);
-    if (hit && Date.now() - hit.at < REUSE_MS) return hit.events;
-    const cals = await calendars();
-    let perCal: CalendarEvent[][];
-    try {
-      perCal = await inBatches(cals, MAX_PARALLEL_READS, (c) => eventsIn(c, range));
-    } catch (err) {
-      if (err instanceof CalendarError && err.code === "protocol") forget();
-      throw err;
-    }
+  const covers = (c: CalendarCopy | null, range: CalendarRange) =>
+    c != null && range.start.getTime() >= c.from && range.end.getTime() <= c.to;
+  const visible = (name: string) => !hidden.has(name.trim().toLowerCase());
+
+  function pick(perCal: Array<{ name: string; events: CalendarEvent[] }>, range: CalendarRange): CalendarEvent[] {
     // The same instance can come back twice (an event shared onto two calendars); keep the first.
     const seen = new Set<string>();
     const out: CalendarEvent[] = [];
-    for (const ev of perCal.flat()) {
-      if (!overlaps(ev, range)) continue;
-      const key = `${ev.id}|${ev.start}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(ev);
+    for (const cal of perCal) {
+      if (!visible(cal.name)) continue;
+      for (const ev of cal.events) {
+        if (!overlaps(ev, range)) continue;
+        const key = `${ev.id}|${ev.start}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(ev);
+      }
     }
-    const sorted = out.sort((a, b) => startKey(a) - startKey(b) || a.title.localeCompare(b.title));
-    recent.set(key, { at: Date.now(), events: sorted });
-    return sorted;
+    return out.sort((a, b) => startKey(a) - startKey(b) || a.title.localeCompare(b.title));
+  }
+
+  async function list(range: CalendarRange): Promise<CalendarEvent[]> {
+    let c = copy;
+    if (!c || Date.now() - c.synced_at > FRESH_MS) c = await syncOnce();
+    if (covers(c, range)) return pick(c.calendars, range);
+    // Far from today: read just this range, from the calendars the copy knows.
+    const cals = c.calendars.filter((cal) => visible(cal.name));
+    const perCal = await inBatches(cals, MAX_PARALLEL_READS, async (cal) => ({ name: cal.name, events: await eventsIn(cal, range) }));
+    return pick(perCal, range);
+  }
+
+  function held(range: CalendarRange): { events: CalendarEvent[]; as_of: number } | null {
+    if (!copy || !copy.synced_at || !covers(copy, range)) return null;
+    return { events: pick(copy.calendars, range), as_of: copy.synced_at };
   }
 
   async function check(): Promise<CalendarCheck> {
-    forget(); // a live check always signs in again
-    recent.clear();
-    const cals = await calendars();
+    // A live check always signs in from the start, finding the calendar home again.
+    const c = await syncOnce(true);
     const start = new Date();
     start.setUTCHours(0, 0, 0, 0);
-    const events = await list({ start, end: new Date(start.getTime() + 30 * DAY_MS) });
-    return { calendars: cals.map((c) => c.name), events_next_30_days: events.length };
+    const events = pick(c.calendars, { start, end: new Date(start.getTime() + 30 * DAY_MS) });
+    return { calendars: c.calendars.filter((cal) => visible(cal.name)).map((cal) => cal.name), events_next_30_days: events.length };
   }
 
-  return { list, check };
+  return { list, held, check };
 }
 
 /** Runs `fn` over `items`, at most `n` at a time, keeping the order of results. */
