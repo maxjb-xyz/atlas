@@ -357,7 +357,8 @@ export class SenseDesk {
         continue;
       }
       const at = nextRun({ kind: "schedule", at: s.at, days: [] }, now, tz)!.getTime();
-      if (open && open.due_at === at) continue;
+      // One that's due or under way is the clock's to run (a cold start calls this before the alarm's own wake does).
+      if (open && (open.due_at === at || open.state === "running" || open.due_at <= now.getTime())) continue;
       const item = open
         ? rearm(this.d.sql, open.id, at)!
         : createItem(this.d.sql, {
@@ -373,7 +374,10 @@ export class SenseDesk {
   /** A look before leaving for the next event with a place, ten minutes before leave-by, once per event. */
   async #armLeave(settings: Settings): Promise<void> {
     const t = cache(this.d.sql).travel;
-    const open = upcoming(this.d.sql, 200).filter((i) => i.kind === "rhythm" && i.source.detail?.moment === "leave");
+    // A look that's running is the moment's own to finish.
+    const open = upcoming(this.d.sql, 200).filter(
+      (i) => i.kind === "rhythm" && i.source.detail?.moment === "leave" && i.state === "scheduled",
+    );
     for (const o of open) {
       // A leave look for an event that's no longer next (moved, cancelled) is dropped.
       if (!t || o.source.detail?.event_id !== t.event_id || !isOn(settings, "leave")) {
@@ -519,7 +523,7 @@ export class SenseDesk {
 
   /** A push for a nudge was opened or dismissed on a device. */
   pushed(id: string, how: "opened" | "dismissed"): void {
-    const n = nudges(this.d.sql).find((x) => x.id === id && !x.reaction);
+    const n = nudges(this.d.sql).find((x) => x.id === id && (!x.reaction || x.reaction === "ignored"));
     if (n) this.#react(n, how);
   }
 
@@ -532,7 +536,16 @@ export class SenseDesk {
   }
 
   #ignored(now: number): void {
-    for (const n of nudges(this.d.sql).filter((x) => !x.reaction && now - x.at >= IGNORED_MS)) this.#react(n, "ignored");
+    for (const n of nudges(this.d.sql).filter((x) => !x.reaction)) {
+      // A push held for quiet hours or focus starts its two hours when it's released, not when Atlas wrote it.
+      const held = this.d.sql
+        .exec<{ until: number | null }>(
+          `SELECT MAX(json_extract(body, '$.held_until')) AS until FROM log WHERE kind = 'delivery' AND json_extract(body, '$.held_until') IS NOT NULL AND EXISTS (SELECT 1 FROM json_each(json_extract(body, '$.of')) WHERE value = ?)`,
+          n.id,
+        )
+        .one().until;
+      if (now - Math.max(n.at, held ?? 0) >= IGNORED_MS) this.#react(n, "ignored");
+    }
   }
 }
 

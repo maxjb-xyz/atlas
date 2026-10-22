@@ -296,6 +296,15 @@ interface ConverseOpts {
 }
 
 export class PersonAgent extends VoiceAgent implements HelperHost {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // The voice layer wraps onMessage and answers its own messages (a typed turn, a call) before Atlas sees them.
+    // A paired device speaks only the device protocol, so its socket goes around the voice layer entirely.
+    const voiced = this.onMessage;
+    this.onMessage = (connection: Connection, message: WSMessage) =>
+      (connection.state as SocketState | null)?.node ? this.#nodeRaw(connection, message) : voiced.call(this, connection, message);
+  }
+
   #router = new BrainRouter((c) => this.#makeBrain(c));
   #outbox!: Outbox;
   #calendar!: CalendarSense;
@@ -381,6 +390,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       mcp: () => this.#mcpClient(),
       node: (c) => this.#nodeCall(c),
       later: async (c) => {
+        // A device removed since (a card approved after it was unpaired) gets nothing queued.
+        if (!nodes(this.#sql).some((n) => n.id === c.node)) return false;
         const tool = c.tool.replace(/_/g, " ");
         createItem(this.#sql, {
           kind: "device",
@@ -393,6 +404,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           },
         });
         this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+        return true;
       },
     });
     // A restart drops every socket: devices count as offline until they connect again.
@@ -506,11 +518,6 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     try {
       data = JSON.parse(message);
     } catch {
-      return;
-    }
-    const node = (connection.state as SocketState | null)?.node;
-    if (node) {
-      await this.#nodeMessage(node, connection, data);
       return;
     }
     const parsed = ClientMessage.safeParse(data);
@@ -1292,6 +1299,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   }
 
   #nodeOnline(id: string, connection: Connection): void {
+    // A device that reconnects (a Mac waking) can leave its old socket half open: the newest one is the device.
+    for (const c of this.getConnections()) {
+      if (c.id !== connection.id && (c.state as SocketState | null)?.node === id) c.close(4000, "Replaced by a newer connection.");
+    }
     const n = updateNode(this.#sql, id, (x) => ({ ...x, online: true, last_seen: Date.now() }));
     if (!n) {
       this.#nodeSend(connection, { type: "node.unpaired" });
@@ -1301,6 +1312,28 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     this.#nodeSend(connection, { type: "node.welcome", node_id: n.id, allowed: allowedMap(n) });
     this.#broadcast({ type: "atlas.rows", rows: [logNode(this.#sql, n, "online")] });
     this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  async #nodeRaw(connection: Connection, message: WSMessage): Promise<void> {
+    const id = (connection.state as SocketState | null)?.node;
+    if (!id || typeof message !== "string") return;
+    let data: unknown;
+    try {
+      data = JSON.parse(message);
+    } catch {
+      return;
+    }
+    await this.#nodeMessage(id, connection, data);
+  }
+
+  /** A paired device gets none of the SDK's own messages (identity, state, connected servers): only the device protocol. */
+  override shouldSendProtocolMessages(_connection: Connection, ctx: { request: Request }): boolean {
+    return new URL(ctx.request.url).pathname !== "/nodes/connect";
+  }
+
+  /** A call is for the owner's app; a device's socket can't start one. */
+  override beforeCallStart(connection: Connection): boolean {
+    return !(connection.state as SocketState | null)?.node;
   }
 
   override onClose(connection: Connection): void {
@@ -1360,7 +1393,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (!n) return;
     this.#nodeSend(connection, { type: "node.allowed", allowed: allowedMap(n) });
     this.#broadcast({ type: "atlas.view", view: this.#view() });
-    const waiting = upcoming(this.#sql, 200).filter((i) => i.kind === "device" && i.state === "scheduled" && i.source.detail?.node === id);
+    // Waiting calls, and any a restart cut off mid-run (their claim ran out).
+    const now = Date.now();
+    const waiting = upcoming(this.#sql, 200).filter(
+      (i) => i.kind === "device" && i.source.detail?.node === id && (i.state === "scheduled" || (i.lease_until ?? 0) < now),
+    );
     if (waiting.length) void this.keepAliveWhile(() => this.#drainDevice(n.name, waiting));
   }
 
@@ -1386,8 +1423,18 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   async #drainDevice(device: string, items: AgendaItem[]): Promise<void> {
     const lines: string[] = [];
     for (const item of items) {
-      const leased = lease(this.#sql, item.id, Number.MAX_SAFE_INTEGER - 1);
-      if (!leased) continue;
+      // Claimed for three minutes: a call takes at most two, and a claim a restart cut off runs again on the next hello.
+      const claim = Date.now();
+      const took = this.#sql
+        .exec(
+          `UPDATE agenda SET state = 'running', lease_until = ?, updated_at = ? WHERE id = ? AND (state = 'scheduled' OR (state = 'running' AND lease_until < ?)) RETURNING id`,
+          claim + 3 * 60_000,
+          claim,
+          item.id,
+          claim,
+        )
+        .toArray();
+      if (!took.length) continue;
       const d = item.source.detail ?? {};
       const out = await this.#outbox.device(
         { node: String(d.node), device, tool: String(d.tool), input: (d.input ?? {}) as Record<string, unknown> },
@@ -1467,8 +1514,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
     if (item.kind === "errand") {
       // An errand's deadline: the owner hears it once, and the errand stays open until it's done.
-      await this.keepAliveWhile(() => this.#inLine(() => this.#remind(item, false)));
-      this.#sql.exec(`UPDATE agenda SET state = 'scheduled', due_at = ?, lease_until = NULL WHERE id = ?`, NO_DEADLINE, item.id);
+      try {
+        await this.keepAliveWhile(() => this.#inLine(() => this.#remind(item, false)));
+      } finally {
+        this.#sql.exec(`UPDATE agenda SET state = 'scheduled', due_at = ?, lease_until = NULL WHERE id = ?`, NO_DEADLINE, item.id);
+      }
       this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
       return;
     }

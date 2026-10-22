@@ -214,7 +214,7 @@ export interface Channels {
     input: Record<string, unknown>;
     run_id: string | null;
     by: string;
-  }): Promise<void>;
+  }): Promise<boolean>;
 }
 
 export class Outbox {
@@ -536,14 +536,25 @@ export class Outbox {
   ): Promise<{ ok: boolean; text: string; queued?: boolean }> {
     const base = { channel: "node", to: c.device, text: c.tool, by: o.by };
     const input = JSON.stringify(c.input);
-    if (scrub(input, this.secrets()) !== input) {
-      this.receipt(o.run_id, { ...base, ok: false, error: "Not sent: it held one of your secrets.", checks: { secrets: "failed" } });
-      return { ok: false, text: `Not sent to ${c.device}: what it would send held one of your secrets.` };
+    // A link or a command can carry a private detail off the device as surely as a search can (§4.4).
+    const found = privateIn(this.sql, input, this.secrets());
+    if (found) {
+      const secret = found === SECRET_FOUND;
+      this.receipt(o.run_id, {
+        ...base,
+        ok: false,
+        error: `Not sent: it held ${found}.`,
+        checks: secret ? { secrets: "failed" } : { secrets: "passed", public_query: "failed" },
+      });
+      return { ok: false, text: `Not sent to ${c.device}: it held ${found}. Private details don't go into a device's links or commands.` };
     }
     if (!this.channels.node || !this.channels.later) return { ok: false, text: "This deployment can't reach paired devices." };
     const out = await this.channels.node(c);
     if (out.offline) {
-      await this.channels.later({ ...c, run_id: o.run_id, by: o.by });
+      if (!(await this.channels.later({ ...c, run_id: o.run_id, by: o.by }))) {
+        this.receipt(o.run_id, { ...base, ok: false, error: "That device isn't paired any more." });
+        return { ok: false, text: `${c.device} isn't paired any more, so nothing was sent.` };
+      }
       this.receipt(o.run_id, { ...base, ok: true, note: "Waiting: the device is offline, so it runs when it's back." });
       return { ok: true, queued: true, text: `${c.device} is offline. It runs when it's back, and the owner hears how it went.` };
     }

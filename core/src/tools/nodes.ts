@@ -45,8 +45,7 @@ export const deviceCall = defineTool({
     const args = input.input as Record<string, Json>;
     const what = Object.entries(args)
       .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
-      .join("; ")
-      .slice(0, 300);
+      .join("; ");
     if (cap.acts) {
       if (!ctx.exit) return fail("This run can't ask the owner for an OK.");
       return ctx.exit.request(
@@ -57,7 +56,8 @@ export const deviceCall = defineTool({
           tool: cap.name,
           input: args,
           name: `${cap.name.replace(/_/g, " ")} on ${n.name}${typeof args.command === "string" ? `: ${args.command.slice(0, 80)}` : ""}`,
-          what: `${cap.description}${what ? ` With ${what}.` : ""}`,
+          // The whole input, so the card shows everything that would run.
+          what: `${cap.description}${what ? ` With ${what.slice(0, 4_000)}.` : ""}`,
         },
         { run_id: ctx.run_id, source_log_id: ctx.source_log_id },
       );

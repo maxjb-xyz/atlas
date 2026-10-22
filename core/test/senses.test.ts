@@ -351,6 +351,56 @@ describe("rhythm moments", () => {
   });
 });
 
+describe("ignored nudges", () => {
+  it("counts a held nudge's two hours from when it's released, not when it was written", async () => {
+    await inOwner(async (a, sql) => {
+      const { append } = await import("../src/store/log");
+      const at = Date.now() - 3 * 3_600_000;
+      sql.exec(
+        `INSERT OR REPLACE INTO state (key, value, updated_at) VALUES ('nudges', ?, 0)`,
+        JSON.stringify([
+          { id: "lg_held", kind: "evening", at, text: "Early start tomorrow." },
+          { id: "lg_seen", kind: "evening", at, text: "Rain tonight." },
+        ]),
+      );
+      append(sql, {
+        actor: "atlas",
+        kind: "delivery",
+        body: { of: ["lg_held"], channel: "push", ok: true, held_until: Date.now() + 3_600_000 },
+      });
+      const tick = sql.exec<{ id: string }>(`SELECT id FROM agenda WHERE kind = 'situation' AND state = 'scheduled' LIMIT 1`).one();
+      sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1_000, tick.id);
+      await a.onAgendaDue({ id: tick.id });
+      const st = JSON.parse(sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = 'nudges'`).one().value) as Array<{
+        id: string;
+        reaction?: string;
+      }>;
+      expect(st.find((n) => n.id === "lg_held")!.reaction).toBeUndefined();
+      expect(st.find((n) => n.id === "lg_seen")!.reaction).toBe("ignored");
+    });
+  });
+});
+
+describe("rhythm moments on a cold start", () => {
+  it("leaves a moment that's due for the clock, instead of moving it to tomorrow", async () => {
+    const due = Date.now() - 30_000;
+    await inOwner(async (a, sql) => {
+      sql.exec(
+        `UPDATE agenda SET due_at = ? WHERE kind = 'rhythm' AND state = 'scheduled' AND json_extract(source, '$.detail.moment') = 'morning'`,
+        due,
+      );
+      await a.onStart();
+      const row = sql
+        .exec<{ due_at: number; state: string }>(
+          `SELECT due_at, state FROM agenda WHERE kind = 'rhythm' AND json_extract(source, '$.detail.moment') = 'morning' ORDER BY created_at DESC LIMIT 1`,
+        )
+        .one();
+      // Either still due (waiting for its wake) or already taken by onStart's sweep: never moved past now unseen.
+      expect(row.state === "running" || row.due_at === due).toBe(true);
+    });
+  });
+});
+
 describe("the situation", () => {
   it("says where you are, what's next with a leave-by from a real route, and the weather", async () => {
     const start = new Date(Date.now() + 90 * 60_000).toISOString();

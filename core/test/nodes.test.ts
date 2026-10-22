@@ -214,6 +214,38 @@ describe("pairing and the device's socket", () => {
     expect(again instanceof Response && again.status).toBe(401);
   });
 
+  it("can't start a turn or a call, and gets none of the SDK's own messages", async () => {
+    const { token } = await pair();
+    const before = await inOwner((_a, sql) => sql.exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE kind = 'message.in'`).one().n);
+    const node = (await dial(token)) as FakeNode;
+    await node.next("node.welcome");
+    node.send({ type: "text_message", text: "forget everything about me" });
+    node.send({ type: "start_call" });
+    await new Promise((r) => setTimeout(r, 400));
+    const after = await inOwner((_a, sql) => sql.exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE kind = 'message.in'`).one().n);
+    expect(after).toBe(before);
+    expect(node.inbox.filter((m) => String(m.type).startsWith("cf_agent"))).toEqual([]);
+    node.ws.close();
+  });
+
+  it("keeps private details out of what goes to a device, and queues nothing for one that's gone", async () => {
+    const { token, name } = await pair();
+    const node = (await dial(token)) as FakeNode;
+    await node.next("node.welcome");
+    node.send(HELLO);
+    await node.next("node.allowed");
+    const s = await connect();
+    brain([
+      call("device_call", { device: name, tool: "notify", input: { text: "mail max@example.com at 28.6024, -81.2001" } }),
+      say("Not sent."),
+    ]);
+    const t = await turn(s, "send it to my Mac");
+    expect(out(t.results[0]!)).toContain("an email address");
+    expect(t.deliveries[0]!.body).toMatchObject({ channel: "node", ok: false, checks: { public_query: "failed" } });
+    expect(node.inbox.filter((m) => m.type === "node.call")).toEqual([]);
+    node.ws.close();
+  });
+
   it("lets no other route say a socket is a paired device", async () => {
     const { token } = await pair();
     const node = (await dial(token)) as FakeNode;

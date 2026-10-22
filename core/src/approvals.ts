@@ -98,7 +98,8 @@ export const trustKey = (a: Action): string | null =>
     : a.kind === "mcp"
       ? `mcp:${a.server}:${a.tool}`
       : a.kind === "node"
-        ? `node:${a.node}:${a.tool}`
+        ? // On a device, trust is earned for exactly this, not for every command the tool could run.
+          `node:${a.node}:${a.tool}:${JSON.stringify(a.input)}`
         : null;
 
 export const needsHold = (actions: Action[]) => actions.some((a) => ASKS[kindOf(a)].hold);

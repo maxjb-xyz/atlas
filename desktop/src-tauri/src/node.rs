@@ -37,10 +37,10 @@ fn hello() -> Value {
             },
             {
                 "name": "open_url",
-                "description": "Open a web page in this Mac's default browser.",
+                "description": "Open a web page in this Mac's default browser. The browser loads it, so it asks first.",
                 "input": { "type": "object", "properties": { "url": { "type": "string", "description": "An https:// address." } }, "required": ["url"] },
                 "sensitive": false,
-                "acts": false
+                "acts": true
             },
             {
                 "name": "run_command",
@@ -141,6 +141,9 @@ async fn session(app: &AppHandle, cfg: &Config) -> Result<Ended, String> {
         })
     };
     let idler = tokio::spawn(idle_events(tx.clone()));
+    // If this session is dropped (Pair again aborts it), its writer, pinger and idle watcher stop with it,
+    // so the old socket doesn't linger and keep pinging.
+    let _tasks = Tasks(vec![writer, pinger, idler]);
 
     let mut ended = Ended::Closed;
     while let Some(msg) = stream.next().await {
@@ -195,11 +198,19 @@ async fn session(app: &AppHandle, cfg: &Config) -> Result<Ended, String> {
             _ => {}
         }
     }
-    pinger.abort();
-    idler.abort();
     drop(tx);
-    writer.abort();
     Ok(ended)
+}
+
+/// Tasks that end when their session does, however it ends.
+struct Tasks(Vec<tokio::task::JoinHandle<()>>);
+
+impl Drop for Tasks {
+    fn drop(&mut self) {
+        for t in &self.0 {
+            t.abort();
+        }
+    }
 }
 
 /// Says when someone sits down at the Mac or walks away (five minutes without input), on change only.
