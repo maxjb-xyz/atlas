@@ -114,6 +114,28 @@ describe("search providers", () => {
     expect(seen[0]!.url).toBe("https://api.search.brave.com/res/v1/web/search?q=pho&count=3&freshness=pd");
   });
 
+  it("Brave: searches asked at once are spaced a second apart, and a 429 waits and tries once more", async () => {
+    const at: number[] = [];
+    let first = true;
+    const f = (async () => {
+      at.push(Date.now());
+      if (first) {
+        first = false;
+        return new Response('{"error":{"detail":"Request rate limit exceeded for plan"}}', {
+          status: 429,
+          headers: { "retry-after": "1" },
+        });
+      }
+      return Response.json({ web: { results: [{ title: "Pho", url: "https://pho.example", description: "Pho" }] } });
+    }) as unknown as typeof fetch;
+    const outs = await Promise.all(
+      ["a", "b"].map((query) => search("brave", { query, count: 1 }, { fetch: f, key: "brave-key-1", binding: null })),
+    );
+    expect(outs.every((o) => o.ok)).toBe(true);
+    expect(at).toHaveLength(3);
+    for (let i = 1; i < at.length; i++) expect(at[i]! - at[i - 1]!).toBeGreaterThanOrEqual(900);
+  });
+
   it("Exa: the key header, a start date, and highlights as the snippet", async () => {
     const out = await search(
       "exa",

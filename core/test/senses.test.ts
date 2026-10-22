@@ -584,3 +584,31 @@ describe("what changed in the situation", () => {
     expect(changes(after, after, settings, now)).toEqual([]);
   });
 });
+
+describe("finding places when OpenStreetMap's servers struggle", () => {
+  it("tries the next Overpass server after a 522, and finds a name with a bounded address search", async () => {
+    const { nearby } = await import("../src/maps");
+    const asked: string[] = [];
+    const f = (async (input: string) => {
+      const url = String(input);
+      asked.push(url);
+      if (url.startsWith("https://overpass-api.de/")) return new Response("error code: 522", { status: 522 });
+      if (url.includes("overpass"))
+        return Response.json({ elements: [{ type: "node", lat: 28.6, lon: -81.2, tags: { name: "Publix", shop: "supermarket" } }] });
+      if (url.startsWith("https://nominatim.openstreetmap.org/search"))
+        return Response.json([
+          { lat: "28.5961", lon: "-81.1990", name: "Recreation and Wellness Center", display_name: "RWC, UCF", type: "sports_centre" },
+        ]);
+      return new Response("not faked", { status: 404 });
+    }) as unknown as typeof fetch;
+    const near = { lat: 28.6003, lon: -81.2015 };
+    const kind = await nearby(f, { provider: "osm", key: null, kind: "grocery", near, within: 1_500, limit: 5 });
+    expect(kind.ok && kind.value.map((p) => p.name)).toEqual(["Publix"]);
+    expect(asked.filter((u) => u.includes("overpass")).map((u) => new URL(u).host)).toEqual(["overpass-api.de", "overpass.private.coffee"]);
+    const named = await nearby(f, { provider: "osm", key: null, name: "RWC", near, within: 3_000, limit: 5 });
+    expect(named.ok && named.value[0]).toMatchObject({ name: "Recreation and Wellness Center" });
+    const u = new URL(asked.at(-1)!);
+    expect(u.searchParams.get("bounded")).toBe("1");
+    expect(u.searchParams.get("q")).toBe("RWC");
+  }, 15_000);
+});

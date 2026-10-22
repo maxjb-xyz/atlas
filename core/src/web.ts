@@ -4,6 +4,8 @@
 // checks first and leaves a receipt. What comes back is someone else's
 // words: information for Atlas, never instructions (§20).
 
+import { paced } from "./pace";
+
 /** A page's words: scripts, styles and tags gone, one line per block, entities decoded. Watches compare pages by this text. */
 export function pageText(html: string): string {
   return html
@@ -323,10 +325,21 @@ export async function search(
       }
       case "brave": {
         const fresh = q.fresh ? `&freshness=${{ day: "pd", week: "pw", month: "pm", year: "py" }[q.fresh]}` : "";
-        res = await o.fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q.query)}&count=${count}${fresh}`, {
-          headers: { "x-subscription-token": o.key!, accept: "application/json" },
-          signal,
-        });
+        // Brave's free plan takes one search a second, and a run often asks several at once: they're spaced out, and a 429 waits once.
+        const ask = () =>
+          paced(p.host, 1_100, () =>
+            o.fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q.query)}&count=${count}${fresh}`, {
+              headers: { "x-subscription-token": o.key!, accept: "application/json" },
+              // Its own timeout, from when it's sent, so waiting its turn doesn't use it up.
+              signal: AbortSignal.timeout(15_000),
+            }),
+          );
+        res = await ask();
+        if (res.status === 429) {
+          const wait = Math.min(5, Number(res.headers.get("retry-after") ?? res.headers.get("x-ratelimit-reset")?.split(",")[0] ?? 1) || 1);
+          await new Promise((r) => setTimeout(r, wait * 1000));
+          res = await ask();
+        }
         if (!res.ok) return refused(res, p.host);
         const body = (await res.json()) as {
           web?: { results?: Array<{ url?: string; title?: string; description?: string; age?: string }> };

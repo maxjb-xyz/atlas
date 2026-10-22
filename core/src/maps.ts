@@ -8,7 +8,15 @@
 // from Nominatim (or the phone). Every call goes out through the outbox
 // (core/src/outbox.ts) with a receipt; these functions only speak HTTP.
 
+import { paced } from "./pace";
 import type { LookOut } from "./web";
+
+const MAPBOX_HOST = "api.mapbox.com";
+/**
+ * Overpass's public servers, tried in turn: the main one is often busy, and
+ * from Cloudflare it has timed out (522) where the others answered.
+ */
+const OVERPASS = ["overpass-api.de", "overpass.private.coffee", "maps.mail.ru/osm/tools/overpass"];
 
 export type MapsProvider = "osm" | "mapbox";
 export type Travel = "drive" | "walk" | "bike";
@@ -87,20 +95,10 @@ export const kindWords = (kind: string) => placeKind(kind)?.words ?? kind;
 
 // --- pacing ---------------------------------------------------------------------------------------
 
-const lastCall = new Map<string, number>();
-
-/** Waits so calls to one host are at least `gap` ms apart (OpenStreetMap's services ask for one a second). */
-async function paced<T>(host: string, gap: number, go: () => Promise<T>): Promise<T> {
-  const now = Date.now();
-  const at = Math.max(now, (lastCall.get(host) ?? 0) + gap);
-  lastCall.set(host, at);
-  if (at > now) await new Promise((r) => setTimeout(r, at - now));
-  return go();
-}
-
 async function getJson<T>(f: typeof fetch, url: string, who: string, init: RequestInit = {}): Promise<LookOut<T>> {
   const host = new URL(url).host;
-  const gap = host.endsWith("openstreetmap.org") || host.endsWith("openstreetmap.de") || host.includes("overpass") ? 1_100 : 0;
+  // OpenStreetMap's services ask for at most one call a second.
+  const gap = MAPBOX_HOST === host ? 0 : 1_100;
   let res: Response;
   try {
     res = await paced(host, gap, () =>
@@ -318,6 +316,32 @@ export async function nearby(
       .filter((x) => x.name && Number.isFinite(x.lat));
     return { ...out, value };
   }
+  // A place by name near a point is an address search, bounded to the area: lighter than Overpass, and it knows short names.
+  if (o.name && !kind && !o.along?.length) {
+    const d = o.within / 111_000;
+    const u = new URL("https://nominatim.openstreetmap.org/search");
+    u.searchParams.set("q", o.name);
+    u.searchParams.set("format", "jsonv2");
+    u.searchParams.set("limit", String(Math.min(10, o.limit)));
+    u.searchParams.set("bounded", "1");
+    u.searchParams.set("viewbox", `${o.near.lon - d},${o.near.lat + d},${o.near.lon + d},${o.near.lat - d}`);
+    const out = await getJson<Array<Record<string, unknown>>>(f, u.toString(), "OpenStreetMap's address search");
+    if (!out.ok) return out;
+    const value = out.value
+      .map((r) => {
+        const p = { lat: num(r.lat), lon: num(r.lon) };
+        return {
+          name: String(r.name || String(r.display_name ?? "").split(",")[0] || o.name),
+          address: String(r.display_name ?? ""),
+          ...p,
+          kind: String(r.type ?? ""),
+          m: Math.round(metresBetween(p, o.near)),
+        };
+      })
+      .filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon))
+      .sort((a, b) => a.m - b.m);
+    return { ...out, value };
+  }
   const pts = o.along?.length ? samples(o.along, Math.max(200, o.within)) : [o.near];
   const around = pts.map((p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join(",");
   const filters = kind
@@ -331,14 +355,20 @@ export async function nearby(
     `way${flt}(around:${Math.round(o.within)},${around});`,
   ]);
   const query = `[out:json][timeout:20];(${body.join("")});out center tags 60;`;
-  const out = await getJson<{
-    elements?: Array<{ lat?: number; lon?: number; center?: Point; tags?: Record<string, string> }>;
-    remark?: string;
-  }>(f, "https://overpass-api.de/api/interpreter", "OpenStreetMap's place search", {
-    method: "POST",
-    body: new URLSearchParams({ data: query }).toString(),
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-  });
+  type Answer = { elements?: Array<{ lat?: number; lon?: number; center?: Point; tags?: Record<string, string> }>; remark?: string };
+  let out: LookOut<Answer> = { ok: false, status: 0, error: "" };
+  const tried: string[] = [];
+  for (const server of OVERPASS) {
+    out = await getJson<Answer>(f, `https://${server}/api/interpreter`, "OpenStreetMap's place search", {
+      method: "POST",
+      body: new URLSearchParams({ data: query }).toString(),
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    });
+    // A busy or unreachable server (429, 5xx, no answer) means the next one; anything else is the answer.
+    if (out.ok || (out.status !== 0 && out.status !== 429 && out.status < 500)) break;
+    tried.push(out.error);
+  }
+  if (!out.ok && tried.length === OVERPASS.length) return { ...out, error: `Every Overpass server failed: ${tried.join(" · ")}` };
   if (!out.ok) return out;
   if (!out.value.elements && out.value.remark)
     return { ok: false, status: out.status, error: `OpenStreetMap's place search: ${out.value.remark}` };

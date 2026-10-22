@@ -42,6 +42,17 @@ function hereNow(ctx: ToolContext): Where {
   return { ok: true, point: { lat: h.fix.lat, lon: h.fix.lon }, name: h.place?.name ?? "where you are" };
 }
 
+/**
+ * Where an address search should look first: where the owner is, else home,
+ * else the most recently changed saved place. Without it, "UCF Library" found a library two
+ * hours away.
+ */
+function searchNear(ctx: ToolContext): Point | null {
+  const h = hereNow(ctx);
+  if (h.ok) return h.point;
+  return homePin(ctx.sql) ?? pins(ctx.sql)[0] ?? null;
+}
+
 /** "here", "home", a saved place (by name or id), or an address, as a point. An address is looked up near the owner. */
 async function resolve(ctx: ToolContext, ref: string): Promise<Where> {
   const t = ref.trim();
@@ -55,8 +66,8 @@ async function resolve(ctx: ToolContext, ref: string): Promise<Where> {
   if (pin) return { ok: true, point: pin, name: pin.name, pin };
   if (!ctx.maps) return { ok: false, error: "Maps aren't reachable from this run." };
   const address = saved && typeof saved.fields.address === "string" ? saved.fields.address : t;
-  const near = hereNow(ctx);
-  const out = await ctx.maps.geocode(address, { run_id: ctx.run_id, ...(near.ok ? { near: near.point } : {}) });
+  const near = searchNear(ctx);
+  const out = await ctx.maps.geocode(address, { run_id: ctx.run_id, ...(near ? { near } : {}) });
   if (!out.ok) return { ok: false, error: out.error };
   const best = out.value[0];
   if (!best) {
@@ -106,8 +117,8 @@ export const placePin = defineTool({
     } else {
       if (!address) return fail(`${input.place} has no address yet. Ask the owner for it.`);
       if (!ctx.maps) return fail("Maps aren't reachable from this run.");
-      const near = hereNow(ctx);
-      const out = await ctx.maps.geocode(address, { run_id: ctx.run_id, ...(near.ok ? { near: near.point } : {}) });
+      const near = searchNear(ctx);
+      const out = await ctx.maps.geocode(address, { run_id: ctx.run_id, ...(near ? { near } : {}) });
       if (!out.ok) return fail(out.error);
       const best = out.value[0];
       if (!best) return fail(`OpenStreetMap found nothing for "${address}". Ask for a fuller address.`);
