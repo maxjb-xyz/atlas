@@ -138,7 +138,7 @@ The outbox does three things:
    - approvals (§12);
    - the secrets scrubber;
    - sharing rules (§7);
-   - the public-query check, so private details never go into a web search. Private means a secret, an email address, a phone number, a street address Atlas keeps, or where you are; names, places and topics aren't, on their own (decided 2026-10-22). Places are the one exception, and only for the maps service the owner picked (§19.1): a saved address or where you are can go to it for a route, travel time or what's nearby, and nowhere else. Weather gets only a rough area, about 10 km across (decided 2026-10-22, for M4).
+   - the public-query check, so private details never go into a web search. Private means a secret, an email address, a phone number, a street address Atlas keeps, or where you are; names, places and topics aren't, on their own (decided 2026-10-22). Places are the one exception, and only for the maps services (§19.1): a saved address or where you are can go to them for a pin, a route, travel time or what's nearby, and nowhere else. Weather gets only a rough area, about 10 km across (decided 2026-10-22, for M4).
 3. **Writes a delivery receipt** into the log.
 
 ---
@@ -650,7 +650,7 @@ Kinds of node:
 
 The node protocol is public, so anyone can build a node.
 
-**The first node is the desktop app** (decided 2026-10-22, for M4): the Tauri app of §21.10, for a Mac with Apple silicon first. GitHub Actions builds it on a Mac and puts it on the repo's releases. It isn't signed yet, so macOS asks once before opening it.
+**The first node is the desktop app** (decided 2026-10-22, for M4): the Tauri app of §21.10, for a Mac with Apple silicon first. GitHub Actions builds it on a Mac only when a release is published (or by hand), and attaches it to the release. It isn't signed yet, so macOS asks once before opening it.
 
 ---
 
@@ -727,7 +727,7 @@ Everything installs from the app: browse, preview what it can touch, install, un
 | Email | Email Service for sending, Email Routing for receiving |
 | Brains | AI Gateway |
 | Public webhooks | The Worker itself (OwnTracks, SMS, GitHub, email) |
-| Maps, routes and places | Not Cloudflare: Mapbox by key, picked by the owner (decided 2026-10-22). Directions with traffic for travel time, Search Box category search along a route for "a store off your way home", and its maps for the map and place views. Each call leaves through the outbox |
+| Maps, routes and places | Not Cloudflare: OpenStreetMap's free services by default, with no key or account (decided 2026-10-22): OpenFreeMap for the map, Nominatim for addresses, FOSSGIS's OSRM for routes, Overpass for what's nearby. Each is volunteer-run with fair-use rules, so Atlas asks little of them (sparse events, cached answers). Mapbox's free tier by key, picked in Settings, adds traffic to travel times and better store search. Pins always come from OpenStreetMap or the phone, since Mapbox's free answers can't be kept. Each call leaves through the outbox |
 | Weather | Not Cloudflare: Open-Meteo, which needs no key and is free for non-commercial use, as a personal Atlas is (decided 2026-10-22) |
 
 ### 19.2 Shape (to be validated in M0)
