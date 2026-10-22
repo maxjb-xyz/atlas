@@ -45,6 +45,8 @@ export interface ToolContext {
   web: WebApi | null;
   /** Where files' bytes live (§21.7): R2, or null where there's no bucket. */
   files: R2Bucket | null;
+  /** The workspace (§9.1): a container with a shell; null where it isn't reachable. */
+  workspace: WorkspaceApi | null;
   /** The browser (§9.1), for runs that may drive it; null elsewhere. */
   browser: BrowserApi | null;
   /** Automations, for owner runs; null elsewhere. */
@@ -85,6 +87,28 @@ export interface BrowserApi {
   takeOver(why: string): Promise<void>;
   close(): Promise<void>;
   where(): { open: boolean; url: string; title: string };
+}
+
+/** What a command in the workspace did. */
+export interface RunResult {
+  exit: number;
+  /** What it printed (stdout and stderr together), at most 200 KB. */
+  output: string;
+  ms: number;
+  /** Websites the workspace tried and wasn't allowed to reach. */
+  blocked: string[];
+  /** Said by the workspace along the way: setting up, starting, or why /workspace wasn't kept. */
+  notes: string[];
+}
+
+/** The workspace (§9.1) as tools reach it. */
+export interface WorkspaceApi {
+  run(command: string, o: { run_id: string; timeout_s: number }): Promise<RunResult>;
+  read(path: string): Promise<{ ok: true; bytes: ArrayBuffer } | { ok: false; error: string }>;
+  /** A link to a server on `port` in the workspace, for a day. */
+  preview(port: number): Promise<{ url: string; expires: number }>;
+  /** Websites the workspace may reach. */
+  sites(): string[];
 }
 
 export interface ExitApi {

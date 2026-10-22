@@ -23,6 +23,8 @@ export const seams: {
   websearch: WebSearchBinding | null | undefined;
   /** The browser: undefined uses Browser Run, null means none. */
   browser: import("../browser").BrowserDriver | null | undefined;
+  /** The workspace: undefined uses its Durable Object, null means none. */
+  workspace: import("../agent").WorkspaceStub | null | undefined;
 } = {
   makeBrain: null,
   calendar: undefined,
@@ -32,4 +34,5 @@ export const seams: {
   decide: undefined,
   websearch: undefined,
   browser: undefined,
+  workspace: undefined,
 };

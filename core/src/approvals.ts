@@ -52,10 +52,13 @@ export type Action =
       card: boolean;
       fields: Record<string, string>;
       press?: { ref: string; text: string };
-    };
+    }
+  /** Letting the workspace reach a website (§9.1), asked once per site and remembered; `key` is a vault key it will carry there. */
+  | { kind: "site"; host: string; name: string; why: string; key?: { entry: string; name: string } };
 
 /** Sending a form can't be taken back (VISION §12.1 lists submit with the things that can't be undone). */
-export const kindOf = (a: Action): ToolKind => (a.kind === "webhook" || (a.kind === "vault" && !a.card) ? "outside" : "irreversible");
+export const kindOf = (a: Action): ToolKind =>
+  a.kind === "webhook" || a.kind === "site" || (a.kind === "vault" && !a.card) ? "outside" : "irreversible";
 
 /** What earned trust is counted by: each webhook on its own. Nothing that can't be undone is ever trusted. */
 export const trustKey = (a: Action): string | null => (a.kind === "webhook" ? `webhook:${a.webhook}` : null);

@@ -393,6 +393,13 @@ export class Outbox {
   ): Promise<{ ok: boolean; text: string }> {
     if (a.kind === "browser") return this.#submit(a, o);
     if (a.kind === "vault") return this.#fill(a, o);
+    if (a.kind === "site") {
+      const sites = getState<string[]>(this.sql, "workspace_sites") ?? [];
+      setState(this.sql, "workspace_sites", [...new Set([...sites, a.host])]);
+      if (a.key) touchEntry(this.sql, a.key.entry, (x) => ({ ...x, allowed: [...new Set([...x.allowed, siteFor(x, a.host)])] }));
+      this.receipt(o.run_id, { channel: "workspace", to: a.host, text: a.name, by: o.by, ok: true, note: "Allowed from now on." });
+      return { ok: true, text: `The workspace can reach ${a.host} now${a.key ? `, carrying ${a.key.name}` : ""}.` };
+    }
     if (a.kind === "delete") {
       const touched = deleteRecord(this.sql, a.record, { via: "owner", ...(o.run_id ? { run_id: o.run_id } : {}) });
       // Open apps get the blanked rows at once, so the deleted words don't linger on screen.

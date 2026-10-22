@@ -9,6 +9,7 @@ import { type AuthStore, handleAuth, owner, sameOrigin } from "./auth";
 export { PersonAgent } from "./agent";
 // Helpers are sub-agents of the person agent; the class must be exported by this name.
 export { HelperAgent } from "./helper";
+export { Workspace, WorkspaceEgress } from "./workspace";
 
 /** The agent's HTTP-facing methods, typed narrowly (RPC stubs can't infer the log's recursive JSON type). */
 interface OwnerApi {
@@ -18,6 +19,7 @@ interface OwnerApi {
   apiCharacterCheck(): Promise<unknown>;
   apiApprove(id: string): Promise<{ ok: boolean; text: string }>;
   apiFile(id: string): Promise<{ key: string; name: string; type: string } | null>;
+  apiWorkspaceGate(): Promise<{ allow: string[]; inject: Record<string, string> }>;
 }
 
 /** Passkeys, challenges and sessions live in the owner's agent. */
@@ -30,6 +32,12 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // A preview of a server in the workspace (§9.1): the link's token is the permission, and the
+    // workspace serves it sandboxed, so it can't act as Atlas with the owner's sign-in.
+    if (/^\/preview\/[0-9a-f]{36}(\/|$)/.test(path)) {
+      return env.WORKSPACE.getByName(OWNER).fetch(request);
+    }
 
     if (path.startsWith("/api/")) {
       const auth = await handleAuth(request, env, path, () => authStore(env));
@@ -49,6 +57,13 @@ export default {
         if (typeof body.id !== "string" || body.id.length > 64) return json({ error: 'Send {"id": "..."}.' }, 400);
         const out = await agent.apiApprove(body.id);
         return json(out, out.ok ? 200 : 409);
+      }
+      // The workspace's terminal (§9.1): the owner's only, from the app's own page.
+      if (path === "/api/workspace/terminal" && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+        if (!sameOrigin(request)) return json({ error: "Wrong origin." }, 403);
+        const ws = env.WORKSPACE.getByName(OWNER);
+        await ws.setGate(await agent.apiWorkspaceGate());
+        return ws.fetch(new Request(`https://workspace/terminal${url.search}`, request));
       }
       // A file Atlas made (§21.7), from R2. It's served sandboxed, so an HTML or SVG file can't run scripts as Atlas.
       const file = /^\/api\/files\/([\w-]{1,64})$/.exec(path);

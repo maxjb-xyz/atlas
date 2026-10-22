@@ -99,6 +99,7 @@ export function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Re
     case "plan":
     case "research":
     case "browser":
+    case "workspace":
     case "document":
     case "code":
       return { view, names: {} };

@@ -67,7 +67,7 @@ export interface CalendarEventView {
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete" | "browser" | "vault";
+  kind: "webhook" | "delete" | "browser" | "vault" | "site";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -310,6 +310,9 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.browser"), action: z.enum(["take", "give", "close"]) }),
   /** Library's pages (§21.7). */
   z.object({ type: z.literal("atlas.pages") }),
+  /** The workspace (§9.1): keep a file from it in Library, or take back a site it may reach. */
+  z.object({ type: z.literal("atlas.workspace.keep"), path: z.string().min(1).max(500) }),
+  z.object({ type: z.literal("atlas.workspace.site.remove"), site: z.string().min(1).max(200) }),
   /** Library's files (§21.7), and deleting one. */
   z.object({ type: z.literal("atlas.files") }),
   z.object({ type: z.literal("atlas.file.delete"), id: z.string().max(64) }),
@@ -436,6 +439,8 @@ export type ServerMessage =
   | { type: "atlas.automations"; automations: AutomationView[]; suggestions: SuggestionView[] }
   | { type: "atlas.pages"; pages: PageSummary[] }
   | { type: "atlas.files"; files: import("./stage").FileRow[] }
+  /** What a command in the workspace prints, as it prints it (a progress hint; the tool's result is the truth). */
+  | { type: "atlas.workspace.out"; run_id: string; text: string }
   /** Keep worked: the new page, so the view can say where it went. */
   | { type: "atlas.page.kept"; id: string; name: string }
   | {

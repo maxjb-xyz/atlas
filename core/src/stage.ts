@@ -123,6 +123,9 @@ export const CodeStage = z.object({
   source,
 });
 
+/** Atlas's workspace (§9.1): its terminal, files and recent commands. There's one. */
+export const WorkspaceStage = z.object({ kind: z.literal("workspace") });
+
 /** Atlas's browser, live (§9.1): there's one, so the view only says to show it. */
 export const BrowserStage = z.object({ kind: z.literal("browser") });
 
@@ -146,6 +149,7 @@ export const StageView = z.discriminatedUnion("kind", [
   FileStage,
   DocumentStage,
   CodeStage,
+  WorkspaceStage,
 ]);
 export type StageView = z.infer<typeof StageView>;
 export type StageKind = StageView["kind"];
@@ -252,6 +256,18 @@ export interface BrowserState {
 
 export type BrowserStagePage = BrowserState & { kind: "browser" };
 
+/** The workspace as its view shows it: whether it's up, its files, the sites it may reach, and what ran lately. */
+export interface WorkspaceStagePage {
+  kind: "workspace";
+  available: boolean;
+  running: boolean;
+  /** /workspace, while the container is up (listing never starts it). */
+  files: Array<{ path: string; size: number; dir: boolean }> | null;
+  sites: string[];
+  runs: Array<{ id: string; at: number; command: string; exit: number | null; output: string; error?: string }>;
+  error?: string;
+}
+
 /** A file Atlas made (§21.7): what it is. Its bytes live in R2. */
 export interface FileRow {
   id: string;
@@ -279,7 +295,14 @@ export interface FileStagePage {
 
 /** What a view needs from the agent, or why it can't be shown any more. */
 export type StagePage =
-  AreaPage | PersonPage | AutomationPage | PagePage | BrowserStagePage | FileStagePage | { kind: "missing"; why: string };
+  | AreaPage
+  | PersonPage
+  | AutomationPage
+  | PagePage
+  | BrowserStagePage
+  | FileStagePage
+  | WorkspaceStagePage
+  | { kind: "missing"; why: string };
 
 /** The few words a view goes by: on its tab, its receipt and its compact card. */
 export function stageTitle(
@@ -294,6 +317,8 @@ export function stageTitle(
       return v.title;
     case "browser":
       return "Browser";
+    case "workspace":
+      return "Workspace";
     case "area":
       return names.area ?? v.area;
     case "person":

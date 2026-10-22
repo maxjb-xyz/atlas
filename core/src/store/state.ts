@@ -6,6 +6,12 @@
 import { parse, type Sql } from "./db";
 
 export type StateName =
+  /** The workspace's last twelve commands, for its view: what ran, its exit code and the end of its output. */
+  | "workspace_runs"
+  /** The app's address, from the last socket the owner opened: previews are links under it. */
+  | "origin"
+  /** Websites the workspace may reach (§9.1): each one asked once, then remembered. */
+  | "workspace_sites"
   /** Atlas's browser (§9.1): its Browser Run session, tab, and where it is. */
   | "browser"
   /** Set while the owner has the browser: why, since when, and whether Atlas asked for it. */

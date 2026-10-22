@@ -82,6 +82,8 @@ export interface State {
   /** The owner's pages (§21.7), once asked for. */
   pages: PageSummary[] | null;
   files: import("../../core/src/stage").FileRow[] | null;
+  /** What the workspace is printing for Atlas right now (a progress hint; the tool's result is the truth). */
+  workspaceOut: { run_id: string; text: string } | null;
   /** The page Keep just made, so the view can say where it went. */
   kept: { id: string; name: string } | null;
 }
@@ -113,6 +115,7 @@ const initial: State = {
   suggestions: [],
   pages: null,
   files: null,
+  workspaceOut: null,
   kept: null,
 };
 
@@ -260,6 +263,10 @@ function reduce(s: State, a: Action): State {
       return { ...s, pages: m.pages };
     case "atlas.files":
       return { ...s, files: m.files };
+    case "atlas.workspace.out": {
+      const prev = s.workspaceOut?.run_id === m.run_id ? s.workspaceOut.text : "";
+      return { ...s, workspaceOut: { run_id: m.run_id, text: (prev + m.text).slice(-40_000) } };
+    }
     case "atlas.page.kept":
       return { ...s, kept: { id: m.id, name: m.name } };
   }

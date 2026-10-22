@@ -43,6 +43,7 @@ function ctx(sql: Sql, opts: { embed?: Embedder | null; source?: string | null }
     web: null,
     browser: null,
     files: null,
+    workspace: null,
   };
 }
 

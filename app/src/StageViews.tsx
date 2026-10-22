@@ -4,7 +4,7 @@
 // opens it on Home's stage. Library's area and person pages are these same
 // views (§21.2).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Segment } from "../../core/src/pages";
 import type { LogRow, RecordView } from "../../core/src/protocol";
 import type { AreaPage, PagePage, PersonPage, StageMessage, StageView } from "../../core/src/stage";
@@ -24,6 +24,9 @@ export interface Shown {
 export function shownFrom(row: LogRow): Shown | null {
   const r = row.body.receipt as { text?: string; view?: StageView } | undefined;
   if (!r?.view || row.body.ok === false) return null;
+  // There's one workspace and one browser: their tab goes by that, not by what was run or opened.
+  if (r.view.kind === "workspace") return { id: row.id, view: r.view, title: "Workspace" };
+  if (r.view.kind === "browser") return { id: row.id, view: r.view, title: "Browser" };
   // "Showing · X", "Made page · X", "Changed page · X · version 2": the view goes by X.
   const title = String(r.text ?? "")
     .replace(/^(Showing|Made page|Changed page) · /, "")
@@ -45,7 +48,9 @@ export const pageRef = (v: StageView) =>
             ? "browser"
             : v.kind === "file"
               ? `file:${v.file}`
-              : null;
+              : v.kind === "workspace"
+                ? "workspace"
+                : null;
 
 /** The live page behind an area or person view: undefined while it loads. Asked again when what it's built from changes. */
 function usePage(atlas: Atlas, view: StageView) {
@@ -93,7 +98,7 @@ export function StageSheet({
   onClose?: () => void;
 }) {
   const v = shown.view;
-  const keep = v.kind !== "page" && v.kind !== "browser" && v.kind !== "file";
+  const keep = v.kind !== "page" && v.kind !== "browser" && v.kind !== "file" && v.kind !== "workspace";
   return (
     <Sheet className="pick" key={shown.id}>
       <div className={`sheet-in ${onClose ? "closable" : ""} ${keep ? "keepable" : ""}`}>
@@ -130,6 +135,7 @@ function ViewBody({
       {v.kind === "file" && <FileView atlas={atlas} view={v} onClose={onClose} />}
       {v.kind === "document" && <DocumentView view={v} onClose={onClose} />}
       {v.kind === "code" && <CodeView view={v} onClose={onClose} />}
+      {v.kind === "workspace" && <WorkspaceView atlas={atlas} view={v} onClose={onClose} />}
       {v.kind === "page" && <PageView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
     </>
   );
@@ -747,6 +753,181 @@ function BrowserView({ atlas, view, onClose }: { atlas: Atlas; view: Extract<Sta
   );
 }
 
+/**
+ * Atlas's workspace (§9.1): what it's running now, as it prints; a terminal
+ * of your own; its files, with Keep; the sites it may reach; and what ran
+ * lately. Opening the terminal starts the workspace; looking doesn't.
+ */
+function WorkspaceView({ atlas, view, onClose }: { atlas: Atlas; view: Extract<StageView, { kind: "workspace" }>; onClose?: () => void }) {
+  const page = usePage(atlas, view);
+  const [terminal, setTerminal] = useState(false);
+  const w = page && page.kind === "workspace" ? page : null;
+  const live = atlas.state.workspaceOut;
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="grid" />
+        <h1 className="disp">Workspace</h1>
+        {w && <span className={`tag ${w.running ? "ok" : ""}`}>{w.running ? "Running" : "Asleep"}</span>}
+        <span className="grow" />
+        {w?.available && (
+          <button className="btn sm" onClick={() => setTerminal(!terminal)}>
+            {terminal ? "Close terminal" : "Open terminal"}
+          </button>
+        )}
+        <Close onClose={onClose} />
+      </div>
+      {w === null ? (
+        <p className="lab">Looking</p>
+      ) : !w.available ? (
+        <p className="muted">{w.error ?? "This deployment has no workspace."}</p>
+      ) : (
+        <>
+          <p className="muted small" style={{ marginTop: -6 }}>
+            Atlas's own computer: bash, Python and Node, with files in /workspace. It sleeps after ten minutes without use.
+          </p>
+          {terminal && <Terminal />}
+          {live && !terminal && (
+            <>
+              <p className="lab" style={{ marginTop: 14 }}>
+                Atlas, live
+              </p>
+              <pre className="code-block mono workspace-live">{live.text}</pre>
+            </>
+          )}
+          <p className="lab" style={{ marginTop: 16 }}>
+            Files
+          </p>
+          {w.files === null ? (
+            <p className="faint small">The workspace is asleep; its files show when it's running.</p>
+          ) : w.files.length === 0 ? (
+            <p className="faint small">/workspace is empty.</p>
+          ) : (
+            <div className="rows">
+              {w.files.slice(0, 120).map((f) => (
+                <div className="r" key={f.path}>
+                  <span className="mono small grow clamp">
+                    {f.path}
+                    {f.dir ? "/" : ""}
+                  </span>
+                  {!f.dir && <span className="mono faint small">{sizeOf(f.size)}</span>}
+                  {!f.dir && (
+                    <button className="link small" onClick={() => atlas.send({ type: "atlas.workspace.keep", path: f.path })}>
+                      Keep
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="lab" style={{ marginTop: 16 }}>
+            Websites it can reach
+          </p>
+          {w.sites.length ? (
+            <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+              {w.sites.map((s) => (
+                <span key={s} className="tag">
+                  {s}{" "}
+                  <button className="link small" onClick={() => atlas.send({ type: "atlas.workspace.site.remove", site: s })}>
+                    Remove
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="faint small">None yet. Atlas asks you before the workspace reaches any website.</p>
+          )}
+          {w.runs.length > 0 && (
+            <>
+              <p className="lab" style={{ marginTop: 16 }}>
+                Lately
+              </p>
+              <div className="rows">
+                {w.runs.map((r) => (
+                  <details className="r workspace-run" key={`${r.id}-${r.at}`}>
+                    <summary className="row" style={{ flexWrap: "nowrap" }}>
+                      <span className={`mono small ${r.exit === 0 ? "" : "err"}`} style={{ flex: "none" }}>
+                        {r.exit === 0 ? "✓" : `✗ ${r.exit ?? ""}`}
+                      </span>
+                      <span className="mono small grow clamp">{r.command.split("\n")[0]}</span>
+                      <span className="lab faint" style={{ flex: "none" }}>
+                        {shortDay(r.at)}
+                      </span>
+                    </summary>
+                    <pre className="code-block mono">{r.error ?? (r.output || "(nothing printed)")}</pre>
+                  </details>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+/** A terminal into the workspace: a shell of your own (tmux), over a WebSocket through the Worker. */
+function Terminal() {
+  const box = useRef<HTMLDivElement | null>(null);
+  const [state, setState] = useState("Connecting…");
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    let gone = false;
+    let cleanup = () => {};
+    void (async () => {
+      const [{ Terminal: XTerm }, { FitAddon }] = await Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")]);
+      await import("@xterm/xterm/css/xterm.css");
+      if (gone) return;
+      const css = getComputedStyle(document.documentElement);
+      const term = new XTerm({
+        fontFamily: "Geist Mono, ui-monospace, monospace",
+        fontSize: 13,
+        cursorBlink: true,
+        theme: {
+          background: css.getPropertyValue("--win").trim(),
+          foreground: css.getPropertyValue("--tx").trim(),
+          cursor: css.getPropertyValue("--ac").trim(),
+        },
+      });
+      const fit = new FitAddon();
+      term.loadAddon(fit);
+      term.open(el);
+      fit.fit();
+      const ws = new WebSocket(
+        `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/workspace/terminal?cols=${term.cols}&rows=${term.rows}`,
+      );
+      ws.binaryType = "arraybuffer";
+      ws.onopen = () => setState("");
+      ws.onmessage = (e) => term.write(typeof e.data === "string" ? e.data : new Uint8Array(e.data as ArrayBuffer));
+      ws.onclose = (e) => setState(e.reason || "The terminal closed.");
+      const enc = new TextEncoder();
+      const typed = term.onData((d) => ws.readyState === 1 && ws.send(enc.encode(d)));
+      const resized = term.onResize(({ cols, rows }) => ws.readyState === 1 && ws.send(JSON.stringify({ cols, rows })));
+      const onWindow = () => fit.fit();
+      window.addEventListener("resize", onWindow);
+      term.focus();
+      cleanup = () => {
+        window.removeEventListener("resize", onWindow);
+        typed.dispose();
+        resized.dispose();
+        ws.close();
+        term.dispose();
+      };
+    })();
+    return () => {
+      gone = true;
+      cleanup();
+    };
+  }, []);
+  return (
+    <>
+      {state && <p className="faint small">{state}</p>}
+      <div className="terminal-box" ref={box} />
+    </>
+  );
+}
+
 /** A copy button that says it worked. */
 function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
@@ -876,7 +1057,9 @@ function FileView({ atlas, view, onClose }: { atlas: Atlas; view: Extract<StageV
         ))}
       {p.kind === "image" && <img className="file-image" src={`${f.url}?inline=1`} alt={f.name} />}
       {p.kind === "pdf" && <iframe className="browser-live" src={`${f.url}?inline=1`} title={f.name} />}
-      {p.kind === "none" && <p className="muted small">The stage can't show a {f.type} file. Download it to open it.</p>}
+      {p.kind === "none" && (
+        <p className="muted small">The stage can't show a .{f.name.split(".").pop()} file. Download it to open it in its app.</p>
+      )}
       {"more" in p && p.more && <p className="faint small">That's the start of it; download it for the rest.</p>}
     </>
   );
@@ -889,6 +1072,7 @@ function viewLabel(atlas: Atlas, v: StageView): string {
   if (v.kind === "automation") return atlas.state.automations?.find((a) => a.id === v.automation)?.name ?? "An automation";
   if (v.kind === "page") return "A page";
   if (v.kind === "browser") return "The browser";
+  if (v.kind === "workspace") return "The workspace";
   if (v.kind === "file") return atlas.state.files?.find((f) => f.id === v.file)?.name ?? "A file";
   return v.title;
 }
@@ -1104,6 +1288,7 @@ const KIND: Record<StageView["kind"], string> = {
   file: "File",
   document: "Document",
   code: "Code",
+  workspace: "Workspace",
 };
 
 export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown; onOpen: () => void }) {
@@ -1132,18 +1317,20 @@ export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown
                   ? atlas.state.pages?.find((p) => p.id === v.page)?.preview || "A page you keep."
                   : v.kind === "browser"
                     ? "Atlas's browser, live."
-                    : v.kind === "file"
-                      ? (atlas.state.files?.find((f) => f.id === v.file)?.note ?? "A file to open or download.")
-                      : v.kind === "document"
-                        ? v.text.slice(0, 160)
-                        : v.kind === "code"
-                          ? `${v.language} · ${v.code.split("\n").length} lines`
-                          : v.kind === "research"
-                            ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"} · ${v.sources
-                                .slice(0, 3)
-                                .map((x) => hostOf(x.url))
-                                .join(", ")}`
-                            : "What Atlas knows about them, and where they came up.";
+                    : v.kind === "workspace"
+                      ? "Atlas's computer: its terminal and files."
+                      : v.kind === "file"
+                        ? (atlas.state.files?.find((f) => f.id === v.file)?.note ?? "A file to open or download.")
+                        : v.kind === "document"
+                          ? v.text.slice(0, 160)
+                          : v.kind === "code"
+                            ? `${v.language} · ${v.code.split("\n").length} lines`
+                            : v.kind === "research"
+                              ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"} · ${v.sources
+                                  .slice(0, 3)
+                                  .map((x) => hostOf(x.url))
+                                  .join(", ")}`
+                              : "What Atlas knows about them, and where they came up.";
   return (
     <div className="stage-card rise">
       <span className="lab">

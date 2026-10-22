@@ -48,7 +48,9 @@ export function ApprovalCard({ atlas, a }: { atlas: Atlas; a: ApprovalView }) {
                     ? "Sends a form"
                     : s.kind === "vault"
                       ? "Uses the vault"
-                      : "Reaches outside"}
+                      : s.kind === "site"
+                        ? "Opens a website to the workspace"
+                        : "Reaches outside"}
               </span>
             </div>
             <p className="small">{s.detail}</p>

@@ -420,6 +420,15 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
 }
 
 function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
+  if (a.kind === "site") {
+    return {
+      kind: "site",
+      title: a.name,
+      detail: `${a.why}${a.key ? ` Its requests there will carry your ${a.key.name} from the vault; the workspace never sees the key.` : ""}`,
+      where: a.host,
+      undo: "Remembered for this site and its subdomains. Remove it under Websites it can reach, in the workspace on the stage.",
+    };
+  }
   if (a.kind === "vault") {
     const e = findEntry(sql, a.entry);
     const fields = Object.keys(a.fields).map((f) => (e ? (FIELDS[e.kind][f] ?? f) : f).toLowerCase());

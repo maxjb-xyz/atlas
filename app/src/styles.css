@@ -2010,3 +2010,26 @@ button.chip:hover {
   border: 1px solid var(--sep);
   border-radius: 8px;
 }
+
+/* The workspace (M3): Atlas's live output and the terminal. */
+.workspace-live {
+  max-height: 40vh;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.workspace-run summary {
+  cursor: pointer;
+  list-style: none;
+}
+.workspace-run[open] .code-block {
+  margin-top: 8px;
+  max-height: 40vh;
+  white-space: pre-wrap;
+}
+.terminal-box {
+  height: min(60vh, 560px);
+  padding: 8px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--win);
+}

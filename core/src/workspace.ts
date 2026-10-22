@@ -1,0 +1,445 @@
+// The workspace (§9.1): a container per person, with a shell, Python, Node,
+// git and files, driven by its own Durable Object (Sandbox SDK 1.0's way:
+// `ctx.container`, no SDK class). It starts from Cloudflare's managed
+// Debian image, so deploying needs no Docker; the first start installs
+// Python and the rest once and keeps that as a snapshot to start from.
+//
+// Nothing leaves it unless the owner said yes to that website: the
+// container has no internet of its own, and every request goes through
+// `WorkspaceEgress`, which lets through only approved sites and adds a
+// vault key to a site's requests outside the container (§15). /workspace
+// is kept in R2 after each command and put back when a new container
+// starts, so files outlive the container.
+
+import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+
+const IMAGE = "cloudflare/debian-trixie";
+/** How long the container stays up after the last use. Container time is billed while it waits. */
+const IDLE_MS = 10 * 60_000;
+/** What the first start installs. Changing it changes BASE, so the next start makes a new snapshot. */
+const PACKAGES = [
+  "python3",
+  "python3-pip",
+  "python3-venv",
+  "python3-pandas",
+  "python3-openpyxl",
+  "python3-docx",
+  "python3-reportlab",
+  "python3-matplotlib",
+  "python3-requests",
+  "git",
+  "curl",
+  "ca-certificates",
+  "zip",
+  "unzip",
+  "jq",
+  "sqlite3",
+  "file",
+  "tmux",
+];
+const BASE = `atlas-base-1:${PACKAGES.join(",")}`;
+/** Where the setup's packages come from: allowed only while setting up. */
+const SETUP_HOSTS = ["deb.debian.org", "security.debian.org"];
+/** /workspace bigger than this isn't kept between containers (it says so). */
+const KEEP_LIMIT = 200_000_000;
+/** The most of a command's output that comes back. */
+const OUTPUT_LIMIT = 200_000;
+const BACKUP = (ws: string) => `workspace/${ws}.tgz`;
+
+const CERTS = "/etc/ssl/certs/ca-certificates.crt";
+/** Every command's environment: the container's CA trusted everywhere (the egress gate re-signs HTTPS). */
+const ENV: Record<string, string> = {
+  HOME: "/root",
+  LANG: "C.UTF-8",
+  TERM: "dumb",
+  PYTHONUNBUFFERED: "1",
+  DEBIAN_FRONTEND: "noninteractive",
+  SSL_CERT_FILE: CERTS,
+  REQUESTS_CA_BUNDLE: CERTS,
+  PIP_CERT: CERTS,
+  NODE_EXTRA_CA_CERTS: "/etc/cloudflare/certs/cloudflare-containers-ca.crt",
+  GIT_SSL_CAINFO: CERTS,
+};
+
+/** One line of a run's stream. */
+export type RunEvent =
+  { note: string } | { out: string } | { done: { exit: number; ms: number; blocked: string[]; kept: string } } | { error: string };
+
+interface Gate {
+  /** The workspace's name, so a refusal can be noted there. */
+  ws: string;
+  /** Hostnames it may reach; "example.com" also covers its subdomains. */
+  allow: string[];
+  /** A header value to add to a host's requests (a vault key, as "Bearer …"). */
+  inject: Record<string, string>;
+}
+
+const allowed = (host: string, allow: string[]) => allow.some((a) => host === a || host.endsWith(`.${a}`));
+
+/**
+ * Every request the container makes comes here (§9.1, §15). An approved
+ * site goes through, with its vault key added when there is one; anything
+ * else is refused with a reason the command can print, and noted, so Atlas
+ * knows which site to ask about.
+ */
+export class WorkspaceEgress extends WorkerEntrypoint<Env, Gate> {
+  override async fetch(req: Request): Promise<Response> {
+    const host = new URL(req.url).hostname.toLowerCase();
+    const gate = this.ctx.props;
+    if (!allowed(host, gate.allow)) {
+      await this.env.WORKSPACE.getByName(gate.ws)
+        .noteBlocked(host)
+        .catch(() => {});
+      return new Response(`Atlas's workspace can't reach ${host}: the owner hasn't allowed it yet.\n`, { status: 403 });
+    }
+    const key = Object.entries(gate.inject).find(([h]) => host === h || host.endsWith(`.${h}`))?.[1];
+    if (!key) return fetch(req);
+    const r = new Request(req);
+    r.headers.set("authorization", key);
+    return fetch(r);
+  }
+}
+
+interface Saved {
+  snapshot: { id: string; base: string } | null;
+}
+
+/** A preview link: a port in the container, reachable at /preview/<token>/ until it expires. */
+interface Preview {
+  port: number;
+  expires: number;
+}
+
+/** How long a preview link works. Anyone with the link can open it, like Cloudflare's own preview URLs. */
+const PREVIEW_MS = 24 * 3600_000;
+
+/** Quotes a string for bash. */
+const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+export class Workspace extends DurableObject<Env> {
+  #blocked = new Set<string>();
+  #starting: Promise<void> | null = null;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    const c = ctx.container;
+    if (c?.running) void ctx.blockConcurrencyWhile(() => c.setInactivityTimeout(IDLE_MS));
+  }
+
+  get #c(): Container {
+    const c = this.ctx.container;
+    if (!c) throw new Error("This deployment has no workspace container (the Workspace class isn't bound to a container application).");
+    return c;
+  }
+
+  get #name(): string {
+    return this.ctx.id.name ?? "owner";
+  }
+
+  async #saved(): Promise<Saved> {
+    return (await this.ctx.storage.get<Saved>("saved")) ?? { snapshot: null };
+  }
+
+  /** A site the gate refused during a command. */
+  async noteBlocked(host: string): Promise<void> {
+    this.#blocked.add(host);
+  }
+
+  /** Whether the container is up now. */
+  async status(): Promise<{ running: boolean; ready: boolean }> {
+    const saved = await this.#saved();
+    return { running: Boolean(this.ctx.container?.running), ready: saved.snapshot?.base === BASE };
+  }
+
+  async #exec(
+    cmd: string,
+    o: { stdin?: ReadableStream; timeoutS?: number } = {},
+  ): Promise<{ exit: number; out: string; bytes: ArrayBuffer }> {
+    const p = await this.#c.exec(["bash", "-lc", o.timeoutS ? `timeout -k 5 ${o.timeoutS} bash -lc ${sh(cmd)}` : cmd], {
+      env: ENV,
+      cwd: "/",
+      stderr: "combined",
+      ...(o.stdin ? { stdin: o.stdin } : {}),
+    });
+    const r = await p.output();
+    return { exit: r.exitCode, out: new TextDecoder().decode(r.stdout), bytes: r.stdout };
+  }
+
+  async #gate(allow: string[], inject: Record<string, string>): Promise<void> {
+    const gw = (this.ctx.exports as unknown as { WorkspaceEgress(o: { props: Gate }): Fetcher }).WorkspaceEgress({
+      props: { ws: this.#name, allow, inject },
+    });
+    await this.#c.interceptOutboundHttps("*", gw);
+    await this.#c.interceptAllOutboundHttp(gw);
+  }
+
+  /**
+   * Starts the container if it isn't up: from the setup snapshot when there
+   * is one, else from the managed image, installing the packages and
+   * keeping a snapshot. Then trusts the gate's certificate and puts
+   * /workspace back from R2.
+   */
+  async #up(say: (note: string) => Promise<void>): Promise<void> {
+    if (this.ctx.container?.running) return;
+    this.#starting ??= (async () => {
+      const saved = await this.#saved();
+      const fromSnapshot = saved.snapshot?.base === BASE ? saved.snapshot : null;
+      const start = async (snap: { id: string } | null) => {
+        this.#c.start({
+          ...(snap ? { containerSnapshot: { id: snap.id } } : { image: IMAGE }),
+          entrypoint: ["sleep", "infinity"],
+          enableInternet: false,
+          instance: "basic",
+        });
+        await this.#c.setInactivityTimeout(IDLE_MS);
+        const ok = await this.#exec("true").then(
+          (r) => r.exit === 0,
+          () => false,
+        );
+        return ok;
+      };
+      await say(fromSnapshot ? "Starting the workspace." : "Setting up the workspace for the first time (a minute or two).");
+      let ok = await start(fromSnapshot);
+      if (!ok && fromSnapshot) {
+        // The snapshot ran out (they last 30 days unused): set up again from the image.
+        await this.#c.destroy("snapshot expired").catch(() => {});
+        await this.ctx.storage.put<Saved>("saved", { snapshot: null });
+        await say("The workspace's saved setup was gone, so it's setting up again.");
+        ok = await start(null);
+      }
+      if (!ok) throw new Error("The workspace container didn't start.");
+      // The gate's certificate appears once a gate is registered, so register one (setup's package sites, or nothing) first.
+      const settingUp = !(await this.#saved()).snapshot;
+      await this.#gate(settingUp ? SETUP_HOSTS : [], {});
+      const trust = await this.#exec(
+        "for i in $(seq 1 50); do [ -s /etc/cloudflare/certs/cloudflare-containers-ca.crt ] && break; sleep 0.2; done; " +
+          "mkdir -p /usr/local/share/ca-certificates /workspace && " +
+          "cp /etc/cloudflare/certs/cloudflare-containers-ca.crt /usr/local/share/ca-certificates/ && " +
+          "(update-ca-certificates >/dev/null 2>&1 || cat /usr/local/share/ca-certificates/cloudflare-containers-ca.crt >> /etc/ssl/certs/ca-certificates.crt)",
+      );
+      if (trust.exit !== 0) throw new Error(`The workspace couldn't trust its gate's certificate: ${trust.out.slice(-300)}`);
+      if (settingUp) {
+        const setup = await this.#exec(
+          `apt-get update -qq && apt-get install -y -qq --no-install-recommends ${PACKAGES.join(" ")} >/tmp/setup.log 2>&1 || (tail -40 /tmp/setup.log; exit 1)`,
+          { timeoutS: 900 },
+        );
+        if (setup.exit !== 0) throw new Error(`Setting up the workspace failed: ${setup.out.slice(-1_500)}`);
+        const snap = await this.#c.snapshotContainer({ name: "atlas-base" });
+        await this.ctx.storage.put<Saved>("saved", { snapshot: { id: snap.id, base: BASE } });
+      }
+      const backup = await this.env.FILES.get(BACKUP(this.#name));
+      if (backup) {
+        const r = await this.#exec("tar xzf - -C /", { stdin: backup.body });
+        if (r.exit !== 0) await say(`Couldn't put /workspace back from its copy: ${r.out.slice(-300)}`);
+      }
+    })().finally(() => {
+      this.#starting = null;
+    });
+    await this.#starting;
+  }
+
+  /** Keeps /workspace in R2, so it outlives the container. Says what happened. */
+  async #keep(): Promise<string> {
+    const size = await this.#exec("du -sb /workspace | cut -f1");
+    const n = Number(size.out.trim());
+    if (!Number.isFinite(n)) return "";
+    if (n > KEEP_LIMIT)
+      return `/workspace is ${Math.round(n / 1e6)} MB, over the ${KEEP_LIMIT / 1e6} MB that's kept between sessions; big files there are lost when the workspace sleeps.`;
+    const tar = await this.#exec("tar czf - -C / workspace");
+    if (tar.exit !== 0) return `Couldn't keep /workspace: ${new TextDecoder().decode(tar.bytes).slice(-200)}`;
+    await this.env.FILES.put(BACKUP(this.#name), tar.bytes);
+    return "";
+  }
+
+  /**
+   * Runs a command in /workspace with bash, at most `timeout_s` seconds,
+   * and streams what it prints as lines of JSON (RunEvent), ending with its
+   * exit code, how long it took and which sites the gate refused.
+   */
+  async run(o: {
+    command: string;
+    timeout_s: number;
+    allow: string[];
+    inject: Record<string, string>;
+  }): Promise<ReadableStream<Uint8Array>> {
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+    const w = writable.getWriter();
+    const enc = new TextEncoder();
+    const send = (e: RunEvent) => w.write(enc.encode(`${JSON.stringify(e)}\n`));
+    void (async () => {
+      const t0 = Date.now();
+      try {
+        await this.#up((note) => send({ note }));
+        await this.#gate(o.allow, o.inject);
+        this.#blocked.clear();
+        const p = await this.#c.exec(["bash", "-lc", `cd /workspace && timeout -k 5 ${o.timeout_s} bash -lc ${sh(o.command)}`], {
+          env: ENV,
+          stderr: "combined",
+        });
+        let sent = 0;
+        const reader = p.stdout!.getReader();
+        const dec = new TextDecoder();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (sent < OUTPUT_LIMIT) {
+            const text = dec.decode(value, { stream: true });
+            sent += text.length;
+            await send({ out: sent > OUTPUT_LIMIT ? `${text.slice(0, text.length - (sent - OUTPUT_LIMIT))}\n… (output cut)` : text });
+          }
+        }
+        const exit = await p.exitCode;
+        const kept = await this.#keep();
+        await send({ done: { exit, ms: Date.now() - t0, blocked: [...this.#blocked], kept } });
+      } catch (err) {
+        console.error(JSON.stringify({ at: "workspace.run", error: err instanceof Error ? err.message : String(err) }));
+        await send({ error: err instanceof Error ? err.message : String(err) });
+      } finally {
+        await w.close().catch(() => {});
+      }
+    })();
+    return readable;
+  }
+
+  /** The gate for what the owner does in the terminal: the same sites and keys as Atlas's commands. */
+  async setGate(gate: { allow: string[]; inject: Record<string, string> }): Promise<void> {
+    this.#lastGate = gate;
+  }
+
+  #lastGate: { allow: string[]; inject: Record<string, string> } = { allow: [], inject: {} };
+
+  /** A link to a server listening on `port` in the workspace, for a day. */
+  async preview(port: number): Promise<{ token: string; expires: number }> {
+    const token = [...crypto.getRandomValues(new Uint8Array(18))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const expires = Date.now() + PREVIEW_MS;
+    const all = ((await this.ctx.storage.get<Record<string, Preview>>("previews")) ?? {}) as Record<string, Preview>;
+    for (const [t, p] of Object.entries(all)) if (p.expires < Date.now()) delete all[t];
+    all[token] = { port, expires };
+    await this.ctx.storage.put("previews", all);
+    return { token, expires };
+  }
+
+  /**
+   * The terminal (a WebSocket at /terminal, the owner's, through the Worker)
+   * and previews (/preview/<token>/…). The terminal is tmux in a PTY, so
+   * reopening it finds the same shell. Keystrokes arrive as binary
+   * messages, a resize as JSON text: { cols, rows }.
+   */
+  override async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const pv = /^\/preview\/([0-9a-f]{36})(\/.*)?$/.exec(url.pathname);
+    if (pv) return this.#preview(request, pv[1]!, pv[2] ?? "/");
+    if (url.pathname !== "/terminal" || request.headers.get("upgrade")?.toLowerCase() !== "websocket")
+      return new Response("Not found", { status: 404 });
+    const pair = new WebSocketPair();
+    const [client, server] = [pair[0], pair[1]];
+    server.accept();
+    const say = (text: string) => server.send(new TextEncoder().encode(`\r\n\x1b[2m${text}\x1b[0m\r\n`));
+    void (async () => {
+      try {
+        await this.#up(async (note) => say(note));
+        await this.#gate(this.#lastGate.allow, this.#lastGate.inject);
+        const cols = Number(url.searchParams.get("cols")) || 100;
+        const rows = Number(url.searchParams.get("rows")) || 30;
+        const p = await this.#c.exec(["tmux", "new-session", "-A", "-s", "main"], {
+          env: { ...ENV, TERM: "xterm-256color" },
+          cwd: "/workspace",
+          pty: { cols, rows },
+        });
+        const stdin = p.stdin!.getWriter();
+        // Keystrokes go in in order, one write after another.
+        let writes: Promise<void> = Promise.resolve();
+        server.addEventListener("message", (e) => {
+          if (typeof e.data === "string") {
+            try {
+              const m = JSON.parse(e.data) as { cols?: number; rows?: number };
+              if (m.cols && m.rows) p.resize(Math.min(500, m.cols), Math.min(200, m.rows));
+            } catch {
+              // Not a resize: ignore.
+            }
+            return;
+          }
+          // Binary messages can arrive as an ArrayBuffer, a view or a Blob, depending on the runtime.
+          const d = e.data as ArrayBuffer | ArrayBufferView | Blob;
+          const bytes =
+            d instanceof Blob
+              ? d.arrayBuffer().then((b) => new Uint8Array(b))
+              : Promise.resolve(ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : new Uint8Array(d));
+          writes = writes.then(() => bytes.then((b) => stdin.write(b))).catch(() => {});
+        });
+        // Closing the page detaches from tmux; the shell keeps running until the workspace sleeps.
+        server.addEventListener("close", () => {
+          void stdin.close().catch(() => {});
+        });
+        const reader = p.stdout!.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          server.send(value);
+        }
+        server.close(1000, "The shell ended.");
+      } catch (err) {
+        say(`The terminal couldn't start: ${err instanceof Error ? err.message : String(err)}`);
+        server.close(1011, "Couldn't start.");
+      }
+    })();
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /**
+   * A preview: the request goes to the port its token names, with the
+   * token's prefix taken off. It's served sandboxed (its own origin), so a
+   * page built in the workspace can't reach Atlas with the owner's sign-in.
+   */
+  async #preview(request: Request, token: string, path: string): Promise<Response> {
+    const all = (await this.ctx.storage.get<Record<string, Preview>>("previews")) ?? {};
+    const p = all[token];
+    if (!p || p.expires < Date.now()) return new Response("This preview link has run out. Ask Atlas for a new one.", { status: 404 });
+    if (!this.ctx.container?.running)
+      return new Response("The workspace is asleep, so the server behind this preview isn't running. Ask Atlas to start it again.", {
+        status: 503,
+      });
+    const url = new URL(request.url);
+    const target = new URL(`http://localhost:${p.port}${path}${url.search}`);
+    let res: Response;
+    try {
+      res = await this.#c.getTcpPort(p.port).fetch(new Request(target, request));
+    } catch (err) {
+      return new Response(`Nothing is answering on port ${p.port} in the workspace: ${err instanceof Error ? err.message : String(err)}`, {
+        status: 502,
+      });
+    }
+    const headers = new Headers(res.headers);
+    headers.set("content-security-policy", "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads");
+    headers.set("x-robots-tag", "noindex");
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  }
+
+  /** A file's bytes, from /workspace. */
+  async read(path: string): Promise<{ ok: true; bytes: ArrayBuffer } | { ok: false; error: string }> {
+    try {
+      await this.#up(async () => {});
+      const r = await this.#exec(`cat -- ${sh(path)}`);
+      return r.exit === 0
+        ? { ok: true, bytes: r.bytes }
+        : { ok: false, error: new TextDecoder().decode(r.bytes).slice(-300) || `Couldn't read ${path}.` };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** What's in /workspace, three levels deep, at most 300 entries. Only while the container is up: listing doesn't start it. */
+  async list(): Promise<Array<{ path: string; size: number; dir: boolean }> | null> {
+    if (!this.ctx.container?.running) return null;
+    const r = await this.#exec("cd /workspace && find . -maxdepth 3 -not -path '*/.*' -printf '%y %s %P\\n' | head -300");
+    if (r.exit !== 0) return [];
+    return r.out
+      .split("\n")
+      .filter((l) => l.trim() && !l.endsWith(" "))
+      .map((l) => {
+        const [y, size, ...p] = l.split(" ");
+        return { path: p.join(" "), size: Number(size), dir: y === "d" };
+      })
+      .filter((e) => e.path);
+  }
+}

@@ -67,23 +67,34 @@ import { webFetch, webSearch, webTools } from "./tools/web";
 import { browserTools } from "./tools/browser";
 import { vaultFill } from "./tools/vault";
 import { fileRead, fileTools } from "./tools/files";
-import { deleteFile, filePage, getFile, keyOf, listFiles } from "./files";
+import { workspaceTools } from "./tools/workspace";
+import type { RunEvent } from "./workspace";
+import { deleteFile, filePage, getFile, keyOf, listFiles, saveFile } from "./files";
 import { type BrowserDriver, type BrowserPage, BrowserRunDriver } from "./browser";
-import { findEntry, hiddenValues, removeEntry, saveEntry, siteFor, touchEntry } from "./vault";
+import { fillsOn, findEntry, hiddenValues, removeEntry, saveEntry, siteFor, touchEntry, vault } from "./vault";
 import { scrub } from "./outbox";
-import type { BrowserStagePage } from "./stage";
+import type { BrowserStagePage, WorkspaceStagePage } from "./stage";
 import { fetchPage, hostOf, PROVIDERS, search, type WebSearchBinding } from "./web";
 import { deletePage, getPage, listPages, pageSummaries, pageVersion, savePage, viewBlock } from "./pages";
 import { noticeAsk, openSuggestions, settleSuggestion } from "./suggestions";
 import { deleteAutomation, getAutomation, listAutomations, matchPhrase, saveAutomation, setAutomationState } from "./automations";
 import { automationView } from "./agent/views";
-import type { BrowserApi, ExitApi, Tool, ToolContext, ToolResult, WebApi } from "./tools/types";
+import type { BrowserApi, ExitApi, RunResult, Tool, ToolContext, ToolResult, WebApi, WorkspaceApi } from "./tools/types";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
 import type { Append } from "./store/log";
 
 export { seams };
+
+/** What the agent asks of the workspace's Durable Object (core/src/workspace.ts), or of a fake in tests. */
+export interface WorkspaceStub {
+  run(o: { command: string; timeout_s: number; allow: string[]; inject: Record<string, string> }): Promise<ReadableStream<Uint8Array>>;
+  read(path: string): Promise<{ ok: true; bytes: ArrayBuffer } | { ok: false; error: string }>;
+  list(): Promise<Array<{ path: string; size: number; dir: boolean }> | null>;
+  preview(port: number): Promise<{ token: string; expires: number }>;
+  status(): Promise<{ running: boolean; ready: boolean }>;
+}
 
 /** The one owner in M0. Members get their own agents in M5. */
 export const OWNER = "owner";
@@ -113,6 +124,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     ...browserTools,
     vaultFill,
     ...fileTools,
+    ...workspaceTools,
   ],
   atlas: [calendarRead, ...agendaTools, recall, ...webTools, fileRead],
   system: [],
@@ -130,6 +142,7 @@ const AUTOMATION_TOOLS: Tool[] = [
   ...browserTools,
   vaultFill,
   ...fileTools,
+  ...workspaceTools,
 ];
 /** A test run only looks: it changes nothing, and webhooks only say what they'd do (§13.4). */
 const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall, pageRead, webSearch, webFetch, fileRead];
@@ -197,6 +210,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           exit: null,
           automations: null,
           browser: null,
+          workspace: null,
           run_id: runId,
         };
       },
@@ -304,6 +318,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     // Which sign-in opened this socket (the Worker sets it), kept on the socket so it survives hibernation.
     const session = ctx.request.headers.get(SESSION_HEADER);
     if (session) connection.setState({ session } satisfies SocketState);
+    const origin = ctx.request.headers.get("origin");
+    if (origin && /^https?:\/\/[^/]+$/.test(origin) && getState<string>(this.#sql, "origin") !== origin)
+      setState(this.#sql, "origin", origin);
   }
 
   /** Closes the sockets opened by sessions that just ended; with no list, every socket. */
@@ -688,7 +705,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
               ? await this.#browserPage()
               : msg.view.kind === "file"
                 ? await filePage(this.#sql, this.#bucket(), msg.view.file)
-                : stagePage(this.#sql, msg.view),
+                : msg.view.kind === "workspace"
+                  ? await this.#workspacePage()
+                  : stagePage(this.#sql, msg.view),
         });
         return;
       case "atlas.browser":
@@ -697,6 +716,36 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       case "atlas.files":
         this.#send(connection, { type: "atlas.files", files: listFiles(this.#sql) });
         return;
+      case "atlas.workspace.keep": {
+        const bucket = this.#bucket();
+        const path = msg.path.startsWith("/") ? msg.path : `/workspace/${msg.path}`;
+        const got = await this.#workspaceApi.read(path);
+        if (!got.ok || !bucket) {
+          this.#send(connection, {
+            type: "atlas.error",
+            message: got.ok ? "This deployment has no file storage." : `Couldn't keep ${path}: ${got.error}`,
+          });
+          return;
+        }
+        try {
+          await saveFile(this.#sql, bucket, { name: path.split("/").pop()!, body: got.bytes, made_by: "owner" });
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
+        this.#broadcast({ type: "atlas.files", files: listFiles(this.#sql) });
+        return;
+      }
+      case "atlas.workspace.site.remove": {
+        const sites = getState<string[]>(this.#sql, "workspace_sites") ?? [];
+        setState(
+          this.#sql,
+          "workspace_sites",
+          sites.filter((s) => s !== msg.site),
+        );
+        append(this.#sql, { actor: "owner", kind: "settings.change", body: { workspace: "site removed", name: msg.site } });
+        this.#send(connection, { type: "atlas.stage.page", ref: "workspace", page: await this.#workspacePage() });
+        return;
+      }
       case "atlas.file.delete": {
         const bucket = this.#bucket();
         if (bucket) await deleteFile(this.#sql, bucket, msg.id, "owner");
@@ -1131,6 +1180,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       exit: this.#exit,
       web: this.#web,
       files: this.#bucket(),
+      workspace: this.#workspaceApi,
       browser: this.#browserApi,
       automations: {
         run: (a, o) => this.#automations.run(a, { why: o.why, inputs: o.inputs }),
@@ -1969,6 +2019,112 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
   }
 
+  // --- the workspace (§9.1) --------------------------------------------------------------
+
+  /** The owner's workspace: its Durable Object, or a fake in tests (never a real container). */
+  #ws(): WorkspaceStub | null {
+    if (seams.workspace !== undefined) return seams.workspace;
+    const ns = (this.env as { WORKSPACE?: Env["WORKSPACE"] }).WORKSPACE;
+    return this.env.ATLAS_TEST || !ns ? null : (ns.getByName(OWNER) as unknown as WorkspaceStub);
+  }
+
+  /** What the workspace may reach, and the vault keys its requests carry there (§15: only to sites the key is tied to and allowed on). */
+  #wsGate(): { allow: string[]; inject: Record<string, string> } {
+    const allow = getState<string[]>(this.#sql, "workspace_sites") ?? [];
+    const inject: Record<string, string> = {};
+    for (const site of allow) {
+      const key = vault(this.#sql).find((e) => e.kind === "key" && fillsOn(e, site) && e.allowed.includes(siteFor(e, site)));
+      if (key?.values.key) inject[site] = /\s/.test(key.values.key) ? key.values.key : `Bearer ${key.values.key}`;
+    }
+    return { allow, inject };
+  }
+
+  #workspaceApi: WorkspaceApi = {
+    run: async (command, o) => {
+      const ws = this.#ws();
+      if (!ws) throw new Error("This deployment has no workspace: the Workspace container isn't bound to the Worker.");
+      const stream = await ws.run({ command, timeout_s: o.timeout_s, ...this.#wsGate() });
+      const out: RunResult = { exit: -1, output: "", ms: 0, blocked: [], notes: [] };
+      const show = (text: string) => this.#broadcast({ type: "atlas.workspace.out", run_id: o.run_id, text });
+      show(`$ ${command}\n`);
+      const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (value) buf += value;
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          if (!line.trim()) continue;
+          const e = JSON.parse(line) as RunEvent;
+          if ("out" in e) {
+            out.output += e.out;
+            show(e.out);
+          } else if ("note" in e) {
+            out.notes.push(e.note);
+            show(`[${e.note}]\n`);
+          } else if ("done" in e) {
+            Object.assign(out, { exit: e.done.exit, ms: e.done.ms, blocked: e.done.blocked });
+            if (e.done.kept) out.notes.push(e.done.kept);
+          } else if ("error" in e) throw new Error(`The workspace failed: ${e.error}`);
+        }
+        if (done) break;
+      }
+      if (out.exit < 0) throw new Error("The workspace stopped before the command finished.");
+      // The workspace view's recent runs: the newest twelve, with the end of what each printed.
+      const runs = getState<WorkspaceStagePage["runs"]>(this.#sql, "workspace_runs") ?? [];
+      setState(
+        this.#sql,
+        "workspace_runs",
+        [
+          { id: o.run_id, at: Date.now(), command: command.slice(0, 2_000), exit: out.exit, output: out.output.slice(-4_000) },
+          ...runs,
+        ].slice(0, 12),
+      );
+      return out;
+    },
+    read: async (path) => {
+      const ws = this.#ws();
+      return ws ? ws.read(path) : { ok: false, error: "This deployment has no workspace." };
+    },
+    preview: async (port) => {
+      const ws = this.#ws();
+      if (!ws) throw new Error("This deployment has no workspace.");
+      const p = await ws.preview(port);
+      return { url: `${getState<string>(this.#sql, "origin") ?? ""}/preview/${p.token}/`, expires: p.expires };
+    },
+    sites: () => getState<string[]>(this.#sql, "workspace_sites") ?? [],
+  };
+
+  /** The workspace as its view shows it: up or asleep, its files while up, the sites it may reach, and what ran lately. */
+  async #workspacePage(): Promise<WorkspaceStagePage> {
+    const ws = this.#ws();
+    const runs = getState<WorkspaceStagePage["runs"]>(this.#sql, "workspace_runs") ?? [];
+    const sites = getState<string[]>(this.#sql, "workspace_sites") ?? [];
+    if (!ws)
+      return { kind: "workspace", available: false, running: false, files: null, sites, runs, error: "This deployment has no workspace." };
+    try {
+      const [status, files] = await Promise.all([ws.status(), ws.list()]);
+      return { kind: "workspace", available: true, running: status.running, files, sites, runs };
+    } catch (err) {
+      return {
+        kind: "workspace",
+        available: true,
+        running: false,
+        files: null,
+        sites,
+        runs,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /** What the Worker needs to open the terminal: the workspace's gate, so the owner's shell reaches what Atlas's commands can. */
+  async apiWorkspaceGate(): Promise<{ allow: string[]; inject: Record<string, string> }> {
+    return this.#wsGate();
+  }
+
   // --- approvals (§12) -----------------------------------------------------------
 
   /** The way out for tools: does an action now when its kind and earned trust allow, or puts it on this run's card. */
@@ -1986,6 +2142,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       }
       // The vault (§15): a site the owner said yes to fills without asking. The entry is tied to its
       // sites, so a page steering Atlas can't send it anywhere else; that, not the web-read rule, is the guard.
+      if (action.kind === "site" && this.#workspaceApi.sites().some((s) => action.host === s || action.host.endsWith(`.${s}`))) {
+        return { ok: true, output: { done: `The workspace can already reach ${action.host}.` } };
+      }
       if (action.kind === "vault") {
         const e = findEntry(this.#sql, action.entry);
         if (e && e.kind !== "card" && e.allowed.includes(siteFor(e, action.host))) {
