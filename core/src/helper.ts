@@ -60,14 +60,14 @@ const FIBER = "helper";
 export class HelperAgent extends Agent<Env> {
   /** Starts the job and returns at once; the result reaches the parent through `helperDone`. */
   async begin(job: HelperJob): Promise<void> {
-    void this.runFiber(FIBER, (f) => this.#work(job, null, f));
+    void this.runFiber(FIBER, (f) => this.#work(job, null, f)).catch(logFiber(job.id));
   }
 
   /** After a restart cut the job short: carry on from the last checkpoint. */
   override async onFiberRecovered(ctx: { name: string; snapshot: unknown | null }): Promise<void> {
     const snap = ctx.snapshot as Snapshot | null;
     if (ctx.name !== FIBER || !snap?.job) return;
-    void this.runFiber(FIBER, (f) => this.#work(snap.job, snap.at, f));
+    void this.runFiber(FIBER, (f) => this.#work(snap.job, snap.at, f)).catch(logFiber(snap.job.id));
   }
 
   /** For tests: the same path as a recovery after a restart. */
@@ -77,10 +77,17 @@ export class HelperAgent extends Agent<Env> {
 
   async #work(job: HelperJob, resume: Checkpoint | null, f: FiberContext): Promise<void> {
     f.stash({ job, at: resume } satisfies Snapshot);
-    const host = (await this.parentAgent(
-      // Imported lazily: the parent module imports this one.
-      (await import("./agent")).PersonAgent as never,
-    )) as unknown as HelperHost;
+    let host: HelperHost;
+    try {
+      host = (await this.parentAgent(
+        // Imported lazily: the parent module imports this one.
+        (await import("./agent")).PersonAgent as never,
+      )) as unknown as HelperHost;
+    } catch (err) {
+      // Nobody to hand anything to; the job's lease runs out and the parent counts it as lost, with this in the Worker log.
+      console.error(JSON.stringify({ at: "helper.parent", job: job.id, error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
 
     const tools = HELPER_TOOLS.filter((t) => job.tools.includes(t.name)).map(
       (t): Tool => ({ ...t, run: async (input: unknown) => host.helperTool(job.id, t.name, input) }) as Tool,
@@ -116,9 +123,24 @@ export class HelperAgent extends Agent<Env> {
     } catch (err) {
       outcome = { state: "failed", text: "", steps: 0, error: err instanceof Error ? err.message : String(err) };
     }
-    await host.helperDone(job.id, outcome);
+    // The parent may be restarting; try a few times before the job's lease decides.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await host.helperDone(job.id, outcome);
+        return;
+      } catch (err) {
+        if (attempt >= 3) {
+          console.error(JSON.stringify({ at: "helper.done", job: job.id, error: err instanceof Error ? err.message : String(err) }));
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+      }
+    }
   }
 }
+
+const logFiber = (jobId: string) => (err: unknown) =>
+  console.error(JSON.stringify({ at: "helper.fiber", job: jobId, error: err instanceof Error ? err.message : String(err) }));
 
 /** A brain that asks the parent to make the call, so the parent's chain, health and sign-ins stay the only ones. */
 function proxyBrain(host: HelperHost, jobId: string, choice: BrainChoice): Brain {

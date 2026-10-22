@@ -5,7 +5,7 @@
 import { Agent, type Connection, type ConnectionContext, type WSMessage } from "agents";
 import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } from "agents/voice";
 import { CalendarSense } from "./agent/calendar";
-import { correctAreas, DISCOVER_AFTER, discoveryPrompt, startDiscovered, tagPending, unfiled } from "./agent/areas";
+import { correctAreas, discoveryPrompt, readyToDiscover, startDiscovered, tagPending, triedDiscovery, unfiled } from "./agent/areas";
 import { HelperDesk } from "./agent/helpers";
 import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup";
 import { history as logHistory, historyStats, inbox, inboxDone, listRecords, runDetail } from "./agent/views";
@@ -29,7 +29,7 @@ import { CONTEXT_TOKENS, history, systemPrompt, tokens, withMessage } from "./co
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
 import { Outbox, StreamScrubber } from "./outbox";
 import { type AreaView, ClientMessage, type JobView, type ServerMessage, type SettingsView } from "./protocol";
-import { type AgendaItem, due, finish, lease, setScheduleId, upcoming } from "./store/agenda";
+import { type AgendaItem, due, finish, getItem, lease, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, type Sql } from "./store/db";
 import { type Actor, append, forRun, get as getRow, type LogRow, logTo, type Surface, thread } from "./store/log";
 import { indexNewMessages } from "./store/memory";
@@ -123,11 +123,18 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         await child.begin(job);
       },
       abort: (id) => this.dynamicAgents.abort(HelperAgent, id, "Stopped by the owner."),
-      report: (item, result) => this.#inLine(() => this.#reportJob(item, result)),
+      discard: (id) => this.dynamicAgents.delete(HelperAgent, id),
+      watch: async (item) => {
+        const s = await this.schedule(new Date(item.lease_until ?? item.due_at), "onAgendaDue", { id: item.id });
+        setScheduleId(this.#sql, item.id, s.id);
+      },
+      report: (item, result) => this.#tellJob(item, result),
       rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
       jobsChanged: (jobs) => this.#broadcast({ type: "atlas.jobs", jobs }),
     });
-    this.#helpers.sweep();
+    // Results that ended with nobody told before a restart are told now.
+    for (const { item, result } of this.#helpers.unreported()) this.#tellJob(item, result);
+    void this.#helpers.tidy();
     this.#chatgpt = new ChatGPTSignIn(this.#sql, {
       changed,
       signedIn: (models) => {
@@ -545,6 +552,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** Woken by the scheduler (a Durable Object alarm) when an agenda item is due. */
   async onAgendaDue(payload: { id: string }): Promise<void> {
+    // A job's wake is its helper's lease running out: if the job hasn't ended, the helper was lost.
+    if (getItem(this.#sql, payload.id)?.kind === "job") {
+      await this.keepAliveWhile(() => this.#helpers.lost(payload.id));
+      return;
+    }
     const item = lease(this.#sql, payload.id);
     if (!item) return;
     await this.keepAliveWhile(() => this.#inLine(() => this.#remind(item)));
@@ -592,6 +604,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const fallback =
       result.state === "done" ? `Finished: ${item.title}.\n\n${result.text}` : `"${item.title}" didn't finish: ${result.text}`;
     await this.#atlasSays(`job:${item.id}`, note, fallback);
+    this.#helpers.reported(item.id);
+  }
+
+  #tellJob(item: AgendaItem, result: { state: "done" | "failed"; text: string }): void {
+    void this.keepAliveWhile(() => this.#inLine(() => this.#reportJob(item, result))).catch((err: unknown) =>
+      console.error(JSON.stringify({ at: "jobs.report", job: item.id, error: err instanceof Error ? err.message : String(err) })),
+    );
   }
 
   /**
@@ -722,7 +741,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             ...o,
             system: helperSystem(settings, now),
             chain: settings.brains.main,
-            askedIn: sourceLogId ?? "",
+            askedIn: o.asked_in,
           });
           return { id: job.id };
         },
@@ -1032,10 +1051,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       for (let i = 0; i < 40; i++) {
         const pass = await tagPending(this.#sql, decider, { between: yieldNow });
         if (pass.changed.length) this.#broadcast({ type: "atlas.rows", rows: pass.changed.map((id) => getRow(this.#sql, id)!) });
-        if (pass.tagged === 0 && pass.unfiled === 0 && pass.changed.length === 0) break;
+        if (pass.seen < 50) break;
       }
       const waiting = unfiled(this.#sql);
-      if (waiting.length >= DISCOVER_AFTER) {
+      if (readyToDiscover(this.#sql, waiting)) {
+        triedDiscovery(this.#sql, waiting);
         const settings = readSettings(this.#sql);
         const runId = startRun(this.#sql, { actor: "atlas", trigger: "areas", surface: "none", role: "main" });
         const res = await runLoop(
@@ -1214,7 +1234,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   #makeBrain(choice: BrainChoice): Brain | null {
     if (seams.makeBrain) return seams.makeBrain(choice);
-    if (choice.provider === "workers-ai") return workersAIBrain(this.env.AI as never, choice.model);
+    // Tests never reach a real provider (CLAUDE.md), even from background work that outlives a test's fake.
+    if (choice.provider === "workers-ai") return this.env.ATLAS_TEST ? null : workersAIBrain(this.env.AI as never, choice.model);
     return this.#chatgpt.brain(choice.model);
   }
 

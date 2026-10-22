@@ -1,13 +1,13 @@
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
-import { HelperDesk } from "../src/agent/helpers";
+import { HelperDesk, LOST_AFTER_MS } from "../src/agent/helpers";
 import { BrainRouter } from "../src/brains/router";
 import { HelperAgent, type HelperJob } from "../src/helper";
 import { createItem, getItem } from "../src/store/agenda";
 import type { Sql } from "../src/store/db";
 import { migrate } from "../src/store/db";
-import { startRun } from "../src/store/runs";
+import { getRun, startRun, sweepStaleRuns } from "../src/store/runs";
 import { call, env, fakeCalendar, fakeEmbedder, say, scripted, type Step } from "./helpers";
 
 beforeEach(() => {
@@ -36,6 +36,26 @@ async function until<T>(fn: () => T | null | undefined, what: string, ms = 5_000
     await new Promise((r) => setTimeout(r, 20));
   }
   throw new Error(`timed out waiting for ${what}`);
+}
+
+/** A desk with nothing behind it, for the parent's side alone. */
+function testDesk(sql: Sql, over: Partial<ConstructorParameters<typeof HelperDesk>[0]> = {}) {
+  const reports: string[] = [];
+  const desk = new HelperDesk({
+    sql,
+    router: new BrainRouter(() => null),
+    makeBrain: () => null,
+    toolContext: () => ({}) as never,
+    launch: async () => {},
+    abort: () => {},
+    discard: async () => {},
+    watch: async () => {},
+    report: (item, result) => void reports.push(`${item.title}: ${result.state}: ${result.text}`),
+    rows: () => {},
+    jobsChanged: () => {},
+    ...over,
+  });
+  return Object.assign(desk, { reports });
 }
 
 const rowsOf = (sql: Sql, kind: string) =>
@@ -74,7 +94,7 @@ describe("helpers", () => {
       ).toEqual(["recall"]);
       expect(sql.exec<{ state: string; trigger: string }>(`SELECT state, trigger FROM runs WHERE id = ?`, helperRun).one()).toMatchObject({
         state: "replied",
-        trigger: expect.stringMatching(/^job:ag_/),
+        trigger: expect.stringMatching(/^helper:ag_/),
       });
       const jobs = await agent.apiJobs();
       expect(jobs[0]).toMatchObject({ title: "Riverside notes", state: "done", steps: 1 });
@@ -114,7 +134,15 @@ describe("helpers", () => {
         title: "Clashes",
         due_at: Date.now(),
         state: "running",
-        source: { via: "chat", detail: { brief: "Find clashes.", helper_run: run_id, tools: ["calendar_read"] } },
+        source: {
+          via: "chat",
+          detail: {
+            brief: "Find clashes.",
+            helper_run: run_id,
+            tools: ["calendar_read"],
+            chain: [{ provider: "chatgpt", model: "gpt-5.6-terra" }],
+          },
+        },
       });
       const job: HelperJob = {
         id: item.id,
@@ -153,17 +181,7 @@ describe("helpers", () => {
       const sql = state.storage.sql;
       migrate(sql);
       const aborted: string[] = [];
-      const desk = new HelperDesk({
-        sql,
-        router: new BrainRouter(() => null),
-        makeBrain: () => null,
-        toolContext: () => ({}) as never,
-        launch: async () => {},
-        abort: (id) => void aborted.push(id),
-        report: async () => {},
-        rows: () => {},
-        jobsChanged: () => {},
-      });
+      const desk = testDesk(sql, { abort: (id) => void aborted.push(id) });
       const job = await desk.start({ title: "Slow one", brief: "x", system: "s", tools: ["recall"], chain: [], askedIn: "" });
       const waiting = desk.wait(job.id, 5_000);
       expect(desk.stop(job.id)).toBe(true);
@@ -194,6 +212,60 @@ describe("helpers", () => {
       await agent.dynamicAgents.get(HelperAgent, item.id);
       const ws = await agent.apiJobs();
       expect(ws[0]).toMatchObject({ state: "running" });
+    });
+  });
+
+  it("are counted as lost when their lease runs out, and the owner is told why", async () => {
+    await runInDurableObject(fresh(), async (_agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      const watched: number[] = [];
+      const desk = testDesk(sql, { watch: async (item) => void watched.push(item.lease_until!) });
+      const job = await desk.start({ title: "Lost one", brief: "x", system: "s", tools: ["recall"], chain: [], askedIn: "run_x" });
+      expect(watched).toEqual([job.lease_until]);
+      expect(job.lease_until! - job.created_at).toBe(LOST_AFTER_MS);
+      // Too early: still running.
+      expect(await desk.lost(job.id)).toBe(false);
+      expect(await desk.lost(job.id, job.lease_until! + 1)).toBe(true);
+      expect(getItem(sql, job.id)!.state).toBe("failed");
+      expect(rowsOf(sql, "job.result")[0]!.body).toMatchObject({ state: "failed", error: expect.stringContaining("stopped answering") });
+      expect(desk.reports).toEqual([expect.stringContaining("Lost one: failed: The helper stopped answering")]);
+      // Kept until Atlas has said it, so a restart can't lose it.
+      expect(desk.unreported().map((u) => u.item.id)).toEqual([job.id]);
+      desk.reported(job.id);
+      expect(desk.unreported()).toEqual([]);
+    });
+  });
+
+  it("that can't start fail the asking tool with the reason, and aren't reported twice", async () => {
+    await runInDurableObject(fresh(), async (_agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      const desk = testDesk(sql, {
+        launch: async () => {
+          throw new Error("no room for a facet");
+        },
+      });
+      await expect(desk.start({ title: "Never", brief: "x", system: "s", tools: ["recall"], chain: [], askedIn: "" })).rejects.toThrow(
+        "The helper couldn't start: no room for a facet",
+      );
+      expect(rowsOf(sql, "job.result")[0]!.body).toMatchObject({ state: "failed" });
+      expect(desk.reports).toEqual([]);
+    });
+  });
+
+  it("keep their run through a restart, and may only write their own steps", async () => {
+    await runInDurableObject(fresh(), async (agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      const desk = testDesk(sql);
+      const job = await desk.start({ title: "Survivor", brief: "x", system: "s", tools: ["recall"], chain: [], askedIn: "" });
+      const run = (job.source.detail as { helper_run: string }).helper_run;
+      sweepStaleRuns(sql, 0);
+      expect(getRun(sql, run)!.state).toBe("running");
+      await expect(agent.helperLog(job.id, { actor: "atlas", kind: "message.out", body: { text: "hi" } })).rejects.toThrow(
+        "A helper can't write message.out rows.",
+      );
     });
   });
 });

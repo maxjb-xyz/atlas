@@ -217,16 +217,23 @@ export async function runCharacterCheck(
     for (const p of prompts) {
       let reply = "";
       let verdict: Verdict;
+      const why = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 300);
       try {
         reply = await ask(brain, system, p.owner, opts.ms ?? 60_000);
-        const structural = structuralVerdict(p.owner, reply);
+      } catch (err) {
+        check.results.push({ id: p.id, reply, verdict: { passed: false, failed: ["unreachable"], notes: why(err) } });
+        continue;
+      }
+      const structural = structuralVerdict(p.owner, reply);
+      try {
         const judged = parseVerdict(
           await ask(judge, "You judge replies carefully and answer with JSON only.", judgePrompt(p.owner, reply), opts.ms ?? 60_000),
         );
         const failed = [...new Set([...structural.failed, ...judged.failed])];
         verdict = { passed: failed.length === 0 && judged.passed, failed, notes: judged.notes };
       } catch (err) {
-        verdict = { passed: false, failed: ["unreachable"], notes: err instanceof Error ? err.message.slice(0, 300) : String(err) };
+        // The judge failed, not the brain under test: say so, and name the judge.
+        verdict = { passed: false, failed: ["judge_unreachable"], notes: `The judge (${check.judge}) didn't answer: ${why(err)}` };
       }
       check.results.push({ id: p.id, reply, verdict });
     }

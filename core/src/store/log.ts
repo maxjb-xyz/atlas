@@ -138,11 +138,17 @@ export function forRun(sql: Sql, runId: string): LogRow[] {
 }
 
 /** What the thread shows: messages, receipts, fallbacks and failed runs. */
+/** Runs whose failure the thread and the Inbox don't show on their own. */
+export function quietTrigger(trigger: string): boolean {
+  return trigger === "compaction" || trigger === "areas" || trigger.startsWith("helper:");
+}
+
 export function isThreadRow(row: LogRow): boolean {
   if (row.kind === "message.in" || row.kind === "message.out" || row.kind === "brain.fallback" || row.kind === "voice.problem") return true;
   if (row.kind === "tool.result") return row.body.receipt != null;
-  // Atlas's own upkeep (compaction) failing isn't news for the thread; the run and the Worker log say why.
-  if (row.kind === "run.end") return row.body.state === "failed" && row.body.trigger !== "compaction";
+  // Atlas's own upkeep (compaction, area discovery) failing isn't news for the thread; the run and the
+  // Worker log say why. A helper's failure reaches the thread as Atlas's report of it.
+  if (row.kind === "run.end") return row.body.state === "failed" && !quietTrigger(String(row.body.trigger ?? ""));
   // An undo from a receipt shows as its own line, so the thread tells the truth.
   if (row.kind === "agenda.change" || row.kind === "record.change") return row.body.undo_of != null;
   // Atlas starting an area is said once, in the thread (§6.3).

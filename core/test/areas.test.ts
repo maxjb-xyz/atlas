@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
-import { correctAreas, DISCOVER_AFTER, startDiscovered, tagPending, unfiled } from "../src/agent/areas";
+import { correctAreas, DISCOVER_AFTER, readyToDiscover, startDiscovered, tagPending, triedDiscovery, unfiled } from "../src/agent/areas";
 import { hat, systemPrompt } from "../src/context";
 import { areaByName, createArea, examples, getArea, listAreas, mergeAreas, setScope, tagsOf, updateArea } from "../src/store/areas";
 import { migrate, type Sql } from "../src/store/db";
@@ -73,6 +73,52 @@ describe("tagging", () => {
       expect(thread(sql, 50).some((r) => r.kind === "area.change" && r.body.name === "Gym")).toBe(true);
       // Nonsense from the brain changes nothing.
       expect(startDiscovered(sql, unfiled(sql), "no json here", "run_y")).toEqual([]);
+    }));
+});
+
+describe("tagging when things go wrong", () => {
+  it("leaves an item Clef refuses untagged and keeps going", () =>
+    withSql(async (sql) => {
+      const work = createArea(sql, { name: "Keyframes", by: "owner" });
+      const bad = exchange(sql, "x".repeat(50_000));
+      const good = exchange(sql, "Keyframes invoice is out");
+      const d = fakeDecider({ Keyframes: ["invoice"] });
+      const refusing = {
+        ...d,
+        async yesNo(state: string, q: Parameters<typeof d.yesNo>[1], signal?: AbortSignal) {
+          if (state.startsWith("xxx")) throw new Error("Workers AI answered 413: input too long");
+          return d.yesNo(state, q, signal);
+        },
+      };
+      await tagPending(sql, refusing);
+      expect(tagsOf(sql, `log:${bad.ask}`)).toEqual([]);
+      expect(tagsOf(sql, `log:${good.ask}`)).toEqual([work.id]);
+      // The long one was cut before it was sent.
+      expect(d.calls.every((c) => c.state.length <= 2_000)).toBe(true);
+    }));
+
+  it("doesn't rediscover the same set, revive archived areas, or count a message twice", () =>
+    withSql(async (sql) => {
+      const said = ["Leg day at the gym", "Gym was packed", "New gym shoes", "Ran 5k before the gym", "Mom's flight lands at 3"];
+      const ids = said.map((t) => exchange(sql, t).ask);
+      await tagPending(sql, fakeDecider({}, ["gym", "mom"]));
+      expect(readyToDiscover(sql, unfiled(sql))).toBe(true);
+      triedDiscovery(sql, unfiled(sql));
+      // Nothing new since the last try: wait.
+      expect(readyToDiscover(sql, unfiled(sql))).toBe(false);
+
+      const gym = createArea(sql, { name: "Gym", by: "owner" });
+      updateArea(sql, gym.id, { state: "archived" }, "owner");
+      expect(startDiscovered(sql, unfiled(sql), `{"areas": [{"name": "Gym", "messages": [1, 2, 3]}]}`, "run_x")).toEqual([]);
+      expect(getArea(sql, gym.id)!.state).toBe("archived");
+      expect(startDiscovered(sql, unfiled(sql), `{"areas": [{"name": "Solo", "messages": [5, 5, 5]}]}`, "run_y")).toEqual([]);
+      expect(areaByName(sql, "Solo")).toBeNull();
+
+      // An existing area takes its messages without being announced as new.
+      const fit = createArea(sql, { name: "Fitness", by: "owner" });
+      expect(startDiscovered(sql, unfiled(sql), `{"areas": [{"name": "fitness", "messages": [1, 2, 3]}]}`, "run_z")).toEqual([]);
+      expect(tagsOf(sql, `log:${ids[0]}`)).toEqual([fit.id]);
+      expect(unfiled(sql).map((r) => r.id)).toEqual([ids[3], ids[4]]);
     }));
 });
 

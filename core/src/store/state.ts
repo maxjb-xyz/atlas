@@ -33,7 +33,13 @@ export type StateName =
   /** Which setup steps are done or skipped (§22). */
   | "setup"
   /** Inbox items the owner marked done. */
-  | "inbox_done";
+  | "inbox_done"
+  /** Jobs that ended with nobody waiting, until Atlas has told the owner. */
+  | "jobs_unreported"
+  /** Helpers whose own storage is still there, deleted once their job ends. */
+  | "helper_facets"
+  /** How many unfiled messages there were when discovery last ran, so it waits for new ones. */
+  | "unfiled_tried";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

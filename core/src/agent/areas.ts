@@ -4,7 +4,19 @@
 
 import type { Decider, YesNo } from "../brains/decide";
 import { MAX_QUESTIONS } from "../brains/decide";
-import { addExample, type Area, createArea, examples, getArea, listAreas, setTags, type Tagged, tagsOf, updateArea } from "../store/areas";
+import {
+  addExample,
+  type Area,
+  areaByName,
+  createArea,
+  examples,
+  getArea,
+  listAreas,
+  setTags,
+  type Tagged,
+  tagsOf,
+  updateArea,
+} from "../store/areas";
 import { parse, type Sql } from "../store/db";
 import { append, get as getRow, type LogRow } from "../store/log";
 import { getRecord, recordText } from "../store/records";
@@ -18,6 +30,24 @@ export const UNFILED_AT = 0.7;
 export const DISCOVER_AFTER = 5;
 /** A proposed area needs at least this many messages to be started. */
 export const NEW_AREA_MIN = 3;
+/** Clef reads this much of an item; a long paste is judged by its start. */
+const DECIDE_CHARS = 2_000;
+/** How long one Clef call may take before the item is left untagged. */
+const DECIDE_MS = 20_000;
+
+/**
+ * Asks the decide role about one item. A refusal or a timeout leaves that
+ * item untagged (§6.3: if unsure, no area) and moves on, so one bad item
+ * can't stop tagging; the reason goes to the Worker log.
+ */
+async function ask(decider: Decider, text: string, questions: Record<string, YesNo>, what: string): Promise<Record<string, number>> {
+  try {
+    return await decider.yesNo(text.slice(0, DECIDE_CHARS), questions, AbortSignal.timeout(DECIDE_MS));
+  } catch (err) {
+    console.error(JSON.stringify({ at: "areas.decide", item: what, error: err instanceof Error ? err.message : String(err) }));
+    return {};
+  }
+}
 
 const ONGOING: YesNo = {
   instructions:
@@ -40,6 +70,8 @@ function question(sql: Sql, a: Area): YesNo {
 }
 
 export interface TagPass {
+  /** Messages and records looked at; fewer than the limit means it has caught up. */
+  seen: number;
   tagged: number;
   unfiled: number;
   /** Log rows whose tags changed, for the app's chips. */
@@ -71,6 +103,7 @@ export async function tagPending(
       limit,
     )
     .toArray();
+  let seen = rows.length;
   for (const r of rows) {
     const row = getRow(sql, r.id)!;
     const text = typeof row.body.text === "string" ? row.body.text : "";
@@ -90,7 +123,7 @@ export async function tagPending(
       }
     }
     if (text.trim() && row.actor === "owner") {
-      const p = await decider.yesNo(text, questions);
+      const p = await ask(decider, text, questions, row.id);
       const tags = areas.filter((a) => (p[a.id] ?? 0) >= TAG_AT).map((a) => a.id);
       if (tags.length) {
         setTags(sql, `log:${row.id}`, tags);
@@ -111,13 +144,14 @@ export async function tagPending(
     const recs = sql
       .exec<{ id: string }>(`SELECT id FROM records WHERE tagged = 0 AND state = 'active' ORDER BY learned_at LIMIT ?`, limit)
       .toArray();
+    seen = Math.max(seen, recs.length);
     for (const { id } of recs) {
       const rec = getRecord(sql, id)!;
       // A record learned from a message that has areas starts with those.
       const from = rec.source.log_id ? tagsOf(sql, `log:${rec.source.log_id}`) : [];
       let tags = from;
       if (!tags.length) {
-        const p = await decider.yesNo(recordText(rec), questions);
+        const p = await ask(decider, recordText(rec), questions, id);
         tags = areas.filter((a) => (p[a.id] ?? 0) >= TAG_AT).map((a) => a.id);
       }
       setTags(sql, `rec:${id}`, [...rec.areas, ...tags]);
@@ -125,12 +159,30 @@ export async function tagPending(
       await opts.between?.();
     }
   }
-  return { tagged, unfiled, changed };
+  return { seen, tagged, unfiled, changed };
 }
 
 /** Messages that fit no area yet but seemed to be about something ongoing. */
 export function unfiled(sql: Sql): LogRow[] {
   return (getState<string[]>(sql, "unfiled") ?? []).map((id) => getRow(sql, id)).filter((r): r is LogRow => r != null);
+}
+
+/**
+ * Whether discovery should run: enough messages are set aside, and at
+ * least that many arrived since it last tried, so a set that didn't make an
+ * area isn't sent to the brain again after every run.
+ */
+export function readyToDiscover(sql: Sql, waiting: LogRow[]): boolean {
+  const tried = new Set(getState<string[]>(sql, "unfiled_tried") ?? []);
+  return waiting.length >= DISCOVER_AFTER && waiting.filter((r) => !tried.has(r.id)).length >= DISCOVER_AFTER;
+}
+
+export function triedDiscovery(sql: Sql, waiting: LogRow[]): void {
+  setState(
+    sql,
+    "unfiled_tried",
+    waiting.map((r) => r.id),
+  );
 }
 
 export const DISCOVER_NOTE = `[Atlas's upkeep, not the owner] The owner's messages below don't fit any of their areas yet. An area is an ongoing part of someone's life: a job, a business, a client, school, family, health, money, home, a hobby. Group the messages that clearly share one, and name each area the way the owner would ("Keyframes", "Gym", "Mom's move"). Leave out anything that doesn't clearly belong with others. Reply with JSON only, in this shape: {"areas": [{"name": "...", "about": "one short sentence", "messages": [1, 4]}]}. An empty list is fine.`;
@@ -154,8 +206,21 @@ export function startDiscovered(sql: Sql, rows: LogRow[], answer: string, runId:
   const used = new Set<string>();
   for (const p of proposal.areas ?? []) {
     if (typeof p.name !== "string" || !p.name.trim() || !Array.isArray(p.messages)) continue;
-    const picked = p.messages.map((n) => (typeof n === "number" ? rows[n - 1] : undefined)).filter((r): r is LogRow => r != null);
+    const picked = [...new Set(p.messages)]
+      .map((n) => (typeof n === "number" ? rows[n - 1] : undefined))
+      .filter((r): r is LogRow => r != null && !used.has(r.id));
     if (picked.length < NEW_AREA_MIN) continue;
+    const existing = areaByName(sql, p.name);
+    // An area the owner archived or merged away stays gone; the messages wait for another home.
+    if (existing?.state === "archived") continue;
+    if (existing) {
+      // It already exists (the brain named one it was shown): file the messages there, quietly.
+      for (const r of picked) {
+        setTags(sql, `log:${r.id}`, [...r.areas, existing.id]);
+        used.add(r.id);
+      }
+      continue;
+    }
     const area = createArea(sql, {
       name: p.name,
       about: typeof p.about === "string" ? p.about : "",
@@ -195,6 +260,16 @@ export function correctAreas(sql: Sql, ref: Tagged, areaIds: string[]): LogRow {
   const move = (r: Tagged) => setTags(sql, r, [...tagsOf(sql, r).filter((a) => !removed.includes(a)), ...added]);
 
   setTags(sql, ref, valid);
+  // Filed by the owner, so discovery leaves it alone.
+  if (ref.startsWith("log:")) {
+    const list = getState<string[]>(sql, "unfiled") ?? [];
+    if (list.includes(ref.slice(4)))
+      setState(
+        sql,
+        "unfiled",
+        list.filter((id) => id !== ref.slice(4)),
+      );
+  }
   const related: Tagged[] = [];
   if (ref.startsWith("log:")) {
     const row = getRow(sql, ref.slice(4));

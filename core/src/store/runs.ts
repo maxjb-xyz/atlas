@@ -66,7 +66,8 @@ export function runningRuns(sql: Sql): RunRow[] {
 /** Moves lost runs to failed. Pass 0 on startup: no run survives a restart of this instance. */
 export function sweepStaleRuns(sql: Sql, olderThanMs = STALE_RUN_MS): number {
   const cutoff = Date.now() - olderThanMs;
-  const stale = runningRuns(sql).filter((r) => r.started_at <= cutoff);
+  // A helper's run outlives a restart: its fiber carries on, and its job's lease decides when it's lost.
+  const stale = runningRuns(sql).filter((r) => r.started_at <= cutoff && !r.trigger.startsWith("helper:"));
   for (const r of stale) endRun(sql, r.id, "failed", r.steps, { error: "Atlas restarted before this finished." });
   return stale.length;
 }

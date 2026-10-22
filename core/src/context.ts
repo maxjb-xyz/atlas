@@ -70,8 +70,10 @@ export function systemPrompt(opts: {
     .filter(Boolean)
     .join("\n\n");
 
-  const reminders = upcoming(sql, 15)
+  // Jobs share the agenda; they don't push reminders out of the prompt.
+  const reminders = upcoming(sql, 60)
     .filter((i) => i.kind === "reminder")
+    .slice(0, 15)
     .map((i) => `- ${isoLocal(new Date(i.due_at), tz)}: ${i.title} (id ${i.id})`);
   const fresh = [
     `Now: ${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}.`,

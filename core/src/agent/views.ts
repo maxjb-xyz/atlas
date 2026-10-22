@@ -183,7 +183,7 @@ export function inbox(sql: Sql): InboxItem[] {
   const since = Date.now() - 14 * 86_400_000;
   const rows = sql
     .exec<{ id: string }>(
-      `SELECT id FROM log WHERE at > ? AND (kind = 'job.result' OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas'))) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 100`,
+      `SELECT id FROM log WHERE at > ? AND (kind = 'job.result' OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%')) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 100`,
       since,
       done,
     )
