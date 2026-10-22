@@ -557,7 +557,7 @@ Any trigger can have conditions: "only on weekdays", "only when I'm home", "only
 - **Starting paused.** A new automation stays paused until you've seen a test run, unless you made it yourself in the form.
 - **History.** Each run is listed with its result, time and cost. Two failures in a row and Atlas tells you; after several more, it pauses the automation.
 - **Promises are automations.** Anything Atlas says it'll do shows in Agenda as a promise, linked to where it said it. Scheduled runs show there too; the automations themselves live on the Automations page.
-- **Default routines** ship as automations you can edit: a morning brief, an evening wrap-up, a weekly review.
+- **Default routines** ship as automations you can edit: a morning brief, an evening wrap-up, a weekly review. They start off; setup offers each one with its time (§22), and you turn on the ones you want.
 - **Templates** can be shared.
 
 ---
@@ -1003,7 +1003,7 @@ Setup is the first impression, so it has to be polished, quick and useful right 
    - proposed areas, each one tap to accept, rename or merge;
    - key people;
    - three to five things worth knowing: "Two clashes this week", "Your Thursday 9 am has no travel time", "You haven't replied to the landlord in 4 days".
-6. **First useful act.** It offers one or two things it can do right now, like fixing the clash, setting a leave-by reminder or drafting the landlord reply. It does them through a real approval, so you see how approvals work.
+6. **First useful act.** It offers one or two things it can do right now, like fixing the clash, setting a leave-by reminder or drafting the landlord reply. It does them through a real approval, so you see how approvals work. It also offers the default routines (§13.4), each off until you turn it on, with its time.
 7. **Done, with a path forward.** Optional extras appear later, when they become relevant, not as a checklist up front:
    - faces, a phone number, Atlas's own email;
    - members;
