@@ -65,7 +65,10 @@ import { focusTool, setFocus } from "./tools/focus";
 import { pageRead, pageTools } from "./tools/pages";
 import { webFetch, webSearch, webTools } from "./tools/web";
 import { browserTools } from "./tools/browser";
+import { vaultFill } from "./tools/vault";
 import { type BrowserDriver, type BrowserPage, BrowserRunDriver } from "./browser";
+import { findEntry, hiddenValues, removeEntry, saveEntry, siteFor, touchEntry } from "./vault";
+import { scrub } from "./outbox";
 import type { BrowserStagePage } from "./stage";
 import { fetchPage, hostOf, PROVIDERS, search, type WebSearchBinding } from "./web";
 import { deletePage, getPage, listPages, pageSummaries, pageVersion, savePage, viewBlock } from "./pages";
@@ -106,13 +109,24 @@ const TOOLS: Record<Actor, Tool[]> = {
     ...automationTools,
     ...webTools,
     ...browserTools,
+    vaultFill,
   ],
   atlas: [calendarRead, ...agendaTools, recall, ...webTools],
   system: [],
 };
 
 /** What an automation's Atlas step can reach: what the clock's runs can, and the owner's webhooks (§13.1). */
-const AUTOMATION_TOOLS: Tool[] = [calendarRead, ...agendaTools, recall, webhookCall, focusTool, ...pageTools, ...webTools, ...browserTools];
+const AUTOMATION_TOOLS: Tool[] = [
+  calendarRead,
+  ...agendaTools,
+  recall,
+  webhookCall,
+  focusTool,
+  ...pageTools,
+  ...webTools,
+  ...browserTools,
+  vaultFill,
+];
 /** A test run only looks: it changes nothing, and webhooks only say what they'd do (§13.4). */
 const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall, pageRead, webSearch, webFetch];
 
@@ -581,6 +595,26 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           } else {
             const gone = removeWebhook(this.#sql, msg.id);
             if (gone) append(this.#sql, { actor: "owner", kind: "settings.change", body: { webhook: "removed", name: gone.name } });
+          }
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      case "atlas.vault.save":
+      case "atlas.vault.remove":
+      case "atlas.vault.revoke":
+        try {
+          if (msg.type === "atlas.vault.save") {
+            const e = saveEntry(this.#sql, msg);
+            append(this.#sql, { actor: "owner", kind: "settings.change", body: { vault: msg.id ? "changed" : "added", name: e.name } });
+          } else if (msg.type === "atlas.vault.remove") {
+            const gone = removeEntry(this.#sql, msg.id);
+            if (gone) append(this.#sql, { actor: "owner", kind: "settings.change", body: { vault: "removed", name: gone.name } });
+          } else {
+            const e = touchEntry(this.#sql, msg.id, (x) => ({ ...x, allowed: x.allowed.filter((s) => s !== msg.site) }));
+            if (e)
+              append(this.#sql, { actor: "owner", kind: "settings.change", body: { vault: `asks again on ${msg.site}`, name: e.name } });
           }
         } catch (err) {
           this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
@@ -1728,7 +1762,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         ),
       );
     },
-    fetch: (url, o) => this.#outbox.look({ what: "fetch", text: url, to: hostOf(url), run_id: o.run_id }, (f) => fetchPage(f, url, o)),
+    fetch: async (url, o) => {
+      const out = await this.#outbox.look({ what: "fetch", text: url, to: hostOf(url), run_id: o.run_id }, (f) => fetchPage(f, url, o));
+      return out.ok ? { ...out, value: this.#hide(out.value) } : out;
+    },
   };
 
   /** Cloudflare's web search, on the Workers AI binding; tests use a fake (never the real one). */
@@ -1781,13 +1818,37 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   #taken = () => getState<{ why: string; at: number; asked: boolean }>(this.#sql, "browser_taken");
 
+  /** A page as Atlas may see it: no vault value in its text, address, title or fields (§15). */
+  #hide<T extends { url: string; title: string; text: string }>(page: T): T {
+    const hidden = hiddenValues(this.#sql);
+    if (!hidden.length) return page;
+    const h = (s: string) => scrub(s, hidden);
+    const elements = (page as { elements?: BrowserPage["elements"] }).elements;
+    return {
+      ...page,
+      url: h(page.url),
+      title: h(page.title),
+      text: h(page.text),
+      ...(elements
+        ? {
+            elements: elements.map((e) => ({
+              ...e,
+              text: h(e.text),
+              ...(e.value ? { value: h(e.value) } : {}),
+              ...(e.href ? { href: h(e.href) } : {}),
+            })),
+          }
+        : {}),
+    };
+  }
+
   /** The browser for tools: refuses while the owner has it, and sends what leaves Atlas through the outbox. */
   #browserApi: BrowserApi = {
     open: async (url, o) => {
       const d = this.#usable();
       const out = await this.#outbox.look({ what: "browse", text: url, to: hostOf(url), run_id: o.run_id }, async () => {
         try {
-          return { ok: true, status: 200, value: await d.open(url, { start: o.start }) };
+          return { ok: true, status: 200, value: this.#hide(await d.open(url, { start: o.start })) };
         } catch (err) {
           return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
         }
@@ -1795,14 +1856,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       if (!out.ok) throw new Error(out.error);
       return out.value;
     },
-    look: (o) => this.#usable().look(o),
+    look: async (o) => this.#hide(await this.#usable().look(o)),
     act: async (a, o) => {
       const d = this.#usable();
-      if (a.act !== "type") return d.act(a);
+      if (a.act !== "type") return this.#hide(await d.act(a));
       // What Atlas types into a page leaves it, so it passes the same checks as a search.
       const out = await this.#outbox.look({ what: "type", text: a.text, to: hostOf(d.where().url), run_id: o.run_id }, async () => {
         try {
-          return { ok: true, status: 200, value: await d.act(a) };
+          return { ok: true, status: 200, value: this.#hide(await d.act(a)) };
         } catch (err) {
           return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
         }
@@ -1810,7 +1871,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       if (!out.ok) throw new Error(out.error);
       return out.value;
     },
-    find: (ref) => this.#usable().find(ref),
+    find: async (ref) => {
+      const el = await this.#usable().find(ref);
+      if (!el) return null;
+      const hidden = hiddenValues(this.#sql);
+      return { ...el, text: scrub(el.text, hidden), ...(el.value ? { value: scrub(el.value, hidden) } : {}) };
+    },
     takeOver: async (why) => {
       const d = this.#usable();
       if (!d.where().open) throw new Error("The browser isn't open. Open the page first.");
@@ -1898,6 +1964,19 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             test_run: `Would ${action.kind === "webhook" ? `call ${action.name}` : action.kind === "delete" ? `ask to delete ${action.name}` : `ask to ${action.name}`}. Nothing was sent.`,
           },
         };
+      }
+      // The vault (§15): a site the owner said yes to fills without asking. The entry is tied to its
+      // sites, so a page steering Atlas can't send it anywhere else; that, not the web-read rule, is the guard.
+      if (action.kind === "vault") {
+        const e = findEntry(this.#sql, action.entry);
+        if (e && e.kind !== "card" && e.allowed.includes(siteFor(e, action.host))) {
+          const out = await this.#outbox.perform(action, { run_id: c.run_id, by: "trusted" });
+          return {
+            ok: out.ok,
+            output: out.ok ? { done: out.text } : { error: out.text },
+            receipt: { text: `${out.ok ? "Filled" : "Didn't fill"} · ${action.name} on ${action.host}` },
+          };
+        }
       }
       const readWeb = this.#readTheWeb(c.run_id);
       // An automation the owner turned on may call the webhooks they saw in it (§13.1: allowed to).
@@ -2033,6 +2112,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (offers.length) append(this.#sql, { actor: "atlas", kind: "settings.change", body: { trust: "offered", keys: offers } });
     if (actions.some((a) => a.kind === "delete")) this.#broadcast({ type: "atlas.records.changed" });
     this.#approvalSettled(id);
+    // A yes in the app to a step in the middle of browsing (a login, a form) lets Atlas carry on from there.
+    // Said by voice or in text, the yes is already part of a run that carries on by itself.
+    if ((o.by === "app" || o.by === "hold" || o.by === "push") && actions.some((a) => a.kind === "browser" || a.kind === "vault")) {
+      void this.keepAliveWhile(() => this.#textTurn(`Yes to ${item.title}. Carry on.`, `approval-${id}`));
+    }
     return { ok, text: results.map((r) => r.text).join(" ") };
   }
 

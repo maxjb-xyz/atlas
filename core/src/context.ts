@@ -11,6 +11,7 @@ import { character, TEXT_PROFILE, VOICE_PROFILE } from "./character";
 import { getItem, upcoming } from "./store/agenda";
 import { actionsOf, needsHold, waitingApprovals } from "./approvals";
 import { webhooks } from "./webhooks";
+import { vault } from "./vault";
 import { type Area, getArea, getScope, listAreas } from "./store/areas";
 import { parse, type Sql } from "./store/db";
 import { type AtlasRecord, standingFacts } from "./store/records";
@@ -220,6 +221,17 @@ function exitsContext(sql: Sql, tz: string, now: Date): string {
   if (hooks.length) {
     lines.push(
       `The owner's webhooks (call them with webhook_call):\n${hooks.map((w) => `- ${w.name}${w.about ? `: ${w.about}` : ""}`).join("\n")}`,
+    );
+  }
+  const entries = vault(sql);
+  if (entries.length) {
+    lines.push(
+      `The owner's vault (fill an entry into the browser with vault_fill; you never see the values):\n${entries
+        .map(
+          (e) =>
+            `- ${e.name} (${e.kind}, fills on ${e.sites.join(", ")}): ${[...Object.keys(e.values), ...(e.totp ? ["code"] : [])].join(", ")}`,
+        )
+        .join("\n")}`,
     );
   }
   const waiting = waitingApprovals(sql);

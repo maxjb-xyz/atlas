@@ -16,6 +16,7 @@ import { setupView } from "./setup";
 import { focusNow, interruptionsToday, pushDevices } from "../outbox";
 import { ASKS, trustTable } from "../approvals";
 import { webhooks, webhookView } from "../webhooks";
+import { vault, vaultView } from "../vault";
 import type { VapidKeys } from "../push";
 import type { ChatGPTSignIn } from "./chatgpt";
 
@@ -41,6 +42,7 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
         : null,
     },
     webhooks: webhooks(sql).map(webhookView),
+    vault: vault(sql).map(vaultView),
     permissions: {
       kinds: ASKS,
       trusted: Object.entries(trustTable(sql))

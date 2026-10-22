@@ -50,6 +50,11 @@ export interface BrowserDriver {
   open(url: string, o?: { start?: number }): Promise<BrowserPage>;
   look(o?: { start?: number }): Promise<BrowserPage>;
   act(a: BrowserAction): Promise<BrowserPage>;
+  /**
+   * Puts values into fields, then presses `press` if given: the vault's
+   * last step (§15). Nothing about the values comes back but the page.
+   */
+  fill(fields: Array<{ ref: string; value: string }>, press?: string): Promise<BrowserPage>;
   /** The element `ref` as it is now on the page at `url`, or null when the page changed. */
   find(ref: string): Promise<PageElement | null>;
   /** A live-view link: read-only, or one the owner can drive. */
@@ -297,6 +302,11 @@ export class BrowserRunDriver implements BrowserDriver {
       await this.#settle(cdp, page, a.act === "type" || a.act === "scroll" ? 300 : 1_000);
       return this.#read(cdp, page);
     });
+  }
+
+  async fill(fields: Array<{ ref: string; value: string }>, press?: string): Promise<BrowserPage> {
+    for (const f of fields) await this.act({ act: "type", ref: f.ref, text: f.value });
+    return press ? this.act({ act: "submit", ref: press }) : this.look();
   }
 
   async live(control: boolean): Promise<string> {

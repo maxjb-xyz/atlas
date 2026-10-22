@@ -1,14 +1,8 @@
-import { runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type PersonAgent, seams } from "../src/agent";
+import { seams } from "../src/agent";
 import type { BrowserAction, BrowserDriver, BrowserPage, PageElement } from "../src/browser";
-import type { ServerMessage } from "../src/protocol";
-import { migrate, type Sql } from "../src/store/db";
-import type { LogRow } from "../src/store/log";
-import { call, env, fakeCalendar, fakeEmbedder, say, scripted, SECRET, type Step } from "./helpers";
-
-const ORIGIN = "http://atlas.test";
-const auth = { authorization: `Bearer ${SECRET}` };
+import { call, fakeCalendar, fakeEmbedder, say } from "./helpers";
+import { brain, connect, inOwner, out, turn } from "./owner";
 
 /** A browser for tests: two pages of a shop, strict like the real one about numbers that went stale. */
 function fakeBrowser() {
@@ -50,6 +44,11 @@ function fakeBrowser() {
       if (a.act === "submit" && a.ref === "3") at = "https://shop.example/thanks";
       return page();
     },
+    async fill(fields, press) {
+      log.push(`fill ${fields.map((f) => `${f.ref}=${f.value}`).join(" ")}${press ? ` press ${press}` : ""}`);
+      if (press === "3") at = "https://shop.example/thanks";
+      return page();
+    },
     async find(ref) {
       return at ? (pages[at]!.elements.find((e) => e.ref === ref) ?? null) : null;
     },
@@ -65,66 +64,6 @@ function fakeBrowser() {
   };
   return driver;
 }
-
-interface Socket {
-  send(msg: object): void;
-  next<T extends ServerMessage["type"]>(
-    type: T,
-    where?: (m: Extract<ServerMessage, { type: T }>) => boolean,
-  ): Promise<Extract<ServerMessage, { type: T }>>;
-}
-
-async function connect(): Promise<Socket> {
-  const res = await SELF.fetch(`${ORIGIN}/agents/person-agent/owner`, { headers: { Upgrade: "websocket", ...auth } });
-  const ws = res.webSocket!;
-  ws.accept();
-  const inbox: ServerMessage[] = [];
-  ws.addEventListener("message", (e) => {
-    if (typeof e.data !== "string") return;
-    const m = JSON.parse(e.data) as { type?: string };
-    if (m.type?.startsWith("atlas.")) inbox.push(m as ServerMessage);
-  });
-  const s: Socket = {
-    send: (msg) => ws.send(JSON.stringify(msg)),
-    async next(type, where = () => true) {
-      const deadline = Date.now() + 5_000;
-      while (Date.now() < deadline) {
-        const i = inbox.findIndex((m) => m.type === type && where(m as never));
-        if (i >= 0) return inbox.splice(i, 1)[0] as never;
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      throw new Error(`no ${type} within 5 s; got ${inbox.map((m) => m.type).join(", ")}`);
-    },
-  };
-  s.send({ type: "atlas.hello", tz: "America/New_York" });
-  await s.next("atlas.snapshot");
-  return s;
-}
-
-const inOwner = <T>(fn: (agent: PersonAgent, sql: Sql) => Promise<T> | T) =>
-  runInDurableObject(env.PersonAgent.get(env.PersonAgent.idFromName("owner")), async (agent: PersonAgent, state) => {
-    migrate(state.storage.sql);
-    return fn(agent, state.storage.sql);
-  });
-
-function brain(steps: Step[]) {
-  const b = scripted(steps, "chatgpt", "gpt-5.6-terra");
-  seams.makeBrain = () => b.brain;
-  return b;
-}
-
-async function turn(s: Socket, text: string): Promise<{ results: LogRow[]; deliveries: LogRow[] }> {
-  s.send({ type: "atlas.say", text, client_id: text });
-  const started = await s.next("atlas.run", (m) => m.client_id === text);
-  await s.next("atlas.run", (m) => m.run_id === started.run_id && m.state !== "running");
-  const rows = await inOwner((_a, sql) =>
-    sql.exec<{ kind: string; body: string }>(`SELECT kind, body FROM log WHERE run_id = ? ORDER BY seq`, started.run_id).toArray(),
-  );
-  const parsed = rows.map((r) => ({ ...r, body: JSON.parse(r.body) as Record<string, unknown> })) as unknown as LogRow[];
-  return { results: parsed.filter((r) => r.kind === "tool.result"), deliveries: parsed.filter((r) => r.kind === "delivery") };
-}
-
-const out = (r: LogRow) => (typeof r.body.output === "string" ? r.body.output : JSON.stringify(r.body.output));
 
 let browser: ReturnType<typeof fakeBrowser>;
 
@@ -188,7 +127,11 @@ describe("the browser", () => {
   it("sends a form only after the owner holds to confirm, on the page it was asked on", async () => {
     const s = await connect();
     browser.goTo("https://shop.example/camera");
-    brain([call("browser_submit", { ref: "3", what: "Order the Sony ZV-1 for $649" }), say("It's waiting for your OK in Inbox.")]);
+    brain([
+      call("browser_submit", { ref: "3", what: "Order the Sony ZV-1 for $649" }),
+      say("It's waiting for your OK in Inbox."),
+      say("Ordered."),
+    ]);
     const { results } = await turn(s, "order it");
     const receipt = results[0]!.body.receipt as { text: string; approval: string };
     expect(receipt.text).toBe('Waiting for your OK · Order the Sony ZV-1 for $649 (presses "Place order" on shop.example)');
@@ -218,7 +161,7 @@ describe("the browser", () => {
   it("sends nothing when the page moved on before the OK", async () => {
     const s = await connect();
     browser.goTo("https://shop.example/camera");
-    brain([call("browser_submit", { ref: "3", what: "Order the Sony ZV-1" }), say("Waiting.")]);
+    brain([call("browser_submit", { ref: "3", what: "Order the Sony ZV-1" }), say("Waiting."), say("It didn't go through.")]);
     const { results } = await turn(s, "order it");
     const id = (results[0]!.body.receipt as { approval: string }).approval;
     browser.goTo("https://shop.example/camera/reviews");

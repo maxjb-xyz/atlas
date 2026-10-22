@@ -4,6 +4,7 @@
 
 import { getPage, pageVersion, pageVersions, segments } from "../pages";
 import type { ApprovalView, HistoryFilter, HistoryStats, InboxItem, RecordView } from "../protocol";
+import { FIELDS, findEntry } from "../vault";
 import { type Action, actionsOf, ASKS, kindOf, needsHold, TRUST_AFTER, trustTable, waitingApprovals } from "../approvals";
 import type { AgendaItem } from "../store/agenda";
 import { scrub } from "../outbox";
@@ -418,6 +419,19 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
 }
 
 function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
+  if (a.kind === "vault") {
+    const e = findEntry(sql, a.entry);
+    const fields = Object.keys(a.fields).map((f) => (e ? (FIELDS[e.kind][f] ?? f) : f).toLowerCase());
+    return {
+      kind: "vault",
+      title: `Fill in ${a.name} on ${a.host}`,
+      detail: `Its ${fields.join(", ")}${a.press ? `, then press "${a.press.text}"` : ""}. Atlas never sees the values.`,
+      where: a.url,
+      undo: a.card
+        ? "Card details always ask, every time."
+        : `Asks the first time on each site. After your yes, ${a.name} fills on ${a.host} without asking.`,
+    };
+  }
   if (a.kind === "browser") {
     return {
       kind: "browser",

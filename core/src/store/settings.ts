@@ -161,7 +161,9 @@ export type SecretName =
   /** This deployment's VAPID key pair, which signs its push notifications. */
   | "push_vapid"
   /** The owner's webhooks: their addresses are credentials. */
-  | "webhooks";
+  | "webhooks"
+  /** The vault (§15): logins, cards and keys, by name, tied to sites. */
+  | "vault";
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];
@@ -198,6 +200,14 @@ export function secretValues(sql: Sql): string[] {
     if (typeof v === "string" && v.length >= 8) out.push(v);
   }
   for (const h of hooks) if (typeof h.url === "string" && h.url.length >= 8) out.push(h.url);
+  // The vault's secret values (§15): passwords, card numbers and codes, keys and seeds never leave.
+  for (const e of getSecret<Array<{ values?: Record<string, unknown>; totp?: unknown }>>(sql, "vault") ?? []) {
+    for (const k of ["password", "number", "cvc", "key"]) {
+      const v = e.values?.[k];
+      if (typeof v === "string" && v.length >= 3) out.push(v);
+    }
+    if (typeof e.totp === "string" && e.totp.length >= 8) out.push(e.totp);
+  }
   // The last ID token is kept as a sign-in hint, outside the secrets; it still never leaves.
   const hint = getState<{ id_token?: unknown }>(sql, "chatgpt_client")?.id_token;
   if (typeof hint === "string" && hint.length >= 8 && !out.includes(hint)) out.push(hint);

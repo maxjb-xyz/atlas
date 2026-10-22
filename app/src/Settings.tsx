@@ -12,8 +12,9 @@ import { Composer } from "./Shell";
 import { useLook } from "./theme";
 import { Icon, Sheet, shortDay, Stage } from "./ui";
 import { PROVIDERS, type SearchProvider } from "../../core/src/web";
+import { FIELDS, type VaultKind } from "../../core/src/vault-fields";
 
-type Section = "character" | "look" | "brains" | "connections" | "devices" | "permissions" | "notifications" | "data";
+type Section = "character" | "look" | "brains" | "connections" | "devices" | "vault" | "permissions" | "notifications" | "data";
 
 const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
   {
@@ -29,6 +30,7 @@ const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
     items: [
       ["connections", "Connections"],
       ["devices", "Devices"],
+      ["vault", "Vault"],
     ],
   },
   { group: "Abilities", items: [["permissions", "Permissions"]] },
@@ -136,6 +138,7 @@ export function SettingsPage({
                 {section === "brains" && <Brains atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "connections" && <Connections atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "devices" && <Devices atlas={atlas} view={view} />}
+                {section === "vault" && <Vault atlas={atlas} view={view} />}
                 {section === "permissions" && <Permissions atlas={atlas} view={view} />}
                 {section === "notifications" && <Notifications atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "data" && <Data atlas={atlas} onSignOut={onSignOut} onSetup={onSetup} />}
@@ -559,6 +562,186 @@ function WebSearch({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settings
       ) : (
         <p className="muted small">Save to test it.</p>
       )}
+    </>
+  );
+}
+
+/**
+ * The vault (§15): logins, cards and keys by name, each tied to the sites it
+ * fills on. Values go in here and never come back out: this page and Atlas
+ * only see names, sites and which fields are set.
+ */
+function Vault({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const blank = {
+    id: undefined as string | undefined,
+    name: "",
+    kind: "login" as VaultKind,
+    sites: "",
+    values: {} as Record<string, string>,
+    totp: "",
+  };
+  const [form, setForm] = useState(blank);
+  const [open, setOpen] = useState(false);
+  const editing = form.id != null;
+  const fields = Object.entries(FIELDS[form.kind]).filter(([k]) => k !== "code");
+  const close = () => {
+    setForm(blank);
+    setOpen(false);
+  };
+  return (
+    <>
+      <Head
+        title="Vault"
+        sub="Logins, cards and keys, by name. Atlas fills them in at the last step and never sees them. Each one only fills on its own sites."
+      />
+      <Row label="Entries">
+        {view.vault.length === 0 && <p className="muted small">Nothing yet. Add a login, and Atlas can sign in for you on that site.</p>}
+        <div className="rows">
+          {view.vault.map((e) => (
+            <div className="r" key={e.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+              <div className="row" style={{ flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 500 }}>{e.name}</span>
+                <span className="tag">{e.kind}</span>
+                <span className="mono faint small">{e.sites.join(", ")}</span>
+                <span className="grow" />
+                <button
+                  className="link"
+                  onClick={() => {
+                    setForm({ id: e.id, name: e.name, kind: e.kind, sites: e.sites.join(", "), values: {}, totp: "" });
+                    setOpen(true);
+                  }}
+                >
+                  Edit
+                </button>
+                <button className="link" onClick={() => atlas.send({ type: "atlas.vault.remove", id: e.id })}>
+                  Remove
+                </button>
+              </div>
+              <span className="muted small">
+                {[...e.fields.map((f) => FIELDS[e.kind][f] ?? f), ...(e.totp ? ["two-factor codes"] : [])].join(" · ")}
+                {" · "}
+                {e.uses ? `used ${e.uses} ${e.uses === 1 ? "time" : "times"}, last ${shortDay(e.last_used!)}` : "not used yet"}
+              </span>
+              {e.kind === "card" ? (
+                <span className="faint small">A card asks every time.</span>
+              ) : e.allowed.length ? (
+                <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+                  <span className="faint small">Fills without asking on</span>
+                  {e.allowed.map((s) => (
+                    <span key={s} className="tag">
+                      {s}{" "}
+                      <button className="link small" onClick={() => atlas.send({ type: "atlas.vault.revoke", id: e.id, site: s })}>
+                        Ask again
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <span className="faint small">The first use on each site asks you.</span>
+              )}
+            </div>
+          ))}
+        </div>
+        {open ? (
+          <form
+            style={{ display: "flex", flexDirection: "column", gap: 10 }}
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              atlas.send({
+                type: "atlas.vault.save",
+                ...(form.id ? { id: form.id } : {}),
+                name: form.name,
+                kind: form.kind,
+                sites: form.sites
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+                values: form.values,
+                ...(form.kind === "login" && form.totp.trim() ? { totp: form.totp } : {}),
+              });
+              close();
+            }}
+          >
+            <div className="row">
+              <label className="field grow">
+                <span>Name</span>
+                <input
+                  value={form.name}
+                  maxLength={60}
+                  placeholder="Chase login"
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Kind</span>
+                <select
+                  value={form.kind}
+                  disabled={editing}
+                  onChange={(e) => setForm({ ...form, kind: e.target.value as VaultKind, values: {} })}
+                >
+                  <option value="login">Login</option>
+                  <option value="card">Card</option>
+                  <option value="key">Key</option>
+                </select>
+              </label>
+            </div>
+            <label className="field">
+              <span>Fills only on (comma separated)</span>
+              <input
+                className="mono"
+                value={form.sites}
+                placeholder="chase.com"
+                spellCheck={false}
+                onChange={(e) => setForm({ ...form, sites: e.target.value })}
+              />
+            </label>
+            {fields.map(([k, label]) => (
+              <label className="field" key={k}>
+                <span>{label}</span>
+                <input
+                  type={k === "username" || k === "name" || k === "expiry" || k === "zip" ? "text" : "password"}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={form.values[k] ?? ""}
+                  placeholder={editing ? "Kept. Type a new one to change it." : ""}
+                  onChange={(e) => setForm({ ...form, values: { ...form.values, [k]: e.target.value } })}
+                />
+              </label>
+            ))}
+            {form.kind === "login" && (
+              <label className="field">
+                <span>Two-factor seed (optional: the code the site shows under the QR code)</span>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={form.totp}
+                  placeholder={editing ? "Kept if set. Paste a new one to change it." : "JBSWY3DPEHPK3PXP"}
+                  onChange={(e) => setForm({ ...form, totp: e.target.value })}
+                />
+              </label>
+            )}
+            <div className="row">
+              <button
+                className="btn primary"
+                disabled={!form.name.trim() || !form.sites.trim() || (!editing && !Object.values(form.values).some((v) => v.trim()))}
+              >
+                {editing ? "Save" : "Add"}
+              </button>
+              <button type="button" className="btn" onClick={close}>
+                Cancel
+              </button>
+            </div>
+            <p className="muted small">Values are kept with your secrets. Neither this page nor Atlas can show them again.</p>
+          </form>
+        ) : (
+          <div className="row">
+            <button className="btn" onClick={() => setOpen(true)}>
+              Add to the vault
+            </button>
+          </div>
+        )}
+      </Row>
     </>
   );
 }

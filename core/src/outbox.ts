@@ -15,6 +15,7 @@ import { getState, setState } from "./store/state";
 import { deleteRecord, findRecords } from "./store/records";
 import { hostOf, type LookOut } from "./web";
 import type { BrowserDriver } from "./browser";
+import { FIELDS, fillsOn, findEntry, hiddenValues, siteFor, touchEntry, valueOf } from "./vault";
 import { quietUntil, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import { callWebhook, webhooks, webhookView } from "./webhooks";
 
@@ -391,6 +392,7 @@ export class Outbox {
     o: { run_id: string | null; by: "approved" | "trusted" | "owner" | "automation" },
   ): Promise<{ ok: boolean; text: string }> {
     if (a.kind === "browser") return this.#submit(a, o);
+    if (a.kind === "vault") return this.#fill(a, o);
     if (a.kind === "delete") {
       const touched = deleteRecord(this.sql, a.record, { via: "owner", ...(o.run_id ? { run_id: o.run_id } : {}) });
       // Open apps get the blanked rows at once, so the deleted words don't linger on screen.
@@ -448,6 +450,61 @@ export class Outbox {
       const page = await driver.act({ act: "submit", ref: a.ref });
       this.receipt(o.run_id, { ...base, ok: true, answer: `Now on ${page.title || hostOf(page.url)}` });
       return { ok: true, text: `Sent it on ${host}. The page now says: ${page.title || page.url}.` };
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /**
+   * The vault's last step (§15): fills an entry's values into the browser's
+   * fields, and presses the button after if asked. Only on a site the entry
+   * is tied to, and only on the page it was asked on. The values never come
+   * back: the receipt and the answer name the fields, and the page's title
+   * has any vault value hidden. A yes from the owner is remembered for that
+   * site, except for a card, which asks every time.
+   */
+  async #fill(a: Extract<Action, { kind: "vault" }>, o: { run_id: string | null; by: string }): Promise<{ ok: boolean; text: string }> {
+    const base = { channel: "vault", to: a.host, text: a.name, fields: Object.keys(a.fields), by: o.by };
+    const fail = (error: string) => {
+      this.receipt(o.run_id, { ...base, ok: false, error });
+      console.error(JSON.stringify({ at: "vault.fill", host: a.host, error }));
+      return { ok: false, text: `${a.name} wasn't filled in: ${error}` };
+    };
+    const e = findEntry(this.sql, a.entry);
+    if (!e) return fail("That vault entry isn't there any more.");
+    const driver = this.channels.browser();
+    if (!driver) return fail("This deployment has no browser.");
+    const here = driver.where();
+    if (!here.open) return fail("The browser closed before it could be filled in. Ask Atlas to do it again.");
+    const host = hostOf(here.url);
+    if (!fillsOn(e, host)) return fail(`The browser is on ${host}, and ${e.name} only fills on ${e.sites.join(", ")}.`);
+    if (here.url !== a.url) return fail(`The browser moved on to ${here.url} since you were asked, so nothing was filled in.`);
+    const values: Array<{ ref: string; value: string }> = [];
+    for (const [field, ref] of Object.entries(a.fields)) {
+      const value = await valueOf(e, field);
+      if (!value) return fail(`${e.name} has no ${(FIELDS[e.kind][field] ?? field).toLowerCase()}.`);
+      values.push({ ref, value });
+    }
+    try {
+      if (a.press) {
+        const el = await driver.find(a.press.ref);
+        if (!el || el.text !== a.press.text) return fail("The page changed since you were asked, so nothing was filled in.");
+      }
+      const page = await driver.fill(values, a.press?.ref);
+      const hidden = hiddenValues(this.sql);
+      const now = scrub(page.title || hostOf(page.url), hidden);
+      touchEntry(this.sql, e.id, (x) => ({
+        ...x,
+        uses: x.uses + 1,
+        last_used: Date.now(),
+        allowed: o.by === "approved" && x.kind !== "card" ? [...new Set([...x.allowed, siteFor(x, host)])] : x.allowed,
+      }));
+      this.receipt(o.run_id, { ...base, ok: true, ...(a.press ? { pressed: a.press.text } : {}), answer: `Now on ${now}` });
+      const n = values.length;
+      return {
+        ok: true,
+        text: `Filled ${n} ${n === 1 ? "field" : "fields"} from ${e.name} on ${host}${a.press ? ` and pressed "${a.press.text}"` : ""}. The page now says: ${now}.`,
+      };
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }

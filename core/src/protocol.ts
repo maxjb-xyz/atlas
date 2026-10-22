@@ -67,7 +67,7 @@ export interface CalendarEventView {
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete" | "browser";
+  kind: "webhook" | "delete" | "browser" | "vault";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -196,6 +196,19 @@ export const ClientMessage = z.discriminatedUnion("type", [
     about: z.string().max(300),
   }),
   z.object({ type: z.literal("atlas.webhook.remove"), id: z.string().max(64) }),
+  /** Add or change a vault entry (§15). Empty values on a change keep what was there; `totp: null` removes the seed. */
+  z.object({
+    type: z.literal("atlas.vault.save"),
+    id: z.string().max(64).optional(),
+    name: z.string().trim().min(1).max(60),
+    kind: z.enum(["login", "card", "key"]),
+    sites: z.array(z.string().max(200)).min(1).max(10),
+    values: z.record(z.string().max(40), z.string().max(4_000)),
+    totp: z.string().max(200).nullable().optional(),
+  }),
+  z.object({ type: z.literal("atlas.vault.remove"), id: z.string().max(64) }),
+  /** Take back the owner's yes for one site, so the next use there asks again. */
+  z.object({ type: z.literal("atlas.vault.revoke"), id: z.string().max(64), site: z.string().max(200) }),
   /** The Automations page: every automation. */
   z.object({ type: z.literal("atlas.automations") }),
   /** Make or change an automation in the form. The owner's own start on (§13.4). */
@@ -356,6 +369,8 @@ export interface SettingsView {
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
   /** The owner's passkeys, without their keys (Settings → Devices). */
   passkeys: Array<{ id: string; name: string; created_at: number; last_used: number | null }>;
+  /** The vault's entries, without their values (Settings → Vault). */
+  vault: import("./vault-fields").VaultView[];
   /** The owner's webhooks, without their addresses (Settings → Connections). */
   webhooks: import("./webhooks").WebhookView[];
   /** When Atlas asks (Settings → Permissions): the table by kind, and the outside actions it may do without asking. */

@@ -110,7 +110,9 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
                     : `Read ${str(b.text)}`
               : b.channel === "browser"
                 ? `Sent a form on ${str(b.to)}: ${str(b.text)}`
-                : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
+                : b.channel === "vault"
+                  ? `Filled in ${str(b.text)} on ${str(b.to)}${b.pressed ? `, then pressed “${str(b.pressed)}”` : ""}`
+                  : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
       const what =
         b.ok === false
           ? `${where}, but it didn't work: ${str(b.error)}`
@@ -118,7 +120,7 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
             ? `${where}: ${str(b.note)}`
             : b.answer
               ? `${where}: ${str(b.answer)}`
-              : b.channel === "web" || b.channel === "browser"
+              : b.channel === "web" || b.channel === "browser" || b.channel === "vault"
                 ? where
                 : `${where}${b.text ? `: “${str(b.text)}”` : ""}`;
       return { who: b.by === "owner" ? "You" : "Atlas", what, kind: `deliver.${str(b.channel)}` };
@@ -138,13 +140,15 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
                   ? `Notifications ${str(b.push)}: ${str(b.name)}`
                   : b.webhook
                     ? `Webhook ${str(b.webhook)}: ${str(b.name)}`
-                    : b.trust
-                      ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
-                      : b.focus
-                        ? b.focus === "on"
-                          ? `Focus until ${new Date(Number(b.until)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${b.about ? `: ${str(b.about)}` : ""}`
-                          : "Ended focus"
-                        : "Changed settings";
+                    : b.vault
+                      ? `Vault: ${str(b.name)} ${str(b.vault)}`
+                      : b.trust
+                        ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
+                        : b.focus
+                          ? b.focus === "on"
+                            ? `Focus until ${new Date(Number(b.until)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${b.about ? `: ${str(b.about)}` : ""}`
+                            : "Ended focus"
+                          : "Changed settings";
       return { who: r.actor === "owner" ? "You" : "Atlas", what, kind: "settings.change" };
     }
     default:
