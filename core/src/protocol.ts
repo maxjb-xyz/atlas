@@ -7,10 +7,11 @@ import type { LogRow } from "./store/log";
 import type { AgendaItem } from "./store/agenda";
 import { BrainChoice, Settings, SettingsPatch } from "./store/settings";
 import { RECORD_TYPES } from "./store/records";
-import { StageView, type StagePage } from "./stage";
+import { StageView, type AutomationView, type StagePage } from "./stage";
+import { AutomationInput } from "./automations";
 
 export type { LogRow, AgendaItem };
-export type { StagePage };
+export type { StagePage, AutomationView };
 
 export interface RecordView {
   id: string;
@@ -178,6 +179,19 @@ export const ClientMessage = z.discriminatedUnion("type", [
     about: z.string().max(300),
   }),
   z.object({ type: z.literal("atlas.webhook.remove"), id: z.string().max(64) }),
+  /** The Automations page: every automation. */
+  z.object({ type: z.literal("atlas.automations") }),
+  /** Make or change an automation in the form. The owner's own start on (§13.4). */
+  z.object({ type: z.literal("atlas.automation.save"), id: z.string().max(64).optional(), automation: AutomationInput }),
+  z.object({ type: z.literal("atlas.automation.set"), id: z.string().max(64), on: z.boolean() }),
+  /** Run now (the Run button), or as a test that sends nothing. */
+  z.object({
+    type: z.literal("atlas.automation.run"),
+    id: z.string().max(64),
+    test: z.boolean().optional(),
+    inputs: z.record(z.string().max(30), z.string().max(200)).optional(),
+  }),
+  z.object({ type: z.literal("atlas.automation.delete"), id: z.string().max(64) }),
   /** Cancel a reminder or promise from Agenda. */
   z.object({ type: z.literal("atlas.agenda.cancel"), id: z.string().max(64) }),
   /** Stop sending notifications to a device. */
@@ -353,6 +367,7 @@ export type ServerMessage =
   | { type: "atlas.calendar.events"; ref: string; events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } }
   | { type: "atlas.inbox.items"; items: InboxItem[] }
   | { type: "atlas.stage.page"; ref: string; page: StagePage | null }
+  | { type: "atlas.automations"; automations: AutomationView[] }
   | {
       type: "atlas.voices";
       voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>;

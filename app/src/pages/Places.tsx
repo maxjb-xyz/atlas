@@ -1,4 +1,4 @@
-// Inbox, Agenda and Automations (§21.2).
+// Inbox and Agenda (§21.2). Automations has its own page.
 
 import { useEffect, useState } from "react";
 import type { CalendarEventView } from "../../../core/src/protocol";
@@ -166,7 +166,7 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
 interface AgendaEntry {
   at: Date;
   allDay: boolean;
-  kind: "Event" | "Reminder" | "Promise" | "Job";
+  kind: "Event" | "Reminder" | "Promise" | "Job" | "Automation";
   title: string;
   source: string;
   id: string;
@@ -197,12 +197,12 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
         return {
           at: new Date(a.due_at),
           allDay: false,
-          kind: a.kind === "job" ? "Job" : a.kind === "promise" ? "Promise" : "Reminder",
+          kind: a.kind === "job" ? "Job" : a.kind === "promise" ? "Promise" : a.kind === "automation" ? "Automation" : "Reminder",
           title: a.title,
-          source: a.kind === "job" ? "Helper" : "Atlas",
+          source: a.kind === "job" ? "Helper" : a.kind === "automation" ? "Automations" : "Atlas",
           id: a.id,
           ...(typeof d.said === "string" ? { said: { text: d.said, at: typeof d.said_at === "number" ? d.said_at : a.created_at } } : {}),
-          cancel: a.kind !== "job" && a.state === "scheduled",
+          cancel: (a.kind === "reminder" || a.kind === "promise") && a.state === "scheduled",
         };
       }),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
@@ -307,42 +307,6 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
               ))}
             </>
           )}
-        </div>
-      </Sheet>
-    </Stage>
-  );
-}
-
-// --- Automations ------------------------------------------------------------------------------
-
-export function Automations({ atlas }: { atlas: Atlas }) {
-  const reminders = atlas.state.agenda.filter((a) => (a.kind === "reminder" || a.kind === "promise") && a.state === "scheduled");
-  return (
-    <Stage
-      label="Automations"
-      tabs={[{ id: "all", label: "All" }]}
-      tab="all"
-      dock={
-        <div className="dock slim">
-          <Composer atlas={atlas} placeholder="Describe something for Atlas to do on its own" />
-        </div>
-      }
-    >
-      <Sheet>
-        <div className="sheet-in">
-          <div className="sheet-title">
-            <h1 className="disp">What Atlas does on its own</h1>
-          </div>
-          <Empty title="No automations yet">
-            Soon you'll be able to say "every weekday at 8, brief me on the day" and see it here as When → Do → Report, with a test run
-            before it starts.
-            {reminders.length > 0 && (
-              <p style={{ marginTop: 10 }}>
-                Atlas is keeping {reminders.length} {reminders.length === 1 ? "reminder or promise" : "reminders and promises"}; they're in{" "}
-                <a href="#/agenda">Agenda</a>.
-              </p>
-            )}
-          </Empty>
         </div>
       </Sheet>
     </Stage>

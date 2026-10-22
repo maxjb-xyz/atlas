@@ -39,6 +39,7 @@ function ctx(sql: Sql, opts: { embed?: Embedder | null; source?: string | null }
     via: "chat",
     helpers: null,
     exit: null,
+    automations: null,
   };
 }
 

@@ -9,6 +9,7 @@ import type { LogRow, RecordView } from "../../core/src/protocol";
 import type { AreaPage, PersonPage, StageMessage, StageView } from "../../core/src/stage";
 import type { Atlas } from "./connection";
 import { AreaChip, AreaDot, Diamond, Empty, Icon, pressable, Sheet, shortDay } from "./ui";
+import { AutomationFlow } from "./pages/Automations";
 
 /** A view on the stage: the receipt it came from (or a local id), the view, and its title. */
 export interface Shown {
@@ -25,7 +26,14 @@ export function shownFrom(row: LogRow): Shown | null {
 }
 
 /** The ref an area or person view asks for its page under, so every copy of one view shares it. */
-export const pageRef = (v: StageView) => (v.kind === "area" ? `area:${v.area}` : v.kind === "person" ? `person:${v.person}` : null);
+export const pageRef = (v: StageView) =>
+  v.kind === "area"
+    ? `area:${v.area}`
+    : v.kind === "person"
+      ? `person:${v.person}`
+      : v.kind === "automation"
+        ? `automation:${v.automation}`
+        : null;
 
 /** The live page behind an area or person view: undefined while it loads. Asked again when what it's built from changes. */
 function usePage(atlas: Atlas, view: StageView) {
@@ -33,7 +41,7 @@ function usePage(atlas: Atlas, view: StageView) {
   const ref = pageRef(view);
   useEffect(() => {
     if (ref && atlas.voice.connected) atlas.send({ type: "atlas.stage", ref, view });
-  }, [ref, atlas.voice.connected, s.recordsVersion, s.areas, s.rows.length]);
+  }, [ref, atlas.voice.connected, s.recordsVersion, s.areas, s.rows.length, s.automations]);
   return ref ? s.stage[ref] : null;
 }
 
@@ -42,6 +50,10 @@ export function titleOf(atlas: Atlas, shown: Shown): string {
   if (shown.view.kind === "area") {
     const id = shown.view.area;
     return atlas.state.areas.find((a) => a.id === id)?.name ?? shown.title;
+  }
+  if (shown.view.kind === "automation") {
+    const id = shown.view.automation;
+    return atlas.state.automations?.find((a) => a.id === id)?.name ?? shown.title;
   }
   return shown.title;
 }
@@ -68,6 +80,7 @@ export function StageSheet({
         {v.kind === "person" && <PersonView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
         {v.kind === "list" && <ListView view={v} onClose={onClose} />}
         {v.kind === "table" && <TableView view={v} onClose={onClose} />}
+        {v.kind === "automation" && <AutomationStage atlas={atlas} view={v} onClose={onClose} />}
       </div>
     </Sheet>
   );
@@ -330,6 +343,34 @@ function PersonView({
   );
 }
 
+/** An automation on the stage: the same When → Do → Report flow as its page (§21.2: pages and views are one thing). */
+function AutomationStage({
+  atlas,
+  view,
+  onClose,
+}: {
+  atlas: Atlas;
+  view: Extract<StageView, { kind: "automation" }>;
+  onClose?: () => void;
+}) {
+  const page = usePage(atlas, view);
+  if (page === undefined) return <Loading />;
+  if (!page || page.kind !== "automation")
+    return <Missing why={page?.kind === "missing" ? page.why : "That automation was deleted."} onClose={onClose} />;
+  return (
+    <>
+      <div className="sheet-title">
+        <a className="link small" href={`#/automations/${encodeURIComponent(`a:${page.automation.id}`)}`}>
+          Open in Automations
+        </a>
+        <span className="grow" />
+        <Close onClose={onClose} />
+      </div>
+      <AutomationFlow atlas={atlas} a={page.automation} />
+    </>
+  );
+}
+
 function ListView({ view, onClose }: { view: Extract<StageView, { kind: "list" }>; onClose?: () => void }) {
   const checklist = view.items.some((i) => i.done != null);
   return (
@@ -415,7 +456,7 @@ function TableView({ view, onClose }: { view: Extract<StageView, { kind: "table"
 
 // --- compact: the card in an exchange or the transcript --------------------------------------
 
-const KIND: Record<StageView["kind"], string> = { area: "Area", person: "Person", list: "List", table: "Table" };
+const KIND: Record<StageView["kind"], string> = { area: "Area", person: "Person", list: "List", table: "Table", automation: "Automation" };
 
 export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown; onOpen: () => void }) {
   const v = shown.view;
@@ -429,7 +470,9 @@ export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown
         ? `${v.rows.length} ${v.rows.length === 1 ? "row" : "rows"} · ${v.columns.join(", ")}`
         : v.kind === "area"
           ? atlas.state.areas.find((a) => a.id === v.area)?.about || "Its people, plans and what was said lately."
-          : "What Atlas knows about them, and where they came up.";
+          : v.kind === "automation"
+            ? atlas.state.automations?.find((a) => a.id === v.automation)?.when_text || "When it runs, what it does, and where it reports."
+            : "What Atlas knows about them, and where they came up.";
   return (
     <div className="stage-card rise">
       <span className="lab">

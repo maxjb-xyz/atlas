@@ -68,6 +68,23 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         what: `Summarized ${str(b.messages)} older messages to keep the conversation in view`,
         kind: "context.summary",
       };
+    case "automation.run": {
+      const first = str(b.text).split("\n")[0]!.slice(0, 140);
+      const what = b.quiet
+        ? `Looked: ${first}`
+        : b.test
+          ? `Test run, sent nothing: ${b.ok === false ? str(b.error) : first}`
+          : b.ok === false
+            ? `Didn't run: ${str(b.error)}`
+            : `Ran${b.brain ? "" : ", no brain"}: ${first}`;
+      return { who: `Automation · ${str(b.name)}`, what, kind: `automation.${str(b.why)}` };
+    }
+    case "automation.change":
+      return {
+        who: r.actor === "owner" ? "You" : "Atlas",
+        what: `${{ made: "Made", changed: "Changed", on: "Turned on", paused: "Paused", deleted: "Deleted" }[str(b.change)] ?? "Changed"} the automation ${str(b.name)}${b.why ? `: ${str(b.why)}` : ""}`,
+        kind: `automation.${str(b.change)}`,
+      };
     case "delivery": {
       const where =
         b.channel === "push"

@@ -18,6 +18,7 @@ import type {
   ServerMessage,
   SettingsView,
   StagePage,
+  AutomationView,
 } from "../../core/src/protocol";
 
 /** One calendar read for a page: the events, why it failed, or how old Atlas's copy is when iCloud couldn't be asked. */
@@ -72,6 +73,8 @@ export interface State {
   inbox: InboxItem[] | null;
   /** The live pages behind area and person views, by the ref they asked with. */
   stage: Record<string, StagePage | null>;
+  /** The automations, once asked for; the agent sends them again whenever they change. */
+  automations: AutomationView[] | null;
 }
 
 const initial: State = {
@@ -97,6 +100,7 @@ const initial: State = {
   calendar: {},
   inbox: null,
   stage: {},
+  automations: null,
 };
 
 type Action =
@@ -237,6 +241,8 @@ function reduce(s: State, a: Action): State {
       return { ...s, inbox: m.items };
     case "atlas.stage.page":
       return { ...s, stage: { ...s.stage, [m.ref]: m.page } };
+    case "atlas.automations":
+      return { ...s, automations: m.automations };
   }
   return s;
 }

@@ -25,6 +25,10 @@ export type LogKind =
   | "job.result"
   /** An area was created, changed, merged or archived, or the owner moved an item's areas (§6). */
   | "area.change"
+  /** An automation was made, changed, turned on or paused, or deleted (§13). */
+  | "automation.change"
+  /** An automation ran, or ran as a test: each step's result, how long, and what it cost (§13.4). */
+  | "automation.run"
   /** Something left Atlas on a channel beyond the thread (a push, a webhook call), or was held or refused at the exit (§4.4). */
   | "delivery";
 
@@ -147,7 +151,8 @@ export function forRun(sql: Sql, runId: string): LogRow[] {
 /** What the thread shows: messages, receipts, fallbacks and failed runs. */
 /** Runs whose failure the thread and the Inbox don't show on their own. */
 export function quietTrigger(trigger: string): boolean {
-  return trigger === "compaction" || trigger === "areas" || trigger.startsWith("helper:");
+  // An automation's failure reaches the thread as its own report ("… didn't run"), so its run's end stays quiet.
+  return trigger === "compaction" || trigger === "areas" || trigger.startsWith("helper:") || trigger.startsWith("automation");
 }
 
 export function isThreadRow(row: LogRow): boolean {

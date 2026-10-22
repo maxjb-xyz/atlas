@@ -4,6 +4,8 @@
 
 import { z } from "zod";
 import type { Action, ToolKind } from "../approvals";
+import type { Automation } from "../automations";
+import type { RunOutcome } from "../agent/automations";
 import type { ToolSpec } from "../brains/types";
 import type { Embedder } from "../brains/embed";
 import type { Calendar } from "../calendar/types";
@@ -37,11 +39,20 @@ export interface ToolContext {
    * where nothing may leave, such as inside a helper.
    */
   exit: ExitApi | null;
+  /** Automations, for owner runs; null elsewhere. */
+  automations: AutomationsApi | null;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
   clock: {
     schedule(item: AgendaItem): Promise<void>;
     unschedule(item: AgendaItem): Promise<void>;
   };
+}
+
+/** Running and arming automations, for Atlas's tools (§13). */
+export interface AutomationsApi {
+  run(automation: Automation, o: { why: "request" | "test"; inputs?: Record<string, string> }): Promise<RunOutcome>;
+  /** Puts its next run on the clock, or takes it off, after a change. */
+  arm(id: string): Promise<void>;
 }
 
 export interface ExitApi {

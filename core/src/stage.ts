@@ -52,7 +52,12 @@ export const TableStage = z.object({
   source,
 });
 
-export const StageView = z.discriminatedUnion("kind", [AreaStage, PersonStage, ListStage, TableStage]);
+export const AutomationStage = z.object({
+  kind: z.literal("automation"),
+  automation: z.string().min(1).max(80).describe("The automation's name or id."),
+});
+
+export const StageView = z.discriminatedUnion("kind", [AreaStage, PersonStage, ListStage, TableStage, AutomationStage]);
 export type StageView = z.infer<typeof StageView>;
 export type StageKind = StageView["kind"];
 
@@ -89,11 +94,49 @@ export interface PersonPage {
   history: Array<{ at: number; name: string | null; fact: string; reason: string }>;
 }
 
+/** An automation as its card and flow show it (§13.4): When → Do → Report, and its recent runs. */
+export interface AutomationView {
+  id: string;
+  name: string;
+  about: string;
+  state: "on" | "paused";
+  made_by: "owner" | "atlas";
+  when: import("./automations").Trigger;
+  when_text: string;
+  steps: Array<{ step: import("./automations").Step; text: string }>;
+  report: "thread" | "inbox" | "silent";
+  /** Whether it can be turned on now: Atlas's need a test run since their last change. */
+  can_turn_on: boolean;
+  tested_at: number | null;
+  fails: number;
+  paused_why: string | null;
+  next_at: number | null;
+  runs: Array<{
+    id: string;
+    at: number;
+    why: string;
+    test: boolean;
+    ok: boolean;
+    quiet: boolean;
+    text: string;
+    error: string | null;
+    ms: number | null;
+    brain: string | null;
+    tokens: number;
+    results: Array<{ step: string; ok: boolean; text: string }>;
+  }>;
+}
+
+export interface AutomationPage {
+  kind: "automation";
+  automation: AutomationView;
+}
+
 /** What a view needs from the agent, or why it can't be shown any more. */
-export type StagePage = AreaPage | PersonPage | { kind: "missing"; why: string };
+export type StagePage = AreaPage | PersonPage | AutomationPage | { kind: "missing"; why: string };
 
 /** The few words a view goes by: on its tab, its receipt and its compact card. */
-export function stageTitle(v: StageView, names: { area?: string; person?: string } = {}): string {
+export function stageTitle(v: StageView, names: { area?: string; person?: string; automation?: string } = {}): string {
   switch (v.kind) {
     case "area":
       return names.area ?? v.area;
@@ -102,5 +145,7 @@ export function stageTitle(v: StageView, names: { area?: string; person?: string
     case "list":
     case "table":
       return v.title;
+    case "automation":
+      return names.automation ?? v.automation;
   }
 }

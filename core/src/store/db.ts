@@ -157,6 +157,26 @@ const MIGRATIONS: string[] = [
   `
   CREATE INDEX log_at ON log(at);
   `,
+  // 6. M2: automations (§13). Their next runs are agenda items; their runs are runs.
+  `
+  CREATE TABLE automations (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    about TEXT NOT NULL DEFAULT '',
+    trigger TEXT NOT NULL,
+    steps TEXT NOT NULL,
+    report TEXT NOT NULL DEFAULT 'thread',
+    state TEXT NOT NULL DEFAULT 'paused',
+    made_by TEXT NOT NULL,
+    allowed TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    tested_at INTEGER,
+    fails INTEGER NOT NULL DEFAULT 0,
+    paused_why TEXT,
+    memo TEXT NOT NULL DEFAULT '{}'
+  );
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

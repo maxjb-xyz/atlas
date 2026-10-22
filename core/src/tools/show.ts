@@ -5,6 +5,7 @@
 import { z } from "zod";
 import { areaPage, personPage } from "../agent/views";
 import { type StageView, StageView as StageViewSchema, stageTitle } from "../stage";
+import { findAutomation } from "../automations";
 import { getArea, listAreas } from "../store/areas";
 import { findRecords, getRecord, recordsNamed } from "../store/records";
 import { defineTool, fail, type ToolResult } from "./types";
@@ -15,7 +16,7 @@ export const show = defineTool({
   description: [
     "Put a view on the stage of the owner's app, beside your reply.",
     "Use it when the owner asks to see something, when they ask what's going on with one of their areas or who someone is, and when the answer is several items that read better as a list or a table than as sentences.",
-    "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `list` and `table` (things you've put together in this turn).",
+    "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `automation` (one of the owner's automations, as When → Do → Report with its runs), `list` and `table` (things you've put together in this turn).",
     "Fill a list or table only with what you've looked up or what's in the conversation, never with guesses, and say where it came from in `source`.",
     "The owner sees the view as you answer, so keep your reply to what matters most and don't read the view out. In a voice conversation, say a sentence or two and let the stage show the rest.",
   ].join(" "),
@@ -33,7 +34,7 @@ export const show = defineTool({
   },
 });
 
-type Resolved = { view: StageView; names: { area?: string; person?: string }; what?: unknown } | { error: string };
+type Resolved = { view: StageView; names: { area?: string; person?: string; automation?: string }; what?: unknown } | { error: string };
 
 /** Turns a name into the id the view keeps, and checks a table's rows fit its columns. */
 function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Resolved {
@@ -91,6 +92,11 @@ function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Resolved 
     }
     case "list":
       return { view, names: {} };
+    case "automation": {
+      const a = findAutomation(sql, view.automation);
+      if (!a) return { error: `There's no automation called "${view.automation}".` };
+      return { view: { kind: "automation", automation: a.id }, names: { automation: a.name } };
+    }
   }
 }
 

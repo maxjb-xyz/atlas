@@ -4,7 +4,8 @@ import { addPasskey, deviceName, passkeysSupported, signInWithCode, signInWithPa
 import { History } from "./pages/History";
 import { Home } from "./pages/Home";
 import { Library } from "./pages/Library";
-import { Agenda, Automations, Inbox } from "./pages/Places";
+import { Agenda, Inbox } from "./pages/Places";
+import { Automations } from "./pages/Automations";
 import { SettingsPage } from "./Settings";
 import { Setup } from "./Setup";
 import { Palette, Sidebar, TabBar, Toolbar, Transcript } from "./Shell";
@@ -206,7 +207,7 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
         {place === "home" && <Home atlas={atlas} detail={detail} go={sub} onTranscript={() => setTranscript(true)} />}
         {place === "inbox" && <Inbox atlas={atlas} />}
         {place === "agenda" && <Agenda atlas={atlas} />}
-        {place === "automations" && <Automations atlas={atlas} />}
+        {place === "automations" && <Automations atlas={atlas} detail={detail} go={sub} />}
         {place === "library" && <Library atlas={atlas} detail={detail} go={sub} />}
         {place === "history" && <History atlas={atlas} />}
         {place === "settings" && <SettingsPage atlas={atlas} detail={detail} go={sub} onSignOut={signOut} onSetup={onSetup} />}

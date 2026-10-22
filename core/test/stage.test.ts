@@ -34,6 +34,7 @@ function ctx(sql: Sql): ToolContext {
     via: "chat",
     helpers: null,
     exit: null,
+    automations: null,
   };
 }
 

@@ -249,7 +249,10 @@ export class Outbox {
    * allowed. The exit checks run first; a webhook call leaves a delivery
    * receipt with what it answered. `by` says whose word it went out on.
    */
-  async perform(a: Action, o: { run_id: string | null; by: "approved" | "trusted" | "owner" }): Promise<{ ok: boolean; text: string }> {
+  async perform(
+    a: Action,
+    o: { run_id: string | null; by: "approved" | "trusted" | "owner" | "automation" },
+  ): Promise<{ ok: boolean; text: string }> {
     if (a.kind === "delete") {
       const touched = deleteRecord(this.sql, a.record, { via: "owner", ...(o.run_id ? { run_id: o.run_id } : {}) });
       // Open apps get the blanked rows at once, so the deleted words don't linger on screen.

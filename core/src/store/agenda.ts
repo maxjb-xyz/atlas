@@ -6,7 +6,7 @@
 import { append } from "./log";
 import { type Json, newId, parse, type Sql } from "./db";
 
-export type AgendaKind = "reminder" | "promise" | "job" | "notify" | "approval";
+export type AgendaKind = "reminder" | "promise" | "job" | "notify" | "approval" | "automation";
 export type AgendaState = "scheduled" | "running" | "done" | "cancelled" | "failed";
 
 export interface AgendaSource {
@@ -130,5 +130,11 @@ export function finish(
     run_id: runId,
     body: { item_id: id, change: state, kind: item.kind, title: item.title, due_at: item.due_at, ...detail },
   });
+  return getItem(sql, id);
+}
+
+/** Puts a recurring item (an automation's next run) back on the clock at its next time. */
+export function rearm(sql: Sql, id: string, dueAt: number): AgendaItem | null {
+  sql.exec(`UPDATE agenda SET state = 'scheduled', due_at = ?, lease_until = NULL, updated_at = ? WHERE id = ?`, dueAt, Date.now(), id);
   return getItem(sql, id);
 }

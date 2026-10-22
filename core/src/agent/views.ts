@@ -8,7 +8,8 @@ import type { AgendaItem } from "../store/agenda";
 import { scrub } from "../outbox";
 import { secretValues } from "../store/settings";
 import { webhooks, webhookView } from "../webhooks";
-import type { AreaPage, PersonPage, StageMessage, StagePage, StageView } from "../stage";
+import type { AreaPage, AutomationView, PersonPage, StageMessage, StagePage, StageView } from "../stage";
+import { type Automation, getAutomation, stepText, whenText } from "../automations";
 import { getArea } from "../store/areas";
 import { parse, type Sql } from "../store/db";
 import { get as getRow, type LogKind, type LogRow } from "../store/log";
@@ -86,7 +87,63 @@ export function listRecords(
 export function stagePage(sql: Sql, view: StageView): StagePage | null {
   if (view.kind === "area") return areaPage(sql, view.area);
   if (view.kind === "person") return personPage(sql, view.person);
+  if (view.kind === "automation") {
+    const a = getAutomation(sql, view.automation);
+    return a ? { kind: "automation", automation: automationView(sql, a) } : { kind: "missing", why: "That automation was deleted." };
+  }
   return null;
+}
+
+/** An automation as the app shows it: its parts in words, when it runs next, and its last runs. */
+export function automationView(sql: Sql, a: Automation): AutomationView {
+  const next = sql
+    .exec<{ due_at: number }>(
+      `SELECT due_at FROM agenda WHERE kind = 'automation' AND state IN ('scheduled', 'running') AND json_extract(source, '$.detail.automation') = ? LIMIT 1`,
+      a.id,
+    )
+    .toArray()[0];
+  const runs = sql
+    .exec<{ id: string }>(
+      `SELECT id FROM log WHERE kind = 'automation.run' AND json_extract(body, '$.automation_id') = ? ORDER BY seq DESC LIMIT 12`,
+      a.id,
+    )
+    .toArray()
+    .map((r) => getRow(sql, r.id)!)
+    .map((r) => {
+      const b = r.body as Record<string, unknown>;
+      const usage = (b.usage ?? {}) as { input?: number; output?: number };
+      return {
+        id: r.id,
+        at: r.at,
+        why: String(b.why ?? ""),
+        test: b.test === true,
+        ok: b.ok !== false,
+        quiet: b.quiet === true,
+        text: String(b.text ?? ""),
+        error: typeof b.error === "string" ? b.error : null,
+        ms: typeof b.ms === "number" ? b.ms : null,
+        brain: typeof b.brain === "string" ? b.brain : null,
+        tokens: (usage.input ?? 0) + (usage.output ?? 0),
+        results: (Array.isArray(b.results) ? b.results : []) as AutomationView["runs"][number]["results"],
+      };
+    });
+  return {
+    id: a.id,
+    name: a.name,
+    about: a.about,
+    state: a.state,
+    made_by: a.made_by,
+    when: a.when,
+    when_text: whenText(a.when, (id) => getAutomation(sql, id)?.name ?? null),
+    steps: a.do.map((step) => ({ step, text: stepText(step) })),
+    report: a.report,
+    can_turn_on: a.made_by === "owner" || a.tested_at != null,
+    tested_at: a.tested_at,
+    fails: a.fails,
+    paused_why: a.paused_why,
+    next_at: next?.due_at ?? null,
+    runs,
+  };
 }
 
 const PAGE_GROUP = 30;
@@ -188,10 +245,12 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
     "context.summary",
     "settings.change",
     "delivery",
+    "automation.run",
+    "automation.change",
   ],
-  actions: ["tool.result", "record.change", "agenda.change", "area.change", "delivery"],
+  actions: ["tool.result", "record.change", "agenda.change", "area.change", "delivery", "automation.change"],
   conversations: ["message.in", "message.out"],
-  jobs: ["job.result", "agenda.change"],
+  jobs: ["job.result", "agenda.change", "automation.run"],
 };
 
 /** Whether a row belongs on History's list for a filter: the things that happened, not the plumbing. */
@@ -199,8 +258,8 @@ function shown(row: LogRow, filter: HistoryFilter): boolean {
   if (row.kind === "tool.result") return row.body.receipt != null;
   if (row.kind === "run.end") return row.body.state === "failed";
   if (filter === "jobs" && row.kind === "agenda.change") return row.body.kind === "job";
-  // A notification held for quiet hours is told by its delivery receipt, not as an agenda change.
-  if (row.kind === "agenda.change" && row.body.kind === "notify") return false;
+  // A notification held for quiet hours is told by its delivery receipt, and an automation's next run by its run, not as agenda changes.
+  if (row.kind === "agenda.change" && (row.body.kind === "notify" || row.body.kind === "automation")) return false;
   return true;
 }
 
@@ -356,13 +415,29 @@ function pastItems(sql: Sql): InboxItem[] {
   const since = Date.now() - 14 * 86_400_000;
   const rows = sql
     .exec<{ id: string }>(
-      `SELECT id FROM log WHERE at > ? AND (kind = 'job.result' OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%')) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 100`,
+      `SELECT id FROM log WHERE at > ? AND (kind = 'job.result'
+         OR (kind = 'automation.run' AND json_extract(body, '$.report') = 'inbox' AND json_extract(body, '$.test') = 0 AND json_extract(body, '$.quiet') IS NULL)
+         OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%' AND json_extract(body, '$.trigger') NOT LIKE 'automation%'))
+         AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 100`,
       since,
       done,
     )
     .toArray()
     .map((r) => getRow(sql, r.id)!);
   return rows.map((r): InboxItem => {
+    // An automation that reports to Inbox (§13.1: report here).
+    if (r.kind === "automation.run") {
+      const ok = r.body.ok !== false;
+      return {
+        id: r.id,
+        kind: ok ? "review" : "failed",
+        title: String(r.body.name ?? "An automation"),
+        text: String((ok ? r.body.text : r.body.error) ?? "").slice(0, 2_000),
+        at: r.at,
+        areas: r.areas,
+        run_id: r.run_id,
+      };
+    }
     if (r.kind === "job.result") {
       const ok = r.body.state === "done";
       return {

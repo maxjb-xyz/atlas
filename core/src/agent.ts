@@ -41,7 +41,7 @@ import { isoLocal, isValidZone, longLocal, parseWhen, shortLocal, zoneOf } from 
 import { calendarRead } from "./tools/calendar";
 import { delegate } from "./tools/delegate";
 import { memoryTools, recall } from "./tools/memory";
-import { agendaTools } from "./tools/agenda";
+import { agendaList, agendaTools } from "./tools/agenda";
 import { show } from "./tools/show";
 import { approve, deleteForGood, webhookCall } from "./tools/exits";
 import {
@@ -57,6 +57,10 @@ import {
   setTrust,
 } from "./approvals";
 import { removeWebhook, saveWebhook, webhooks } from "./webhooks";
+import { AutomationDesk } from "./agent/automations";
+import { automationTools } from "./tools/automations";
+import { deleteAutomation, getAutomation, listAutomations, matchPhrase, saveAutomation, setAutomationState } from "./automations";
+import { automationView } from "./agent/views";
 import type { ExitApi, Tool, ToolContext, ToolResult } from "./tools/types";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from "./helper";
@@ -77,10 +81,15 @@ const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
  * and nobody is looking at the stage when they run, so they can't `show`.
  */
 const TOOLS: Record<Actor, Tool[]> = {
-  owner: [calendarRead, ...agendaTools, ...memoryTools, delegate, show, webhookCall, deleteForGood, approve],
+  owner: [calendarRead, ...agendaTools, ...memoryTools, delegate, show, webhookCall, deleteForGood, approve, ...automationTools],
   atlas: [calendarRead, ...agendaTools, recall],
   system: [],
 };
+
+/** What an automation's Atlas step can reach: what the clock's runs can, and the owner's webhooks (§13.1). */
+const AUTOMATION_TOOLS: Tool[] = [calendarRead, ...agendaTools, recall, webhookCall];
+/** A test run only looks: it changes nothing, and webhooks only say what they'd do (§13.4). */
+const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall];
 
 /**
  * The most history a voice turn reads, in tokens: about M0's last 40
@@ -108,6 +117,8 @@ interface ConverseOpts {
   budget: { steps: number; ms: number };
   signal?: AbortSignal;
   emit: (e: LoopEvent) => void;
+  /** The tools, when they aren't the actor's usual ones (an automation's step, a test run). */
+  tools?: Tool[];
 }
 
 export class PersonAgent extends VoiceAgent implements HelperHost {
@@ -116,6 +127,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #calendar!: CalendarSense;
   #chatgpt!: ChatGPTSignIn;
   #helpers!: HelperDesk;
+  #automations!: AutomationDesk;
   /** Runs go one at a time, so each one sees the last one's answer. */
   #line: Promise<unknown> = Promise.resolve();
 
@@ -136,7 +148,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       makeBrain: (c) => this.#makeBrain(c),
       toolContext: (runId) => {
         const settings = readSettings(this.#sql);
-        return { ...this.#toolContext(settings, new Date(), "helper", null), helpers: null, exit: null, run_id: runId };
+        return { ...this.#toolContext(settings, new Date(), "helper", null), helpers: null, exit: null, automations: null, run_id: runId };
       },
       launch: async (job) => {
         const child = await this.dynamicAgents.get(HelperAgent, job.id);
@@ -182,6 +194,34 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       },
       fetch: (...args) => (seams.fetch ?? fetch)(...args),
     });
+    this.#automations = new AutomationDesk({
+      sql: this.#sql,
+      outbox: this.#outbox,
+      clock: this.#clock,
+      converse: ({ runId, note, test }) => {
+        const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
+        return this.#converse({
+          runId,
+          actor: "atlas",
+          sourceLogId: null,
+          surface: "none",
+          role: "main",
+          input: note,
+          beforeSeq: lastSeq,
+          budget: { steps: 12, ms: 3 * 60_000 },
+          emit: (e) => {
+            if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });
+          },
+          tools: test ? TEST_TOOLS : AUTOMATION_TOOLS,
+        });
+      },
+      decider: () => this.#decider(),
+      fetch: (...args) => (seams.fetch ?? fetch)(...args),
+      changed: () => this.#automationsChanged(),
+      rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
+    });
+    // Every automation that's on has its next run on the clock (a missing one is put back).
+    for (const a of listAutomations(this.#sql)) void this.#automations.arm(a.id).catch(() => {});
     // The key that signs push notifications, made once, so Settings can offer them straight away.
     void vapidKeys(this.#sql).catch((err: unknown) =>
       console.error(JSON.stringify({ at: "push.keys", error: err instanceof Error ? err.message : String(err) })),
@@ -504,6 +544,49 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         }
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
+      case "atlas.automations":
+        this.#send(connection, { type: "atlas.automations", automations: this.#automationViews() });
+        return;
+      case "atlas.automation.save":
+      case "atlas.automation.set":
+      case "atlas.automation.delete":
+        try {
+          if (msg.type === "atlas.automation.save") {
+            const a = saveAutomation(this.#sql, msg.automation, "owner", msg.id);
+            await this.#automations.arm(a.id);
+          } else if (msg.type === "atlas.automation.set") {
+            setAutomationState(this.#sql, msg.id, msg.on, "owner");
+            await this.#automations.arm(msg.id);
+          } else {
+            await this.#automations.disarm(msg.id);
+            deleteAutomation(this.#sql, msg.id);
+          }
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
+        this.#automationsChanged();
+        return;
+      case "atlas.automation.run": {
+        const a = getAutomation(this.#sql, msg.id);
+        if (!a) {
+          this.#send(connection, { type: "atlas.error", message: "That automation isn't there any more." });
+          return;
+        }
+        void this.keepAliveWhile(() =>
+          this.#inLine(async () => {
+            // A test of a watch or an absence looks first, the way the clock would, then runs the steps sending nothing.
+            const look = msg.test && (a.when.kind === "watch" || a.when.kind === "absence") ? await this.#automations.look(a, true) : null;
+            await this.#automations.run(a, {
+              why: msg.test ? "test" : "button",
+              inputs: msg.inputs,
+              ...(look ? { context: `What the look found (in a real run, the steps only run when it says so): ${look.note}` } : {}),
+            });
+          }),
+        ).catch((err: unknown) =>
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) }),
+        );
+        return;
+      }
       case "atlas.agenda.cancel": {
         const item = getItem(this.#sql, msg.id);
         if (!item || !["reminder", "promise"].includes(item.kind) || item.state !== "scheduled") {
@@ -542,6 +625,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     this.#broadcast({ type: "atlas.rows", rows: [inRow] });
     this.#broadcast({ type: "atlas.run", run_id: runId, state: "running", surface: "app", client_id: clientId });
 
+    const hit = matchPhrase(this.#sql, text);
+    if (hit) {
+      await this.#inLine(() => this.#phraseRun(hit, runId, "app"), { id: runId, surface: "app" }).catch(() => {});
+      return;
+    }
+
     await this.#inLine(
       async () => {
         const scrubber = new StreamScrubber(this.#outbox.secrets());
@@ -572,6 +661,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     this.#broadcast({ type: "atlas.run", run_id: runId, state: "running", surface: "voice" });
 
     const spoken = new Speech();
+    const hit = matchPhrase(this.#sql, transcript);
+    if (hit) {
+      void this.#inLine(async () => spoken.push(await this.#phraseRun(hit, runId, "voice")), { id: runId, surface: "voice" })
+        .catch(() => {})
+        .finally(() => spoken.close());
+      return spoken;
+    }
     const started = Date.now();
     let firstWordsMs: number | null = null;
     let statusMs: number | null = null;
@@ -702,6 +798,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
     const item = lease(this.#sql, payload.id);
     if (!item) return;
+    if (item.kind === "automation") {
+      await this.keepAliveWhile(() => this.#inLine(() => this.#automations.due(item)));
+      return;
+    }
     // A wake for when the lease runs out: if a restart cuts this run off, the item fires again, once, instead of
     // staying stuck as running. A finished item isn't leased again, so the wake does nothing.
     await this.schedule(new Date(item.lease_until ?? Date.now() + 5 * 60_000), "onAgendaDue", { id: item.id });
@@ -889,7 +989,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         surface: o.surface,
         system,
         messages,
-        tools: TOOLS[o.actor],
+        tools: o.tools ?? TOOLS[o.actor],
         budget: o.budget,
         signal: o.signal,
         joiner: o.surface === "voice" ? " " : "\n\n",
@@ -912,6 +1012,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       source_log_id: sourceLogId,
       via,
       exit: this.#exit,
+      automations: {
+        run: (a, o) => this.#automations.run(a, { why: o.why, inputs: o.inputs }),
+        arm: (id) => this.#automations.arm(id),
+      },
       helpers: {
         start: async (o) => {
           const job = await this.#helpers.start({
@@ -1507,6 +1611,21 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** The way out for tools: does an action now when its kind and earned trust allow, or puts it on this run's card. */
   #exit: ExitApi = {
     request: async (action, c) => {
+      const auto = this.#automations.runs.get(c.run_id);
+      // A test run sends nothing: it only says what it would do (§13.4).
+      if (auto?.test) {
+        return {
+          ok: true,
+          output: {
+            test_run: `Would ${action.kind === "webhook" ? `call ${action.name}` : `ask to delete ${action.name}`}. Nothing was sent.`,
+          },
+        };
+      }
+      // An automation the owner turned on may call the webhooks they saw in it (§13.1: allowed to).
+      if (auto && action.kind === "webhook" && auto.allowed.includes(action.name.toLowerCase())) {
+        const out = await this.#outbox.perform(action, { run_id: c.run_id, by: "automation" });
+        return { ok: out.ok, output: out.ok ? { done: out.text } : { error: out.text } };
+      }
       if (ASKS[kindOf(action)].asks === "never" || isTrusted(this.#sql, action)) {
         const out = await this.#outbox.perform(action, { run_id: c.run_id, by: "trusted" });
         return {
@@ -1544,6 +1663,41 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     },
     decide: (id, yes, by) => this.#decide(id, { yes, by }),
   };
+
+  #automationViews() {
+    return listAutomations(this.#sql).map((a) => automationView(this.#sql, a));
+  }
+
+  #automationsChanged(): void {
+    this.#broadcast({ type: "atlas.automations", automations: this.#automationViews() });
+    this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+  }
+
+  /**
+   * The owner said an automation's phrase, exactly (§13.2: on request). It
+   * runs in place of a reply: fixed steps with no model call, and an Atlas
+   * step only if it has one. What it says is the run's answer.
+   */
+  async #phraseRun(hit: NonNullable<ReturnType<typeof matchPhrase>>, runId: string, surface: Surface): Promise<string> {
+    const out = await this.#automations.run(hit.automation, { why: "request", inputs: hit.inputs, runId });
+    const text = out.ok ? out.text : `${hit.automation.name} didn't run: ${out.error}`;
+    await this.#finishRun(
+      runId,
+      surface,
+      {
+        state: out.ok ? "replied" : "failed",
+        text,
+        steps: out.steps,
+        brain: out.brain,
+        fallback: false,
+        interrupted: false,
+        usage: out.usage,
+        ...(out.error ? { error: out.error } : {}),
+      },
+      surface === "voice",
+    );
+    return text;
+  }
 
   #looking(): boolean {
     return [...this.getConnections()].some((c) => (c.state as SocketState | null)?.visible === true);
