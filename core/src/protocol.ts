@@ -340,6 +340,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
     arguments: z.record(z.string(), z.unknown()).optional(),
   }),
   z.object({ type: z.literal("atlas.mcp.app.read"), req: z.string().max(64), call: z.string().max(64), uri: z.string().min(1).max(2_000) }),
+  /** Stop one of the owner's text runs, under way or waiting in line. */
+  z.object({ type: z.literal("atlas.run.stop"), run_id: z.string().max(64) }),
   /** Library's files (§21.7), and deleting one. */
   z.object({ type: z.literal("atlas.files") }),
   z.object({ type: z.literal("atlas.file.delete"), id: z.string().max(64) }),

@@ -170,6 +170,7 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
         </p>
       );
     case "run.end":
+      if (b.interrupted) return <p className="note">Stopped.</p>;
       return <p className="note fail">Didn't finish. {str(b.error) || "The run failed."}</p>;
     default:
       return null;

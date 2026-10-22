@@ -94,6 +94,7 @@ export function systemPrompt(opts: {
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     areaContext(sql, opts.beforeSeq),
     exitsContext(sql, tz, now),
+    jobsLine(sql, now),
     surface === "voice" ? VOICE_PROFILE : surface === "none" ? "" : TEXT_PROFILE,
     opts.extra ?? "",
   ]
@@ -284,6 +285,23 @@ function exitsContext(sql: Sql, tz: string, now: Date): string {
     });
   if (settled.length) lines.push(`Approvals settled lately:\n${settled.join("\n")}`);
   return lines.join("\n\n");
+}
+
+/** Helpers working now (§8.1), so "how's it going?" has an answer while they work. */
+function jobsLine(sql: Sql, now: Date): string {
+  const running = sql
+    .exec<{ id: string; title: string; created_at: number; source: string }>(
+      `SELECT id, title, created_at, source FROM agenda WHERE kind = 'job' AND state IN ('scheduled', 'running') ORDER BY created_at LIMIT 10`,
+    )
+    .toArray();
+  if (!running.length) return "";
+  const lines = running.map((j) => {
+    const run = parse<{ detail?: { helper_run?: string } }>(j.source, {}).detail?.helper_run;
+    const steps = run ? sql.exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE run_id = ? AND kind = 'tool.call'`, run).one().n : 0;
+    const mins = Math.max(0, Math.round((now.getTime() - j.created_at) / 60_000));
+    return `- ${j.title} (id ${j.id}): started ${mins ? `${mins} min` : "under a minute"} ago, ${steps} lookup${steps === 1 ? "" : "s"} so far`;
+  });
+  return `Helpers working now (you get each one's result when it's done, and finish the task then):\n${lines.join("\n")}`;
 }
 
 /** What a run is told about areas: the hat, its tone, and the owner's other areas. */

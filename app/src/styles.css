@@ -2163,3 +2163,60 @@ button.chip:hover {
 .wrap-anywhere {
   overflow-wrap: anywhere;
 }
+
+/* A turn under way (§21.1): a light arc travels the pill's edge, and Send becomes Stop. */
+@property --busy-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+.composer.busy,
+.console.busy {
+  position: relative;
+}
+.composer.busy::after,
+.console.busy::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(from var(--busy-angle), transparent 0 62%, var(--ac) 82%, transparent 100%);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.85;
+  animation: busy-spin 2.6s linear infinite;
+}
+@keyframes busy-spin {
+  to {
+    --busy-angle: 360deg;
+  }
+}
+/* Without motion, the edge just holds a quiet accent while Atlas works. */
+@media (prefers-reduced-motion: reduce) {
+  .composer.busy::after,
+  .console.busy::after {
+    animation: none;
+    background: var(--ac);
+    opacity: 0.35;
+  }
+}
+[data-motion="reduced"] .composer.busy::after,
+[data-motion="reduced"] .console.busy::after {
+  animation: none;
+  background: var(--ac);
+  opacity: 0.35;
+}
+.send.stop {
+  background: var(--btn);
+}
+.stop-square {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: currentColor;
+}

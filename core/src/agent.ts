@@ -453,6 +453,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       case "atlas.say":
         void this.keepAliveWhile(() => this.#textTurn(msg.text, msg.client_id));
         return;
+      case "atlas.run.stop": {
+        const stop = this.#stops.get(msg.run_id);
+        if (stop) stop.abort("You stopped it.");
+        else this.#send(connection, { type: "atlas.error", message: "That isn't running any more." });
+        return;
+      }
       case "atlas.more":
         {
           const rows = thread(this.#sql, 60, msg.before_seq);
@@ -922,8 +928,21 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   // --- the two ways the owner talks: text and voice ----------------------------
 
+  /** The owner's text runs that can still be stopped, waiting in line or under way. */
+  #stops = new Map<string, AbortController>();
+
   async #textTurn(text: string, clientId: string): Promise<void> {
     const runId = startRun(this.#sql, { actor: "owner", trigger: "message", surface: "app", role: "main" });
+    const stop = new AbortController();
+    this.#stops.set(runId, stop);
+    try {
+      await this.#textRun(runId, text, clientId, stop.signal);
+    } finally {
+      this.#stops.delete(runId);
+    }
+  }
+
+  async #textRun(runId: string, text: string, clientId: string, signal: AbortSignal): Promise<void> {
     const inRow = append(this.#sql, {
       actor: "owner",
       kind: "message.in",
@@ -953,6 +972,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           input: text,
           beforeSeq: inRow.seq,
           budget: BUDGETS.chat,
+          signal,
           emit: (e) => this.#relay(runId, e, scrubber),
         });
         const tail = scrubber.flush();
@@ -1190,11 +1210,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   async #reportJob(item: AgendaItem, result: { state: "done" | "failed"; text: string }): Promise<void> {
     const note =
       result.state === "done"
-        ? `[Atlas's helper, not the owner] The job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nTell the owner what it found, the way you'd say it, as short as it can be while complete.`
+        ? `[Atlas's helper, not the owner] The job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nFinish what the owner asked for with it: if they wanted to see something (a chart, a table, a comparison), show it. Then tell them what it found, the way you'd say it, as short as it can be while complete.`
         : `[Atlas's helper, not the owner] The job "${item.title}" you started didn't finish: ${result.text}. Tell the owner in one or two sentences, with what you'd need to try again.`;
     const fallback =
       result.state === "done" ? `Finished: ${item.title}.\n\n${result.text}` : `"${item.title}" didn't finish: ${result.text}`;
-    await this.#atlasSays(`job:${item.id}`, note, fallback, "normal");
+    // The report finishes the owner's task, so it can put a view on the stage (a chart from the helper's numbers).
+    await this.#atlasSays(`job:${item.id}`, note, fallback, "normal", 6, [...TOOLS.atlas, show]);
     this.#helpers.reported(item.id);
   }
 
@@ -1209,7 +1230,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    * a job's result. If no brain can answer, `fallback` is sent as it is, so
    * the owner still hears it.
    */
-  async #atlasSays(trigger: string, note: string, fallback: string, urgency: Urgency, steps = 4): Promise<string> {
+  async #atlasSays(trigger: string, note: string, fallback: string, urgency: Urgency, steps = 4, tools?: Tool[]): Promise<string> {
     const runId = startRun(this.#sql, { actor: "atlas", trigger, surface: "none", role: "main" });
     const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
     const res: LoopResult = await this.#converse({
@@ -1220,6 +1241,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       role: "main",
       input: note,
       beforeSeq: lastSeq,
+      ...(tools ? { tools } : {}),
       budget: { steps, ms: steps > 4 ? 120_000 : 60_000 },
       emit: (e) => {
         if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });

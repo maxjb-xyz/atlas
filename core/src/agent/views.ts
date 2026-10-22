@@ -513,7 +513,7 @@ function pastItems(sql: Sql): InboxItem[] {
     .exec<{ id: string }>(
       `SELECT id FROM log WHERE at > ? AND (kind = 'job.result'
          OR (kind = 'automation.run' AND json_extract(body, '$.report') = 'inbox' AND json_extract(body, '$.test') = 0 AND json_extract(body, '$.quiet') IS NULL)
-         OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%' AND json_extract(body, '$.trigger') NOT LIKE 'automation%'))
+         OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.interrupted') IS NULL AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%' AND json_extract(body, '$.trigger') NOT LIKE 'automation%'))
          AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 100`,
       since,
       done,

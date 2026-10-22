@@ -333,6 +333,14 @@ export function Composer({
     return () => window.removeEventListener("atlas:compose", on);
   }, []);
 
+  // A turn under way: the owner's own text runs can be stopped; any run that isn't a voice call makes the pill busy.
+  const runs = Object.entries(s.live).filter(([, l]) => l.surface !== "voice");
+  const mine = runs.filter(([, l]) => l.surface === "app").map(([id]) => id);
+  const busy = runs.length > 0 || s.pending.some((p) => !p.run_id);
+  const stop = () => {
+    for (const run_id of mine) atlas.send({ type: "atlas.run.stop", run_id });
+  };
+
   function submit() {
     const t = text.trim();
     // While the socket is down the words stay here, rather than going nowhere.
@@ -345,7 +353,7 @@ export function Composer({
 
   const form = (
     <form
-      className="composer"
+      className={`composer ${busy && !sent ? "busy" : ""}`}
       onSubmit={(e) => {
         e.preventDefault();
         submit();
@@ -384,14 +392,21 @@ export function Composer({
       >
         <Icon name="mic" />
       </button>
-      <button className="send" aria-label="Send" disabled={!text.trim()}>
-        <Icon name="up" size={15} style={{ strokeWidth: 2.1 }} />
-      </button>
+      {busy && !text.trim() && mine.length > 0 ? (
+        // Typing while Atlas works shows Send again: the message waits its turn.
+        <button type="button" className="send stop" aria-label="Stop" title="Stop" onClick={stop}>
+          <span className="stop-square" />
+        </button>
+      ) : (
+        <button className="send" aria-label="Send" disabled={!text.trim()}>
+          <Icon name="up" size={15} style={{ strokeWidth: 2.1 }} />
+        </button>
+      )}
     </form>
   );
   if (!sent) return form;
   return (
-    <div className="console">
+    <div className={`console ${busy ? "busy" : ""}`}>
       <Exchange atlas={atlas} runId={sent.run_id} asked={sent.text} onTranscript={openTranscript} onClose={() => setSent(null)} />
       {form}
     </div>
@@ -491,11 +506,16 @@ function Exchange({
           {live?.status ?? "Thinking"}
         </p>
       )}
-      {failed && (
-        <p className="err small" style={{ marginTop: 4 }}>
-          Didn't finish. {str(failed.body.error) || "The run failed."}
-        </p>
-      )}
+      {failed &&
+        (failed.body.interrupted ? (
+          <p className="lab" style={{ marginTop: 6 }}>
+            Stopped
+          </p>
+        ) : (
+          <p className="err small" style={{ marginTop: 4 }}>
+            Didn't finish. {str(failed.body.error) || "The run failed."}
+          </p>
+        ))}
       {receipts.length > 0 && (
         <div className="receipts">
           {receipts.map((r) => (
