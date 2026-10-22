@@ -115,8 +115,13 @@ describe("the workspace", () => {
     const card = (await s.next("atlas.inbox.items")).items.find((i) => i.approval?.id === id)!.approval!;
     expect(card.steps[0]).toMatchObject({ kind: "site", title: "Let the workspace reach api.github.com", where: "api.github.com" });
     expect(card.steps[0]!.detail).toContain("carry your GitHub token from the vault");
+    // The yes carries on the task, without another message from the owner.
+    const carried = brain([say("Allowed. Trying again now.")]);
     s.send({ type: "atlas.approval.decide", id, yes: true });
     await s.next("atlas.rows", (m) => m.rows.some((r) => r.kind === "agenda.change" && r.body.change === "done"));
+    const resumed = await s.next("atlas.run", (m) => m.client_id === `approval-${id}`);
+    await s.next("atlas.run", (m) => m.run_id === resumed.run_id && m.state !== "running");
+    expect(carried.requests[0]!.messages.at(-1)).toMatchObject({ content: expect.stringContaining("Carry on.") });
 
     // Now it goes through, carrying the key; the model never sees it.
     const b = brain([call("workspace_run", { command: "curl https://api.github.com/user" }), say("Done.")]);

@@ -20,6 +20,34 @@ const approvalOf = (r: LogRow) => (r.body.receipt as { approval?: string } | und
 /** The most views the stage keeps open as tabs; the oldest closes first. */
 const MAX_VIEWS = 4;
 
+/** What a view shows, for views that are one thing however often they're shown; null for one-off views (a list, a chart). */
+function identity(s: Shown): string | null {
+  const v = s.view;
+  switch (v.kind) {
+    case "workspace":
+    case "browser":
+      return v.kind;
+    case "file":
+      return `file:${v.file}`;
+    case "area":
+      return `area:${v.area}`;
+    case "person":
+      return `person:${v.person}`;
+    case "automation":
+      return `automation:${v.automation}`;
+    case "page":
+      return `page:${v.page}`;
+    case "mcp_app":
+      return `mcp_app:${v.call}`;
+    default:
+      return null;
+  }
+}
+const sameThing = (a: Shown, b: Shown) => {
+  const k = identity(a);
+  return k != null && k === identity(b);
+};
+
 /**
  * What's on Home's stage, kept while the app is open (and through a reload,
  * in this tab), so leaving Home and coming back finds it as it was. `seen`
@@ -76,9 +104,15 @@ export function Home({
     setTab("approval");
   };
 
+  // Showing the same thing again (the workspace, a file, an area) reuses its tab, in its place, instead of adding one.
   const openView = (v: Shown) => {
-    setViews((list) => [...list.filter((x) => x.id !== v.id), v].slice(-MAX_VIEWS));
-    setTab(`view:${v.id}`);
+    const matches = (x: Shown) => x.id === v.id || sameThing(x, v);
+    const at = views.find(matches)?.id ?? v.id;
+    setViews((list) => {
+      const same = list.find(matches);
+      return same ? list.map((x) => (x === same ? { ...v, id: same.id } : x)) : [...list, v].slice(-MAX_VIEWS);
+    });
+    setTab(`view:${at}`);
   };
   const closeView = (id: string) => {
     setViews((list) => list.filter((x) => x.id !== id));

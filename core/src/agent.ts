@@ -2793,12 +2793,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (offers.length) append(this.#sql, { actor: "atlas", kind: "settings.change", body: { trust: "offered", keys: offers } });
     if (actions.some((a) => a.kind === "delete")) this.#broadcast({ type: "atlas.records.changed" });
     this.#approvalSettled(id);
-    // A yes in the app to a step in the middle of browsing (a login, a form) lets Atlas carry on from there.
+    // A yes in the app lets the task that asked carry on from there: after a site for the workspace, a login,
+    // a form, a service's tool or a webhook, Atlas finishes what it was doing, or says it's done.
     // Said by voice or in text, the yes is already part of a run that carries on by itself.
-    if (
-      (o.by === "app" || o.by === "hold" || o.by === "push") &&
-      actions.some((a) => a.kind === "browser" || a.kind === "vault" || a.kind === "mcp")
-    ) {
+    if (o.by === "app" || o.by === "hold" || o.by === "push") {
       void this.keepAliveWhile(() => this.#textTurn(`Yes to ${item.title}. Carry on.`, `approval-${id}`));
     }
     return { ok, text: results.map((r) => r.text).join(" ") };
