@@ -252,7 +252,8 @@ describe("OwnTracks through the Worker", () => {
     expect((await post(location(north(GYM, 5_000), T0 + 60_000), auth)).status).toBe(200);
     expect(await inOwner((_a, sql) => here(sql).fix)).toBeNull();
     s.send({ type: "atlas.settings.update", patch: { location: { on: true } } });
-    await s.next("atlas.view", (m) => m.view.settings.location.on === true);
+    // An older view (from before it was turned off) also says on, so wait for the row itself.
+    await s.next("atlas.rows", (m) => m.rows.some((r) => r.kind === "sense" && r.body.event === "on"));
     const events = await inOwner((_a, sql) =>
       sql
         .exec<{ body: string }>(`SELECT body FROM log WHERE kind = 'sense' AND seq > ? ORDER BY seq`, from)
