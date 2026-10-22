@@ -751,7 +751,7 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
 - **At the exits** (rule 2): the outbox checks, the secrets scrubber, the public-query check, sharing rules, approvals and the vault.
 - **Untrusted content** (emails, web pages, messages from other people, web results that tools return) is marked as untrusted wherever it appears. It can inform Atlas, never instruct it.
   - Atlas reads a page or a search's results itself; long or many reads go to helpers (§8.1), so only what matters comes back.
-  - Once a run has read the web, itself or through its helpers, anything that leaves Atlas in that run asks first, even what Atlas usually does without asking. The safety is at the exit (rule 2), not in the reading. (Decided 2026-10-22: a quarantined helper for every page would add a model call to each read, which voice can't afford.)
+  - Once a run has read the web, itself or through its helpers, anything that leaves Atlas in that run asks first, even what Atlas usually does without asking. The safety is at the exit (rule 2), not in the reading. The one exception is a vault login on a site the owner already said yes to (§15): the entry only fills on its own sites, so a page can't steer it anywhere else. (Decided 2026-10-22: a quarantined helper for every page would add a model call to each read, which voice can't afford.)
 - **Members are kept apart** by agent (§19.2).
 - **One audit log:** the log itself, with every action and delivery.
 - **Devices** are paired and can be revoked. Sign-in uses passkeys.
