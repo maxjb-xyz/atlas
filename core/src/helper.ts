@@ -17,11 +17,11 @@ import type { Append, LogRow } from "./store/log";
 import type { BrainChoice } from "./store/settings";
 import { recall } from "./tools/memory";
 import { calendarRead } from "./tools/calendar";
-import { reminderList } from "./tools/reminders";
+import { agendaList } from "./tools/agenda";
 import type { Tool, ToolResult } from "./tools/types";
 
 /** What a helper may use: looking only. Helpers can't change the owner's things or save facts about them (§5.4). */
-export const HELPER_TOOLS: Tool[] = [recall, calendarRead, reminderList];
+export const HELPER_TOOLS: Tool[] = [recall, calendarRead, agendaList];
 
 export interface HelperJob {
   /** The agenda item for the job; also the helper's name. */

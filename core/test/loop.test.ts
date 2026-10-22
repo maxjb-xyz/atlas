@@ -12,7 +12,7 @@ import { readSettings, secretValues, setSecret, writeSettings } from "../src/sto
 import { endRun, getRun, startRun, sweepStaleRuns } from "../src/store/runs";
 import { getState } from "../src/store/state";
 import { calendarRead } from "../src/tools/calendar";
-import { reminderTools } from "../src/tools/reminders";
+import { agendaTools } from "../src/tools/agenda";
 import type { ToolContext } from "../src/tools/types";
 import { call, env, fakeCalendar, say, scripted, type Step } from "./helpers";
 
@@ -67,7 +67,7 @@ function setup(sql: Sql, steps: Step[], opts: Partial<RunSpec> = {}, extraBrains
     surface: "app",
     system: "sys",
     messages: [{ role: "user", content: "hi" }],
-    tools: [calendarRead, ...reminderTools],
+    tools: [calendarRead, ...agendaTools],
     budget: { steps: 10, ms: 60_000 },
     joiner: "\n\n",
     firstEventMs: 2_000,
@@ -92,8 +92,9 @@ describe("the loop", () => {
       expect(t.main.requests[0]!.tools.map((x) => x.name)).toEqual([
         "calendar_read",
         "reminder_create",
-        "reminder_list",
-        "reminder_cancel",
+        "promise",
+        "agenda_list",
+        "agenda_cancel",
       ]);
     }));
 
@@ -173,7 +174,7 @@ describe("the loop", () => {
 
   it("ends with one tool-free answer when the step budget runs out", () =>
     withSql(async (sql) => {
-      const t = setup(sql, [call("reminder_list", {}), call("reminder_list", {}), say("Here's what I found. Want me to keep going?")], {
+      const t = setup(sql, [call("agenda_list", {}), call("agenda_list", {}), say("Here's what I found. Want me to keep going?")], {
         budget: { steps: 2, ms: 60_000 },
       });
       const res = await t.run();

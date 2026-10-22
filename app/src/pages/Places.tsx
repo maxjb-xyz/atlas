@@ -166,10 +166,14 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
 interface AgendaEntry {
   at: Date;
   allDay: boolean;
-  kind: "Event" | "Reminder" | "Job";
+  kind: "Event" | "Reminder" | "Promise" | "Job";
   title: string;
   source: string;
   id: string;
+  /** Where it was said: the owner's words, for reminders and promises (§13.4). */
+  said?: { text: string; at: number };
+  /** Can be cancelled from here. */
+  cancel?: boolean;
 }
 
 export function Agenda({ atlas }: { atlas: Atlas }) {
@@ -188,14 +192,19 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
     ...s.agenda
       // Notifications held for quiet hours are the outbox's, and approvals wait in Inbox: neither is something on your clock.
       .filter((a) => (a.state === "scheduled" || a.state === "running") && a.kind !== "notify" && a.kind !== "approval")
-      .map((a) => ({
-        at: new Date(a.due_at),
-        allDay: false,
-        kind: a.kind === "job" ? ("Job" as const) : ("Reminder" as const),
-        title: a.title,
-        source: a.kind === "job" ? "Helper" : "Atlas",
-        id: a.id,
-      })),
+      .map((a): AgendaEntry => {
+        const d = a.source.detail ?? {};
+        return {
+          at: new Date(a.due_at),
+          allDay: false,
+          kind: a.kind === "job" ? "Job" : a.kind === "promise" ? "Promise" : "Reminder",
+          title: a.title,
+          source: a.kind === "job" ? "Helper" : "Atlas",
+          id: a.id,
+          ...(typeof d.said === "string" ? { said: { text: d.said, at: typeof d.said_at === "number" ? d.said_at : a.created_at } } : {}),
+          cancel: a.kind !== "job" && a.state === "scheduled",
+        };
+      }),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
   const strip = Array.from({ length: 7 }, (_, i) => addDays(today, i));
   const key = (d: Date) => startOfDay(d).toDateString();
@@ -256,26 +265,43 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                 })}
               </div>
               <CalendarNote atlas={atlas} cal={cal} />
-              {!shown.length && <Empty title="Nothing on the clock">Events, reminders and Atlas's background jobs show here.</Empty>}
+              {!shown.length && (
+                <Empty title="Nothing on the clock">Events, reminders, what Atlas promised to do, and its background jobs show here.</Empty>
+              )}
               {[...byDay].map(([d, list]) => (
                 <div key={d}>
                   <div className="section-rule">
                     <span className="lab">{dayName(new Date(d))}</span>
                   </div>
                   <div className="rows">
-                    {list.map((e) => (
-                      <div key={`${e.kind}:${e.id}`} className="r">
-                        <span className="mono faint small" style={{ width: 70 }}>
-                          {e.allDay ? "All day" : clock(e.at)}
-                        </span>
-                        <span className={`tag ${e.kind === "Reminder" ? "ac" : ""}`} style={{ width: 76, justifyContent: "center" }}>
-                          {e.kind === "Reminder" ? "◆ " : ""}
-                          {e.kind}
-                        </span>
-                        <span className="grow">{e.title}</span>
-                        <span className="faint small hide-phone">{e.source}</span>
-                      </div>
-                    ))}
+                    {list.map((e) => {
+                      const atlasOwn = e.kind === "Reminder" || e.kind === "Promise";
+                      return (
+                        <div key={`${e.kind}:${e.id}`} className="r" style={{ alignItems: "flex-start", flexWrap: "wrap", rowGap: 4 }}>
+                          <span className="mono faint small" style={{ width: 70, flex: "none", paddingTop: 2 }}>
+                            {e.allDay ? "All day" : clock(e.at)}
+                          </span>
+                          <span className={`tag ${atlasOwn ? "ac" : ""}`} style={{ width: 84, flex: "none", justifyContent: "center" }}>
+                            {atlasOwn ? "◆ " : ""}
+                            {e.kind}
+                          </span>
+                          <span style={{ flex: "1 1 220px", minWidth: 0 }}>
+                            {e.title}
+                            {e.said && (
+                              <span className="faint small" style={{ display: "block", marginTop: 2 }}>
+                                You said, {shortDay(e.said.at)}: “{e.said.text}”
+                              </span>
+                            )}
+                          </span>
+                          <span className="faint small hide-phone">{e.source}</span>
+                          {e.cancel && (
+                            <button className="link small" onClick={() => atlas.send({ type: "atlas.agenda.cancel", id: e.id })}>
+                              Cancel
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
@@ -290,7 +316,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
 // --- Automations ------------------------------------------------------------------------------
 
 export function Automations({ atlas }: { atlas: Atlas }) {
-  const reminders = atlas.state.agenda.filter((a) => a.kind === "reminder" && a.state === "scheduled");
+  const reminders = atlas.state.agenda.filter((a) => (a.kind === "reminder" || a.kind === "promise") && a.state === "scheduled");
   return (
     <Stage
       label="Automations"
@@ -312,7 +338,7 @@ export function Automations({ atlas }: { atlas: Atlas }) {
             before it starts.
             {reminders.length > 0 && (
               <p style={{ marginTop: 10 }}>
-                Today Atlas keeps {reminders.length} {reminders.length === 1 ? "reminder" : "reminders"}; they're in{" "}
+                Atlas is keeping {reminders.length} {reminders.length === 1 ? "reminder or promise" : "reminders and promises"}; they're in{" "}
                 <a href="#/agenda">Agenda</a>.
               </p>
             )}

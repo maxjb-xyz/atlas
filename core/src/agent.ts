@@ -41,7 +41,7 @@ import { isoLocal, isValidZone, longLocal, parseWhen, shortLocal, zoneOf } from 
 import { calendarRead } from "./tools/calendar";
 import { delegate } from "./tools/delegate";
 import { memoryTools, recall } from "./tools/memory";
-import { reminderTools } from "./tools/reminders";
+import { agendaTools } from "./tools/agenda";
 import { show } from "./tools/show";
 import { approve, deleteForGood, webhookCall } from "./tools/exits";
 import {
@@ -77,8 +77,8 @@ const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
  * and nobody is looking at the stage when they run, so they can't `show`.
  */
 const TOOLS: Record<Actor, Tool[]> = {
-  owner: [calendarRead, ...reminderTools, ...memoryTools, delegate, show, webhookCall, deleteForGood, approve],
-  atlas: [calendarRead, ...reminderTools, recall],
+  owner: [calendarRead, ...agendaTools, ...memoryTools, delegate, show, webhookCall, deleteForGood, approve],
+  atlas: [calendarRead, ...agendaTools, recall],
   system: [],
 };
 
@@ -504,6 +504,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         }
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
+      case "atlas.agenda.cancel": {
+        const item = getItem(this.#sql, msg.id);
+        if (!item || !["reminder", "promise"].includes(item.kind) || item.state !== "scheduled") {
+          this.#send(connection, { type: "atlas.error", message: "That isn't waiting on the clock any more." });
+          return;
+        }
+        await this.#clock.unschedule(item);
+        finish(this.#sql, item.id, "cancelled", null, { by: "owner" });
+        this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+        return;
+      }
       case "atlas.stage":
         this.#send(connection, { type: "atlas.stage.page", ref: msg.ref, page: stagePage(this.#sql, msg.view) });
         return;
@@ -691,7 +702,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
     const item = lease(this.#sql, payload.id);
     if (!item) return;
-    await this.keepAliveWhile(() => this.#inLine(() => this.#remind(item)));
+    // A wake for when the lease runs out: if a restart cuts this run off, the item fires again, once, instead of
+    // staying stuck as running. A finished item isn't leased again, so the wake does nothing.
+    await this.schedule(new Date(item.lease_until ?? Date.now() + 5 * 60_000), "onAgendaDue", { id: item.id });
+    await this.keepAliveWhile(() => this.#inLine(() => (item.kind === "promise" ? this.#keep(item) : this.#remind(item))));
   }
 
   async #remind(item: AgendaItem): Promise<void> {
@@ -700,6 +714,35 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     // The promise is kept even when no brain can answer: the owner still gets the reminder.
     // The owner chose the time, so it doesn't wait for quiet hours to end.
     const runId = await this.#atlasSays(`agenda:${item.id}`, note, `Reminder: ${item.title}`, "now");
+    finish(this.#sql, item.id, "done", runId);
+    this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+  }
+
+  /**
+   * A promise comes due (§4.3): Atlas does what it said it would, with its
+   * tools, from the note it left itself, and tells the owner how it went.
+   */
+  async #keep(item: AgendaItem): Promise<void> {
+    const tz = zoneOf(readSettings(this.#sql));
+    const d = item.source.detail ?? {};
+    const said = typeof d.said === "string" ? d.said : null;
+    const saidAt = typeof d.said_at === "number" ? d.said_at : item.created_at;
+    const note = [
+      `[Atlas's clock, not the owner] It's time to keep a promise you made on ${shortLocal(new Date(saidAt), tz)}: "${item.title}".`,
+      said ? `The owner had said: "${said}"` : "",
+      `Your note to yourself: ${typeof d.then === "string" ? d.then : item.title}`,
+      "Do it now with your tools, looking things up rather than assuming. Then tell the owner in a short message what you found or did. If it turned out not to be needed, say so in a sentence.",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    // Kept even when no brain can answer: the owner still hears what was due, and that Atlas couldn't do it.
+    const runId = await this.#atlasSays(
+      `agenda:${item.id}`,
+      note,
+      `It's time for what I promised: ${item.title}. I couldn't look into it just now, because no brain answered.`,
+      "now",
+      8,
+    );
     finish(this.#sql, item.id, "done", runId);
     this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
   }
@@ -751,7 +794,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    * a job's result. If no brain can answer, `fallback` is sent as it is, so
    * the owner still hears it.
    */
-  async #atlasSays(trigger: string, note: string, fallback: string, urgency: Urgency): Promise<string> {
+  async #atlasSays(trigger: string, note: string, fallback: string, urgency: Urgency, steps = 4): Promise<string> {
     const runId = startRun(this.#sql, { actor: "atlas", trigger, surface: "none", role: "main" });
     const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
     const res: LoopResult = await this.#converse({
@@ -762,7 +805,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       role: "main",
       input: note,
       beforeSeq: lastSeq,
-      budget: { steps: 4, ms: 60_000 },
+      budget: { steps, ms: steps > 4 ? 120_000 : 60_000 },
       emit: (e) => {
         if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });
       },

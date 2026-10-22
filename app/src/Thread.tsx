@@ -142,7 +142,11 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
           </p>
         );
       }
-      return <p className="note">You undid it: {str(b.title)}. Atlas won't remind you.</p>;
+      return (
+        <p className="note">
+          You undid it: {str(b.title)}. {b.kind === "promise" ? "Atlas won't do it." : "Atlas won't remind you."}
+        </p>
+      );
     case "record.change":
       return (
         <p className="note">

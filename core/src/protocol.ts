@@ -178,6 +178,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
     about: z.string().max(300),
   }),
   z.object({ type: z.literal("atlas.webhook.remove"), id: z.string().max(64) }),
+  /** Cancel a reminder or promise from Agenda. */
+  z.object({ type: z.literal("atlas.agenda.cancel"), id: z.string().max(64) }),
   /** Stop sending notifications to a device. */
   z.object({ type: z.literal("atlas.push.remove"), device: z.string().min(1).max(64) }),
   /** "Sign in with ChatGPT": start, then paste the address the browser landed on. */

@@ -72,14 +72,14 @@ export function systemPrompt(opts: {
     .filter(Boolean)
     .join("\n\n");
 
-  // Jobs share the agenda; they don't push reminders out of the prompt.
-  const reminders = upcoming(sql, 60)
-    .filter((i) => i.kind === "reminder")
-    .slice(0, 15)
-    .map((i) => `- ${isoLocal(new Date(i.due_at), tz)}: ${i.title} (id ${i.id})`);
+  // Jobs, held notifications and approvals share the agenda; they don't push reminders and promises out of the prompt.
+  const reminders = upcoming(sql, 100)
+    .filter((i) => (i.kind === "reminder" || i.kind === "promise") && i.state === "scheduled")
+    .slice(0, 20)
+    .map((i) => `- ${isoLocal(new Date(i.due_at), tz)}: ${i.kind === "promise" ? "your promise: " : ""}${i.title} (id ${i.id})`);
   const fresh = [
     `Now: ${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}.`,
-    reminders.length ? `Upcoming reminders:\n${reminders.join("\n")}` : "No upcoming reminders.",
+    reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     areaContext(sql, opts.beforeSeq),
     exitsContext(sql, tz, now),
     surface === "voice" ? VOICE_PROFILE : surface === "none" ? "" : TEXT_PROFILE,

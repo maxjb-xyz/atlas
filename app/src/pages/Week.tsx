@@ -122,7 +122,14 @@ export function WeekGrid({ events, agenda, start }: { events: CalendarEventView[
             const isToday = localDate(d) === today;
             const dayEnd = addDays(d, 1);
             const timed = events.filter((e) => !e.all_day && eventStart(e) < dayEnd && eventEnd(e) > d);
-            const marks = agenda.filter((a) => a.state === "scheduled" && new Date(a.due_at) >= d && new Date(a.due_at) < dayEnd);
+            // Reminders and promises: the things on the clock that are Atlas's to say or do.
+            const marks = agenda.filter(
+              (a) =>
+                (a.kind === "reminder" || a.kind === "promise") &&
+                a.state === "scheduled" &&
+                new Date(a.due_at) >= d &&
+                new Date(a.due_at) < dayEnd,
+            );
             return (
               <div
                 key={d.toISOString()}

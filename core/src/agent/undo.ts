@@ -21,7 +21,12 @@ export async function undoReceipt(sql: Sql, logId: string, clock: ToolContext["c
   switch (undo.kind) {
     case "reminder.cancel": {
       const item = getItem(sql, undo.id);
-      if (!item || item.state !== "scheduled") return { ok: false, message: "That reminder already went off or was cancelled." };
+      if (!item || item.state !== "scheduled") {
+        return {
+          ok: false,
+          message: `That ${item?.kind === "promise" ? "promise was already kept" : "reminder already went off"} or was cancelled.`,
+        };
+      }
       await clock.unschedule(item);
       finish(sql, item.id, "cancelled", receiptRow.run_id, mark);
       return { ok: true, row: undoneBy(sql, logId)!, agenda: true };

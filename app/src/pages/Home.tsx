@@ -169,7 +169,7 @@ function Now({ atlas }: { atlas: Atlas }) {
   const cal = useCalendar(atlas, "now", monday, addDays(today, 8));
   const events = (cal?.events ?? []).filter((e) => eventEnd(e).getTime() > Date.now());
   const next = events.find((e) => !e.all_day) ?? events[0];
-  const reminder = s.agenda.find((a) => a.kind === "reminder" && a.state === "scheduled");
+  const reminder = s.agenda.find((a) => (a.kind === "reminder" || a.kind === "promise") && a.state === "scheduled");
   const owner = s.view?.settings.owner_name?.split(" ")[0];
   const inbox = s.inbox ?? [];
   const running = s.jobs.filter((j) => j.state === "running");
@@ -223,7 +223,9 @@ function Now({ atlas }: { atlas: Atlas }) {
             ) : reminder ? (
               <>
                 <p style={{ fontWeight: 500, fontSize: 15 }}>{reminder.title}</p>
-                <p className="muted">Reminder, {shortDay(reminder.due_at)}</p>
+                <p className="muted">
+                  {reminder.kind === "promise" ? "Atlas promised" : "Reminder"}, {shortDay(reminder.due_at)}
+                </p>
               </>
             ) : (
               <p className="muted">{cal?.error ?? "Nothing coming up."}</p>
