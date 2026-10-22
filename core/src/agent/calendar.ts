@@ -69,8 +69,14 @@ export class CalendarSense {
     setState(this.sql, "icloud_copy", null);
   }
 
+  /** The refusal on record. One saved by an older version has only `at` and `message`; it reads as a first refusal. */
   refusal(): Refusal | null {
-    return getState<Refusal>(this.sql, "icloud_refused");
+    const r = getState<Partial<Refusal>>(this.sql, "icloud_refused");
+    if (!r) return null;
+    const at = Number.isFinite(r.at) ? r.at! : Date.now();
+    const tries = Number.isFinite(r.tries) && r.tries! > 0 ? r.tries! : 1;
+    const next_try = Number.isFinite(r.next_try) ? r.next_try! : at + RETRY_AFTER_MS[0]!;
+    return { at, message: typeof r.message === "string" ? r.message : "iCloud refused the sign-in", tries, next_try };
   }
 
   /**

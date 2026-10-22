@@ -4,6 +4,7 @@ import { type PersonAgent, seams } from "../src/agent";
 import type { ServerMessage } from "../src/protocol";
 import { CalendarError } from "../src/calendar/types";
 import { getItem } from "../src/store/agenda";
+import { migrate } from "../src/store/db";
 import type { LogRow } from "../src/store/log";
 import { call, collect, env, fakeCalendar, fakeEmbedder, fakeOpenAI, say, scripted, SECRET, type Step } from "./helpers";
 
@@ -333,6 +334,35 @@ describe("the thread", () => {
     await s.next("atlas.view", (m) => m.view.secrets.icloud?.refused === null);
 
     // New credentials always let Atlas ask at once.
+    s.send({ type: "atlas.secret.set", secret: { name: "icloud", value: null } });
+    await s.next("atlas.view");
+    s.ws.close();
+  });
+
+  it("reads a refusal saved by the version before, instead of failing to load", async () => {
+    seams.calendar = fakeCalendar([]);
+    await runInDurableObject(owner(), async (_a: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      sql.exec(
+        `INSERT OR REPLACE INTO secrets (name, value, updated_at) VALUES ('icloud', ?, ?)`,
+        JSON.stringify({ username: "owner@icloud.com", app_password: "abcd-efgh-ijkl-mnop" }),
+        Date.now(),
+      );
+      // M0's shape: no tries, no next_try.
+      sql.exec(
+        `INSERT OR REPLACE INTO state (key, value, updated_at) VALUES ('icloud_refused', ?, ?)`,
+        JSON.stringify({ at: Date.now() - 60_000, message: "iCloud didn't accept the Apple ID and app-specific password." }),
+        Date.now(),
+      );
+    });
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "America/New_York" });
+    const snap = await s.next("atlas.snapshot");
+    const r = snap.view.secrets.icloud!.refused!;
+    expect(r.tries).toBe(1);
+    expect(r.next_try - r.at).toBe(30 * 60_000);
+    expect(r.note).toContain("Atlas will try again by itself after");
     s.send({ type: "atlas.secret.set", secret: { name: "icloud", value: null } });
     await s.next("atlas.view");
     s.ws.close();
