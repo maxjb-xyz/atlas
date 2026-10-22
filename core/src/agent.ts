@@ -27,9 +27,11 @@ import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
 import { compact, planCompaction } from "./compaction";
 import { CONTEXT_TOKENS, history, systemPrompt, tokens, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
-import { Outbox, StreamScrubber } from "./outbox";
+import { channelsOf, checkDiscord, type DiscordCopy } from "./discord";
+import { Outbox, type PushDevice, pushDevices, StreamScrubber, type Urgency } from "./outbox";
+import { vapidKeys } from "./push";
 import { type AreaView, ClientMessage, type JobView, type ServerMessage, type SettingsView } from "./protocol";
-import { type AgendaItem, due, finish, getItem, lease, setScheduleId, upcoming } from "./store/agenda";
+import { type AgendaItem, createItem, due, finish, getItem, lease, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, type Sql } from "./store/db";
 import { type Actor, append, forRun, get as getRow, type LogRow, logTo, type Surface, thread } from "./store/log";
 import { indexNewMessages } from "./store/memory";
@@ -155,7 +157,22 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         await Promise.all(calls.map((c) => this.speak(c, text)));
         return true;
       },
+      looking: () => [...this.getConnections()].some((c) => (c.state as SocketState | null)?.visible === true),
+      hold: async (at, row) => {
+        const item = createItem(this.#sql, {
+          kind: "notify",
+          title: String(row.body.text ?? "").slice(0, 80),
+          due_at: at.getTime(),
+          source: { log_id: row.id, run_id: row.run_id ?? undefined, via: "outbox" },
+        });
+        await this.#clock.schedule(item);
+      },
+      fetch: (...args) => (seams.fetch ?? fetch)(...args),
     });
+    // The key that signs push notifications, made once, so Settings can offer them straight away.
+    void vapidKeys(this.#sql).catch((err: unknown) =>
+      console.error(JSON.stringify({ at: "push.keys", error: err instanceof Error ? err.message : String(err) })),
+    );
     this.#refreshVoice();
     // Anything that came due while the agent was asleep runs now.
     for (const item of due(this.#sql, Date.now())) void this.onAgendaDue({ id: item.id });
@@ -176,13 +193,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   override onConnect(connection: Connection, ctx: ConnectionContext): void {
     // Which sign-in opened this socket (the Worker sets it), kept on the socket so it survives hibernation.
     const session = ctx.request.headers.get(SESSION_HEADER);
-    if (session) connection.setState({ session });
+    if (session) connection.setState({ session } satisfies SocketState);
   }
 
   /** Closes the sockets opened by sessions that just ended; with no list, every socket. */
   #signOutSockets(ended?: Set<string>): void {
     for (const c of this.getConnections()) {
-      const session = (c.state as { session?: string } | null)?.session;
+      const session = (c.state as SocketState | null)?.session;
       if (ended && !(session && ended.has(session))) continue;
       this.#send(c, { type: "atlas.signed_out" });
       c.close(4001, "Signed out.");
@@ -244,6 +261,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         );
         append(this.#sql, { actor: "owner", kind: "settings.change", body: { secret: msg.secret.name, set: msg.secret.value !== null } });
         if (msg.secret.name === "icloud") this.#calendar.reconnect();
+        // A new token means a new bot: what the old one could see no longer counts. The app tests the new one at once.
+        if (msg.secret.name === "discord_bot_token") setState(this.#sql, "discord", null);
         this.#refreshVoice();
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
@@ -401,6 +420,61 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       case "atlas.inbox":
         this.#send(connection, { type: "atlas.inbox.items", items: inbox(this.#sql) });
         return;
+      case "atlas.presence": {
+        const st = (connection.state as SocketState | null) ?? {};
+        connection.setState({ ...st, device: msg.device, visible: msg.visible } satisfies SocketState);
+        // The device in use is where the next push goes (§14: one channel).
+        if (msg.visible && pushDevices(this.#sql).some((d) => d.id === msg.device)) {
+          setState(
+            this.#sql,
+            "push_devices",
+            pushDevices(this.#sql).map((d) => (d.id === msg.device ? { ...d, last_seen: Date.now() } : d)),
+          );
+        }
+        return;
+      }
+      case "atlas.push.subscribe": {
+        const now = Date.now();
+        const others = pushDevices(this.#sql).filter((d) => d.id !== msg.device && d.sub.endpoint !== msg.subscription.endpoint);
+        const device: PushDevice = {
+          id: msg.device,
+          name: msg.name,
+          sub: msg.subscription,
+          origin: msg.origin,
+          added_at: now,
+          last_seen: now,
+        };
+        setState(this.#sql, "push_devices", [...others, device].slice(-20));
+        append(this.#sql, { actor: "owner", kind: "settings.change", body: { push: "added", name: msg.name } });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.push.remove": {
+        const gone = pushDevices(this.#sql).find((d) => d.id === msg.device);
+        if (!gone) return;
+        setState(
+          this.#sql,
+          "push_devices",
+          pushDevices(this.#sql).filter((d) => d.id !== msg.device),
+        );
+        append(this.#sql, { actor: "owner", kind: "settings.change", body: { push: "removed", name: gone.name } });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.discord.send": {
+        const to = channelsOf(getState<DiscordCopy>(this.#sql, "discord")).find((c) => c.id === msg.channel_id);
+        const out = to
+          ? await this.#outbox.send({ channel: "discord", to, text: msg.text, run_id: null, by: "owner" })
+          : { ok: false, error: "Atlas doesn't know that channel. Press Test to read the bot's channels again." };
+        this.#send(connection, {
+          type: "atlas.test.result",
+          what: "discord",
+          ref: msg.ref,
+          ok: out.ok,
+          message: out.ok ? `Sent to #${to!.name}.` : (out.error ?? "It didn't go out."),
+        });
+        return;
+      }
       case "atlas.stage":
         this.#send(connection, { type: "atlas.stage.page", ref: msg.ref, page: stagePage(this.#sql, msg.view) });
         return;
@@ -570,6 +644,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       await this.keepAliveWhile(() => this.#helpers.lost(payload.id));
       return;
     }
+    // Quiet hours are over: every held notification goes out together, as one push.
+    if (getItem(this.#sql, payload.id)?.kind === "notify") {
+      const held = due(this.#sql, Date.now())
+        .filter((i) => i.kind === "notify")
+        .map((i) => lease(this.#sql, i.id))
+        .filter((i): i is AgendaItem => i != null);
+      for (const i of held) finish(this.#sql, i.id, "done", null);
+      const rows = held.map((i) => (i.source.log_id ? getRow(this.#sql, i.source.log_id) : null)).filter((r): r is LogRow => r != null);
+      await this.keepAliveWhile(() => this.#outbox.release(rows));
+      return;
+    }
     const item = lease(this.#sql, payload.id);
     if (!item) return;
     await this.keepAliveWhile(() => this.#inLine(() => this.#remind(item)));
@@ -579,7 +664,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const tz = zoneOf(readSettings(this.#sql));
     const note = `[Atlas's clock, not the owner] The reminder "${item.title}" is due now (set ${shortLocal(new Date(item.created_at), tz)}). Give it to the owner in one short message, as you'd say it. Don't ask follow-up questions unless it truly helps.`;
     // The promise is kept even when no brain can answer: the owner still gets the reminder.
-    const runId = await this.#atlasSays(`agenda:${item.id}`, note, `Reminder: ${item.title}`);
+    // The owner chose the time, so it doesn't wait for quiet hours to end.
+    const runId = await this.#atlasSays(`agenda:${item.id}`, note, `Reminder: ${item.title}`, "now");
     finish(this.#sql, item.id, "done", runId);
     this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
   }
@@ -616,7 +702,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         : `[Atlas's helper, not the owner] The job "${item.title}" you started didn't finish: ${result.text}. Tell the owner in one or two sentences, with what you'd need to try again.`;
     const fallback =
       result.state === "done" ? `Finished: ${item.title}.\n\n${result.text}` : `"${item.title}" didn't finish: ${result.text}`;
-    await this.#atlasSays(`job:${item.id}`, note, fallback);
+    await this.#atlasSays(`job:${item.id}`, note, fallback, "normal");
     this.#helpers.reported(item.id);
   }
 
@@ -631,7 +717,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    * a job's result. If no brain can answer, `fallback` is sent as it is, so
    * the owner still hears it.
    */
-  async #atlasSays(trigger: string, note: string, fallback: string): Promise<string> {
+  async #atlasSays(trigger: string, note: string, fallback: string, urgency: Urgency): Promise<string> {
     const runId = startRun(this.#sql, { actor: "atlas", trigger, surface: "none", role: "main" });
     const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
     const res: LoopResult = await this.#converse({
@@ -657,7 +743,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       error: err instanceof Error ? err.message : String(err),
     }));
     const kept = res.state === "replied" ? res : { ...res, state: "replied" as const, text: fallback, brain: null };
-    await this.#finishRun(runId, "app", kept, false, trigger);
+    await this.#finishRun(runId, "app", kept, false, trigger, urgency);
     return runId;
   }
 
@@ -982,6 +1068,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     res: LoopResult & { timing?: Record<string, unknown> },
     streamed: boolean,
     trigger?: string,
+    // A reply to something the owner just asked can't wait: they're awake and asked for it.
+    urgency: Urgency = "now",
   ): Promise<void> {
     if (res.text.trim()) {
       await this.#outbox.deliver(
@@ -989,6 +1077,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           text: res.text,
           run_id: runId,
           channel,
+          urgency,
           brain: res.brain,
           fallback: res.fallback,
           interrupted: res.interrupted,
@@ -1306,6 +1395,32 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           if (this.#inCall.has(connection.id)) await this.speak(connection, sample);
           return { ok: true, message: `${(this.tts as { label?: string }).label ?? "voice"} spoke in ${Date.now() - t0} ms.` };
         },
+        discord: async () => {
+          await this.#checkDiscord();
+          const copy = getState<DiscordCopy>(this.#sql, "discord")!;
+          const channels = channelsOf(copy);
+          if (!copy.servers.length) {
+            return {
+              ok: true,
+              message: `Connected as ${copy.bot}, but it isn't in a server yet. Invite it with the link below, then test again.`,
+            };
+          }
+          const names = channels.slice(0, 6).map((c) => `#${c.name}`);
+          return {
+            ok: true,
+            message: `Connected as ${copy.bot}. It sees ${channels.length} text ${channels.length === 1 ? "channel" : "channels"} in ${copy.servers.length} ${copy.servers.length === 1 ? "server" : "servers"}: ${names.join(", ")}${channels.length > names.length ? ", and more" : ""}.`,
+          };
+        },
+        push: async (device) => {
+          const out = await this.#outbox.push(
+            [{ id: `test-${Date.now()}`, run_id: null, body: { text: "This is how Atlas's notifications look." } } as unknown as LogRow],
+            "now",
+            device,
+          );
+          return out.ok
+            ? { ok: true, message: "Sent. It should show on this device in a moment." }
+            : { ok: false, message: out.error ?? "It didn't go." };
+        },
         systemFor: (character) => {
           const settings = readSettings(this.#sql);
           const s = character ? { ...settings, character } : settings;
@@ -1316,6 +1431,23 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     );
     this.#send(connection, { type: "atlas.test.result", what: msg.what, ref: msg.ref, ...out });
     if (msg.what === "brain") this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  /** Asks Discord who the bot is and what it can see, and keeps a copy for Settings and for sending. Throws Discord's own words. */
+  async #checkDiscord(): Promise<void> {
+    const token = getSecret<string>(this.#sql, "discord_bot_token");
+    if (!token) throw new Error("Paste the bot's token first.");
+    try {
+      setState(this.#sql, "discord", await checkDiscord(seams.fetch ?? fetch, token));
+      append(this.#sql, { actor: "system", kind: "settings.change", body: { discord: "checked" } });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      append(this.#sql, { actor: "system", kind: "settings.change", body: { discord: "refused", message } });
+      console.error(JSON.stringify({ at: "discord.check", error: message }));
+      throw err;
+    } finally {
+      this.#broadcast({ type: "atlas.view", view: this.#view() });
+    }
   }
 
   // --- sending ----------------------------------------------------------------
@@ -1361,6 +1493,13 @@ class Speech implements AsyncIterable<string> {
       this.#wake = null;
     }
   }
+}
+
+/** What each socket remembers about itself, across hibernation: its sign-in, its device, and whether Atlas is in view there. */
+interface SocketState {
+  session?: string;
+  device?: string;
+  visible?: boolean;
 }
 
 /** Lets the agent take other work between batches of background upkeep. */

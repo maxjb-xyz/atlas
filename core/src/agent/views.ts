@@ -182,8 +182,9 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
     "brain.fallback",
     "context.summary",
     "settings.change",
+    "delivery",
   ],
-  actions: ["tool.result", "record.change", "agenda.change", "area.change"],
+  actions: ["tool.result", "record.change", "agenda.change", "area.change", "delivery"],
   conversations: ["message.in", "message.out"],
   jobs: ["job.result", "agenda.change"],
 };
@@ -193,6 +194,8 @@ function shown(row: LogRow, filter: HistoryFilter): boolean {
   if (row.kind === "tool.result") return row.body.receipt != null;
   if (row.kind === "run.end") return row.body.state === "failed";
   if (filter === "jobs" && row.kind === "agenda.change") return row.body.kind === "job";
+  // A notification held for quiet hours is told by its delivery receipt, not as an agenda change.
+  if (row.kind === "agenda.change" && row.body.kind === "notify") return false;
   return true;
 }
 

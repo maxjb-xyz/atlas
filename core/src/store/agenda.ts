@@ -1,11 +1,12 @@
 // One clock (VISION §4.3). The agenda holds reminders, and since M1 the
-// jobs helpers run in the background (§8.1). Promises, automations and
-// watches join in M2 as more kinds of the same row.
+// jobs helpers run in the background (§8.1). Since M2 it also holds
+// notifications waiting for quiet hours to end (§14). Promises, automations
+// and watches join in M2 as more kinds of the same row.
 
 import { append } from "./log";
 import { type Json, newId, parse, type Sql } from "./db";
 
-export type AgendaKind = "reminder" | "job";
+export type AgendaKind = "reminder" | "job" | "notify";
 export type AgendaState = "scheduled" | "running" | "done" | "cancelled" | "failed";
 
 export interface AgendaSource {

@@ -138,7 +138,8 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
       .filter((e: CalendarEventView) => eventEnd(e).getTime() > Date.now())
       .map((e) => ({ at: eventStart(e), allDay: e.all_day, kind: "Event" as const, title: e.title, source: e.calendar, id: e.id })),
     ...s.agenda
-      .filter((a) => a.state === "scheduled" || a.state === "running")
+      // Notifications held for quiet hours are the outbox's, not something on your clock.
+      .filter((a) => (a.state === "scheduled" || a.state === "running") && a.kind !== "notify")
       .map((a) => ({
         at: new Date(a.due_at),
         allDay: false,

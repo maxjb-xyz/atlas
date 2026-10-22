@@ -1146,6 +1146,19 @@ button.chip:hover {
 
 /* --- forms (settings and setup) --------------------------------------------------------- */
 
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--tx);
+}
+
 .form-row {
   display: grid;
   grid-template-columns: 140px 1fr;

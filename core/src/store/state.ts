@@ -39,7 +39,14 @@ export type StateName =
   /** Helpers whose own storage is still there, deleted once their job ends. */
   | "helper_facets"
   /** How many unfiled messages there were when discovery last ran, so it waits for new ones. */
-  | "unfiled_tried";
+  | "unfiled_tried"
+  /**
+   * The owner's devices that take push notifications: each one's id, name, push subscription, and when it was
+   * last in use. Signed by this deployment's own key, so a subscription alone can't be used by anyone else.
+   */
+  | "push_devices"
+  /** What the Discord bot could see at its last check: its name, servers and text channels. No token. */
+  | "discord";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

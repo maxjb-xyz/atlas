@@ -12,6 +12,9 @@ import type { StoredPasskey } from "../passkeys";
 import { getState } from "../store/state";
 import type { CalendarSense } from "./calendar";
 import { setupView } from "./setup";
+import { type DiscordCopy, inviteUrl } from "../discord";
+import { pushDevices } from "../outbox";
+import type { VapidKeys } from "../push";
 import type { ChatGPTSignIn } from "./chatgpt";
 
 export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar: CalendarSense; router: BrainRouter }): SettingsView {
@@ -31,6 +34,16 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
       icloud: icloud
         ? { username: icloud.username, refused: refusal ? { ...refusal, note: parts.calendar.note(refusal, settings) } : null }
         : null,
+      discord: getSecret(sql, "discord_bot_token")
+        ? (() => {
+            const copy = getState<DiscordCopy>(sql, "discord");
+            return { copy, invite: copy ? inviteUrl(copy.app_id) : null };
+          })()
+        : null,
+    },
+    push: {
+      public_key: getSecret<VapidKeys>(sql, "push_vapid")?.public ?? null,
+      devices: pushDevices(sql).map((d) => ({ id: d.id, name: d.name, added_at: d.added_at, last_seen: d.last_seen })),
     },
     chatgpt: parts.chatgpt.view(),
     health: parts.router.snapshot(),
@@ -56,6 +69,10 @@ export interface TestDeps {
   speakSample(): Promise<TestOutcome>;
   /** Atlas's system prompt for a text reply, with an unsaved character when one is given. */
   systemFor(character?: Settings["character"]): string;
+  /** Checks the Discord bot and keeps a copy of what it can see. */
+  discord(): Promise<TestOutcome>;
+  /** Sends a test notification to one device. */
+  push(device: string | undefined): Promise<TestOutcome>;
 }
 
 /** What the Character page's sample answers, so the owner hears the character before saving it. */
@@ -114,6 +131,8 @@ export async function liveTest(deps: TestDeps, msg: Extract<ClientMessage, { typ
       const ok = checks.length > 0 && checks.every((c) => !c.note && c.results.every((r) => r.verdict.passed));
       return { ok, message: `Character check: ${summary(checks)}.`, detail: checks };
     }
+    if (msg.what === "discord") return await deps.discord();
+    if (msg.what === "push") return await deps.push(msg.device);
     if (msg.what === "sample") {
       const choice = settings.brains.main.map((c) => deps.makeBrain(c)).find((b) => b != null);
       if (!choice) return { ok: false, message: "There's no brain set up to answer." };

@@ -57,6 +57,17 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         what: `Summarized ${str(b.messages)} older messages to keep the conversation in view`,
         kind: "context.summary",
       };
+    case "delivery": {
+      const where =
+        b.channel === "push" ? `Notification${b.to ? ` to ${str(b.to)}` : ""}` : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
+      const what =
+        b.ok === false
+          ? `${where} didn't go: ${str(b.error)}`
+          : b.note
+            ? `${where}: ${str(b.note)}`
+            : `${where}${b.text ? `: “${str(b.text)}”` : " sent"}`;
+      return { who: b.by === "owner" ? "You" : "Atlas", what, kind: `deliver.${str(b.channel)}` };
+    }
     case "settings.change": {
       const what = Array.isArray(b.keys)
         ? `Changed ${(b.keys as string[]).map((k) => k.replace(/_/g, " ")).join(", ")}`
@@ -68,7 +79,11 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
               ? `iCloud ${str(b.icloud)}: ${str(b.message)}`
               : b.passkeys != null
                 ? `Passkeys: ${str(b.passkeys)}`
-                : "Changed settings";
+                : b.push
+                  ? `Notifications ${str(b.push)}: ${str(b.name)}`
+                  : b.discord
+                    ? `Discord ${str(b.discord)}${b.message ? `: ${str(b.message)}` : ""}`
+                    : "Changed settings";
       return { who: r.actor === "owner" ? "You" : "Atlas", what, kind: "settings.change" };
     }
     default:

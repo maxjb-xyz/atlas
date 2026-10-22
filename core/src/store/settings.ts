@@ -70,6 +70,27 @@ export const Settings = z.object({
       hidden: z.array(z.string().max(200)).max(50).default([]),
     })
     .default({ hidden: [] }),
+  /** How messages reach the owner when the app isn't in view (§14). */
+  notifications: z
+    .object({
+      /** Push notifications to the device used last, when no app is in view. */
+      push: z.boolean().default(true),
+      /** Non-urgent pushes wait until these hours end. Local times, HH:mm. */
+      quiet: z
+        .object({
+          on: z.boolean().default(false),
+          from: z
+            .string()
+            .regex(/^\d{2}:\d{2}$/)
+            .default("22:00"),
+          to: z
+            .string()
+            .regex(/^\d{2}:\d{2}$/)
+            .default("07:00"),
+        })
+        .default({ on: false, from: "22:00", to: "07:00" }),
+    })
+    .default({ push: true, quiet: { on: false, from: "22:00", to: "07:00" } }),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -88,6 +109,7 @@ export const SettingsPatch = z.object({
   character: f.character.unwrap().optional(),
   pins: f.pins.unwrap().optional(),
   calendar: f.calendar.unwrap().optional(),
+  notifications: f.notifications.unwrap().optional(),
 } satisfies { [K in keyof typeof f]: z.ZodType });
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
@@ -122,7 +144,15 @@ export function writeSettings(sql: Sql, patch: SettingsPatch): string[] {
 // M0 keeps a handful of keys in the agent's own storage (encrypted at rest by
 // Cloudflare). The vault (§15) replaces this in M3.
 
-export type SecretName = "elevenlabs_api_key" | "icloud" | "chatgpt_tokens" | "chatgpt_login";
+export type SecretName =
+  | "elevenlabs_api_key"
+  | "icloud"
+  | "chatgpt_tokens"
+  | "chatgpt_login"
+  /** The Discord bot's token. */
+  | "discord_bot_token"
+  /** This deployment's VAPID key pair, which signs its push notifications. */
+  | "push_vapid";
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];
@@ -147,6 +177,8 @@ export function secretValues(sql: Sql): string[] {
     ["chatgpt_tokens", ["access_token"]],
     ["chatgpt_tokens", ["refresh_token"]],
     ["chatgpt_tokens", ["id_token"]],
+    ["discord_bot_token", []],
+    ["push_vapid", ["private_jwk", "d"]],
   ];
   const out: string[] = [];
   for (const [name, path] of wanted) {

@@ -3,6 +3,7 @@
 
 import { VoiceClient } from "agents/voice/client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { deviceId, inView } from "./notify";
 import type {
   AgendaItem,
   AreaView,
@@ -270,8 +271,12 @@ export function useAtlas() {
       patch(connected ? { connected, error: null } : { connected });
       if (connected) {
         c.sendJSON({ type: "atlas.hello", tz: Intl.DateTimeFormat().resolvedOptions().timeZone } satisfies ClientMessage);
+        c.sendJSON({ type: "atlas.presence", device: deviceId(), visible: inView() } satisfies ClientMessage);
       }
     });
+    // Whether Atlas is in view here decides whether a message also needs a push (§14: one channel).
+    const presence = () => c.sendJSON({ type: "atlas.presence", device: deviceId(), visible: inView() } satisfies ClientMessage);
+    document.addEventListener("visibilitychange", presence);
     c.addEventListener("custommessage", (msg) => {
       const m = msg as ServerMessage;
       if (m?.type === "atlas.signed_out") {
@@ -298,6 +303,7 @@ export function useAtlas() {
     c.addEventListener("error", (error) => patch({ error }));
     c.connect();
     return () => {
+      document.removeEventListener("visibilitychange", presence);
       c.disconnect();
       client.current = null;
     };

@@ -6,12 +6,13 @@ import { PRESETS, type Preset } from "../../core/src/character";
 import type { ChatGPTView, SettingsView } from "../../core/src/protocol";
 import type { BrainChoice, Settings as SettingsT } from "../../core/src/store/settings";
 import type { Atlas, TestResult } from "./connection";
+import { deviceId, type PushState, pushState, subscribe, unsubscribe } from "./notify";
 import { addPasskey, deviceName, passkeysSupported } from "./passkey";
 import { Composer } from "./Shell";
 import { useLook } from "./theme";
 import { Icon, Sheet, shortDay, Stage } from "./ui";
 
-type Section = "character" | "look" | "brains" | "connections" | "devices" | "data";
+type Section = "character" | "look" | "brains" | "connections" | "devices" | "notifications" | "data";
 
 const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
   {
@@ -29,7 +30,13 @@ const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
       ["devices", "Devices"],
     ],
   },
-  { group: "System", items: [["data", "Your data"]] },
+  {
+    group: "System",
+    items: [
+      ["notifications", "Notifications"],
+      ["data", "Your data"],
+    ],
+  },
 ];
 
 export function SettingsPage({
@@ -79,7 +86,7 @@ export function SettingsPage({
       label="Settings"
       tabs={[{ id: section, label }]}
       tab={section}
-      meta="Atlas · M1"
+      meta="Atlas · M2"
       dock={
         <div className="dock slim">
           {dirty && (
@@ -127,6 +134,7 @@ export function SettingsPage({
                 {section === "brains" && <Brains atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "connections" && <Connections atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "devices" && <Devices atlas={atlas} view={view} />}
+                {section === "notifications" && <Notifications atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "data" && <Data atlas={atlas} onSignOut={onSignOut} onSetup={onSetup} />}
               </>
             )}
@@ -459,10 +467,19 @@ function Brains({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; 
 // --- Connections -------------------------------------------------------------------------------
 
 function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
+  const icloud = view.secrets.icloud;
+  const discord = view.secrets.discord;
+  const channels = discord?.copy?.servers.reduce((n, sv) => n + sv.channels.length, 0) ?? 0;
   return (
     <>
-      <Head title="Connections" sub="What Atlas can see. Each one has a live test." />
+      <Head title="Connections" sub="What Atlas can see, and where it can speak. Each one has its own live test." />
       <Row label="iCloud Calendar">
+        <State
+          on={!!icloud && !icloud.refused}
+          bad={!!icloud?.refused}
+          text={icloud ? (icloud.refused ? "Refused by Apple" : `Connected as ${icloud.username}`) : "Not connected"}
+          what="Reads your calendars."
+        />
         <ICloud view={view} atlas={atlas} />
         <label className="field">
           <span>Calendars to leave out</span>
@@ -488,9 +505,139 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
           run={() => atlas.test("calendar", { type: "atlas.test", what: "calendar" })}
         />
       </Row>
+      <Row label="Discord">
+        <State
+          on={!!discord?.copy}
+          text={
+            discord?.copy
+              ? `Connected as ${discord.copy.bot} · ${discord.copy.servers.length} ${discord.copy.servers.length === 1 ? "server" : "servers"}, ${channels} ${channels === 1 ? "channel" : "channels"}`
+              : discord
+                ? "Token saved, not checked yet"
+                : "Not connected"
+          }
+          what="Posts in your servers' channels, as a bot you make."
+        />
+        <Discord atlas={atlas} view={view} />
+      </Row>
       <Row label="Google, Microsoft, email">
         <p className="muted small">Not yet. Atlas connects to Google and Microsoft calendars, and reads mail, in a later version.</p>
       </Row>
+    </>
+  );
+}
+
+/** One connection's state: a tag, what it found, and what it's for. */
+function State({ on, bad, text, what }: { on: boolean; bad?: boolean; text: string; what: string }) {
+  return (
+    <div className="row" style={{ gap: 10 }}>
+      <span className={`tag ${on ? "ok" : bad ? "ac" : ""}`}>{on ? "✓ On" : bad ? "× Refused" : "Off"}</span>
+      <span style={{ fontWeight: 500 }}>{text}</span>
+      <span className="muted small">{what}</span>
+    </div>
+  );
+}
+
+function Discord({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const d = view.secrets.discord;
+  const [token, setToken] = useState("");
+  const channels = (d?.copy?.servers ?? []).flatMap((sv) => sv.channels.map((c) => ({ ...c, server: sv.name })));
+  const [channel, setChannel] = useState("");
+  const [text, setText] = useState("Atlas is connected here.");
+  const [sent, setSent] = useState(0);
+  const result = sent ? atlas.state.tests[`discord:send:${sent}`] : undefined;
+  return (
+    <>
+      {!d && (
+        <p className="muted small">
+          Make a bot for Atlas at{" "}
+          <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer">
+            discord.com/developers
+          </a>
+          : New Application, then Bot, then Reset Token. Paste the token here. Atlas posts as that bot, and only in servers you invite it
+          to.
+        </p>
+      )}
+      <label className="field">
+        <span>Bot token</span>
+        <div className="row">
+          <input
+            type="password"
+            className="mono"
+            autoComplete="new-password"
+            spellCheck={false}
+            value={token}
+            placeholder={d ? "Set. Paste a new one to replace it." : "Paste the bot's token"}
+            onChange={(e) => setToken(e.target.value)}
+          />
+          <button
+            type="button"
+            className="btn"
+            disabled={token.trim().length < 20}
+            onClick={() => {
+              atlas.send({ type: "atlas.secret.set", secret: { name: "discord_bot_token", value: token.trim() } });
+              setToken("");
+              atlas.test("discord", { type: "atlas.test", what: "discord" });
+            }}
+          >
+            Connect
+          </button>
+          {d && (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => atlas.send({ type: "atlas.secret.set", secret: { name: "discord_bot_token", value: null } })}
+            >
+              Disconnect
+            </button>
+          )}
+        </div>
+      </label>
+      {d?.invite && (
+        <p className="small">
+          <a href={d.invite} target="_blank" rel="noreferrer">
+            Add the bot to a server
+          </a>
+          <span className="muted">. It asks only to see channels and send messages. Test again after inviting it.</span>
+        </p>
+      )}
+      {d && (
+        <TestRow
+          label="Test Discord"
+          k="discord"
+          atlas={atlas}
+          run={() => atlas.test("discord", { type: "atlas.test", what: "discord" })}
+        />
+      )}
+      {channels.length > 0 && (
+        <form
+          className="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const n = Date.now();
+            setSent(n);
+            atlas.send({ type: "atlas.discord.send", ref: `discord:send:${n}`, channel_id: channel || channels[0]!.id, text });
+          }}
+        >
+          <select value={channel || channels[0]!.id} onChange={(e) => setChannel(e.target.value)} style={{ maxWidth: 220 }}>
+            {channels.map((c) => (
+              <option key={c.id} value={c.id}>
+                #{c.name} · {c.server}
+              </option>
+            ))}
+          </select>
+          <input value={text} maxLength={2000} onChange={(e) => setText(e.target.value)} style={{ flex: 1, minWidth: 160 }} />
+          <button className="btn" disabled={!text.trim()}>
+            Send a test message
+          </button>
+          {sent > 0 && !result && <span className="muted small">Sending</span>}
+          {result && <TestMessage r={result} />}
+        </form>
+      )}
+      {d && (
+        <p className="muted small">
+          Everything sent leaves a receipt in History. Atlas doesn't post on its own yet; when it can, it asks you first.
+        </p>
+      )}
     </>
   );
 }
@@ -505,6 +652,155 @@ function draftProblem(d: SettingsT): string | null {
     if (d.brains[role].some((b) => !b.model.trim())) return "Every brain in a chain needs a model name.";
   }
   return null;
+}
+
+// --- Notifications ----------------------------------------------------------------------------
+
+const PUSH_NOTE: Record<PushState, string> = {
+  on: "On. When Atlas isn't open in front of you, messages reach you here.",
+  off: "Off on this device.",
+  blocked: "Blocked in this browser. Allow notifications for this site in the browser's settings, then come back.",
+  install:
+    "On iPhone and iPad, notifications need Atlas on the Home Screen: tap Share, then Add to Home Screen, and open Atlas from there.",
+  unsupported: "This browser can't take notifications.",
+};
+
+function Notifications({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
+  const me = deviceId();
+  const mine = view.push.devices.find((d) => d.id === me);
+  const [browser, setBrowser] = useState<PushState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void pushState().then(setBrowser);
+  }, [view.push.devices.length]);
+  // Subscribed in the browser but forgotten by Atlas (it was removed, or the push service dropped it) reads as off.
+  const state: PushState | null = browser === "on" && !mine ? "off" : browser;
+  const quiet = draft.notifications.quiet;
+
+  async function turnOn() {
+    if (!view.push.public_key) return;
+    setBusy(true);
+    setError(null);
+    const out = await subscribe(view.push.public_key);
+    if ("error" in out) setError(out.error);
+    else {
+      atlas.send({
+        type: "atlas.push.subscribe",
+        device: me,
+        name: deviceName(),
+        origin: location.origin,
+        subscription: out.sub as { endpoint: string; keys: { p256dh: string; auth: string } },
+      });
+    }
+    setBrowser(await pushState());
+    setBusy(false);
+  }
+
+  return (
+    <>
+      <Head
+        title="Notifications"
+        sub="When Atlas isn't open in front of you, each message reaches you once, on the device you used last."
+      />
+      <Row label="This device">
+        <p className={state === "blocked" ? "err small" : "small"}>{state ? PUSH_NOTE[state] : "Checking."}</p>
+        <div className="row">
+          {state === "off" && (
+            <button className="btn primary" disabled={busy || !view.push.public_key} onClick={() => void turnOn()}>
+              {busy ? "Waiting for the browser" : "Turn on notifications here"}
+            </button>
+          )}
+          {state === "on" && (
+            <>
+              <TestRow
+                label="Send a test"
+                k="push"
+                atlas={atlas}
+                run={() => atlas.test("push", { type: "atlas.test", what: "push", device: me })}
+              />
+              <button
+                className="btn"
+                onClick={() => {
+                  void unsubscribe().then(async () => setBrowser(await pushState()));
+                  atlas.send({ type: "atlas.push.remove", device: me });
+                }}
+              >
+                Turn off here
+              </button>
+            </>
+          )}
+        </div>
+        {error && <p className="err small">{error}</p>}
+      </Row>
+      <Row label="Devices">
+        <div className="rows">
+          {view.push.devices.map((d) => (
+            <div className="r" key={d.id}>
+              <span className="grow" style={{ fontWeight: 500 }}>
+                {d.name}
+                {d.id === me && <span className="muted"> · this one</span>}
+              </span>
+              <span className="faint small">Used {shortDay(d.last_seen)}</span>
+              <button className="link" onClick={() => atlas.send({ type: "atlas.push.remove", device: d.id })}>
+                Remove
+              </button>
+            </div>
+          ))}
+          {!view.push.devices.length && <p className="muted small">No device takes notifications yet.</p>}
+        </div>
+      </Row>
+      <Row label="When Atlas isn't open">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.notifications.push}
+            onChange={(e) => edit({ notifications: { ...draft.notifications, push: e.target.checked } })}
+          />
+          Send a notification to the device I used last
+        </label>
+        <p className="muted small">With Atlas open in front of you, or in a voice call, messages just arrive there.</p>
+      </Row>
+      <Row label="Quiet hours">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={quiet.on}
+            onChange={(e) => edit({ notifications: { ...draft.notifications, quiet: { ...quiet, on: e.target.checked } } })}
+          />
+          Hold notifications that can wait
+        </label>
+        <div className="row">
+          <label className="field" style={{ width: 130 }}>
+            <span>From</span>
+            <input
+              type="time"
+              value={quiet.from}
+              disabled={!quiet.on}
+              onChange={(e) =>
+                e.target.value && edit({ notifications: { ...draft.notifications, quiet: { ...quiet, from: e.target.value } } })
+              }
+            />
+          </label>
+          <label className="field" style={{ width: 130 }}>
+            <span>Until</span>
+            <input
+              type="time"
+              value={quiet.to}
+              disabled={!quiet.on}
+              onChange={(e) =>
+                e.target.value && edit({ notifications: { ...draft.notifications, quiet: { ...quiet, to: e.target.value } } })
+              }
+            />
+          </label>
+        </div>
+        <p className="muted small">
+          Reminders you set and answers to what you asked still come right away. Everything else waits, then arrives as one notification
+          when quiet hours end. Times are in {view.settings.timezone || "UTC"}.
+        </p>
+      </Row>
+    </>
+  );
 }
 
 // --- Devices ----------------------------------------------------------------------------------
