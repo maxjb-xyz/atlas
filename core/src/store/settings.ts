@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import { parse, type Sql } from "./db";
+import { getState } from "./state";
 
 /** The ChatGPT model new chains start with, and the one picked after sign-in when the plan has it. */
 export const DEFAULT_CHATGPT_MODEL = "gpt-5.6-terra";
@@ -49,6 +50,20 @@ export const Settings = z.object({
       elevenlabs_voice_id: "JBFqnCBsd6RMkjVDRZzb",
       elevenlabs_model: "eleven_v4_turbo",
     }),
+  /** The character (§23.1): a preset, four scales, and the owner's own words. */
+  character: z
+    .object({
+      preset: z.enum(["atlas", "butler", "coach", "friend", "quiet"]).default("atlas"),
+      warmth: z.number().int().min(1).max(5).default(4),
+      humor: z.number().int().min(1).max(5).default(3),
+      directness: z.number().int().min(1).max(5).default(4),
+      initiative: z.number().int().min(1).max(5).default(3),
+      /** Anything else, in the owner's words: "Call me Max. Swear if you like." */
+      notes: z.string().max(2_000).default(""),
+    })
+    .default({ preset: "atlas", warmth: 4, humor: 3, directness: 4, initiative: 3, notes: "" }),
+  /** What the owner keeps in the sidebar's Pinned list: area ids and record ids (§21.1). */
+  pins: z.array(z.string().max(64)).max(20).default([]),
   calendar: z
     .object({
       /** Calendar names to leave out of what Atlas reads. Empty means read them all. */
@@ -58,8 +73,22 @@ export const Settings = z.object({
 });
 export type Settings = z.infer<typeof Settings>;
 
-/** A partial update from the app. Nested objects are replaced whole. */
-export const SettingsPatch = Settings.partial();
+/**
+ * A partial update from the app. Nested objects are replaced whole. Built
+ * from each field without its default: `Settings.partial()` would fill every
+ * missing key with its default, so changing one setting would reset the rest.
+ */
+const f = Settings.shape;
+export const SettingsPatch = z.object({
+  assistant_name: f.assistant_name.unwrap().optional(),
+  owner_name: f.owner_name.unwrap().optional(),
+  timezone: f.timezone.unwrap().optional(),
+  brains: f.brains.unwrap().optional(),
+  voice: f.voice.unwrap().optional(),
+  character: f.character.unwrap().optional(),
+  pins: f.pins.unwrap().optional(),
+  calendar: f.calendar.unwrap().optional(),
+} satisfies { [K in keyof typeof f]: z.ZodType });
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
 export function readSettings(sql: Sql): Settings {
@@ -93,16 +122,7 @@ export function writeSettings(sql: Sql, patch: SettingsPatch): string[] {
 // M0 keeps a handful of keys in the agent's own storage (encrypted at rest by
 // Cloudflare). The vault (§15) replaces this in M3.
 
-export type SecretName =
-  | "elevenlabs_api_key"
-  | "icloud"
-  /** The iCloud calendar list, kept between wakes. */
-  | "icloud_calendars"
-  /** Set when iCloud refuses the password; Atlas stops asking until the owner reconnects. */
-  | "icloud_refused"
-  | "chatgpt_tokens"
-  | "chatgpt_login"
-  | "chatgpt_client";
+export type SecretName = "elevenlabs_api_key" | "icloud" | "chatgpt_tokens" | "chatgpt_login";
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];
@@ -133,5 +153,8 @@ export function secretValues(sql: Sql): string[] {
     const v = pick(getSecret<unknown>(sql, name), path);
     if (typeof v === "string" && v.length >= 8) out.push(v);
   }
+  // The last ID token is kept as a sign-in hint, outside the secrets; it still never leaves.
+  const hint = getState<{ id_token?: unknown }>(sql, "chatgpt_client")?.id_token;
+  if (typeof hint === "string" && hint.length >= 8 && !out.includes(hint)) out.push(hint);
   return out;
 }

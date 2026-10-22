@@ -17,7 +17,7 @@ Read [VISION.md](../VISION.md), [CLAUDE.md](../CLAUDE.md) and [docs/M0.md](M0.md
 
 **Smoke tests instead of a week of use.** VISION rule 7 changed on 2026-10-21: a milestone is done when its smoke test passes on the owner's real deployment, not after a week of living with it. A smoke test is a short, hand-run list of day-in-the-life checks covering every surface and failure path the milestone adds. M0's is in [M0.md §4](M0.md#4-the-smoke-test-and-what-it-found). For M1:
 
-- Write M1's smoke test first, from the M1 scope, before the build. Section 6 has a starting draft.
+- M1's smoke test is written, in [M1.md §1](M1.md#1-the-smoke-test). Section 6 below was its first draft.
 - Keep M0's smoke test as a regression list. Run both after any deploy that touches the core.
 - The owner keeps using Atlas while M1 is built. Anything that feels wrong is a fix, under rule 1: the character, the context, a tool's description or the tool, never a filter.
 

@@ -31,6 +31,11 @@ export function isValidZone(tz: string): boolean {
   }
 }
 
+/** The owner's one resolved time zone (§23.6), or UTC until one is set. */
+export function zoneOf(settings: { timezone: string }): string {
+  return settings.timezone && isValidZone(settings.timezone) ? settings.timezone : "UTC";
+}
+
 export interface ZonedParts {
   year: number;
   month: number;

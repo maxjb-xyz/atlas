@@ -1,7 +1,10 @@
 import { env as testEnv } from "cloudflare:test";
+import type { Decider } from "../src/brains/decide";
+import type { Embedder } from "../src/brains/embed";
 import type { Brain, BrainEvent, BrainRequest } from "../src/brains/types";
 import { BrainError } from "../src/brains/types";
-import type { CalendarEvent, CalendarSource } from "../src/calendar/types";
+import type { Calendar, CalendarEvent, CalendarRange, CalendarSource } from "../src/calendar/types";
+import { normalize } from "../src/store/memory";
 
 export const env = testEnv as unknown as Env;
 export const SECRET = "test-owner-secret-not-real";
@@ -45,13 +48,18 @@ export const call = (name: string, input: unknown, id = `call_${name}`): BrainEv
   { type: "done", finish: "tool_calls" },
 ];
 
-export function fakeCalendar(events: CalendarEvent[]): CalendarSource & { ranges: Array<{ start: Date; end: Date }> } {
+/** A calendar for tests: usable as a source behind the guard (`seams.calendar`) or directly as a run's calendar. */
+export function fakeCalendar(events: CalendarEvent[]): CalendarSource & Calendar & { ranges: Array<{ start: Date; end: Date }> } {
   const ranges: Array<{ start: Date; end: Date }> = [];
+  const list = async (range: CalendarRange) => {
+    ranges.push(range);
+    return events.filter((e) => new Date(e.end) > range.start && new Date(e.start) < range.end);
+  };
   return {
     ranges,
-    async list(range) {
-      ranges.push(range);
-      return events.filter((e) => new Date(e.end) > range.start && new Date(e.start) < range.end);
+    list,
+    async read(range) {
+      return { events: await list(range) };
     },
     async check() {
       return { calendars: ["Home", "Work"], events_next_30_days: events.length };
@@ -131,4 +139,84 @@ export async function fakeOpenAI(opts: { scope?: string; tokenStatus?: number; t
     });
   }) as unknown as typeof fetch;
   return { f, calls, setNonce: (n: string) => (nonce = n) };
+}
+
+/** Words a fake embedder treats as the same idea, so tests can check search by meaning. */
+const SAME_IDEA: Record<string, string> = {
+  camera: "camera",
+  lens: "camera",
+  lenses: "camera",
+  rental: "rent",
+  rent: "rent",
+  hire: "rent",
+  hired: "rent",
+  vegetarian: "food",
+  meat: "food",
+  dinner: "food",
+};
+
+/**
+ * A fake `embed` role: each word (or its idea) lights up one of 64 slots.
+ * Strict like the real one: it fails when told to, and records each call.
+ */
+export function fakeEmbedder(opts: { fail?: string; refuse?: string } = {}): Embedder & { calls: string[][] } {
+  const calls: string[][] = [];
+  return {
+    model: "fake-embed",
+    calls,
+    async embed(texts) {
+      calls.push(texts);
+      if (opts.fail) throw new Error(opts.fail);
+      // Like a model refusing one input: the whole call fails.
+      if (opts.refuse && texts.some((t) => t.includes(opts.refuse!))) throw new Error("Workers AI: 400 input too long");
+      return texts.map((t) => {
+        const v = new Array<number>(64).fill(0);
+        for (const w of t.toLowerCase().match(/[a-z]+/g) ?? []) {
+          const key = SAME_IDEA[w] ?? w;
+          let h = 0;
+          for (const c of key) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+          v[h % 64]! += SAME_IDEA[w] ? 3 : 1;
+        }
+        return normalize(v);
+      });
+    },
+  };
+}
+
+/**
+ * A fake `decide` role. An area question gets a high probability when the
+ * text has one of that area's words (or its name, or a word from an example
+ * in the question); "ongoing" when the text has any word from `ongoing`.
+ */
+export function fakeDecider(
+  words: Record<string, string[]> = {},
+  ongoing: string[] = [],
+): Decider & { calls: Array<{ state: string; questions: Record<string, string> }> } {
+  const calls: Array<{ state: string; questions: Record<string, string> }> = [];
+  return {
+    model: "fake-decide",
+    calls,
+    async yesNo(state, questions) {
+      calls.push({ state, questions: Object.fromEntries(Object.entries(questions).map(([k, q]) => [k, q.instructions])) });
+      const text = state.toLowerCase();
+      const out: Record<string, number> = {};
+      for (const [id, q] of Object.entries(questions)) {
+        if (id === "ongoing") {
+          out[id] = ongoing.some((w) => text.includes(w)) ? 0.9 : 0.1;
+          continue;
+        }
+        const name = /Is this about (.+?)(?: \(|,)/.exec(q.instructions)?.[1] ?? "";
+        const keys = [name.toLowerCase(), ...(words[name] ?? [])];
+        const shown = [...q.instructions.matchAll(/These belong to [^:]+: (.+?)\.(?: These|$)/g)].flatMap(
+          (m) => m[1]!.toLowerCase().match(/[a-z]{4,}/g) ?? [],
+        );
+        const notShown = [...q.instructions.matchAll(/These don't: (.+?)\.$/g)].flatMap(
+          (m) => m[1]!.toLowerCase().match(/[a-z]{4,}/g) ?? [],
+        );
+        const hit = keys.some((k) => k && text.includes(k)) || shown.some((w) => text.includes(w) && !notShown.includes(w));
+        out[id] = hit ? 0.9 : 0.05;
+      }
+      return out;
+    },
+  };
 }

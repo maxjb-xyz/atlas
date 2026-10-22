@@ -5,10 +5,12 @@ import { BrainError } from "../src/brains/types";
 import { type LoopEvent, runLoop, type RunSpec } from "../src/loop";
 import { upcoming } from "../src/store/agenda";
 import { migrate, type Sql } from "../src/store/db";
-import { forRun, thread } from "../src/store/log";
+import { forRun, logTo, thread } from "../src/store/log";
 import { correctRecord, createRecord, recordHistory } from "../src/store/records";
+import { ClientMessage } from "../src/protocol";
 import { readSettings, secretValues, setSecret, writeSettings } from "../src/store/settings";
 import { endRun, getRun, startRun, sweepStaleRuns } from "../src/store/runs";
+import { getState } from "../src/store/state";
 import { calendarRead } from "../src/tools/calendar";
 import { reminderTools } from "../src/tools/reminders";
 import type { ToolContext } from "../src/tools/types";
@@ -51,6 +53,10 @@ function setup(sql: Sql, steps: Step[], opts: Partial<RunSpec> = {}, extraBrains
       schedule: async (item) => void scheduled.push(item.id),
       unschedule: async () => {},
     },
+    embed: null,
+    source_log_id: null,
+    via: "chat",
+    helpers: null,
   };
   const runId = startRun(sql, { actor: "owner", trigger: "message", surface: "app", role: "main" });
   const events: LoopEvent[] = [];
@@ -66,7 +72,7 @@ function setup(sql: Sql, steps: Step[], opts: Partial<RunSpec> = {}, extraBrains
     firstEventMs: 2_000,
     ...opts,
   };
-  const deps = { sql, router, chain: brains.map((b) => ({ provider: b.brain.provider, model: b.brain.model })), toolContext };
+  const deps = { log: logTo(sql), router, chain: brains.map((b) => ({ provider: b.brain.provider, model: b.brain.model })), toolContext };
   return { main, others, router, scheduled, runId, events, run: () => runLoop(deps, spec, (e) => events.push(e)) };
 }
 
@@ -264,9 +270,9 @@ describe("the store", () => {
   it("keeps the old value when a record is corrected", () =>
     withSql((sql) => {
       const r = createRecord(sql, { type: "person", name: "Jordan Lee", fields: { phone: "555-0100" }, source: { via: "chat" } });
-      const fixed = correctRecord(sql, r.id, { phone: "555-0199", nickname: null }, "owner corrected it", { via: "owner" });
+      const fixed = correctRecord(sql, r.id, { fields: { phone: "555-0199", nickname: null } }, "owner corrected it", { via: "owner" });
       expect(fixed.fields).toEqual({ phone: "555-0199" });
-      expect(recordHistory(sql, r.id)).toMatchObject([{ fields: { phone: "555-0100" }, reason: "owner corrected it" }]);
+      expect(recordHistory(sql, r.id)).toMatchObject([{ name: "Jordan Lee", fields: { phone: "555-0100" }, reason: "owner corrected it" }]);
     }));
 
   it("fills in default settings and validates patches", () =>
@@ -278,7 +284,38 @@ describe("the store", () => {
       writeSettings(sql, { owner_name: "Max" });
       expect(readSettings(sql).owner_name).toBe("Max");
       expect(() => writeSettings(sql, { brains: { main: [], voice: [] } } as never)).toThrow();
+      // Changing one setting leaves the others as they were, not back at their defaults.
+      writeSettings(sql, { assistant_name: "Jarvis" });
+      expect(writeSettings(sql, { timezone: "Europe/London" })).toEqual(["timezone"]);
+      expect(readSettings(sql)).toMatchObject({ assistant_name: "Jarvis", owner_name: "Max", timezone: "Europe/London" });
+      expect(ClientMessage.parse({ type: "atlas.settings.update", patch: { pins: [] } })).toEqual({
+        type: "atlas.settings.update",
+        patch: { pins: [] },
+      });
     }));
+
+  it("moves what isn't a secret out of the secrets table", async () => {
+    const stub = env.PersonAgent.get(env.PersonAgent.idFromName(`t-${crypto.randomUUID()}`));
+    await runInDurableObject(stub, async (_i, state) => {
+      const sql = state.storage.sql;
+      migrate(sql, 1);
+      const put = (name: string, value: unknown) =>
+        sql.exec(`INSERT INTO secrets (name, value, updated_at) VALUES (?, ?, 1)`, name, JSON.stringify(value));
+      put("icloud_refused", { at: 5, message: "401" });
+      put("chatgpt_client", { host_id: "urn:uuid:x", id_token: "eyJ-hint-token", models: ["gpt-6.1-sol"] });
+      put("elevenlabs_api_key", "sk_eleven_1234567890");
+      migrate(sql);
+      expect(getState(sql, "icloud_refused")).toEqual({ at: 5, message: "401" });
+      expect(getState<{ models: string[] }>(sql, "chatgpt_client")!.models).toEqual(["gpt-6.1-sol"]);
+      const left = sql
+        .exec<{ name: string }>(`SELECT name FROM secrets`)
+        .toArray()
+        .map((r) => r.name);
+      expect(left).toEqual(["elevenlabs_api_key"]);
+      // The sign-in hint is still kept from leaving.
+      expect(secretValues(sql).sort()).toEqual(["eyJ-hint-token", "sk_eleven_1234567890"]);
+    });
+  });
 
   it("lists only real secret values for the scrubber", () =>
     withSql((sql) => {

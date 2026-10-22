@@ -1,9 +1,13 @@
+// The full transcript (⌘J): every message, receipt and note, from the log.
+// Messages carry their area chip; tapping it moves the message (§6.3).
+
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { LogRow } from "../../core/src/protocol";
 import type { Atlas } from "./connection";
-import { Mark } from "./Mark";
+import { Receipt } from "./Shell";
+import { Markdown } from "./Markdown";
+import { AreaChip, Diamond, clock } from "./ui";
 
-const time = (at: number) => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : JSON.stringify(v));
 
 export function Thread({ atlas, name }: { atlas: Atlas; name: string }) {
@@ -19,7 +23,6 @@ export function Thread({ atlas, name }: { atlas: Atlas; name: string }) {
     const el = box.current;
     if (!el) return;
     if (asked.current !== null && firstSeq !== undefined && firstSeq < asked.current) {
-      // Older rows arrived above: hold the reading position.
       el.scrollTop += el.scrollHeight - prevHeight.current;
       asked.current = null;
     } else if (stick.current) {
@@ -44,19 +47,13 @@ export function Thread({ atlas, name }: { atlas: Atlas; name: string }) {
   }
 
   const liveRuns = Object.entries(live);
-  const undone = new Set(rows.filter((r) => r.kind === "agenda.change" && r.body.undo_of).map((r) => String(r.body.undo_of)));
+  const undone = new Set(rows.filter((r) => r.body.undo_of).map((r) => String(r.body.undo_of)));
   const empty = loaded && rows.length === 0 && pending.length === 0 && liveRuns.length === 0;
 
   return (
     <div className="thread" ref={box} onScroll={onScroll}>
-      {!loaded && <p className="muted pad">Connecting to {name}.</p>}
-      {empty && (
-        <div className="hello">
-          <Mark size={44} />
-          <h2 className="disp">Hi, I'm {name}.</h2>
-          <p className="muted">Ask about your calendar, or tell me what to remind you of. Press Space to talk.</p>
-        </div>
-      )}
+      {!loaded && <p className="muted">Connecting to {name}.</p>}
+      {empty && <p className="muted">Nothing said yet. Ask about your calendar, tell me something to remember, or press Space to talk.</p>}
       {rows.map((r) => (
         <Row key={r.id} row={r} atlas={atlas} undone={undone.has(r.id)} />
       ))}
@@ -68,11 +65,11 @@ export function Thread({ atlas, name }: { atlas: Atlas; name: string }) {
           </div>
         ))}
       {liveRuns.map(([runId, l]) => (
-        <div key={runId} className="msg atlas live-msg">
-          <Mark size={18} />
+        <div key={runId} className="msg atlas">
+          <Diamond size={16} />
           <div>
-            {l.text && <p>{l.text}</p>}
-            {(l.status || !l.text) && <p className="status lab">{l.status ?? "Thinking"}</p>}
+            {l.text && <Markdown text={l.text} />}
+            {(l.status || !l.text) && <p className="lab">{l.status ?? "Thinking"}</p>}
           </div>
         </div>
       ))}
@@ -82,7 +79,11 @@ export function Thread({ atlas, name }: { atlas: Atlas; name: string }) {
 
 function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolean }) {
   const b = row.body as Record<string, unknown>;
-  const voiceTag = row.surface === "voice" ? <span className="lab tag">Voice</span> : null;
+  const s = atlas.state;
+  const voiceTag = row.surface === "voice" ? <span className="tag">Voice</span> : null;
+  const chip = (
+    <AreaChip ids={row.areas} areas={s.areas} onMove={(ids) => atlas.send({ type: "atlas.areas.set", ref: `log:${row.id}`, areas: ids })} />
+  );
   switch (row.kind) {
     case "message.in":
       return (
@@ -90,43 +91,32 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
           <p>{str(b.text)}</p>
           <span className="lab when">
             {voiceTag}
-            {time(row.at)}
+            {s.areas.length > 0 && chip}
+            {clock(row.at)}
           </span>
         </div>
       );
     case "message.out":
       return (
         <div className="msg atlas">
-          <Mark size={18} />
+          <Diamond size={16} />
           <div>
-            <p>{str(b.text)}</p>
+            <Markdown text={str(b.text)} />
             <span className="lab when">
               {voiceTag}
               {b.interrupted ? <span className="tag">Interrupted</span> : null}
               <Timing timing={b.timing} />
-              {time(row.at)}
+              {clock(row.at)}
             </span>
           </div>
         </div>
       );
-    case "tool.result": {
-      const receipt = b.receipt as { text: string; undo?: unknown } | undefined;
-      if (!receipt) return null;
+    case "tool.result":
       return (
-        <div className={`receipt ${b.ok === false ? "bad" : ""}`}>
-          <span className="tick" aria-hidden>
-            {b.ok === false ? "×" : "✓"}
-          </span>
-          <span>{receipt.text}</span>
-          {undone && <span className="lab">Undone</span>}
-          {receipt.undo != null && !undone && (
-            <button className="link" onClick={() => atlas.send({ type: "atlas.undo", log_id: row.id })}>
-              Undo
-            </button>
-          )}
+        <div className="note">
+          <Receipt row={row} atlas={atlas} undone={undone} />
         </div>
       );
-    }
     case "voice.problem":
       return <p className="note fail">{str(b.message)}</p>;
     case "brain.fallback":
@@ -137,6 +127,26 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
       );
     case "agenda.change":
       return <p className="note">You undid it: {str(b.title)}. Atlas won't remind you.</p>;
+    case "record.change":
+      return (
+        <p className="note">
+          You undid it.{" "}
+          {b.change === "forgotten"
+            ? `Atlas forgot: ${str(b.name)}.`
+            : b.change === "restored"
+              ? `Atlas remembers ${str(b.name)} again.`
+              : `${str(b.name)} is back to what it was.`}
+        </p>
+      );
+    case "area.change":
+      return (
+        <p className="note">
+          Atlas started an area: <strong>{str(b.name)}</strong>, from {str(b.from)} conversations about it.{" "}
+          <button className="link" onClick={() => atlas.send({ type: "atlas.area.update", id: str(b.area_id), state: "archived" })}>
+            Not an area
+          </button>
+        </p>
+      );
     case "run.end":
       return <p className="note fail">Didn't finish. {str(b.error) || "The run failed."}</p>;
     default:

@@ -4,8 +4,9 @@ import { type PersonAgent, seams } from "../src/agent";
 import type { ServerMessage } from "../src/protocol";
 import { CalendarError } from "../src/calendar/types";
 import { getItem } from "../src/store/agenda";
+import { migrate } from "../src/store/db";
 import type { LogRow } from "../src/store/log";
-import { call, collect, env, fakeCalendar, fakeOpenAI, say, scripted, SECRET, type Step } from "./helpers";
+import { call, collect, env, fakeCalendar, fakeEmbedder, fakeOpenAI, say, scripted, SECRET, type Step } from "./helpers";
 
 const ORIGIN = "http://atlas.test";
 const auth = { authorization: `Bearer ${SECRET}` };
@@ -66,11 +67,13 @@ function brains(main: Step[], voice: Step[] = []) {
 
 beforeEach(() => {
   seams.calendar = fakeCalendar([]);
+  seams.embed = fakeEmbedder();
 });
 afterEach(() => {
   seams.fetch = null;
   seams.makeBrain = null;
   seams.calendar = undefined;
+  seams.embed = undefined;
 });
 
 describe("sign-in", () => {
@@ -98,7 +101,7 @@ describe("sign-in", () => {
     const cookie = ok.headers.get("set-cookie")!.split(";")[0]!;
     expect(cookie).toMatch(/^atlas_session=/);
     const session = await SELF.fetch(`${ORIGIN}/api/session`, { headers: { cookie } });
-    expect(await session.json()).toEqual({ configured: true, signed_in: true });
+    expect(await session.json()).toEqual({ configured: true, signed_in: true, has_passkeys: false });
   });
 });
 
@@ -171,6 +174,73 @@ describe("the thread", () => {
     s.ws.close();
   });
 
+  it("notes a fact with a chip, uses it next time, and undoes it from the chip", async () => {
+    const { main } = brains([
+      call("remember", { type: "preference", name: "Diet", fact: "The owner is vegetarian." }),
+      say("Noted."),
+      say("How about the Thai place?"),
+      say("Sure."),
+    ]);
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "America/New_York" });
+    await s.next("atlas.snapshot");
+    s.send({ type: "atlas.say", text: "I'm vegetarian", client_id: "m1" });
+    const chipMsg = await s.next("atlas.rows", (m) => rowsOf(m, "tool.result").length > 0);
+    const chip = rowsOf(chipMsg, "tool.result")[0]!;
+    expect(chip.body.receipt).toMatchObject({ text: "Noted · The owner is vegetarian.", undo: { kind: "record.forget" } });
+    await s.next("atlas.run", (m) => m.state === "replied");
+
+    // The next run has it in view, without being asked.
+    s.send({ type: "atlas.say", text: "dinner Friday?", client_id: "m2" });
+    await s.next("atlas.run", (m) => m.state === "replied" && m.run_id !== chip.run_id);
+    expect(main.requests[2]!.system).toContain("- The owner is vegetarian. (id rec_");
+    expect(main.requests[2]!.tools.map((t) => t.name)).toEqual(expect.arrayContaining(["remember", "forget", "recall"]));
+
+    // Undo from the chip forgets it, and the thread says so.
+    s.send({ type: "atlas.undo", log_id: chip.id });
+    const undone = await s.next("atlas.rows", (m) => rowsOf(m, "record.change").length > 0);
+    expect(rowsOf(undone, "record.change")[0]!.body).toMatchObject({ change: "forgotten", by: "owner", undo_of: chip.id });
+    s.send({ type: "atlas.undo", log_id: chip.id });
+    expect((await s.next("atlas.error")).message).toBe("That's already undone.");
+    s.send({ type: "atlas.say", text: "ok", client_id: "m3" });
+    await s.next("atlas.run", (m) => m.state === "replied" && m.client_id === undefined && main.requests.length === 4);
+    expect(main.requests[3]!.system).not.toContain("vegetarian");
+
+    // The thread and the memory index both caught up.
+    await runInDurableObject(owner(), (agent: PersonAgent) => agent.apiSettleMemory());
+    const indexed = await runInDurableObject(
+      owner(),
+      (_i: PersonAgent, state) =>
+        state.storage.sql.exec<{ n: number }>(`SELECT count(*) AS n FROM memory WHERE kind = 'message' AND model = 'fake-embed'`).one().n,
+    );
+    expect(indexed).toBeGreaterThan(0);
+    s.ws.close();
+  });
+
+  it("doesn't let the clock's own runs save facts about the owner", async () => {
+    const { main } = brains([
+      call("reminder_create", { text: "Water plants", at: "2099-01-01T09:00" }),
+      say("Set."),
+      say("Time to water the plants."),
+    ]);
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "America/New_York" });
+    await s.next("atlas.snapshot");
+    s.send({ type: "atlas.say", text: "remind me", client_id: "k1" });
+    const receiptMsg = await s.next("atlas.rows", (m) => rowsOf(m, "tool.result").length > 0);
+    await s.next("atlas.run", (m) => m.state === "replied");
+    const id = (rowsOf(receiptMsg, "tool.result")[0]!.body.receipt as { undo: { id: string } }).undo.id;
+    await runInDurableObject(owner(), async (agent: PersonAgent, state) => {
+      state.storage.sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1000, id);
+      await agent.onAgendaDue({ id });
+    });
+    const tools = main.requests[2]!.tools.map((t) => t.name);
+    expect(tools).toContain("recall");
+    expect(tools).not.toContain("remember");
+    expect(tools).not.toContain("forget");
+    s.ws.close();
+  });
+
   it("tells the owner what Atlas holds for iCloud when it's refused, without the password", async () => {
     brains([]);
     seams.calendar = {
@@ -188,21 +258,40 @@ describe("the thread", () => {
     s.send({ type: "atlas.test", what: "calendar", ref: "cal" });
     const res = await s.next("atlas.test.result", (m) => m.ref === "cal");
     expect(res.ok).toBe(false);
-    expect(res.message).toContain("signing in as owner@icloud.com with a 16-character password not in Apple's");
-    expect(res.message).not.toContain("abcdefghijklmnop");
+    expect(res.message).toContain("signing in as owner@icloud.com with an app-specific password in Apple's xxxx-xxxx-xxxx-xxxx form");
+    expect(res.message).not.toContain("abcd");
+
+    // The Apple ID's own password pasted by mistake is named as the likely cause.
+    s.send({
+      type: "atlas.secret.set",
+      secret: { name: "icloud", value: { username: "owner@icloud.com", app_password: "Hunter2-secret" } },
+    });
+    await s.next("atlas.view", (m) => m.view.secrets.icloud?.refused === null);
+    s.send({ type: "atlas.test", what: "calendar", ref: "cal2" });
+    const res2 = await s.next("atlas.test.result", (m) => m.ref === "cal2");
+    expect(res2.message).toContain("a 14-character password that isn't in Apple's xxxx-xxxx-xxxx-xxxx form");
+    expect(res2.message).not.toContain("Hunter2");
     s.ws.close();
   });
 
-  it("stops asking iCloud after it refuses the password, until the owner reconnects", async () => {
+  it("after iCloud refuses, answers from its copy, waits before trying again, and recovers by itself", async () => {
     let asked = 0;
+    let refuse = true;
+    const copyAt = Date.now() - 3_600_000;
+    const held = [
+      { id: "e1", calendar: "Home", title: "Dentist", start: new Date().toISOString(), end: new Date().toISOString(), all_day: false },
+    ];
     seams.calendar = {
       list: async () => {
         asked += 1;
-        throw new CalendarError("iCloud didn't accept the Apple ID and app-specific password.", "auth");
+        if (refuse)
+          throw new CalendarError("iCloud didn't accept the Apple ID and app-specific password (HTTP 401 at caldav.icloud.com)", "auth");
+        return held;
       },
+      held: () => ({ events: held, as_of: copyAt }),
       check: async () => ({ calendars: [], events_next_30_days: 0 }),
     };
-    brains([call("calendar_read", {}, "c1"), call("calendar_read", {}, "c2"), say("iCloud refused the password.")]);
+    brains([call("calendar_read", {}, "c1"), call("calendar_read", {}, "c2"), say("You have the dentist.")]);
     const s = await connect();
     s.send({
       type: "atlas.secret.set",
@@ -211,19 +300,86 @@ describe("the thread", () => {
     await s.next("atlas.view");
     s.send({ type: "atlas.say", text: "what's on today?", client_id: "c9" });
     const refused = await s.next("atlas.view", (m) => Boolean(m.view.secrets.icloud?.refused));
-    expect(refused.view.secrets.icloud!.refused!.message).toContain("didn't accept");
+    const r = refused.view.secrets.icloud!.refused!;
+    expect(r.message).toContain("didn't accept");
+    expect(r.next_try - r.at).toBe(30 * 60_000);
     await s.next("atlas.run", (m) => m.state === "replied");
-    expect(asked).toBe(1); // the brain asked twice; iCloud was only asked once
+    // The brain read twice; iCloud was asked once, and both reads were answered from the copy, with its age and why.
+    expect(asked).toBe(1);
+    const results = await runInDurableObject(owner(), async (_a: PersonAgent, state) =>
+      state.storage.sql
+        .exec<{ body: string }>(`SELECT body FROM log WHERE kind = 'tool.result' ORDER BY seq DESC LIMIT 2`)
+        .toArray()
+        .map((x) => JSON.parse(JSON.parse(x.body).output) as { events: unknown[]; as_of?: string; why_not_live?: string }),
+    );
+    for (const out of results) {
+      expect(out.events).toHaveLength(1);
+      expect(out.as_of).toBeTruthy();
+      expect(out.why_not_live).toContain("Atlas will try again by itself after");
+    }
 
-    // Reconnecting lets Atlas ask again.
-    s.send({
-      type: "atlas.secret.set",
-      secret: { name: "icloud", value: { username: "owner@icloud.com", app_password: "wxyz-wxyz-wxyz-wxyz" } },
+    // Once the wait is over, the next read tries iCloud again; it accepts, and the refusal clears with no help from the owner.
+    refuse = false;
+    await runInDurableObject(owner(), async (_a: PersonAgent, state) => {
+      const row = state.storage.sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = 'icloud_refused'`).one();
+      const waiting = JSON.parse(row.value) as { next_try: number };
+      waiting.next_try = Date.now() - 1;
+      state.storage.sql.exec(`UPDATE state SET value = ? WHERE key = 'icloud_refused'`, JSON.stringify(waiting));
     });
-    const fresh = await s.next("atlas.view", (m) => m.view.secrets.icloud?.refused === null);
-    expect(fresh.view.secrets.icloud!.username).toBe("owner@icloud.com");
+    const today = new Date().toISOString().slice(0, 10);
+    s.send({ type: "atlas.calendar", ref: "now", start: today, end: today + "T23:59" });
+    const ok = await s.next("atlas.calendar.events", (m) => m.ref === "now");
+    expect(ok.stale).toBeUndefined();
+    expect(asked).toBe(2);
+    await s.next("atlas.view", (m) => m.view.secrets.icloud?.refused === null);
+
+    // New credentials always let Atlas ask at once.
     s.send({ type: "atlas.secret.set", secret: { name: "icloud", value: null } });
     await s.next("atlas.view");
+    s.ws.close();
+  });
+
+  it("reads a refusal saved by the version before, instead of failing to load", async () => {
+    seams.calendar = fakeCalendar([]);
+    await runInDurableObject(owner(), async (_a: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      sql.exec(
+        `INSERT OR REPLACE INTO secrets (name, value, updated_at) VALUES ('icloud', ?, ?)`,
+        JSON.stringify({ username: "owner@icloud.com", app_password: "abcd-efgh-ijkl-mnop" }),
+        Date.now(),
+      );
+      // M0's shape: no tries, no next_try.
+      sql.exec(
+        `INSERT OR REPLACE INTO state (key, value, updated_at) VALUES ('icloud_refused', ?, ?)`,
+        JSON.stringify({ at: Date.now() - 60_000, message: "iCloud didn't accept the Apple ID and app-specific password." }),
+        Date.now(),
+      );
+    });
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "America/New_York" });
+    const snap = await s.next("atlas.snapshot");
+    const r = snap.view.secrets.icloud!.refused!;
+    expect(r.tries).toBe(1);
+    expect(r.next_try - r.at).toBe(30 * 60_000);
+    expect(r.note).toContain("Atlas will try again by itself after");
+    s.send({ type: "atlas.secret.set", secret: { name: "icloud", value: null } });
+    await s.next("atlas.view");
+    s.ws.close();
+  });
+
+  it("says the calendar can't be read when it holds no copy to answer from", async () => {
+    seams.calendar = {
+      list: async () => {
+        throw new CalendarError("iCloud Calendar didn't answer in time. Try again in a minute.", "network");
+      },
+      check: async () => ({ calendars: [], events_next_30_days: 0 }),
+    };
+    const s = await connect();
+    s.send({ type: "atlas.calendar", ref: "x", start: "2026-10-22", end: "2026-10-23" });
+    const res = await s.next("atlas.calendar.events", (m) => m.ref === "x");
+    expect(res.events).toEqual([]);
+    expect(res.error).toContain("didn't answer in time");
     s.ws.close();
   });
 
@@ -236,6 +392,54 @@ describe("the thread", () => {
     expect(JSON.stringify(view)).not.toContain("sk_eleven_secret_value");
     s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: null } });
     expect((await s.next("atlas.view")).view.secrets.elevenlabs_api_key).toBe(false);
+    s.ws.close();
+  });
+});
+
+describe("setup", () => {
+  it("records steps, lists voices, and takes Atlas's first look", async () => {
+    brains([
+      call("calendar_read", { start: "2099-01-01", end: "2099-01-15" }),
+      say(
+        '{"areas": [{"name": "Keyframes", "about": "video studio"}], "people": [{"name": "Dana", "why": "producer"}], "notes": ["Two clashes Thursday."]}',
+      ),
+    ]);
+    seams.fetch = (async (url: string) => {
+      if (String(url).startsWith("https://api.elevenlabs.io/v2/voices"))
+        return Response.json({
+          voices: [{ voice_id: "v1", name: "George", preview_url: "https://x/p.mp3", labels: { accent: "british" } }],
+        });
+      return new Response("nope", { status: 404 });
+    }) as unknown as typeof fetch;
+    const s = await connect();
+    s.send({ type: "atlas.setup.step", step: "passkey", state: "done" });
+    s.send({ type: "atlas.setup.step", step: "connect", state: "skipped" });
+    const view = await s.next("atlas.view", (m) => m.view.setup.skipped.includes("connect"));
+    expect(view.view.setup).toMatchObject({ done: ["passkey"], skipped: ["connect"], finished: false });
+
+    s.send({ type: "atlas.voices.list" });
+    expect((await s.next("atlas.voices")).error).toContain("Add an ElevenLabs API key");
+    s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: "sk_eleven_test_key" } });
+    await s.next("atlas.view");
+    s.send({ type: "atlas.voices.list" });
+    expect((await s.next("atlas.voices", (m) => m.voices.length > 0)).voices).toEqual([
+      { id: "v1", name: "George", preview_url: "https://x/p.mp3", description: "british" },
+    ]);
+
+    s.send({ type: "atlas.setup.look" });
+    const look = await s.next("atlas.setup.look.result");
+    expect(look.look).toEqual({
+      areas: [{ name: "Keyframes", about: "video studio" }],
+      people: [{ name: "Dana", why: "producer" }],
+      notes: ["Two clashes Thursday."],
+    });
+    s.send({ type: "atlas.setup.people", people: [{ name: "Dana", why: "producer" }] });
+    s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: null } });
+    await s.next("atlas.view");
+    const people = await runInDurableObject(owner(), (_i: PersonAgent, state) =>
+      state.storage.sql.exec<{ name: string }>(`SELECT name FROM records WHERE type = 'person'`).toArray(),
+    );
+    expect(people.map((p) => p.name)).toContain("Dana");
     s.ws.close();
   });
 });

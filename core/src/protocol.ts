@@ -5,9 +5,87 @@
 import { z } from "zod";
 import type { LogRow } from "./store/log";
 import type { AgendaItem } from "./store/agenda";
-import { BrainChoice, SettingsPatch } from "./store/settings";
+import { BrainChoice, Settings, SettingsPatch } from "./store/settings";
+import { RECORD_TYPES } from "./store/records";
 
 export type { LogRow, AgendaItem };
+
+export interface RecordView {
+  id: string;
+  type: string;
+  name: string;
+  fact: string;
+  details: Record<string, unknown>;
+  areas: string[];
+  learned_at: number;
+  updated_at: number;
+  confidence: number;
+  /** Where it came from: the message it was learned from, when there is one. */
+  source: { via: string; text?: string; at?: number; surface?: string | null };
+  corrections: number;
+  /** The value before the latest correction. */
+  was: { name: string; fact: string; at: number } | null;
+}
+
+export type HistoryFilter = "everything" | "actions" | "conversations" | "jobs";
+
+export interface HistoryStats {
+  actions: number;
+  conversations: number;
+  jobs: number;
+  tokens: number;
+  /** Activity in each hour since local midnight. */
+  per_hour: number[];
+}
+
+export interface CalendarEventView {
+  id: string;
+  calendar: string;
+  title: string;
+  start: string;
+  end: string;
+  all_day: boolean;
+  location?: string;
+}
+
+export interface InboxItem {
+  /** The log row it comes from. */
+  id: string;
+  kind: "review" | "failed";
+  title: string;
+  text: string;
+  at: number;
+  areas: string[];
+  run_id: string | null;
+}
+
+/** An area as the app shows it, in Library → Areas and on chips (§6, §21.3). */
+export interface AreaView {
+  id: string;
+  name: string;
+  about: string;
+  state: "active" | "dormant" | "archived";
+  color: number;
+  settings: { tone: string };
+  messages: number;
+  records: number;
+  last_seen: number | null;
+}
+
+/** A helper's job as the app shows it (§21.4). */
+export interface JobView {
+  id: string;
+  title: string;
+  state: "running" | "done" | "failed" | "cancelled";
+  /** What the helper is doing right now, such as "Thinking back." */
+  status: string | null;
+  steps: number;
+  started_at: number;
+  /** What the helper was asked, and what it handed back once done. */
+  brief: string;
+  result: string | null;
+  run_id: string | null;
+}
 
 // --- app -> agent ----------------------------------------------------------
 
@@ -37,16 +115,89 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.chatgpt.finish"), url: z.string().min(1).max(8000) }),
   z.object({ type: z.literal("atlas.chatgpt.cancel") }),
   z.object({ type: z.literal("atlas.chatgpt.signout") }),
+  /** Focus on one area, or null for all (the scope switcher, §21.3). */
+  z.object({ type: z.literal("atlas.scope.set"), area: z.string().max(64).nullable() }),
+  z.object({ type: z.literal("atlas.area.create"), name: z.string().min(1).max(60), about: z.string().max(500).optional() }),
+  z.object({
+    type: z.literal("atlas.area.update"),
+    id: z.string().max(64),
+    name: z.string().min(1).max(60).optional(),
+    about: z.string().max(500).optional(),
+    state: z.enum(["active", "dormant", "archived"]).optional(),
+    settings: z.object({ tone: z.string().max(300).optional() }).optional(),
+  }),
+  z.object({ type: z.literal("atlas.area.merge"), from: z.string().max(64), into: z.string().max(64) }),
+  /** Move an item to other areas by tapping its chip (§6.3): a message (`log:<id>`) or a record (`rec:<id>`). */
+  z.object({
+    type: z.literal("atlas.areas.set"),
+    ref: z.string().regex(/^(log|rec):[\w-]+$/),
+    areas: z.array(z.string().max(64)).max(10),
+  }),
+  /** Setup (§22): mark a step done, skipped, or open again. */
+  z.object({
+    type: z.literal("atlas.setup.step"),
+    step: z.enum(["passkey", "meet", "brain", "connect", "look"]),
+    state: z.enum(["done", "skipped", "open"]),
+  }),
+  /** Setup step 5: Atlas reads the calendar and proposes areas, people and things worth knowing. */
+  z.object({ type: z.literal("atlas.setup.look") }),
+  /** Save the people the owner kept from Atlas's first look. */
+  z.object({
+    type: z.literal("atlas.setup.people"),
+    people: z.array(z.object({ name: z.string().min(1).max(80), why: z.string().max(300) })).max(20),
+  }),
+  /** The voices the owner can pick from, with samples. */
+  z.object({ type: z.literal("atlas.voices.list") }),
+  /** Remove a passkey (Settings → Devices). It also ends the sessions it opened. */
+  z.object({ type: z.literal("atlas.passkey.remove"), id: z.string().max(512) }),
+  /** Sign out everywhere. */
+  z.object({ type: z.literal("atlas.sessions.end") }),
+  /** Library: records, by type, area or text. `ref` is echoed back. */
+  z.object({
+    type: z.literal("atlas.records.list"),
+    ref: z.string().max(64),
+    record_type: z.enum(["all", ...RECORD_TYPES]).optional(),
+    area: z.string().max(64).nullable().optional(),
+    text: z.string().max(200).optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  }),
+  /** Correct a record by hand (Library's Correct link): the old value stays in history. */
+  z.object({
+    type: z.literal("atlas.record.correct"),
+    id: z.string().max(64),
+    name: z.string().min(1).max(120).optional(),
+    fact: z.string().max(600).optional(),
+  }),
+  z.object({ type: z.literal("atlas.record.forget"), id: z.string().max(64) }),
+  /** History: the log, newest first. */
+  z.object({
+    type: z.literal("atlas.history"),
+    filter: z.enum(["everything", "actions", "conversations", "jobs"]),
+    before_seq: z.number().int().optional(),
+    area: z.string().max(64).nullable().optional(),
+    /** Local midnight, for today's totals. */
+    day_start: z.number().int(),
+  }),
+  /** Everything one run did, for a History row's receipt. */
+  z.object({ type: z.literal("atlas.run.detail"), run_id: z.string().max(64) }),
+  /** Calendar events for Week and Agenda, as local dates or times. `ref` is echoed back. */
+  z.object({ type: z.literal("atlas.calendar"), ref: z.string().max(64), start: z.string().max(40), end: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.inbox") }),
+  z.object({ type: z.literal("atlas.inbox.done"), id: z.string().max(64) }),
+  /** Stop a helper's job (Stop on the Jobs tab). */
+  z.object({ type: z.literal("atlas.job.stop"), id: z.string().max(64) }),
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
-    what: z.enum(["calendar", "brain", "voice"]),
+    what: z.enum(["calendar", "brain", "voice", "character", "sample"]),
     /** Echoed back on the result, so the app knows which button it answers. */
     ref: z.string().max(64).optional(),
     /** A brain to test: a spot in a saved chain, or an unsaved choice. */
     role: z.enum(["main", "voice"]).optional(),
     index: z.number().int().optional(),
     choice: BrainChoice.optional(),
+    /** For "sample": an unsaved character to hear before saving it. */
+    character: Settings.shape.character.optional(),
   }),
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
@@ -58,12 +209,21 @@ export interface SettingsView {
   settings: import("./store/settings").Settings;
   secrets: {
     elevenlabs_api_key: boolean;
-    /** `refused` says when and why iCloud refused the password; Atlas doesn't ask iCloud again until the owner reconnects. */
-    icloud: { username: string; refused: { at: number; message: string } | null } | null;
+    /**
+     * `refused` says when and why iCloud last refused the sign-in, how many times in a row, and when Atlas tries
+     * again by itself; `note` says all that in a sentence. Meanwhile Atlas answers from its copy of the calendar.
+     */
+    icloud: {
+      username: string;
+      refused: { at: number; message: string; tries: number; next_try: number; note: string } | null;
+    } | null;
   };
   chatgpt: ChatGPTView;
   /** Provider health, by "provider:model". */
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
+  /** The owner's passkeys, without their keys (Settings → Devices). */
+  passkeys: Array<{ id: string; name: string; created_at: number; last_used: number | null }>;
+  setup: { done: string[]; skipped: string[]; finished: boolean };
 }
 
 export type ChatGPTView =
@@ -81,7 +241,12 @@ export type ServerMessage =
       thread: LogRow[];
       agenda: AgendaItem[];
       view: SettingsView;
-      running: Array<{ run_id: string; surface: string }>;
+      /** Runs in progress, with what they've streamed so far, so a refresh mid-answer picks up where it was. */
+      running: Array<{ run_id: string; surface: string; text?: string; status?: string | null }>;
+      jobs: JobView[];
+      areas: AreaView[];
+      /** The area the owner is focused on, or null for all. */
+      scope: string | null;
     }
   /** A new or older thread row. The saved truth: it replaces any streamed text for its run. */
   | { type: "atlas.rows"; rows: LogRow[]; older?: boolean; has_more?: boolean }
@@ -91,6 +256,29 @@ export type ServerMessage =
   | { type: "atlas.status"; run_id: string; text: string | null }
   | { type: "atlas.run"; run_id: string; state: RunState; surface: string; client_id?: string }
   | { type: "atlas.agenda"; agenda: AgendaItem[] }
+  | { type: "atlas.areas"; areas: AreaView[]; scope: string | null }
+  | { type: "atlas.records"; ref: string; records: RecordView[]; counts: Record<string, number> }
+  /** Records changed (a correction, a forget, a save): pages showing records ask again. */
+  | { type: "atlas.records.changed" }
+  | { type: "atlas.history.rows"; filter: HistoryFilter; rows: LogRow[]; has_more: boolean; older: boolean; stats?: HistoryStats }
+  | { type: "atlas.run.detail.result"; run_id: string; run: Record<string, unknown> | null; rows: LogRow[] }
+  /** `stale` is set when iCloud couldn't be asked: the events are Atlas's copy from `as_of`, and `why` says why. */
+  | { type: "atlas.calendar.events"; ref: string; events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } }
+  | { type: "atlas.inbox.items"; items: InboxItem[] }
+  | {
+      type: "atlas.voices";
+      voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>;
+      error?: string;
+    }
+  | {
+      type: "atlas.setup.look.result";
+      look: { areas: Array<{ name: string; about: string }>; people: Array<{ name: string; why: string }>; notes: string[] } | null;
+      error?: string;
+    }
+  /** Helpers' jobs: running ones, and ones that ended in the last hour (§21.4). */
+  | { type: "atlas.jobs"; jobs: JobView[] }
   | { type: "atlas.view"; view: SettingsView }
   | { type: "atlas.test.result"; what: string; ref?: string; ok: boolean; message: string; detail?: unknown }
-  | { type: "atlas.error"; message: string };
+  | { type: "atlas.error"; message: string }
+  /** This socket's sign-in was ended; the app goes back to signing in. */
+  | { type: "atlas.signed_out" };

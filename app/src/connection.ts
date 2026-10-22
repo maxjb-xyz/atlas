@@ -3,7 +3,25 @@
 
 import { VoiceClient } from "agents/voice/client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import type { AgendaItem, ClientMessage, LogRow, ServerMessage, SettingsView } from "../../core/src/protocol";
+import type {
+  AgendaItem,
+  AreaView,
+  CalendarEventView,
+  ClientMessage,
+  HistoryFilter,
+  HistoryStats,
+  InboxItem,
+  JobView,
+  LogRow,
+  RecordView,
+  ServerMessage,
+  SettingsView,
+} from "../../core/src/protocol";
+
+/** One calendar read for a page: the events, why it failed, or how old Atlas's copy is when iCloud couldn't be asked. */
+export type CalendarState = { events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } };
+
+export type Look = Extract<ServerMessage, { type: "atlas.setup.look.result" }>["look"];
 
 export type VoiceStatus = "idle" | "listening" | "thinking" | "speaking";
 
@@ -37,6 +55,19 @@ export interface State {
   error: string | null;
   loaded: boolean;
   noOlder: boolean;
+  jobs: JobView[];
+  areas: AreaView[];
+  scope: string | null;
+  voices: { voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>; error?: string } | null;
+  look: { look: Look; error?: string } | "pending" | null;
+  /** Library's answers, by the ref they asked with. */
+  records: Record<string, { records: RecordView[]; counts: Record<string, number> }>;
+  /** Bumped when records change, so pages showing them ask again. */
+  recordsVersion: number;
+  history: { filter: HistoryFilter; rows: LogRow[]; has_more: boolean; stats?: HistoryStats } | null;
+  runDetail: Record<string, { run: Record<string, unknown> | null; rows: LogRow[] }>;
+  calendar: Record<string, CalendarState>;
+  inbox: InboxItem[] | null;
 }
 
 const initial: State = {
@@ -50,10 +81,22 @@ const initial: State = {
   error: null,
   loaded: false,
   noOlder: false,
+  jobs: [],
+  areas: [],
+  scope: null,
+  voices: null,
+  look: null,
+  records: {},
+  recordsVersion: 0,
+  history: null,
+  runDetail: {},
+  calendar: {},
+  inbox: null,
 };
 
 type Action =
   | { type: "server"; msg: ServerMessage }
+  | { type: "look" }
   | { type: "say"; pending: Pending }
   | { type: "test"; what: string; key: string }
   | { type: "dismiss" };
@@ -82,6 +125,8 @@ function reduce(s: State, a: Action): State {
       return { ...s, testKeys: { ...s.testKeys, [a.what]: a.key }, tests: without(s.tests, a.key) };
     case "dismiss":
       return { ...s, error: null };
+    case "look":
+      return { ...s, look: "pending" };
     case "server":
       break;
   }
@@ -89,18 +134,44 @@ function reduce(s: State, a: Action): State {
   switch (m.type) {
     case "atlas.snapshot": {
       const live: Record<string, Live> = {};
-      for (const r of m.running) live[r.run_id] = s.live[r.run_id] ?? { text: "", status: null, surface: r.surface };
-      return { ...s, rows: mergeRows([], m.thread), agenda: m.agenda, view: m.view, live, loaded: true, noOlder: false };
+      // What a run in progress has said so far comes back with the snapshot, so a refresh mid-answer picks up there.
+      for (const r of m.running)
+        live[r.run_id] = { text: r.text ?? s.live[r.run_id]?.text ?? "", status: r.status ?? null, surface: r.surface };
+      // A message Atlas never took (no run) was lost with the old socket: say so, with its words, so it can be sent again.
+      const lost = s.pending.filter((p) => !p.run_id);
+      const pending = s.pending.filter((p) => p.run_id && !m.thread.some((r) => r.kind === "message.in" && r.run_id === p.run_id));
+      return {
+        ...s,
+        pending,
+        ...(lost.length
+          ? { error: `This didn't reach Atlas before the connection dropped: "${lost.map((p) => p.text).join(" / ")}". Send it again.` }
+          : {}),
+        rows: mergeRows([], m.thread),
+        agenda: m.agenda,
+        view: m.view,
+        live,
+        loaded: true,
+        noOlder: false,
+        jobs: m.jobs,
+        areas: m.areas,
+        scope: m.scope,
+      };
     }
     case "atlas.rows": {
-      let { live, pending } = s;
+      let { live, pending, recordsVersion } = s;
+      // A fact saved, corrected or forgotten from any composer, or undone from a chip: Library reads again.
+      if (
+        m.rows.some((r) => r.kind === "record.change" || (r.kind === "tool.result" && ["remember", "forget"].includes(String(r.body.name))))
+      ) {
+        recordsVersion += 1;
+      }
       for (const r of m.rows) {
         if (!r.run_id) continue;
         if (r.kind === "message.out") live = without(live, r.run_id);
         if (r.kind === "message.in") pending = pending.filter((p) => p.run_id !== r.run_id);
       }
       const noOlder = m.older && (m.has_more === false || m.rows.length === 0) ? true : s.noOlder;
-      return { ...s, rows: mergeRows(s.rows, m.rows), live, pending, noOlder };
+      return { ...s, rows: mergeRows(s.rows, m.rows), live, pending, noOlder, recordsVersion };
     }
     case "atlas.delta": {
       const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app" };
@@ -131,6 +202,34 @@ function reduce(s: State, a: Action): State {
     }
     case "atlas.error":
       return { ...s, error: m.message };
+    case "atlas.jobs":
+      return { ...s, jobs: m.jobs };
+    case "atlas.areas":
+      return { ...s, areas: m.areas, scope: m.scope };
+    case "atlas.voices":
+      return { ...s, voices: { voices: m.voices, ...(m.error ? { error: m.error } : {}) } };
+    case "atlas.setup.look.result":
+      return { ...s, look: { look: m.look, ...(m.error ? { error: m.error } : {}) } };
+    case "atlas.records":
+      return { ...s, records: { ...s.records, [m.ref]: { records: m.records, counts: m.counts } } };
+    case "atlas.records.changed":
+      return { ...s, recordsVersion: s.recordsVersion + 1 };
+    case "atlas.history.rows": {
+      const keep = m.older && s.history?.filter === m.filter ? s.history.rows : [];
+      return { ...s, history: { filter: m.filter, rows: [...keep, ...m.rows], has_more: m.has_more, stats: m.stats ?? s.history?.stats } };
+    }
+    case "atlas.run.detail.result":
+      return { ...s, runDetail: { ...s.runDetail, [m.run_id]: { run: m.run, rows: m.rows } } };
+    case "atlas.calendar.events":
+      return {
+        ...s,
+        calendar: {
+          ...s.calendar,
+          [m.ref]: { events: m.events, ...(m.error ? { error: m.error } : {}), ...(m.stale ? { stale: m.stale } : {}) },
+        },
+      };
+    case "atlas.inbox.items":
+      return { ...s, inbox: m.items };
   }
   return s;
 }
@@ -169,8 +268,18 @@ export function useAtlas() {
     });
     c.addEventListener("custommessage", (msg) => {
       const m = msg as ServerMessage;
+      if (m?.type === "atlas.signed_out") {
+        // This sign-in was ended (a removed passkey, or sign out everywhere): back to the sign-in page.
+        c.disconnect();
+        location.reload();
+        return;
+      }
       if (m && typeof m === "object" && typeof m.type === "string" && m.type.startsWith("atlas.")) {
         dispatch({ type: "server", msg: m });
+        // A job changed or a run failed: what's waiting in the Inbox may have too.
+        if (m.type === "atlas.jobs" || (m.type === "atlas.run" && m.state === "failed")) {
+          c.sendJSON({ type: "atlas.inbox" } satisfies ClientMessage);
+        }
       }
     });
     c.addEventListener("statuschange", (status) => {
@@ -197,6 +306,7 @@ export function useAtlas() {
       const client_id = crypto.randomUUID();
       dispatch({ type: "say", pending: { client_id, text, at: Date.now() } });
       send({ type: "atlas.say", text, client_id });
+      return client_id;
     },
     [send],
   );
@@ -231,7 +341,12 @@ export function useAtlas() {
     setVoice((v) => ({ ...v, error: null }));
   }, []);
 
-  return { state, voice, inCall, send, say, test, toggleCall, dismiss };
+  const firstLook = useCallback(() => {
+    dispatch({ type: "look" });
+    send({ type: "atlas.setup.look" });
+  }, [send]);
+
+  return { state, voice, inCall, send, say, test, toggleCall, dismiss, firstLook };
 }
 
 export type Atlas = ReturnType<typeof useAtlas>;

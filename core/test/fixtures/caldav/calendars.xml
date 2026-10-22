@@ -17,6 +17,7 @@
       <prop>
         <resourcetype><collection/><C:calendar/></resourcetype>
         <displayname>Home</displayname>
+        <CS:getctag>HwoQEgwAAA-home-1</CS:getctag>
         <C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set>
       </prop>
       <status>HTTP/1.1 200 OK</status>
@@ -28,6 +29,7 @@
       <prop>
         <resourcetype><collection/><C:calendar/></resourcetype>
         <displayname>Work &amp; Studio</displayname>
+        <CS:getctag>HwoQEgwAAA-work-1</CS:getctag>
         <C:supported-calendar-component-set><C:comp name="VEVENT"/><C:comp name="VTODO"/></C:supported-calendar-component-set>
       </prop>
       <status>HTTP/1.1 200 OK</status>
@@ -50,6 +52,7 @@
       <prop>
         <resourcetype><collection/><C:calendar/></resourcetype>
         <displayname>Birthdays</displayname>
+        <sync-token>https://caldav.icloud.com/sync/birthdays-1</sync-token>
         <C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set>
       </prop>
       <status>HTTP/1.1 200 OK</status>

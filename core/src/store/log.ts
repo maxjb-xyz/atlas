@@ -17,13 +17,26 @@ export type LogKind =
   | "brain.fallback"
   | "voice.metrics"
   | "voice.problem"
-  | "settings.change";
+  | "settings.change"
+  /** Atlas's summary of the conversation before a point, which replaces it in context (§4.1). */
+  | "context.summary"
+  /** What a helper handed back when its job ended (§8.1). */
+  | "job.result"
+  /** An area was created, changed, merged or archived, or the owner moved an item's areas (§6). */
+  | "area.change";
 
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */
 export interface Receipt {
   text: string;
-  undo?: { kind: "reminder.cancel"; id: string };
+  undo?: Undo;
 }
+
+/** What Undo on a receipt does. `history` names the correction to roll back. */
+export type Undo =
+  | { kind: "reminder.cancel"; id: string }
+  | { kind: "record.forget"; id: string }
+  | { kind: "record.restore"; id: string }
+  | { kind: "record.revert"; id: string; history: number };
 
 export interface LogRow {
   seq: number;
@@ -95,6 +108,12 @@ export function append(sql: Sql, row: Append): LogRow {
   return get(sql, id)!;
 }
 
+/** A log writer for the loop, over this agent's own log. */
+export const logTo =
+  (sql: Sql) =>
+  async (row: Append): Promise<LogRow> =>
+    append(sql, row);
+
 export function get(sql: Sql, id: string): LogRow | null {
   const r = sql.exec<RawRow>(`SELECT * FROM log WHERE id = ?`, id).toArray()[0];
   return r ? fromRaw(r) : null;
@@ -119,12 +138,21 @@ export function forRun(sql: Sql, runId: string): LogRow[] {
 }
 
 /** What the thread shows: messages, receipts, fallbacks and failed runs. */
+/** Runs whose failure the thread and the Inbox don't show on their own. */
+export function quietTrigger(trigger: string): boolean {
+  return trigger === "compaction" || trigger === "areas" || trigger.startsWith("helper:");
+}
+
 export function isThreadRow(row: LogRow): boolean {
   if (row.kind === "message.in" || row.kind === "message.out" || row.kind === "brain.fallback" || row.kind === "voice.problem") return true;
   if (row.kind === "tool.result") return row.body.receipt != null;
-  if (row.kind === "run.end") return row.body.state === "failed";
+  // Atlas's own upkeep (compaction, area discovery) failing isn't news for the thread; the run and the
+  // Worker log say why. A helper's failure reaches the thread as Atlas's report of it.
+  if (row.kind === "run.end") return row.body.state === "failed" && !quietTrigger(String(row.body.trigger ?? ""));
   // An undo from a receipt shows as its own line, so the thread tells the truth.
-  if (row.kind === "agenda.change") return row.body.undo_of != null;
+  if (row.kind === "agenda.change" || row.kind === "record.change") return row.body.undo_of != null;
+  // Atlas starting an area is said once, in the thread (§6.3).
+  if (row.kind === "area.change") return row.body.change === "started";
   return false;
 }
 
@@ -135,12 +163,21 @@ export const THREAD_KINDS: LogKind[] = [
   "brain.fallback",
   "run.end",
   "agenda.change",
+  "record.change",
+  "area.change",
   "voice.problem",
 ];
 
 export function thread(sql: Sql, limit: number, beforeSeq?: number): LogRow[] {
-  // Over-fetch, since some tool.result and run.end rows aren't shown.
-  return recent(sql, THREAD_KINDS, limit * 3, beforeSeq)
-    .filter(isThreadRow)
-    .slice(-limit);
+  // Some rows of these kinds aren't shown (tool results without receipts, record changes
+  // that aren't undos), so read back in pages until there are enough or none are left.
+  const out: LogRow[] = [];
+  let before = beforeSeq;
+  for (let page = 0; page < 20 && out.length < limit; page++) {
+    const rows = recent(sql, THREAD_KINDS, limit * 3, before);
+    out.unshift(...rows.filter(isThreadRow));
+    if (rows.length < limit * 3) break;
+    before = rows[0]!.seq;
+  }
+  return out.slice(-limit);
 }

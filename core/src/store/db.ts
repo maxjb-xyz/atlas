@@ -83,13 +83,88 @@ const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL
   );
   `,
+  // M1: a home for what Atlas keeps between wakes that isn't a secret, moved
+  // out of the secrets table, which M0 borrowed for it.
+  `
+  CREATE TABLE state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  INSERT INTO state (key, value, updated_at)
+    SELECT name, value, updated_at FROM secrets WHERE name IN ('icloud_calendars', 'icloud_refused', 'chatgpt_client');
+  DELETE FROM secrets WHERE name IN ('icloud_calendars', 'icloud_refused', 'chatgpt_client');
+  `,
+  // M1: memory (§5). Records can be forgotten and linked, and messages and
+  // records are indexed for recall by keyword (full-text) and by meaning
+  // (embeddings kept beside the text).
+  `
+  ALTER TABLE records ADD COLUMN state TEXT NOT NULL DEFAULT 'active';
+  ALTER TABLE records ADD COLUMN recalled INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE record_history ADD COLUMN name TEXT;
+
+  CREATE TABLE links (
+    from_id TEXT NOT NULL,
+    to_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (from_id, to_id, kind)
+  );
+  CREATE INDEX links_to ON links(to_id);
+
+  CREATE TABLE memory (
+    ref TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    model TEXT,
+    vec BLOB
+  );
+  CREATE INDEX memory_at ON memory(at);
+  CREATE INDEX memory_model ON memory(model);
+
+  -- Keyed by memory's rowid, so updating or dropping an item is a point lookup.
+  CREATE VIRTUAL TABLE memory_fts USING fts5(text, tokenize = 'porter unicode61');
+  `,
+  // M1: areas (§6). Tags on log rows and records hold area ids. Examples
+  // come from the owner's corrections and teach future tagging.
+  `
+  CREATE TABLE areas (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE,
+    about TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'active',
+    color INTEGER NOT NULL DEFAULT 0,
+    settings TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    last_seen INTEGER
+  );
+  CREATE UNIQUE INDEX areas_name ON areas(name);
+
+  CREATE TABLE area_examples (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    area_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    fits INTEGER NOT NULL,
+    at INTEGER NOT NULL
+  );
+  CREATE INDEX area_examples_area ON area_examples(area_id, seq);
+
+  ALTER TABLE records ADD COLUMN tagged INTEGER NOT NULL DEFAULT 0;
+  `,
+  // 5. History's totals and the Inbox read the log by time.
+  `
+  CREATE INDEX log_at ON log(at);
+  `,
 ];
 
-export function migrate(sql: Sql): void {
+/** Brings the schema up to date. Tests pass `to` to stop at an older version. */
+export function migrate(sql: Sql, to = MIGRATIONS.length): void {
   sql.exec(`CREATE TABLE IF NOT EXISTS atlas_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
   const row = sql.exec<{ value: string }>(`SELECT value FROM atlas_meta WHERE key = 'schema'`).toArray()[0];
   let version = row ? Number(row.value) : 0;
-  while (version < MIGRATIONS.length) {
+  while (version < to) {
     sql.exec(MIGRATIONS[version]!);
     version += 1;
     sql.exec(`INSERT OR REPLACE INTO atlas_meta (key, value) VALUES ('schema', ?)`, String(version));

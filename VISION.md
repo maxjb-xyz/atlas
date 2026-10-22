@@ -100,7 +100,7 @@ How the loop behaves:
 - **Compaction.** At about 70% of the context window, a silent "save what matters" pass runs, then older context is summarized.
 - **Parallel tool calls,** and helpers for big jobs.
 - **When a budget runs out,** one final answer with no tools: "Here's what I found. Want me to keep going?"
-- **Long work moves to the background** on its own, survives restarts, and reports back where it was asked for.
+- **Long work moves to the background** on its own, survives restarts, and reports back where it was asked for. Background runs execute inside durable fibers (the Agents SDK's `runFiber`): the loop saves a checkpoint after each step and picks up from it after a restart. A chat reply that a restart cuts off simply ends as failed, with the reason.
 
 Every run ends in exactly one final state, which is saved: replied, deferred or failed. Live streams are progress hints only. A refresh always shows the saved truth.
 
@@ -328,7 +328,7 @@ The rules:
 - Every helper action goes into the log.
 - When a helper needs a decision, it asks Atlas. Atlas answers from what it knows, or asks you in plain words.
 
-On Cloudflare, helpers are sub-agents with their own storage, and background ones survive restarts.
+On Cloudflare, helpers are the Agents SDK's sub-agents (dynamic agents, with their own storage), each running Atlas's own loop inside a durable fiber, so background ones survive restarts. A helper's storage is only its scratch space: everything it does is written to the log of the agent that started it.
 
 ### 8.2 Coding jobs: Atlas as the middleman
 
@@ -699,15 +699,16 @@ Everything installs from the app: browse, preview what it can touch, install, un
 
 | Atlas needs | Cloudflare piece |
 |---|---|
-| Each person's Atlas: loop, log, records, agenda | An agent (a Durable Object) with its own SQLite database, scheduling and durable execution (Agents SDK, Project Think) |
+| Each person's Atlas: loop, log, records, agenda | An agent (a Durable Object) with its own SQLite database, scheduling and durable execution (the Agents SDK, with fibers) |
 | Voice on the same connection as text | `@cloudflare/voice`, with ElevenLabs |
-| Helpers | Sub-agents with their own storage, including background sub-agents |
+| Helpers | The Agents SDK's sub-agents (dynamic agents) with their own storage, running Atlas's loop in durable fibers |
+| Multi-step automations | Cloudflare Workflows through the Agents SDK, under the agenda (decided in M2) |
 | Workspace | Sandboxes: shell, interpreters, files, preview URLs, network rules, credential injection, terminals |
 | Browser | Browser Run: live view, human in the loop, recordings |
 | Repos | Artifacts (git-compatible) |
 | Code Mode and extensions | Dynamic Workers |
 | Decide and extract | Workers AI: Clef, Clairic |
-| Embeddings and search | Workers AI embeddings, plus a vector index |
+| Embeddings and search | Workers AI embeddings and full-text search, kept in each person's agent beside their records (a Vectorize index if one person's memory outgrows that) |
 | Files | R2 |
 | Email | Email Service for sending, Email Routing for receiving |
 | Brains | AI Gateway |
@@ -726,7 +727,8 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
 ### 19.3 Costs and caveats
 
 - **Plan.** It needs a Cloudflare account on the Workers paid plan, because sandboxes and sending email require it. Model usage is a separate cost, set by the owner's choices.
-- **Previews.** Some pieces are still previews: Project Think, the voice package, Clairic, Artifacts. We wrap each one behind a small interface and keep a stable path ready.
+- **Previews.** Some pieces are still previews: the Agents SDK's sub-agents, the voice package, Clairic, Artifacts. We wrap each one behind a small interface and keep a stable path ready.
+- **Not Project Think.** Think owns its own agent loop, model calls (through the AI SDK), message store and compaction, and offers no way to use Atlas's log as its store. Using it would mean a second log and a second loop (rule 3). Atlas uses the plain Agents SDK, whose fibers, sub-agents and Workflows don't need Think. ThinkWorkflow needs a Think agent, so it's out too; plain Workflows are considered for automations in M2, beneath the agenda rather than beside it. (Decided 2026-10-22.)
 - **Self-hosting.** People who want everything on their own hardware will prefer Hermes or OpenClaw.
   - The core stays plain TypeScript behind small interfaces (storage, scheduler, sandbox, browser, models, speech), so a self-hosted build is possible later.
   - It isn't promised for version 1.
@@ -864,6 +866,21 @@ The stage uses a fixed set of well-built views. Each has a typed contract that t
   - small sandboxed apps for real interactivity, with no network access and their data passed in;
   - MCP Apps from installed tools, which also render here.
 
+**How a view gets there.** Atlas puts a view on the stage with one tool, `show`, whose input is that view's typed contract: the same zod schema the app renders from (§19.4). A view arrives in the console as a receipt that opens it, and on Home's stage as a tab. Pages and stage views are built from the same components, so the area page and the area view are one thing.
+
+**When each view arrives.** The shell and its first views (Now, Week, Jobs, and receipts that open on the stage) came in M1. `show` comes first in M2, so every later view only has to be built, not wired. After that, each view arrives with the milestone that produces its data:
+
+| Milestone | Views |
+|---|---|
+| M2 | `show`, with area, person, list and table from what Atlas already knows; then draft, approval, plan and automation; and Keep, which saves a view as a page (§21.7) |
+| M3 | Live browser (with take over), research, document, compare, chart, code, and the custom kit, small apps and MCP Apps |
+| M4 | Situation, map, place and weather, and Now and day rebuilt from the situation |
+| M5 | Thread and face conversation, and person with what Atlas knows from email and contacts |
+| M6 | Job: a coding job's steps, terminal, diff, checks and PR |
+| M7 | Ambient mode, media and 3D model |
+
+Each view gets its design pass, motion included (§21.8), when it arrives.
+
 ### 21.7 Pages and files: things Atlas makes
 
 > **Needs refinement.** This is the agreed direction, not a finished design. The open points are at the end of this section and in §26.
@@ -876,7 +893,7 @@ Atlas makes things you keep: a shoot plan, a trip itinerary, a quote, a study gu
 
   | Kind | Examples | Built from | Tentative timing |
   |---|---|---|---|
-  | Living pages | A shoot plan, a trip plan, a weekly report, a study guide | Stage views plus text, with versions | M1 to M2: a "Keep" button on any stage view |
+  | Living pages | A shoot plan, a trip plan, a weekly report, a study guide | Stage views plus text, with versions | M2: a "Keep" button on any stage view |
   | Files | A quote PDF, an invoice, a Word doc, a spreadsheet | Generated in the Sandbox, stored in R2 | M3 |
   | Small apps | A shot-list checklist, a budget calculator | Sandboxed, with no network access and their data passed in (§21.6) | M3 |
   | Decks | A pitch deck | Exported to Google Slides through a connection at first | Later |
@@ -1080,7 +1097,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 |---|---|---|
 | M0 | **Voice and core prototype** (1 to 2 weeks): one person agent on Cloudflare with the log, minimal records, the character, two tools (calendar read and reminders), voice with ElevenLabs `eleven_v4_turbo`, ChatGPT sign-in and Workers AI as brains, and a bare thread. It includes the benchmark that picks the `voice` and `speech_in` defaults. | The platform works, and voice can be one mind. **Exit:** with no lookup, half of replies start speaking within 1 second; with a lookup, an honest status line within 1 second; and the same answers as text. |
 | M1 | **The companion:** the full loop (budgets, compaction, basic helpers), the log, records and recall, areas, the character, the UI v1 shell (§21: Home with the stage and console, Inbox, Agenda, Automations, Library, History, settings) with the first views, receipts, themes (Graphite and Daylight), and setup steps 1 to 5. | It feels like Atlas in conversation and knows your stuff. |
-| M2 | **Follow-through:** the agenda, automations with all five triggers, approvals with earned trust, the outbox and notifications, and the default routines. | Everything Atlas says it'll do actually happens. |
+| M2 | **Follow-through:** the stage's `show` tool first (§21.6), then the agenda, automations with all five triggers, approvals with earned trust, the outbox and notifications, and the default routines. | Everything Atlas says it'll do actually happens. |
 | M3 | **Hands:** the sandbox, browser, web, Code Mode, skills and learning, the vault, and finding a way. | It finishes unfamiliar tasks. |
 | M4 | **Senses:** nodes (phone, desktop), the situation, decide-then-wake awareness, and location-based errands. | The gym-to-store moment, and others like it. |
 | M5 | **People:** contacts, faces (email, phone, chat), members and shared areas, and digests. | It deals with people for you. |
@@ -1097,6 +1114,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 - **Brains:** the owner's setup in §18. ChatGPT plan sign-in and Workers AI are first-class providers.
 - **Voice out:** ElevenLabs `eleven_v4_turbo`.
 - **Done (rule 7):** a smoke test on the real deployment, not a week of use.
+- **Durable execution (2026-10-22):** the plain Agents SDK's fibers and sub-agents, not Project Think (§19.3).
 
 **Still open:**
 1. **Repo visibility.** Proposed: private until launch.

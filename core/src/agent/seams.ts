@@ -1,0 +1,21 @@
+// Test seams: fake brains, calendars, embeddings and HTTP instead of real
+// providers. Only the tests set these (CLAUDE.md: never call a real provider
+// from tests).
+
+import type { Decider } from "../brains/decide";
+import type { Embedder } from "../brains/embed";
+import type { Brain } from "../brains/types";
+import type { CalendarSource } from "../calendar/types";
+import type { BrainChoice } from "../store/settings";
+
+export const seams: {
+  makeBrain: ((choice: BrainChoice) => Brain | null) | null;
+  calendar: CalendarSource | null | undefined;
+  fetch: typeof fetch | null;
+  /** The `embed` role: undefined uses Workers AI, null means none. */
+  embed: Embedder | null | undefined;
+  /** A smaller context window, so tests can reach compaction with a few messages. */
+  contextWindow: number | null;
+  /** The `decide` role: undefined uses Workers AI's Clef, null means none. */
+  decide: Decider | null | undefined;
+} = { makeBrain: null, calendar: undefined, fetch: null, embed: undefined, contextWindow: null, decide: undefined };

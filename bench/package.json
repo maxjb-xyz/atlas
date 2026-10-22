@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "bench": "node --experimental-strip-types latency.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "eval:character": "node --experimental-strip-types character.ts"
   },
   "dependencies": {
     "ws": "^8.18.0"

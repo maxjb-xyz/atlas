@@ -132,8 +132,11 @@ export function workersAIBrain(ai: AiLike, model: string): Brain {
         result = await ai.run(model, inputs, { signal: req.signal });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        const permanent = /no such model|not found|invalid|unsupported|bad input/i.test(message);
-        throw new BrainError(`Workers AI: ${message}`, permanent);
+        // Some models need the Workers Paid plan; that won't change by retrying, so say what to do.
+        const paid = /paid|billing|upgrade/i.test(message);
+        const permanent = paid || /no such model|not found|invalid|unsupported|bad input/i.test(message);
+        const hint = paid ? ` ${model} may need the Workers Paid plan; on the free plan, @cf/moonshotai/kimi-k2.5 works.` : "";
+        throw new BrainError(`Workers AI: ${message}${hint}`, permanent);
       }
       if (!(result instanceof ReadableStream)) {
         // A model that ignored `stream`: one complete answer, in either shape.
