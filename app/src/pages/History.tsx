@@ -165,15 +165,19 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
                     ? `Webhook ${str(b.webhook)}: ${str(b.name)}`
                     : b.vault
                       ? `Vault: ${str(b.name)} ${str(b.vault)}`
-                      : b.mcp
-                        ? `${b.mcp === "added" ? "Added" : "Removed"} the MCP server ${str(b.name)} (${str(b.url)})`
-                        : b.trust
-                          ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
-                          : b.focus
-                            ? b.focus === "on"
-                              ? `Focus until ${new Date(Number(b.until)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${b.about ? `: ${str(b.about)}` : ""}`
-                              : "Ended focus"
-                            : "Changed settings";
+                      : b.workspace
+                        ? b.workspace === "restarted"
+                          ? "Restarted the workspace"
+                          : `Workspace: ${str(b.workspace)}${b.name ? ` (${str(b.name)})` : ""}`
+                        : b.mcp
+                          ? `${b.mcp === "added" ? "Added" : "Removed"} the MCP server ${str(b.name)} (${str(b.url)})`
+                          : b.trust
+                            ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
+                            : b.focus
+                              ? b.focus === "on"
+                                ? `Focus until ${new Date(Number(b.until)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${b.about ? `: ${str(b.about)}` : ""}`
+                                : "Ended focus"
+                              : "Changed settings";
       return { who: r.actor === "owner" ? "You" : "Atlas", what, kind: "settings.change" };
     }
     default:

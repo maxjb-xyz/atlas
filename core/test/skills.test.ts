@@ -97,6 +97,7 @@ beforeEach(async () => {
     async preview() {
       return { token: "x", expires: 0 };
     },
+    async restart() {},
     async status() {
       return { running: false, ready: true };
     },

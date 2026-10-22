@@ -43,6 +43,7 @@ function fakeWorkspace() {
     async preview(port) {
       return { token: `${"ab".repeat(18)}`, expires: Date.now() + 86_400_000 + port };
     },
+    async restart() {},
     async status() {
       return { running: true, ready: true };
     },

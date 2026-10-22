@@ -318,6 +318,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** The workspace (§9.1): keep a file from it in Library, or take back a site it may reach. */
   z.object({ type: z.literal("atlas.workspace.keep"), path: z.string().min(1).max(500) }),
   z.object({ type: z.literal("atlas.workspace.site.remove"), site: z.string().min(1).max(200) }),
+  /** Stop the workspace's container, so the next command starts it fresh (its files and setup are kept). */
+  z.object({ type: z.literal("atlas.workspace.restart") }),
   /**
    * Connected MCP servers (§9.2): the list, adding one by its address (with a
    * token for servers that take one instead of a sign-in), and removing one.

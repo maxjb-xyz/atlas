@@ -67,9 +67,15 @@ export default {
       // The workspace's terminal (§9.1): the owner's only, from the app's own page.
       if (path === "/api/workspace/terminal" && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
         if (!sameOrigin(request)) return json({ error: "Wrong origin." }, 403);
-        const ws = env.WORKSPACE.getByName(OWNER);
-        await ws.setGate(await agent.apiWorkspaceGate());
-        return ws.fetch(new Request(`https://workspace/terminal${url.search}`, request));
+        try {
+          const ws = env.WORKSPACE.getByName(OWNER);
+          await ws.setGate(await agent.apiWorkspaceGate());
+          return await ws.fetch(new Request(`https://workspace/terminal${url.search}`, request));
+        } catch (err) {
+          const error = `The terminal couldn't open: ${err instanceof Error ? err.message : String(err)}`;
+          console.error(JSON.stringify({ at: "workspace.terminal", error }));
+          return json({ error }, 502);
+        }
       }
       // A file Atlas made (§21.7), from R2. It's served sandboxed, so an HTML or SVG file can't run scripts as Atlas.
       const file = /^\/api\/files\/([\w-]{1,64})$/.exec(path);

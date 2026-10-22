@@ -790,6 +790,18 @@ function WorkspaceView({ atlas, view, onClose }: { atlas: Atlas; view: Extract<S
         <h1 className="disp">Workspace</h1>
         {w && <span className={`tag ${w.running ? "ok" : ""}`}>{w.running ? "Running" : "Asleep"}</span>}
         <span className="grow" />
+        {w?.available && w.running && (
+          <button
+            className="btn sm"
+            title="Stops it now; the next command starts it fresh. Its files and setup are kept."
+            onClick={() => {
+              setTerminal(false);
+              atlas.send({ type: "atlas.workspace.restart" });
+            }}
+          >
+            Restart
+          </button>
+        )}
         {w?.available && (
           <button className="btn sm" onClick={() => setTerminal(!terminal)}>
             {terminal ? "Close terminal" : "Open terminal"}

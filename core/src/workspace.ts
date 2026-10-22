@@ -48,6 +48,8 @@ const BACKUP = (ws: string) => `workspace/${ws}.tgz`;
 
 const CERTS = "/etc/ssl/certs/ca-certificates.crt";
 const GATE_CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
+/** Written last when a container is fully set up, so a half-set-up one is never mistaken for ready. */
+const READY = "/etc/atlas-ready";
 
 /** Debian's package sources over HTTP, for setting up before there's a CA bundle. */
 const HTTP_SOURCES =
@@ -140,6 +142,22 @@ const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 export class Workspace extends DurableObject<Env> {
   #blocked = new Set<string>();
   #starting: Promise<void> | null = null;
+  /** The running container got all the way through setting up (see READY). */
+  #ready = false;
+
+  /** Stops the container, so the next command starts it fresh. /workspace and the setup snapshot are kept. */
+  async restart(): Promise<void> {
+    await this.#stop("restarted by the owner");
+  }
+
+  /** Stops the container and waits until it has, so the next start doesn't find it still going. */
+  async #stop(why: string): Promise<void> {
+    this.#ready = false;
+    const c = this.ctx.container;
+    if (!c?.running) return;
+    await c.destroy(why).catch(() => {});
+    for (let i = 0; i < 50 && c.running; i++) await new Promise((r) => setTimeout(r, 200));
+  }
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -201,7 +219,23 @@ export class Workspace extends DurableObject<Env> {
    * /workspace back from R2.
    */
   async #up(say: (note: string) => Promise<void>): Promise<void> {
-    if (this.ctx.container?.running) return;
+    if (this.#starting) return this.#starting;
+    if (this.ctx.container?.running) {
+      // Running isn't ready: a start that failed partway leaves a container without its packages.
+      // Only one that got all the way through (and left the marker) is used; any other starts over.
+      if (this.#ready) return;
+      const marked = await this.#exec(`grep -qxF ${sh(BASE)} ${READY}`).then(
+        (r) => (r.exit === 0 ? "yes" : "no"),
+        () => "gone",
+      );
+      if (marked === "yes") {
+        this.#ready = true;
+        return;
+      }
+      // "gone": it's stopping (or stuck) and didn't answer; "no": it answered without the marker.
+      if (marked === "no") await say("The workspace was left half set up, so it's starting over.");
+      await this.#stop(marked === "no" ? "left half set up" : "didn't answer");
+    }
     this.#starting ??= (async () => {
       const saved = await this.#saved();
       const fromSnapshot = saved.snapshot?.base === BASE ? saved.snapshot : null;
@@ -253,9 +287,20 @@ export class Workspace extends DurableObject<Env> {
         const r = await this.#exec("tar xzf - -C /", { stdin: backup.body });
         if (r.exit !== 0) await say(`Couldn't put /workspace back from its copy: ${r.out.slice(-300)}`);
       }
-    })().finally(() => {
-      this.#starting = null;
-    });
+      const mark = await this.#exec(`echo ${sh(BASE)} > ${READY}`);
+      if (mark.exit !== 0) throw new Error(`The workspace couldn't mark itself ready: ${mark.out.slice(-300)}`);
+      this.#ready = true;
+    })()
+      .catch(async (err: unknown) => {
+        // A start that failed doesn't leave a half-set-up container behind for the next command to trust.
+        this.#ready = false;
+        console.error(JSON.stringify({ at: "workspace.up", error: err instanceof Error ? err.message : String(err) }));
+        await this.ctx.container?.destroy("setup failed").catch(() => {});
+        throw err;
+      })
+      .finally(() => {
+        this.#starting = null;
+      });
     await this.#starting;
   }
 
@@ -356,6 +401,7 @@ export class Workspace extends DurableObject<Env> {
     const [client, server] = [pair[0], pair[1]];
     server.accept();
     const say = (text: string) => server.send(new TextEncoder().encode(`\r\n\x1b[2m${text}\x1b[0m\r\n`));
+    say("Connecting to the workspace…");
     void (async () => {
       try {
         await this.#up(async (note) => say(note));

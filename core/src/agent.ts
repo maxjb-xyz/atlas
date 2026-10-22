@@ -152,6 +152,8 @@ export interface WorkspaceStub {
   list(): Promise<Array<{ path: string; size: number; dir: boolean }> | null>;
   preview(port: number): Promise<{ token: string; expires: number }>;
   status(): Promise<{ running: boolean; ready: boolean }>;
+  /** Stops the container; the next command starts it fresh. */
+  restart(): Promise<void>;
 }
 
 /** The one owner in M0. Members get their own agents in M5. */
@@ -884,6 +886,20 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
         }
         this.#broadcast({ type: "atlas.files", files: listFiles(this.#sql) });
+        return;
+      }
+      case "atlas.workspace.restart": {
+        try {
+          const ws = this.#ws();
+          if (!ws) throw new Error("This deployment has no workspace.");
+          await ws.restart();
+          append(this.#sql, { actor: "owner", kind: "settings.change", body: { workspace: "restarted" } });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(JSON.stringify({ at: "workspace.restart", error: message }));
+          this.#send(connection, { type: "atlas.error", message: `The workspace didn't restart: ${message}` });
+        }
+        this.#send(connection, { type: "atlas.stage.page", ref: "workspace", page: await this.#workspacePage() });
         return;
       }
       case "atlas.workspace.site.remove": {
