@@ -2,6 +2,7 @@
 // points back at the receipt (`undo_of`), so the thread and History show
 // what was undone, and the same receipt can't be undone twice.
 
+import { getSkill, restoreSkill, setSkillState } from "../skills";
 import { finish, getItem } from "../store/agenda";
 import type { Sql } from "../store/db";
 import { get as getRow, type LogRow, type Receipt } from "../store/log";
@@ -53,6 +54,17 @@ export async function undoReceipt(sql: Sql, logId: string, clock: ToolContext["c
         };
       }
       return { ok: true, row: undoneBy(sql, logId)!, agenda: false };
+    }
+    case "skill.undo": {
+      const s = getSkill(sql, undo.id);
+      if (!s) return { ok: false, message: "That skill isn't there any more." };
+      if (s.version !== undo.version)
+        return { ok: false, message: `${s.name} was changed since, so undoing this would lose that. Change it again instead.` };
+      const row =
+        undo.version === 1
+          ? setSkillState(sql, s.id, "archived", "owner", "Undone.")
+          : restoreSkill(sql, s.id, undo.version - 1, "owner", `Undid version ${undo.version}.`);
+      return row ? { ok: true, row, agenda: false } : { ok: false, message: "There was nothing to undo." };
     }
     case "page.undo": {
       const p = getPage(sql, undo.id);

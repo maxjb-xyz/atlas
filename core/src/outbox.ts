@@ -2,8 +2,9 @@
 // owner, it picks one channel (§14): the app when it's in view, a live call,
 // or else a push to the device used last, held through quiet hours unless it
 // can't wait. Every delivery beyond the thread leaves a receipt in the log.
-// Approvals join the exit checks next; sharing rules and the public-query
-// check in M3 and M5.
+// A look that leaves Atlas (a web search's query, a page's address) passes
+// the secrets scrubber and the public-query check here too. Sharing rules
+// come with members and faces in M5.
 
 import { type PushSubscriptionJSON, sendPush, vapidKeys } from "./push";
 import { type Action } from "./approvals";
@@ -11,7 +12,11 @@ import type { Sql } from "./store/db";
 import { append, get as getRow, type LogRow, type Surface } from "./store/log";
 import { readSettings, secretValues } from "./store/settings";
 import { getState, setState } from "./store/state";
-import { deleteRecord } from "./store/records";
+import { deleteRecord, findRecords } from "./store/records";
+import { hostOf, type LookOut } from "./web";
+import type { BrowserDriver } from "./browser";
+import { findServer, type McpClient, type McpResult, type McpServer, resultText } from "./mcp";
+import { FIELDS, fillsOn, findEntry, hiddenValues, siteFor, touchEntry, valueOf } from "./vault";
 import { quietUntil, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import { callWebhook, webhooks, webhookView } from "./webhooks";
 
@@ -22,6 +27,54 @@ export function scrub(text: string, secrets: string[]): string {
   let out = text;
   for (const s of secrets) if (s && out.includes(s)) out = out.split(s).join(HIDDEN);
   return out;
+}
+
+/** A street address: a number, a few words, and a street word ("1204 Lake Ave", "55 W. Church Street"). */
+const ADDRESS =
+  /\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Za-z0-9'.-]+\s+){0,4}(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|court|ct|way|place|pl|terrace|ter|circle|cir|parkway|pkwy|highway|hwy|trail|trl)\b\.?(?:\s*(?:apt|unit|suite|ste|#)\.?\s*[A-Za-z0-9-]+)?/gi;
+const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/;
+/**
+ * A phone number as people write one: ten digits in groups ("(407) 555-0134",
+ * "407.555.0134"), or an international number with its +. A run of digits
+ * with no breaks isn't one: page addresses are full of timestamps and ids.
+ */
+const PHONE = /(?:\+?1[\s.-]?)?(?:\(\d{3}\)\s?|\b\d{3}[\s.-])\d{3}[\s.-]\d{4}\b|\+\d{1,3}[\s.-]\d{2,4}(?:[\s.-]\d{2,4}){2,4}\b/;
+
+const SECRET_FOUND = "one of the owner's secrets";
+
+const squash = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[\s.,]+/g, " ")
+    .trim();
+
+/**
+ * The public-query check (§4.4): private details never go into a web
+ * search or a page's address. Returns what was found, in words Atlas can
+ * act on, or null. Private means one of the owner's secrets, an email
+ * address, a phone number, or a street address Atlas keeps in a record.
+ * Names, places and topics are not (decided with the owner, 2026-10-22).
+ */
+export function privateIn(sql: Sql, text: string, secrets: string[]): string | null {
+  let t = text;
+  try {
+    // In a page's address, + is a space and %40 is an @.
+    if (/^https?:\/\//i.test(text)) t = decodeURIComponent(text.replace(/\+/g, " "));
+  } catch {
+    // Not URL-encoded; check it as it is.
+  }
+  const both = (re: RegExp) => re.test(t) || re.test(text);
+  if (scrub(t, secrets) !== t || scrub(text, secrets) !== text) return SECRET_FOUND;
+  if (both(EMAIL)) return "an email address";
+  if (both(PHONE)) return "a phone number";
+  const q = ` ${squash(t)} `;
+  for (const r of [...findRecords(sql, "person"), ...findRecords(sql, "place"), ...findRecords(sql, "organization")]) {
+    for (const v of Object.values(r.fields)) {
+      if (typeof v !== "string") continue;
+      for (const a of v.matchAll(ADDRESS)) if (q.includes(` ${squash(a[0])} `)) return `a street address from what Atlas knows (${r.name})`;
+    }
+  }
+  return null;
 }
 
 /**
@@ -139,6 +192,10 @@ export interface Channels {
   /** Puts a held notification on the one clock (§4.3), to be released at `at`. */
   hold(at: Date, note: Note): Promise<void>;
   fetch: typeof fetch;
+  /** The browser (§9.1), or null where there isn't one. */
+  browser(): BrowserDriver | null;
+  /** Connected MCP servers (§9.2), or null where there's no client. */
+  mcp(): McpClient | null;
 }
 
 export class Outbox {
@@ -288,6 +345,47 @@ export class Outbox {
   }
 
   /**
+   * A look that leaves Atlas (§4.4): a web search's query or a page's
+   * address goes to someone else's server, so it passes the exit checks
+   * first. Something private in it stops it with the reason, and nothing is
+   * sent. Either way a delivery receipt says what went where, and how it
+   * went: the status, the host and on failure the service's own words.
+   */
+  async look<T>(
+    o: { what: "search" | "fetch" | "browse" | "type"; text: string; to: string; run_id: string | null },
+    go: (f: typeof fetch) => Promise<LookOut<T>>,
+  ): Promise<LookOut<T>> {
+    const base = { channel: "web", what: o.what, to: o.to, text: clip(o.text, 500) };
+    const found = privateIn(this.sql, o.text, this.secrets());
+    if (found) {
+      const error = `Not sent: it held ${found}. Private details never go into ${{ search: "a web search", fetch: "a web address", browse: "a web address", type: "a web page" }[o.what]}.`;
+      const secret = found === SECRET_FOUND;
+      this.receipt(o.run_id, {
+        ...base,
+        ...(secret ? { text: scrub(base.text, this.secrets()) } : {}),
+        ok: false,
+        error,
+        checks: secret ? { secrets: "failed" } : { secrets: "passed", public_query: "failed" },
+      });
+      return { ok: false, status: 0, error };
+    }
+    const out = await go(this.channels.fetch).catch((err: unknown): LookOut<T> => ({
+      ok: false,
+      status: 0,
+      error: `Couldn't reach ${o.to}: ${err instanceof Error ? err.message : String(err)}`,
+    }));
+    this.receipt(o.run_id, {
+      ...base,
+      ok: out.ok,
+      status: out.status,
+      ...(out.ok ? (out.note ? { note: out.note } : {}) : { error: out.error }),
+      checks: { secrets: "passed", public_query: "passed" },
+    });
+    if (!out.ok) console.error(JSON.stringify({ at: `web.${o.what}`, to: o.to, status: out.status, error: out.error }));
+    return out;
+  }
+
+  /**
    * Does what the owner's OK (or earned trust, or the owner's own button)
    * allowed. The exit checks run first; a webhook call leaves a delivery
    * receipt with what it answered. `by` says whose word it went out on.
@@ -296,6 +394,23 @@ export class Outbox {
     a: Action,
     o: { run_id: string | null; by: "approved" | "trusted" | "owner" | "automation" },
   ): Promise<{ ok: boolean; text: string }> {
+    if (a.kind === "browser") return this.#submit(a, o);
+    if (a.kind === "mcp") {
+      const out = await this.mcp({ server: a.server, tool: a.tool, args: a.arguments, run_id: o.run_id, by: o.by });
+      return {
+        ok: out.ok,
+        text: out.ok ? `${a.name} answered: ${clip(out.text, 4_000)}` : `${a.name} didn't work: ${clip(out.text, 1_000)}`,
+      };
+    }
+    if (a.kind === "mcp_add") return this.#connect(a, o);
+    if (a.kind === "vault") return this.#fill(a, o);
+    if (a.kind === "site") {
+      const sites = getState<string[]>(this.sql, "workspace_sites") ?? [];
+      setState(this.sql, "workspace_sites", [...new Set([...sites, a.host])]);
+      if (a.key) touchEntry(this.sql, a.key.entry, (x) => ({ ...x, allowed: [...new Set([...x.allowed, siteFor(x, a.host)])] }));
+      this.receipt(o.run_id, { channel: "workspace", to: a.host, text: a.name, by: o.by, ok: true, note: "Allowed from now on." });
+      return { ok: true, text: `The workspace can reach ${a.host} now${a.key ? `, carrying ${a.key.name}` : ""}.` };
+    }
     if (a.kind === "delete") {
       const touched = deleteRecord(this.sql, a.record, { via: "owner", ...(o.run_id ? { run_id: o.run_id } : {}) });
       // Open apps get the blanked rows at once, so the deleted words don't linger on screen.
@@ -327,6 +442,170 @@ export class Outbox {
     });
     if (!out.ok) console.error(JSON.stringify({ at: "webhook", name: hook.name, error: out.answer }));
     return { ok: out.ok, text: out.ok ? `Called ${hook.name}: ${out.answer}.` : `${hook.name} didn't work: ${out.answer}.` };
+  }
+
+  /**
+   * Calls a tool on a connected MCP server (§9.2): a look when the server
+   * says it only reads, else what the owner's OK or earned trust allowed.
+   * Its arguments pass the secrets check first. A delivery receipt keeps the
+   * server, the tool, how it went and, on failure, the server's own words.
+   */
+  async mcp(o: {
+    server: string;
+    tool: string;
+    args: Record<string, unknown>;
+    run_id: string | null;
+    by: string;
+  }): Promise<{ ok: boolean; text: string; result?: McpResult; server?: McpServer }> {
+    const base = { channel: "mcp", to: o.server, text: o.tool, by: o.by };
+    const fail = (error: string, extra: Record<string, unknown> = {}) => {
+      this.receipt(o.run_id, { ...base, ok: false, error, ...extra });
+      console.error(JSON.stringify({ at: "mcp.call", server: o.server, tool: o.tool, error }));
+      return { ok: false, text: error };
+    };
+    const client = this.channels.mcp();
+    if (!client) return fail("This deployment has no MCP client.");
+    const s = findServer(client.servers(), o.server);
+    if (!s) return fail(`There's no connected server called ${o.server}.`);
+    if (s.state !== "ready") {
+      return fail(
+        s.state === "authenticating"
+          ? `${s.name} is waiting for the owner to sign in, in Settings → Connections → MCP servers.`
+          : `${s.name} isn't ready (${s.state})${s.error ? `: ${s.error}` : ""}.`,
+      );
+    }
+    const args = JSON.stringify(o.args);
+    if (scrub(args, this.secrets()) !== args) {
+      return fail(`Not sent: what it would send to ${s.name} held one of your secrets.`, { checks: { secrets: "failed" } });
+    }
+    try {
+      const result = await client.call(s.id, o.tool, o.args);
+      const text = resultText(result);
+      const ok = !result.isError;
+      this.receipt(o.run_id, {
+        ...base,
+        to: s.name,
+        ok,
+        ...(ok ? { answer: clip(text, 300) } : { error: clip(text, 1_000) }),
+        checks: { secrets: "passed" },
+      });
+      if (!ok) console.error(JSON.stringify({ at: "mcp.call", server: s.name, tool: o.tool, error: clip(text, 1_000) }));
+      return { ok, text, result, server: s };
+    } catch (err) {
+      return fail(`${s.name} (${hostOf(s.url)}) didn't answer: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** Connects an MCP server once the owner said yes (§9.2). An OAuth server then waits for the owner to sign in. */
+  async #connect(
+    a: Extract<Action, { kind: "mcp_add" }>,
+    o: { run_id: string | null; by: string },
+  ): Promise<{ ok: boolean; text: string }> {
+    const base = { channel: "mcp", what: "connect", to: a.name, text: a.url, by: o.by };
+    const client = this.channels.mcp();
+    if (!client) return { ok: false, text: "This deployment has no MCP client." };
+    try {
+      const r = await client.add({ name: a.name, url: a.url });
+      const tools = client.servers().find((s) => s.id === r.id)?.tools.length ?? 0;
+      const text =
+        r.state === "authenticating"
+          ? `${a.name} is added. Sign in to finish: ${r.auth_url ?? "Settings → Connections → MCP servers has Sign in"}`
+          : `Connected ${a.name}, with ${tools} tool${tools === 1 ? "" : "s"}.`;
+      this.receipt(o.run_id, { ...base, ok: true, answer: r.state === "authenticating" ? "Waiting for sign-in" : `${tools} tools` });
+      return { ok: true, text };
+    } catch (err) {
+      const error = `${a.name} (${hostOf(a.url)}) didn't connect: ${err instanceof Error ? err.message : String(err)}`.replace(
+        /\.\.$/,
+        ".",
+      );
+      this.receipt(o.run_id, { ...base, ok: false, error });
+      console.error(JSON.stringify({ at: "mcp.add", url: a.url, error }));
+      return { ok: false, text: error };
+    }
+  }
+
+  /**
+   * Sends a form in the browser, once the owner said yes. Only on the page
+   * it was asked on, and only if the button or field is still the one the
+   * card showed; otherwise nothing is sent and the receipt says why.
+   */
+  async #submit(a: Extract<Action, { kind: "browser" }>, o: { run_id: string | null; by: string }): Promise<{ ok: boolean; text: string }> {
+    const host = hostOf(a.url);
+    const base = { channel: "browser", to: host, text: a.name, by: o.by };
+    const fail = (error: string) => {
+      this.receipt(o.run_id, { ...base, ok: false, error });
+      console.error(JSON.stringify({ at: "browser.submit", host, error }));
+      return { ok: false, text: `${a.name} didn't happen: ${error}` };
+    };
+    const driver = this.channels.browser();
+    if (!driver) return fail("This deployment has no browser.");
+    const here = driver.where();
+    if (!here.open) return fail("The browser closed before your OK (it closes after ten minutes without use). Ask Atlas to do it again.");
+    if (here.url !== a.url) return fail(`The browser moved on to ${here.url} since you were asked, so nothing was sent.`);
+    try {
+      const el = await driver.find(a.ref);
+      if (!el || el.text !== a.what) return fail("The page changed since you were asked, so nothing was sent. Ask Atlas to do it again.");
+      const page = await driver.act({ act: "submit", ref: a.ref });
+      this.receipt(o.run_id, { ...base, ok: true, answer: `Now on ${page.title || hostOf(page.url)}` });
+      return { ok: true, text: `Sent it on ${host}. The page now says: ${page.title || page.url}.` };
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /**
+   * The vault's last step (§15): fills an entry's values into the browser's
+   * fields, and presses the button after if asked. Only on a site the entry
+   * is tied to, and only on the page it was asked on. The values never come
+   * back: the receipt and the answer name the fields, and the page's title
+   * has any vault value hidden. A yes from the owner is remembered for that
+   * site, except for a card, which asks every time.
+   */
+  async #fill(a: Extract<Action, { kind: "vault" }>, o: { run_id: string | null; by: string }): Promise<{ ok: boolean; text: string }> {
+    const base = { channel: "vault", to: a.host, text: a.name, fields: Object.keys(a.fields), by: o.by };
+    const fail = (error: string) => {
+      this.receipt(o.run_id, { ...base, ok: false, error });
+      console.error(JSON.stringify({ at: "vault.fill", host: a.host, error }));
+      return { ok: false, text: `${a.name} wasn't filled in: ${error}` };
+    };
+    const e = findEntry(this.sql, a.entry);
+    if (!e) return fail("That vault entry isn't there any more.");
+    const driver = this.channels.browser();
+    if (!driver) return fail("This deployment has no browser.");
+    const here = driver.where();
+    if (!here.open) return fail("The browser closed before it could be filled in. Ask Atlas to do it again.");
+    const host = hostOf(here.url);
+    if (!fillsOn(e, host)) return fail(`The browser is on ${host}, and ${e.name} only fills on ${e.sites.join(", ")}.`);
+    if (here.url !== a.url) return fail(`The browser moved on to ${here.url} since you were asked, so nothing was filled in.`);
+    const values: Array<{ ref: string; value: string }> = [];
+    for (const [field, ref] of Object.entries(a.fields)) {
+      const value = await valueOf(e, field);
+      if (!value) return fail(`${e.name} has no ${(FIELDS[e.kind][field] ?? field).toLowerCase()}.`);
+      values.push({ ref, value });
+    }
+    try {
+      if (a.press) {
+        const el = await driver.find(a.press.ref);
+        if (!el || el.text !== a.press.text) return fail("The page changed since you were asked, so nothing was filled in.");
+      }
+      const page = await driver.fill(values, a.press?.ref);
+      const hidden = hiddenValues(this.sql);
+      const now = scrub(page.title || hostOf(page.url), hidden);
+      touchEntry(this.sql, e.id, (x) => ({
+        ...x,
+        uses: x.uses + 1,
+        last_used: Date.now(),
+        allowed: o.by === "approved" && x.kind !== "card" ? [...new Set([...x.allowed, siteFor(x, host)])] : x.allowed,
+      }));
+      this.receipt(o.run_id, { ...base, ok: true, ...(a.press ? { pressed: a.press.text } : {}), answer: `Now on ${now}` });
+      const n = values.length;
+      return {
+        ok: true,
+        text: `Filled ${n} ${n === 1 ? "field" : "fields"} from ${e.name} on ${host}${a.press ? ` and pressed "${a.press.text}"` : ""}. The page now says: ${now}.`,
+      };
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
   }
 
   /** A delivery receipt in the log (§4.2), shown in History. */

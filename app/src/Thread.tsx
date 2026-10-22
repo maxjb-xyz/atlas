@@ -6,7 +6,7 @@ import type { LogRow } from "../../core/src/protocol";
 import type { Atlas } from "./connection";
 import { Receipt } from "./Shell";
 import { openOnStage, shownFrom, StageCard } from "./StageViews";
-import { Markdown } from "./Markdown";
+import { InlineText, Markdown } from "./Markdown";
 import { AreaChip, Diamond, clock } from "./ui";
 
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : JSON.stringify(v));
@@ -133,12 +133,14 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
       if (b.kind === "approval") {
         const results = Array.isArray(b.results) ? b.results.map(String).join(" ") : "";
         return (
-          <p className={`note ${b.change === "done" && b.ok === false ? "fail" : ""}`}>
-            {b.change === "done"
-              ? `You OK'd ${str(b.title)}${b.edited ? " with your edits" : ""}. ${results}`
-              : b.change === "cancelled"
-                ? `You declined ${str(b.title)}, so nothing was done.`
-                : `Your OK for ${str(b.title)} ran out, so it didn't happen.`}
+          <p className={`note wrap-anywhere ${b.change === "done" && b.ok === false ? "fail" : ""}`}>
+            {b.change === "done" ? (
+              <InlineText text={`You OK'd ${str(b.title)}${b.edited ? " with your edits" : ""}. ${results}`} />
+            ) : b.change === "cancelled" ? (
+              `You declined ${str(b.title)}, so nothing was done.`
+            ) : (
+              `Your OK for ${str(b.title)} ran out, so it didn't happen.`
+            )}
           </p>
         );
       }
@@ -168,6 +170,7 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
         </p>
       );
     case "run.end":
+      if (b.interrupted) return <p className="note">Stopped.</p>;
       return <p className="note fail">Didn't finish. {str(b.error) || "The run failed."}</p>;
     default:
       return null;

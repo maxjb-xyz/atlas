@@ -4,7 +4,7 @@
 // opens it on Home's stage. Library's area and person pages are these same
 // views (§21.2).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Segment } from "../../core/src/pages";
 import type { LogRow, RecordView } from "../../core/src/protocol";
 import type { AreaPage, PagePage, PersonPage, StageMessage, StageView } from "../../core/src/stage";
@@ -12,6 +12,8 @@ import { Markdown } from "./Markdown";
 import type { Atlas } from "./connection";
 import { AreaChip, AreaDot, Diamond, Empty, Icon, pressable, Sheet, shortDay } from "./ui";
 import { AutomationFlow } from "./pages/Automations";
+import { AppFrame, ChartBody, CompareBody, KitBody } from "./ChartViews";
+import { McpAppFrame } from "./McpApp";
 
 /** A view on the stage: the receipt it came from (or a local id), the view, and its title. */
 export interface Shown {
@@ -24,6 +26,11 @@ export interface Shown {
 export function shownFrom(row: LogRow): Shown | null {
   const r = row.body.receipt as { text?: string; view?: StageView } | undefined;
   if (!r?.view || row.body.ok === false) return null;
+  // There's one workspace and one browser: their tab goes by that, not by what was run or opened.
+  if (r.view.kind === "workspace") return { id: row.id, view: r.view, title: "Workspace" };
+  if (r.view.kind === "browser") return { id: row.id, view: r.view, title: "Browser" };
+  // An MCP App goes by its tool's title.
+  if (r.view.kind === "mcp_app") return { id: row.id, view: r.view, title: r.view.title };
   // "Showing · X", "Made page · X", "Changed page · X · version 2": the view goes by X.
   const title = String(r.text ?? "")
     .replace(/^(Showing|Made page|Changed page) · /, "")
@@ -41,7 +48,13 @@ export const pageRef = (v: StageView) =>
         ? `automation:${v.automation}`
         : v.kind === "page"
           ? `page:${v.page}:${v.version ?? ""}`
-          : null;
+          : v.kind === "browser"
+            ? "browser"
+            : v.kind === "file"
+              ? `file:${v.file}`
+              : v.kind === "workspace"
+                ? "workspace"
+                : null;
 
 /** The live page behind an area or person view: undefined while it loads. Asked again when what it's built from changes. */
 function usePage(atlas: Atlas, view: StageView) {
@@ -67,6 +80,10 @@ export function titleOf(atlas: Atlas, shown: Shown): string {
     const id = shown.view.page;
     return atlas.state.pages?.find((p) => p.id === id)?.name ?? shown.title;
   }
+  if (shown.view.kind === "file") {
+    const id = shown.view.file;
+    return atlas.state.files?.find((f) => f.id === id)?.name ?? shown.title;
+  }
   return shown.title;
 }
 
@@ -85,7 +102,7 @@ export function StageSheet({
   onClose?: () => void;
 }) {
   const v = shown.view;
-  const keep = v.kind !== "page";
+  const keep = v.kind !== "page" && v.kind !== "browser" && v.kind !== "file" && v.kind !== "workspace" && v.kind !== "mcp_app";
   return (
     <Sheet className="pick" key={shown.id}>
       <div className={`sheet-in ${onClose ? "closable" : ""} ${keep ? "keepable" : ""}`}>
@@ -117,6 +134,28 @@ function ViewBody({
       {v.kind === "automation" && <AutomationStage atlas={atlas} view={v} onClose={onClose} />}
       {v.kind === "draft" && <DraftView view={v} onClose={onClose} />}
       {v.kind === "plan" && <PlanView view={v} onClose={onClose} />}
+      {v.kind === "research" && <ResearchView view={v} onClose={onClose} />}
+      {v.kind === "browser" && <BrowserView atlas={atlas} view={v} onClose={onClose} />}
+      {v.kind === "file" && <FileView atlas={atlas} view={v} onClose={onClose} />}
+      {v.kind === "document" && <DocumentView view={v} onClose={onClose} />}
+      {v.kind === "code" && <CodeView view={v} onClose={onClose} />}
+      {v.kind === "workspace" && <WorkspaceView atlas={atlas} view={v} onClose={onClose} />}
+      {(v.kind === "chart" || v.kind === "compare" || v.kind === "kit" || v.kind === "app" || v.kind === "mcp_app") && (
+        <>
+          <div className="sheet-title">
+            <Icon name="grid" />
+            <h1 className="disp">{v.title}</h1>
+            <span className="grow" />
+            <Close onClose={onClose} />
+          </div>
+          {"source" in v && <Source text={v.source} />}
+          {v.kind === "chart" && <ChartBody chart={v} />}
+          {v.kind === "compare" && <CompareBody compare={v} />}
+          {v.kind === "kit" && <KitBody kit={v} />}
+          {v.kind === "app" && <AppFrame app={v} />}
+          {v.kind === "mcp_app" && <McpAppFrame atlas={atlas} call={v.call} title={v.title} />}
+        </>
+      )}
       {v.kind === "page" && <PageView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
     </>
   );
@@ -607,12 +646,466 @@ function PlanView({ view, onClose }: { view: Extract<StageView, { kind: "plan" }
   );
 }
 
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).host.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+};
+
+/** An answer from the web, with the pages it rests on (§21.6). Each source opens in a new tab. */
+function ResearchView({ view, onClose }: { view: Extract<StageView, { kind: "research" }>; onClose?: () => void }) {
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="search" />
+        <h1 className="disp">{view.title}</h1>
+        <span className="muted">
+          {view.sources.length} {view.sources.length === 1 ? "source" : "sources"}
+        </span>
+        <span className="grow" />
+        <Close onClose={onClose} />
+      </div>
+      <div className="panel research-answer">
+        <Markdown text={view.answer} />
+      </div>
+      <p className="lab" style={{ marginTop: 16, marginBottom: 6 }}>
+        Sources
+      </p>
+      <ol className="rows" style={{ listStyle: "none", padding: 0, margin: 0 }}>
+        {view.sources.map((src, i) => (
+          <li className="r" key={i} style={{ alignItems: "flex-start" }}>
+            <span className="mono faint" style={{ flex: "none", width: 22 }}>
+              {i + 1}
+            </span>
+            <span className="grow" style={{ minWidth: 0 }}>
+              <a className="link" href={src.url} target="_blank" rel="noopener noreferrer">
+                {src.title}
+              </a>
+              <span className="lab faint" style={{ display: "block", marginTop: 2 }}>
+                {hostOf(src.url)}
+              </span>
+              {src.note && (
+                <span className="muted small" style={{ display: "block", marginTop: 2 }}>
+                  {src.note}
+                </span>
+              )}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </>
+  );
+}
+
+/**
+ * Atlas's browser, live (§9.1). While Atlas drives, the frame is read-only;
+ * Take over gives the owner one they can drive, for a login or a captcha,
+ * and Hand back gives it to Atlas again, which carries on from there.
+ */
+function BrowserView({ atlas, view, onClose }: { atlas: Atlas; view: Extract<StageView, { kind: "browser" }>; onClose?: () => void }) {
+  const page = usePage(atlas, view);
+  const [shownAt, setShownAt] = useState(Date.now());
+  // Live links last about five minutes: ask for a fresh one every four while it's on screen.
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (atlas.voice.connected) atlas.send({ type: "atlas.stage", ref: "browser", view });
+      setShownAt(Date.now());
+    }, 4 * 60_000);
+    return () => clearInterval(t);
+  }, [atlas.voice.connected]);
+  const b = page && page.kind === "browser" ? page : null;
+  const button = (action: "take" | "give" | "close") => atlas.send({ type: "atlas.browser", action });
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="search" />
+        <h1 className="disp clamp">{b?.title || "Browser"}</h1>
+        <span className="grow" />
+        {b?.open &&
+          (b.taken ? (
+            <button className="btn sm primary" onClick={() => button("give")}>
+              Hand back
+            </button>
+          ) : (
+            <button className="btn sm" onClick={() => button("take")}>
+              Take over
+            </button>
+          ))}
+        {b?.open && (
+          <button className="btn sm" onClick={() => button("close")}>
+            Close browser
+          </button>
+        )}
+        <Close onClose={onClose} />
+      </div>
+      {b === null ? (
+        <p className="muted">Opening the browser.</p>
+      ) : !b.open ? (
+        <p className="muted">
+          {b.error ?? "The browser is closed. It closes by itself after ten minutes without use; ask Atlas to open a page."}
+        </p>
+      ) : (
+        <>
+          <p className="lab faint clamp" style={{ marginTop: -6, marginBottom: 10 }}>
+            {b.url}
+          </p>
+          {b.taken && (
+            <p className="banner rise" style={{ marginBottom: 10 }}>
+              <span className="grow">{b.taken.why}. It's yours to drive; press Hand back when you're done.</span>
+            </p>
+          )}
+          {b.live ? (
+            <iframe
+              key={`${b.live}-${shownAt}`}
+              className="browser-live"
+              src={b.live}
+              title="Atlas's browser, live"
+              allow="clipboard-read; clipboard-write"
+            />
+          ) : (
+            <p className="err small">{b.error ?? "No live view right now."}</p>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * Atlas's workspace (§9.1): what it's running now, as it prints; a terminal
+ * of your own; its files, with Keep; the sites it may reach; and what ran
+ * lately. Opening the terminal starts the workspace; looking doesn't.
+ */
+function WorkspaceView({ atlas, view, onClose }: { atlas: Atlas; view: Extract<StageView, { kind: "workspace" }>; onClose?: () => void }) {
+  const page = usePage(atlas, view);
+  const [terminal, setTerminal] = useState(false);
+  const w = page && page.kind === "workspace" ? page : null;
+  const live = atlas.state.workspaceOut;
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="grid" />
+        <h1 className="disp">Workspace</h1>
+        {w && <span className={`tag ${w.running ? "ok" : ""}`}>{w.running ? "Running" : "Asleep"}</span>}
+        <span className="grow" />
+        {w?.available && w.running && (
+          <button
+            className="btn sm"
+            title="Stops it now; the next command starts it fresh. Its files and setup are kept."
+            onClick={() => {
+              setTerminal(false);
+              atlas.send({ type: "atlas.workspace.restart" });
+            }}
+          >
+            Restart
+          </button>
+        )}
+        {w?.available && (
+          <button className="btn sm" onClick={() => setTerminal(!terminal)}>
+            {terminal ? "Close terminal" : "Open terminal"}
+          </button>
+        )}
+        <Close onClose={onClose} />
+      </div>
+      {w === null ? (
+        <p className="lab">Looking</p>
+      ) : !w.available ? (
+        <p className="muted">{w.error ?? "This deployment has no workspace."}</p>
+      ) : (
+        <>
+          <p className="muted small" style={{ marginTop: -6 }}>
+            Atlas's own computer: bash, Python and Node, with files in /workspace. It sleeps after ten minutes without use.
+          </p>
+          {terminal && <Terminal />}
+          {live && !terminal && (
+            <>
+              <p className="lab" style={{ marginTop: 14 }}>
+                Atlas, live
+              </p>
+              <pre className="code-block mono workspace-live">{live.text}</pre>
+            </>
+          )}
+          <p className="lab" style={{ marginTop: 16 }}>
+            Files
+          </p>
+          {w.files === null ? (
+            <p className="faint small">The workspace is asleep; its files show when it's running.</p>
+          ) : w.files.length === 0 ? (
+            <p className="faint small">/workspace is empty.</p>
+          ) : (
+            <div className="rows">
+              {w.files.slice(0, 120).map((f) => (
+                <div className="r" key={f.path}>
+                  <span className="mono small grow clamp">
+                    {f.path}
+                    {f.dir ? "/" : ""}
+                  </span>
+                  {!f.dir && <span className="mono faint small">{sizeOf(f.size)}</span>}
+                  {!f.dir && (
+                    <button className="link small" onClick={() => atlas.send({ type: "atlas.workspace.keep", path: f.path })}>
+                      Keep
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="lab" style={{ marginTop: 16 }}>
+            Websites it can reach
+          </p>
+          {w.sites.length ? (
+            <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+              {w.sites.map((s) => (
+                <span key={s} className="tag">
+                  {s}{" "}
+                  <button className="link small" onClick={() => atlas.send({ type: "atlas.workspace.site.remove", site: s })}>
+                    Remove
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="faint small">None yet. Atlas asks you before the workspace reaches any website.</p>
+          )}
+          {w.runs.length > 0 && (
+            <>
+              <p className="lab" style={{ marginTop: 16 }}>
+                Lately
+              </p>
+              <div className="rows">
+                {w.runs.map((r) => (
+                  <details className="r workspace-run" key={`${r.id}-${r.at}`}>
+                    <summary className="row" style={{ flexWrap: "nowrap" }}>
+                      <span className={`mono small ${r.exit === 0 ? "" : "err"}`} style={{ flex: "none" }}>
+                        {r.exit === 0 ? "✓" : `✗ ${r.exit ?? ""}`}
+                      </span>
+                      <span className="mono small grow clamp">{r.command.split("\n")[0]}</span>
+                      <span className="lab faint" style={{ flex: "none" }}>
+                        {shortDay(r.at)}
+                      </span>
+                    </summary>
+                    <pre className="code-block mono">{r.error ?? (r.output || "(nothing printed)")}</pre>
+                  </details>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+/** A terminal into the workspace: a shell of your own (tmux), over a WebSocket through the Worker. */
+function Terminal() {
+  const box = useRef<HTMLDivElement | null>(null);
+  const [state, setState] = useState("Connecting…");
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    let gone = false;
+    let cleanup = () => {};
+    void (async () => {
+      const [{ Terminal: XTerm }, { FitAddon }] = await Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")]);
+      await import("@xterm/xterm/css/xterm.css");
+      if (gone) return;
+      const css = getComputedStyle(document.documentElement);
+      const term = new XTerm({
+        fontFamily: "Geist Mono, ui-monospace, monospace",
+        fontSize: 13,
+        cursorBlink: true,
+        theme: {
+          background: css.getPropertyValue("--win").trim(),
+          foreground: css.getPropertyValue("--tx").trim(),
+          cursor: css.getPropertyValue("--ac").trim(),
+        },
+      });
+      const fit = new FitAddon();
+      term.loadAddon(fit);
+      term.open(el);
+      fit.fit();
+      const ws = new WebSocket(
+        `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/workspace/terminal?cols=${term.cols}&rows=${term.rows}`,
+      );
+      ws.binaryType = "arraybuffer";
+      ws.onopen = () => setState("");
+      ws.onmessage = (e) => term.write(typeof e.data === "string" ? e.data : new Uint8Array(e.data as ArrayBuffer));
+      ws.onclose = (e) => setState(e.reason || "The terminal closed.");
+      const enc = new TextEncoder();
+      const typed = term.onData((d) => ws.readyState === 1 && ws.send(enc.encode(d)));
+      const resized = term.onResize(({ cols, rows }) => ws.readyState === 1 && ws.send(JSON.stringify({ cols, rows })));
+      const onWindow = () => fit.fit();
+      window.addEventListener("resize", onWindow);
+      term.focus();
+      cleanup = () => {
+        window.removeEventListener("resize", onWindow);
+        typed.dispose();
+        resized.dispose();
+        ws.close();
+        term.dispose();
+      };
+    })();
+    return () => {
+      gone = true;
+      cleanup();
+    };
+  }, []);
+  return (
+    <>
+      {state && <p className="faint small">{state}</p>}
+      <div className="terminal-box" ref={box} />
+    </>
+  );
+}
+
+/** A copy button that says it worked. */
+function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      className="btn sm"
+      onClick={() =>
+        void navigator.clipboard?.writeText(text).then(
+          () => setCopied(true),
+          () => setCopied(false),
+        )
+      }
+    >
+      {copied ? "Copied" : label}
+    </button>
+  );
+}
+
+/** A write-up to read (§21.6): a document in Markdown, on the sheet. */
+function DocumentView({ view, onClose }: { view: Extract<StageView, { kind: "document" }>; onClose?: () => void }) {
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="file" />
+        <h1 className="disp">{view.title}</h1>
+        <span className="grow" />
+        <CopyButton text={view.text} />
+        <Close onClose={onClose} />
+      </div>
+      <Source text={view.source} />
+      <div className="document-text">
+        <Markdown text={view.text} />
+      </div>
+    </>
+  );
+}
+
+/** Code (§21.6), with its language and a copy button. */
+function CodeView({ view, onClose }: { view: Extract<StageView, { kind: "code" }>; onClose?: () => void }) {
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="file" />
+        <h1 className="disp">{view.title}</h1>
+        <span className="tag">{view.language}</span>
+        <span className="grow" />
+        <CopyButton text={view.code} />
+        <Close onClose={onClose} />
+      </div>
+      <Source text={view.source} />
+      <pre className="code-block mono">
+        <code>{view.code}</code>
+      </pre>
+    </>
+  );
+}
+
+const sizeOf = (n: number) => (n < 1_000 ? `${n} B` : n < 1_000_000 ? `${Math.round(n / 1_000)} KB` : `${(n / 1_000_000).toFixed(1)} MB`);
+
+/** A file Atlas made (§21.7): what it is, Download, and a look inside when the stage can show it. */
+function FileView({ atlas, view, onClose }: { atlas: Atlas; view: Extract<StageView, { kind: "file" }>; onClose?: () => void }) {
+  const page = usePage(atlas, view);
+  if (page === undefined) return <p className="lab">Opening</p>;
+  if (!page || page.kind !== "file")
+    return (
+      <>
+        <div className="sheet-title">
+          <h1 className="disp">A file</h1>
+          <span className="grow" />
+          <Close onClose={onClose} />
+        </div>
+        <p className="muted">{page?.kind === "missing" ? page.why : "That file isn't there."}</p>
+      </>
+    );
+  const { file: f, preview: p } = page;
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="file" />
+        <h1 className="disp clamp">{f.name}</h1>
+        <span className="muted">{sizeOf(f.size)}</span>
+        <span className="grow" />
+        <a className="btn sm" href={f.url} download={f.name}>
+          Download
+        </a>
+        <Close onClose={onClose} />
+      </div>
+      <p className="lab faint" style={{ marginTop: -6, marginBottom: 10 }}>
+        {f.made_by === "owner" ? "Yours" : "Made by Atlas"} · {shortDay(f.updated_at)}
+        {f.note ? ` · ${f.note}` : ""}
+      </p>
+      {p.kind === "table" && (
+        <div className="scroll-x">
+          <table className="grid stage-table">
+            <thead>
+              <tr>
+                {p.columns.map((c, i) => (
+                  <th key={i} className="lab">
+                    {c}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {p.rows.map((r, i) => (
+                <tr key={i}>
+                  {p.columns.map((_, j) => (
+                    <td key={j}>
+                      <span className="cell-text">{r[j] ?? ""}</span>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {p.kind === "text" &&
+        (f.type === "text/markdown" ? (
+          <div className="document-text">
+            <Markdown text={p.text} />
+          </div>
+        ) : (
+          <pre className="code-block mono">
+            <code>{p.text}</code>
+          </pre>
+        ))}
+      {p.kind === "image" && <img className="file-image" src={`${f.url}?inline=1`} alt={f.name} />}
+      {p.kind === "pdf" && <iframe className="browser-live" src={`${f.url}?inline=1`} title={f.name} />}
+      {p.kind === "none" && (
+        <p className="muted small">The stage can't show a .{f.name.split(".").pop()} file. Download it to open it in its app.</p>
+      )}
+      {"more" in p && p.more && <p className="faint small">That's the start of it; download it for the rest.</p>}
+    </>
+  );
+}
+
 /** A view's name in a page's editor, where views can be moved out but not rewritten. */
 function viewLabel(atlas: Atlas, v: StageView): string {
   if (v.kind === "area") return atlas.state.areas.find((a) => a.id === v.area)?.name ?? "An area";
   if (v.kind === "person") return "A person";
   if (v.kind === "automation") return atlas.state.automations?.find((a) => a.id === v.automation)?.name ?? "An automation";
   if (v.kind === "page") return "A page";
+  if (v.kind === "browser") return "The browser";
+  if (v.kind === "workspace") return "The workspace";
+  if (v.kind === "file") return atlas.state.files?.find((f) => f.id === v.file)?.name ?? "A file";
   return v.title;
 }
 
@@ -822,6 +1315,17 @@ const KIND: Record<StageView["kind"], string> = {
   draft: "Draft",
   plan: "Plan",
   page: "Page",
+  research: "Research",
+  browser: "Browser",
+  file: "File",
+  document: "Document",
+  code: "Code",
+  workspace: "Workspace",
+  chart: "Chart",
+  compare: "Compare",
+  kit: "View",
+  app: "App",
+  mcp_app: "App",
 };
 
 export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown; onOpen: () => void }) {
@@ -848,7 +1352,32 @@ export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown
                     .join(" · ")}`
                 : v.kind === "page"
                   ? atlas.state.pages?.find((p) => p.id === v.page)?.preview || "A page you keep."
-                  : "What Atlas knows about them, and where they came up.";
+                  : v.kind === "browser"
+                    ? "Atlas's browser, live."
+                    : v.kind === "chart"
+                      ? `${v.series.map((s) => s.name).join(", ")} · ${v.x.length} ${v.style === "bar" ? "bars" : "points"}`
+                      : v.kind === "compare"
+                        ? `${v.options.map((o) => o.name).join(" · ")}${v.pick ? ` · pick: ${v.pick}` : ""}`
+                        : v.kind === "kit"
+                          ? `${v.blocks.length} parts`
+                          : v.kind === "app"
+                            ? "A small app."
+                            : v.kind === "mcp_app"
+                              ? "A page from a connected service."
+                              : v.kind === "workspace"
+                                ? "Atlas's computer: its terminal and files."
+                                : v.kind === "file"
+                                  ? (atlas.state.files?.find((f) => f.id === v.file)?.note ?? "A file to open or download.")
+                                  : v.kind === "document"
+                                    ? v.text.slice(0, 160)
+                                    : v.kind === "code"
+                                      ? `${v.language} · ${v.code.split("\n").length} lines`
+                                      : v.kind === "research"
+                                        ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"} · ${v.sources
+                                            .slice(0, 3)
+                                            .map((x) => hostOf(x.url))
+                                            .join(", ")}`
+                                        : "What Atlas knows about them, and where they came up.";
   return (
     <div className="stage-card rise">
       <span className="lab">

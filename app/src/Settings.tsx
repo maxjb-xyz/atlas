@@ -11,8 +11,11 @@ import { addPasskey, deviceName, passkeysSupported } from "./passkey";
 import { Composer } from "./Shell";
 import { useLook } from "./theme";
 import { Icon, Sheet, shortDay, Stage } from "./ui";
+import { Markdown } from "./Markdown";
+import { PROVIDERS, type SearchProvider } from "../../core/src/web";
+import { FIELDS, type VaultKind } from "../../core/src/vault-fields";
 
-type Section = "character" | "look" | "brains" | "connections" | "devices" | "permissions" | "notifications" | "data";
+type Section = "character" | "look" | "brains" | "connections" | "devices" | "vault" | "skills" | "permissions" | "notifications" | "data";
 
 const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
   {
@@ -28,9 +31,16 @@ const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
     items: [
       ["connections", "Connections"],
       ["devices", "Devices"],
+      ["vault", "Vault"],
     ],
   },
-  { group: "Abilities", items: [["permissions", "Permissions"]] },
+  {
+    group: "Abilities",
+    items: [
+      ["skills", "Skills"],
+      ["permissions", "Permissions"],
+    ],
+  },
   {
     group: "System",
     items: [
@@ -87,7 +97,7 @@ export function SettingsPage({
       label="Settings"
       tabs={[{ id: section, label }]}
       tab={section}
-      meta="Atlas · M2"
+      meta="Atlas · M3"
       dock={
         <div className="dock slim">
           {dirty && (
@@ -135,6 +145,8 @@ export function SettingsPage({
                 {section === "brains" && <Brains atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "connections" && <Connections atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "devices" && <Devices atlas={atlas} view={view} />}
+                {section === "vault" && <Vault atlas={atlas} view={view} />}
+                {section === "skills" && <Skills atlas={atlas} />}
                 {section === "permissions" && <Permissions atlas={atlas} view={view} />}
                 {section === "notifications" && <Notifications atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "data" && <Data atlas={atlas} onSignOut={onSignOut} onSetup={onSetup} />}
@@ -505,6 +517,9 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
           run={() => atlas.test("calendar", { type: "atlas.test", what: "calendar" })}
         />
       </Row>
+      <Row label="Web search">
+        <WebSearch atlas={atlas} draft={draft} edit={edit} view={view} />
+      </Row>
       <Row label="Webhooks">
         <State
           on={view.webhooks.length > 0}
@@ -513,8 +528,388 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
         />
         <Webhooks atlas={atlas} view={view} />
       </Row>
+      <Row label="MCP servers">
+        <McpServers atlas={atlas} />
+      </Row>
       <Row label="Google, Microsoft, email">
         <p className="muted small">Not yet. Atlas connects to Google and Microsoft calendars, and reads mail, in a later version.</p>
+      </Row>
+    </>
+  );
+}
+
+/**
+ * Which search Atlas uses (§9.1). Cloudflare's is built in and paid from AI
+ * Gateway credits; the others have free allowances and take a key.
+ */
+function WebSearch({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
+  const provider = draft.web.search;
+  const p = PROVIDERS[provider];
+  const keyName = `${provider}_api_key` as "tavily_api_key" | "brave_api_key" | "exa_api_key";
+  const ready = !p.key || view.secrets[keyName];
+  return (
+    <>
+      <State on={ready} text={ready ? p.name : `${p.name}: no key yet`} what="Searches the web when Atlas needs to know something." />
+      <label className="field">
+        <span>Search with</span>
+        <select value={provider} onChange={(e) => edit({ web: { search: e.target.value as SearchProvider } })}>
+          {(Object.keys(PROVIDERS) as SearchProvider[]).map((k) => (
+            <option key={k} value={k}>
+              {PROVIDERS[k].name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="muted small">{p.about} Private details (secrets, emails, phone numbers, saved addresses) never go into a search.</p>
+      {p.key && (
+        <SecretField
+          label={`${p.name} key`}
+          set={view.secrets[keyName]}
+          onSave={(value) => atlas.send({ type: "atlas.secret.set", secret: { name: keyName, value: value?.trim() ?? null } })}
+        />
+      )}
+      {view.settings.web.search === provider ? (
+        <TestRow label="Test search" k="search" atlas={atlas} run={() => atlas.test("search", { type: "atlas.test", what: "search" })} />
+      ) : (
+        <p className="muted small">Save to test it.</p>
+      )}
+    </>
+  );
+}
+
+/**
+ * Skills (§9.3): what Atlas has learned to do, in the SKILL.md format. Each
+ * one shows what it's for, how often it's used, whether its check passes,
+ * and every version; you can edit it, bring an old version back, archive
+ * it, or download it. A SKILL.md from another agent can be pasted in.
+ */
+function Skills({ atlas }: { atlas: Atlas }) {
+  const s = atlas.state;
+  useEffect(() => {
+    if (atlas.voice.connected) atlas.send({ type: "atlas.skills" });
+  }, [atlas.voice.connected, s.rows.length]);
+  const [open, setOpen] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ id: string | null; md: string } | null>(null);
+  const skills = s.skills;
+  const active = skills?.filter((k) => k.state === "active") ?? [];
+  const archived = skills?.filter((k) => k.state === "archived") ?? [];
+  const download = (name: string, md: string) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+    a.download = `${name}.SKILL.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  const row = (k: NonNullable<typeof skills>[number]) => (
+    <div className="r" key={k.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+      <div className="row" style={{ flexWrap: "wrap" }}>
+        <button className="link" style={{ fontWeight: 500 }} onClick={() => setOpen(open === k.id ? null : k.id)}>
+          {k.name}
+        </button>
+        {k.checked && <span className={`tag ${k.checked.ok ? "ok" : "ac"}`}>{k.checked.ok ? "✓ Check passes" : "× Check fails"}</span>}
+        <span className="grow" />
+        <span className="mono faint small">
+          v{k.version} · {k.uses ? `used ${k.uses}×` : "not used yet"}
+        </span>
+      </div>
+      <span className="muted small">{k.description}</span>
+      {open === k.id && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
+          <div className="panel">
+            <Markdown text={k.body} />
+          </div>
+          {k.check && (
+            <p className="small">
+              <span className="lab">Check</span> <code className="mono">{k.check}</code>
+            </p>
+          )}
+          {k.checked && !k.checked.ok && <pre className="code-block mono">{k.checked.output}</pre>}
+          <div className="rows">
+            {k.versions.map((v) => (
+              <div className="r" key={v.n}>
+                <span className="mono small" style={{ flex: "none" }}>
+                  v{v.n}
+                </span>
+                <span className="small grow">{v.note}</span>
+                <span className="lab faint">
+                  {v.by === "owner" ? "You" : "Atlas"} · {shortDay(v.at)}
+                </span>
+                {v.n !== k.version && (
+                  <button className="link small" onClick={() => atlas.send({ type: "atlas.skill.restore", id: k.id, n: v.n })}>
+                    Bring back
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="row">
+            <button className="btn sm" onClick={() => setEditing({ id: k.id, md: k.md })}>
+              Edit
+            </button>
+            <button className="btn sm" onClick={() => download(k.name, k.md)}>
+              Download SKILL.md
+            </button>
+            <button
+              className="btn sm"
+              onClick={() => atlas.send({ type: "atlas.skill.state", id: k.id, state: k.state === "active" ? "archived" : "active" })}
+            >
+              {k.state === "active" ? "Archive" : "Bring back"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <>
+      <Head
+        title="Skills"
+        sub="What Atlas has learned to do, written down so it does it the same way next time. Atlas opens the right one before a task it covers, and improves it when it was wrong."
+      />
+      <Row label="Skills">
+        {skills == null ? (
+          <p className="lab">Looking</p>
+        ) : active.length === 0 ? (
+          <p className="muted small">
+            None yet. After a task that took some working out and went the way you wanted, Atlas writes down how, and says "Learned a
+            skill".
+          </p>
+        ) : (
+          <div className="rows">{active.map(row)}</div>
+        )}
+        {archived.length > 0 && (
+          <>
+            <p className="lab" style={{ marginTop: 12 }}>
+              Archived (unused for months; never deleted)
+            </p>
+            <div className="rows">{archived.map(row)}</div>
+          </>
+        )}
+      </Row>
+      <Row label={editing?.id ? "Edit" : "Add one"}>
+        {editing ? (
+          <form
+            style={{ display: "flex", flexDirection: "column", gap: 10 }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              atlas.send({ type: "atlas.skill.save", md: editing.md });
+              setEditing(null);
+            }}
+          >
+            <textarea
+              className="mono"
+              rows={16}
+              spellCheck={false}
+              value={editing.md}
+              onChange={(e) => setEditing({ ...editing, md: e.target.value })}
+            />
+            <div className="row">
+              <button className="btn primary" disabled={editing.md.trim().length < 20}>
+                Save
+              </button>
+              <button type="button" className="btn" onClick={() => setEditing(null)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <p className="muted small">Paste a SKILL.md from Claude Code, Codex, Hermes or OpenClaw; it works here unchanged.</p>
+            <div className="row">
+              <button
+                className="btn"
+                onClick={() =>
+                  setEditing({
+                    id: null,
+                    md: "---\nname: my-skill\ndescription: What it's for and when to use it.\n---\n\n1. The first step.\n",
+                  })
+                }
+              >
+                Paste a SKILL.md
+              </button>
+            </div>
+          </>
+        )}
+      </Row>
+    </>
+  );
+}
+
+/**
+ * The vault (§15): logins, cards and keys by name, each tied to the sites it
+ * fills on. Values go in here and never come back out: this page and Atlas
+ * only see names, sites and which fields are set.
+ */
+function Vault({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const blank = {
+    id: undefined as string | undefined,
+    name: "",
+    kind: "login" as VaultKind,
+    sites: "",
+    values: {} as Record<string, string>,
+    totp: "",
+  };
+  const [form, setForm] = useState(blank);
+  const [open, setOpen] = useState(false);
+  const editing = form.id != null;
+  const fields = Object.entries(FIELDS[form.kind]).filter(([k]) => k !== "code");
+  const close = () => {
+    setForm(blank);
+    setOpen(false);
+  };
+  return (
+    <>
+      <Head
+        title="Vault"
+        sub="Logins, cards and keys, by name. Atlas fills them in at the last step and never sees them. Each one only fills on its own sites."
+      />
+      <Row label="Entries">
+        {view.vault.length === 0 && <p className="muted small">Nothing yet. Add a login, and Atlas can sign in for you on that site.</p>}
+        <div className="rows">
+          {view.vault.map((e) => (
+            <div className="r" key={e.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+              <div className="row" style={{ flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 500 }}>{e.name}</span>
+                <span className="tag">{e.kind}</span>
+                <span className="mono faint small">{e.sites.join(", ")}</span>
+                <span className="grow" />
+                <button
+                  className="link"
+                  onClick={() => {
+                    setForm({ id: e.id, name: e.name, kind: e.kind, sites: e.sites.join(", "), values: {}, totp: "" });
+                    setOpen(true);
+                  }}
+                >
+                  Edit
+                </button>
+                <button className="link" onClick={() => atlas.send({ type: "atlas.vault.remove", id: e.id })}>
+                  Remove
+                </button>
+              </div>
+              <span className="muted small">
+                {[...e.fields.map((f) => FIELDS[e.kind][f] ?? f), ...(e.totp ? ["two-factor codes"] : [])].join(" · ")}
+                {" · "}
+                {e.uses ? `used ${e.uses} ${e.uses === 1 ? "time" : "times"}, last ${shortDay(e.last_used!)}` : "not used yet"}
+              </span>
+              {e.kind === "card" ? (
+                <span className="faint small">A card asks every time.</span>
+              ) : e.allowed.length ? (
+                <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+                  <span className="faint small">Fills without asking on</span>
+                  {e.allowed.map((s) => (
+                    <span key={s} className="tag">
+                      {s}{" "}
+                      <button className="link small" onClick={() => atlas.send({ type: "atlas.vault.revoke", id: e.id, site: s })}>
+                        Ask again
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <span className="faint small">The first use on each site asks you.</span>
+              )}
+            </div>
+          ))}
+        </div>
+        {open ? (
+          <form
+            style={{ display: "flex", flexDirection: "column", gap: 10 }}
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              atlas.send({
+                type: "atlas.vault.save",
+                ...(form.id ? { id: form.id } : {}),
+                name: form.name,
+                kind: form.kind,
+                sites: form.sites
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+                values: form.values,
+                ...(form.kind === "login" && form.totp.trim() ? { totp: form.totp } : {}),
+              });
+              close();
+            }}
+          >
+            <div className="row">
+              <label className="field grow">
+                <span>Name</span>
+                <input
+                  value={form.name}
+                  maxLength={60}
+                  placeholder="Chase login"
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Kind</span>
+                <select
+                  value={form.kind}
+                  disabled={editing}
+                  onChange={(e) => setForm({ ...form, kind: e.target.value as VaultKind, values: {} })}
+                >
+                  <option value="login">Login</option>
+                  <option value="card">Card</option>
+                  <option value="key">Key</option>
+                </select>
+              </label>
+            </div>
+            <label className="field">
+              <span>Fills only on (comma separated)</span>
+              <input
+                className="mono"
+                value={form.sites}
+                placeholder="chase.com"
+                spellCheck={false}
+                onChange={(e) => setForm({ ...form, sites: e.target.value })}
+              />
+            </label>
+            {fields.map(([k, label]) => (
+              <label className="field" key={k}>
+                <span>{label}</span>
+                <input
+                  type={k === "username" || k === "name" || k === "expiry" || k === "zip" ? "text" : "password"}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={form.values[k] ?? ""}
+                  placeholder={editing ? "Kept. Type a new one to change it." : ""}
+                  onChange={(e) => setForm({ ...form, values: { ...form.values, [k]: e.target.value } })}
+                />
+              </label>
+            ))}
+            {form.kind === "login" && (
+              <label className="field">
+                <span>Two-factor seed (optional: the code the site shows under the QR code)</span>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={form.totp}
+                  placeholder={editing ? "Kept if set. Paste a new one to change it." : "JBSWY3DPEHPK3PXP"}
+                  onChange={(e) => setForm({ ...form, totp: e.target.value })}
+                />
+              </label>
+            )}
+            <div className="row">
+              <button
+                className="btn primary"
+                disabled={!form.name.trim() || !form.sites.trim() || (!editing && !Object.values(form.values).some((v) => v.trim()))}
+              >
+                {editing ? "Save" : "Add"}
+              </button>
+              <button type="button" className="btn" onClick={close}>
+                Cancel
+              </button>
+            </div>
+            <p className="muted small">Values are kept with your secrets. Neither this page nor Atlas can show them again.</p>
+          </form>
+        ) : (
+          <div className="row">
+            <button className="btn" onClick={() => setOpen(true)}>
+              Add to the vault
+            </button>
+          </div>
+        )}
       </Row>
     </>
   );
@@ -528,6 +923,152 @@ function State({ on, bad, text, what }: { on: boolean; bad?: boolean; text: stri
       <span style={{ fontWeight: 500 }}>{text}</span>
       <span className="muted small">{what}</span>
     </div>
+  );
+}
+
+/**
+ * MCP servers (§9.2): services Atlas can use through their own tools. A
+ * server with a sign-in waits for you to sign in; one that takes a token
+ * gets it here. Tools a server marks as only reading run without asking;
+ * the rest ask first, like a webhook.
+ */
+function McpServers({ atlas }: { atlas: Atlas }) {
+  const servers = atlas.state.mcpServers;
+  useEffect(() => {
+    if (atlas.voice.connected) atlas.send({ type: "atlas.mcp" });
+  }, [atlas.voice.connected]);
+  const blank = { name: "", url: "", token: "" };
+  const [form, setForm] = useState(blank);
+  const [adding, setAdding] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
+  const ready = servers?.filter((s) => s.state === "ready").length ?? 0;
+  const label = (state: string) =>
+    state === "ready"
+      ? "Connected"
+      : state === "authenticating"
+        ? "Waiting for you to sign in"
+        : state === "failed"
+          ? "Failed"
+          : "Connecting";
+  return (
+    <>
+      <State
+        on={ready > 0}
+        text={servers?.length ? `${ready} of ${servers.length} connected` : "None yet"}
+        what="Other services' own tools. Atlas can also ask to add one when a task needs it."
+      />
+      <div className="rows">
+        {(servers ?? []).map((s) => (
+          <div className="r" key={s.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <button className="link" style={{ fontWeight: 500 }} onClick={() => setOpen(open === s.id ? null : s.id)}>
+                {s.name}
+              </button>
+              <span className={`tag ${s.state === "ready" ? "ok" : s.state === "failed" ? "ac" : ""}`}>{label(s.state)}</span>
+              <span className="grow" />
+              {s.auth_url && (
+                <a className="btn primary" href={s.auth_url} target="_blank" rel="noopener noreferrer">
+                  Sign in
+                </a>
+              )}
+              <button className="link" onClick={() => atlas.send({ type: "atlas.mcp.remove", id: s.id })}>
+                Remove
+              </button>
+            </div>
+            <span className="mono faint small">
+              {s.url} · {s.tools.length} {s.tools.length === 1 ? "tool" : "tools"}
+            </span>
+            {s.error && <p className="err small">{s.error}</p>}
+            {open === s.id && (
+              <div className="rows">
+                {s.tools.map((t) => (
+                  <div className="r" key={t.name} style={{ alignItems: "flex-start" }}>
+                    <span className="grow small">
+                      <span className="mono">{t.title ?? t.name}</span>
+                      {t.description && (
+                        <span className="muted" style={{ display: "block" }}>
+                          {t.description}
+                        </span>
+                      )}
+                    </span>
+                    {t.page && <span className="tag">Has a page</span>}
+                    <span className={`tag ${t.reads ? "ok" : ""}`}>{t.reads ? "Only reads" : "Asks first"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {adding ? (
+        <form
+          style={{ display: "flex", flexDirection: "column", gap: 10 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            atlas.send({
+              type: "atlas.mcp.add",
+              name: form.name.trim(),
+              url: form.url.trim(),
+              ...(form.token.trim() ? { token: form.token.trim() } : {}),
+            });
+            setForm(blank);
+            setAdding(false);
+          }}
+        >
+          <label className="field">
+            <span>Name</span>
+            <input value={form.name} maxLength={60} placeholder="Linear" onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </label>
+          <label className="field">
+            <span>Its MCP address</span>
+            <input
+              className="mono"
+              type="url"
+              autoComplete="off"
+              spellCheck={false}
+              value={form.url}
+              placeholder="https://mcp.example.com/mcp"
+              onChange={(e) => setForm({ ...form, url: e.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>Token, if it takes one instead of a sign-in</span>
+            <input
+              className="mono"
+              type="password"
+              autoComplete="off"
+              value={form.token}
+              placeholder="Leave empty to sign in"
+              onChange={(e) => setForm({ ...form, token: e.target.value })}
+            />
+          </label>
+          <div className="row">
+            <button className="btn primary" disabled={!form.name.trim() || !/^https:\/\/./.test(form.url.trim())}>
+              Add
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setForm(blank);
+                setAdding(false);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="muted small">
+            A server with a sign-in shows Sign in here once it's added. A token is kept with the server and never shown again.
+          </p>
+        </form>
+      ) : (
+        <div className="row">
+          <button className="btn" onClick={() => setAdding(true)}>
+            Add a server
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 

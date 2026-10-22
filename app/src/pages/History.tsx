@@ -94,13 +94,48 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
             : `${b.change === "made" ? "Made" : `Version ${str(b.version)} of`} the page ${str(b.name)}${b.note && b.change !== "made" ? `: ${str(b.note)}` : ""}`,
         kind: `page.${str(b.change)}`,
       };
+    case "skill.change":
+      return {
+        who: r.actor === "owner" ? "You" : "Atlas",
+        what:
+          b.change === "made"
+            ? `Learned a skill: ${str(b.name)}`
+            : b.change === "patched"
+              ? `Version ${str(b.version)} of the skill ${str(b.name)}${b.note ? `: ${str(b.note)}` : ""}`
+              : b.change === "archived"
+                ? `Archived the skill ${str(b.name)}${b.note ? `: ${str(b.note)}` : ""}`
+                : `Brought back the skill ${str(b.name)}`,
+        kind: `skill.${str(b.change)}`,
+      };
+    case "file.change":
+      return {
+        who: r.actor === "owner" ? "You" : "Atlas",
+        what: `${{ made: "Made", replaced: "Replaced", deleted: "Deleted" }[str(b.change)] ?? "Changed"} the file ${str(b.name)}`,
+        kind: `file.${str(b.change)}`,
+      };
     case "delivery": {
       const where =
         b.channel === "push"
           ? `Notification${b.to ? ` to ${str(b.to)}` : ""}`
           : b.channel === "webhook"
             ? `Called ${str(b.to)}`
-            : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
+            : b.channel === "web"
+              ? b.what === "search"
+                ? `Searched ${str(b.to)} for “${str(b.text)}”`
+                : b.what === "browse"
+                  ? `Opened ${str(b.text)} in the browser`
+                  : b.what === "type"
+                    ? `Typed “${str(b.text)}” on ${str(b.to)}`
+                    : `Read ${str(b.text)}`
+              : b.channel === "browser"
+                ? `Sent a form on ${str(b.to)}: ${str(b.text)}`
+                : b.channel === "vault"
+                  ? `Filled in ${str(b.text)} on ${str(b.to)}${b.pressed ? `, then pressed “${str(b.pressed)}”` : ""}`
+                  : b.channel === "mcp"
+                    ? b.what === "connect"
+                      ? `${b.ok === false ? "Tried to connect" : "Connected"} ${str(b.to)} (${str(b.text)})`
+                      : `Used ${str(b.text)} on ${str(b.to)}`
+                    : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
       const what =
         b.ok === false
           ? `${where}, but it didn't work: ${str(b.error)}`
@@ -108,7 +143,9 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
             ? `${where}: ${str(b.note)}`
             : b.answer
               ? `${where}: ${str(b.answer)}`
-              : `${where}${b.text ? `: “${str(b.text)}”` : ""}`;
+              : b.channel === "web" || b.channel === "browser" || b.channel === "vault" || b.channel === "mcp"
+                ? where
+                : `${where}${b.text ? `: “${str(b.text)}”` : ""}`;
       return { who: b.by === "owner" ? "You" : "Atlas", what, kind: `deliver.${str(b.channel)}` };
     }
     case "settings.change": {
@@ -126,13 +163,21 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
                   ? `Notifications ${str(b.push)}: ${str(b.name)}`
                   : b.webhook
                     ? `Webhook ${str(b.webhook)}: ${str(b.name)}`
-                    : b.trust
-                      ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
-                      : b.focus
-                        ? b.focus === "on"
-                          ? `Focus until ${new Date(Number(b.until)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${b.about ? `: ${str(b.about)}` : ""}`
-                          : "Ended focus"
-                        : "Changed settings";
+                    : b.vault
+                      ? `Vault: ${str(b.name)} ${str(b.vault)}`
+                      : b.workspace
+                        ? b.workspace === "restarted"
+                          ? "Restarted the workspace"
+                          : `Workspace: ${str(b.workspace)}${b.name ? ` (${str(b.name)})` : ""}`
+                        : b.mcp
+                          ? `${b.mcp === "added" ? "Added" : "Removed"} the MCP server ${str(b.name)} (${str(b.url)})`
+                          : b.trust
+                            ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
+                            : b.focus
+                              ? b.focus === "on"
+                                ? `Focus until ${new Date(Number(b.until)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${b.about ? `: ${str(b.about)}` : ""}`
+                                : "Ended focus"
+                              : "Changed settings";
       return { who: r.actor === "owner" ? "You" : "Atlas", what, kind: "settings.change" };
     }
     default:

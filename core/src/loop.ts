@@ -138,7 +138,9 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
         emit({ type: "text", text: spec.joiner });
       }
       messages.push({ role: "assistant", content: step.text, toolCalls: step.calls });
-      const outputs = await Promise.all(step.calls.map((call) => runTool(deps, spec, call, emit)));
+      // A stop doesn't wait for a slow tool: the run ends now, and the tool's own result is still logged when it lands.
+      const tools = Promise.all(step.calls.map((call) => runTool(deps, spec, call, emit)));
+      const outputs = spec.signal ? await Promise.race([tools, stopped(spec.signal)]) : await tools;
       for (const [i, call] of step.calls.entries()) {
         messages.push({ role: "tool", callId: call.id, name: call.name, content: outputs[i]! });
       }
@@ -151,7 +153,10 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
     if (spec.signal?.aborted) {
       return text
         ? result("replied", { interrupted: true })
-        : result("failed", { interrupted: true, error: "Interrupted before answering." });
+        : result("failed", {
+            interrupted: true,
+            error: typeof spec.signal.reason === "string" ? spec.signal.reason : "Interrupted before answering.",
+          });
     }
     const message = err instanceof Error ? err.message : String(err);
     return result("failed", { error: message });
@@ -322,4 +327,12 @@ function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> 
 
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}… (cut, ${s.length - max} more characters)`;
+}
+
+/** Rejects when the run is stopped, so a slow tool doesn't hold the stop up. */
+function stopped(signal: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    if (signal.aborted) reject(new Error("interrupted"));
+    else signal.addEventListener("abort", () => reject(new Error("interrupted")), { once: true });
+  });
 }

@@ -2,6 +2,10 @@
 // `wrangler secret put`; ATLAS_TEST is only set by the test runner.
 interface Env {
   AI: Ai;
+  BROWSER: BrowserRun;
+  FILES: R2Bucket;
+  LOADER: WorkerLoader;
+  WORKSPACE: DurableObjectNamespace<import("./workspace").Workspace>;
   ASSETS: Fetcher;
   PersonAgent: DurableObjectNamespace<import("./index").PersonAgent>;
   ATLAS_OWNER_SECRET?: string;

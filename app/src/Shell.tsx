@@ -333,6 +333,8 @@ export function Composer({
     return () => window.removeEventListener("atlas:compose", on);
   }, []);
 
+  const { busy, mine, stop } = useTurn(atlas);
+
   function submit() {
     const t = text.trim();
     // While the socket is down the words stay here, rather than going nowhere.
@@ -351,6 +353,8 @@ export function Composer({
         submit();
       }}
     >
+      {/* On its own, the field is the box; inside a console, the console's edge shows it. */}
+      {busy && reply && !sent && <BusyEdge />}
       <span className="lead">
         <Diamond size={16} />
       </span>
@@ -384,16 +388,94 @@ export function Composer({
       >
         <Icon name="mic" />
       </button>
-      <button className="send" aria-label="Send" disabled={!text.trim()}>
-        <Icon name="up" size={15} style={{ strokeWidth: 2.1 }} />
-      </button>
+      {busy && !text.trim() && mine.length > 0 ? (
+        // Typing while Atlas works shows Send again: the message waits its turn.
+        <button type="button" className="send stop" aria-label="Stop" title="Stop" onClick={stop}>
+          <span className="stop-square" />
+        </button>
+      ) : (
+        <button className="send" aria-label="Send" disabled={!text.trim()}>
+          <Icon name="up" size={15} style={{ strokeWidth: 2.1 }} />
+        </button>
+      )}
     </form>
   );
   if (!sent) return form;
   return (
     <div className="console">
+      {busy && <BusyEdge />}
       <Exchange atlas={atlas} runId={sent.run_id} asked={sent.text} onTranscript={openTranscript} onClose={() => setSent(null)} />
       {form}
+    </div>
+  );
+}
+
+/**
+ * A turn under way: any run that isn't a voice call. The owner's own text
+ * runs are the ones Stop ends.
+ */
+function useTurn(atlas: Atlas) {
+  const s = atlas.state;
+  const runs = Object.entries(s.live).filter(([, l]) => l.surface !== "voice");
+  const mine = runs.filter(([, l]) => l.surface === "app").map(([id]) => id);
+  const busy = runs.length > 0 || s.pending.some((p) => !p.run_id);
+  const stop = () => {
+    for (const run_id of mine) atlas.send({ type: "atlas.run.stop", run_id });
+  };
+  return { busy, mine, stop };
+}
+
+/** The ticks' size in px: on, off, and how many travel together. */
+const TICK = { on: 3, off: 2, count: 18 };
+/** How fast the ticks travel, in px a second, so a big box isn't a fast one. */
+const TRAVEL = 220;
+
+/**
+ * Work in progress, drawn on the box's edge (§21.1): a dotted track, and a
+ * short run of sharp ticks travelling all the way round. Without motion,
+ * only the track shows.
+ */
+function BusyEdge() {
+  const box = useRef<HTMLDivElement | null>(null);
+  const comet = useRef<SVGRectElement | null>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const o = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
+    o.observe(el);
+    return () => o.disconnect();
+  }, []);
+  const r = 11.5;
+  const w = Math.max(0, size.w - 1);
+  const h = Math.max(0, size.h - 1);
+  const perimeter = Math.max(1, 2 * (w + h - 4 * r) + 2 * Math.PI * r);
+  const run = (TICK.on + TICK.off) * TICK.count;
+  const dashes = [
+    ...Array.from({ length: TICK.count }, () => [TICK.on, TICK.off])
+      .flat()
+      .slice(0, -1),
+    TICK.off + Math.max(0, perimeter - run),
+  ];
+  useEffect(() => {
+    const el = comet.current;
+    const still = document.documentElement.dataset.motion === "reduced" || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!el || still || perimeter <= 1) return;
+    const duration = (perimeter / TRAVEL) * 1000;
+    const a = el.animate([{ strokeDashoffset: 0 }, { strokeDashoffset: -perimeter }], { duration, iterations: Infinity });
+    // Where the ticks are follows the clock, not when this started: the box growing as a tool's
+    // status or receipt arrives (or the edge being drawn again) doesn't send them back to the start.
+    a.currentTime = performance.now() % duration;
+    return () => a.cancel();
+  }, [perimeter]);
+  return (
+    <div className="busy-edge" ref={box} aria-hidden="true">
+      {size.w > 0 && (
+        <svg width={size.w} height={size.h}>
+          <rect className="track" x={0.5} y={0.5} width={w} height={h} rx={r} />
+          <rect ref={comet} className="comet" x={0.5} y={0.5} width={w} height={h} rx={r} strokeDasharray={dashes.join(" ")} />
+        </svg>
+      )}
     </div>
   );
 }
@@ -416,8 +498,10 @@ export function Console({ atlas, onTranscript, onReceipt }: { atlas: Atlas; onTr
   const runId = liveRun?.[0] ?? lastIn?.run_id ?? null;
   const asked =
     pending && !pending.run_id ? pending.text : str(s.rows.find((r) => r.kind === "message.in" && r.run_id === runId)?.body.text);
+  const { busy } = useTurn(atlas);
   return (
     <div className="console">
+      {busy && <BusyEdge />}
       <Exchange atlas={atlas} runId={runId} asked={asked} onTranscript={onTranscript} onReceipt={onReceipt} latest />
       <Composer atlas={atlas} placeholder={`Message ${name}`} reply={false} />
     </div>
@@ -491,11 +575,16 @@ function Exchange({
           {live?.status ?? "Thinking"}
         </p>
       )}
-      {failed && (
-        <p className="err small" style={{ marginTop: 4 }}>
-          Didn't finish. {str(failed.body.error) || "The run failed."}
-        </p>
-      )}
+      {failed &&
+        (failed.body.interrupted ? (
+          <p className="lab" style={{ marginTop: 6 }}>
+            Stopped
+          </p>
+        ) : (
+          <p className="err small" style={{ marginTop: 4 }}>
+            Didn't finish. {str(failed.body.error) || "The run failed."}
+          </p>
+        ))}
       {receipts.length > 0 && (
         <div className="receipts">
           {receipts.map((r) => (

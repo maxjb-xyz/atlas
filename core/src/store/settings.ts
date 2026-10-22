@@ -70,6 +70,8 @@ export const Settings = z.object({
       hidden: z.array(z.string().max(200)).max(50).default([]),
     })
     .default({ hidden: [] }),
+  /** The web (§9.1): which search Atlas uses. Each one but Cloudflare's needs its key, kept with the secrets. */
+  web: z.object({ search: z.enum(["cloudflare", "tavily", "brave", "exa"]).default("cloudflare") }).default({ search: "cloudflare" }),
   /** How messages reach the owner when the app isn't in view (§14). */
   notifications: z
     .object({
@@ -112,6 +114,7 @@ export const SettingsPatch = z.object({
   pins: f.pins.unwrap().optional(),
   calendar: f.calendar.unwrap().optional(),
   notifications: f.notifications.unwrap().optional(),
+  web: f.web.unwrap().optional(),
 } satisfies { [K in keyof typeof f]: z.ZodType });
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
@@ -148,13 +151,19 @@ export function writeSettings(sql: Sql, patch: SettingsPatch): string[] {
 
 export type SecretName =
   | "elevenlabs_api_key"
+  /** Keys for the web searches that need one (§9.1). */
+  | "tavily_api_key"
+  | "brave_api_key"
+  | "exa_api_key"
   | "icloud"
   | "chatgpt_tokens"
   | "chatgpt_login"
   /** This deployment's VAPID key pair, which signs its push notifications. */
   | "push_vapid"
   /** The owner's webhooks: their addresses are credentials. */
-  | "webhooks";
+  | "webhooks"
+  /** The vault (§15): logins, cards and keys, by name, tied to sites. */
+  | "vault";
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];
@@ -175,6 +184,9 @@ export function secretValues(sql: Sql): string[] {
     path.reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), v);
   const wanted: Array<[SecretName, string[]]> = [
     ["elevenlabs_api_key", []],
+    ["tavily_api_key", []],
+    ["brave_api_key", []],
+    ["exa_api_key", []],
     ["icloud", ["app_password"]],
     ["chatgpt_tokens", ["access_token"]],
     ["chatgpt_tokens", ["refresh_token"]],
@@ -188,6 +200,14 @@ export function secretValues(sql: Sql): string[] {
     if (typeof v === "string" && v.length >= 8) out.push(v);
   }
   for (const h of hooks) if (typeof h.url === "string" && h.url.length >= 8) out.push(h.url);
+  // The vault's secret values (§15): passwords, card numbers and codes, keys and seeds never leave.
+  for (const e of getSecret<Array<{ values?: Record<string, unknown>; totp?: unknown }>>(sql, "vault") ?? []) {
+    for (const k of ["password", "number", "cvc", "key"]) {
+      const v = e.values?.[k];
+      if (typeof v === "string" && v.length >= 3) out.push(v);
+    }
+    if (typeof e.totp === "string" && e.totp.length >= 8) out.push(e.totp);
+  }
   // The last ID token is kept as a sign-in hint, outside the secrets; it still never leaves.
   const hint = getState<{ id_token?: unknown }>(sql, "chatgpt_client")?.id_token;
   if (typeof hint === "string" && hint.length >= 8 && !out.includes(hint)) out.push(hint);

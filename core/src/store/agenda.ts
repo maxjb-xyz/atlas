@@ -6,7 +6,7 @@
 import { append } from "./log";
 import { type Json, newId, parse, type Sql } from "./db";
 
-export type AgendaKind = "reminder" | "promise" | "job" | "notify" | "approval" | "automation";
+export type AgendaKind = "reminder" | "promise" | "job" | "notify" | "approval" | "automation" | "skills";
 export type AgendaState = "scheduled" | "running" | "done" | "cancelled" | "failed";
 
 export interface AgendaSource {

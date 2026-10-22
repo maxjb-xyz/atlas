@@ -40,6 +40,10 @@ function ctx(sql: Sql, opts: { embed?: Embedder | null; source?: string | null }
     helpers: null,
     exit: null,
     automations: null,
+    web: null,
+    browser: null,
+    files: null,
+    workspace: null,
   };
 }
 

@@ -8,6 +8,8 @@ import { createItem, getItem } from "../src/store/agenda";
 import type { Sql } from "../src/store/db";
 import { migrate } from "../src/store/db";
 import { getRun, startRun, sweepStaleRuns } from "../src/store/runs";
+import { systemPrompt } from "../src/context";
+import { readSettings } from "../src/store/settings";
 import { call, env, fakeCalendar, fakeEmbedder, say, scripted, type Step } from "./helpers";
 
 beforeEach(() => {
@@ -67,7 +69,7 @@ const rowsOf = (sql: Sql, kind: string) =>
 describe("helpers", () => {
   it("hand back a result in the same turn, and everything they did is in the parent's log", async () => {
     const b = brain([
-      call("delegate", { title: "Riverside notes", task: "Find everything about the Riverside shoot and list it." }),
+      call("delegate", { title: "Riverside notes", task: "Find everything about the Riverside shoot and list it.", wait: true }),
       call("recall", { query: "Riverside" }),
       say("- Riverside shoot moved to Saturday (you said Oct 18)."),
       say("It moved to Saturday."),
@@ -82,7 +84,14 @@ describe("helpers", () => {
       expect(b.requests[3]!.messages.at(-1)).toMatchObject({ role: "tool", content: expect.stringContaining("moved to Saturday") });
       // The helper had no personality and only lookup tools.
       expect(b.requests[1]!.system).toContain("You are a helper for Atlas");
-      expect(b.requests[1]!.tools.map((t) => t.name).sort()).toEqual(["agenda_list", "calendar_read", "recall"]);
+      expect(b.requests[1]!.tools.map((t) => t.name).sort()).toEqual([
+        "agenda_list",
+        "calendar_read",
+        "recall",
+        "skill_read",
+        "web_fetch",
+        "web_search",
+      ]);
 
       const result = rowsOf(sql, "job.result")[0]!;
       expect(result.body).toMatchObject({ title: "Riverside notes", state: "done", text: expect.stringContaining("Saturday") });
@@ -103,11 +112,19 @@ describe("helpers", () => {
     });
   });
 
-  it("work in the background and report when they're done", async () => {
-    brain([
-      call("delegate", { title: "Calendar audit", task: "List every clash in the next month.", wait: false }),
+  it("work in the background by default, so the turn ends, and the report finishes the task with a view", async () => {
+    const chart = {
+      kind: "chart",
+      title: "Meetings by week",
+      style: "bar",
+      x: ["W1", "W2"],
+      series: [{ name: "Meetings", values: [3, 5] }],
+    };
+    const b = brain([
+      call("delegate", { title: "Calendar audit", task: "List every clash in the next month." }),
       say("On it; I'll tell you when it's done."),
-      say("No clashes found."),
+      say("No clashes found. Meetings: W1 3, W2 5."),
+      call("show", { view: chart }),
       say("Your helper found no clashes next month."),
     ]);
     await runInDurableObject(fresh(), async (agent: PersonAgent, state) => {
@@ -120,6 +137,34 @@ describe("helpers", () => {
         "the job's report",
       );
       expect(report.body.text).toBe("Your helper found no clashes next month.");
+      const shown = rowsOf(sql, "tool.result").find((r) => r.body.name === "show" && r.run_id === report.run_id)!;
+      expect(shown.body.receipt).toEqual({ text: "Showing · Meetings by week", view: chart });
+      // The report can finish the task: a view, or the file that was asked for.
+      expect(b.requests.at(-1)!.tools.map((t) => t.name)).toEqual(
+        expect.arrayContaining(["show", "file_save", "workspace_run", "workspace_keep"]),
+      );
+    });
+  });
+
+  it("are in the context while they work, so Atlas can say how it's going", async () => {
+    await runInDurableObject(fresh(), async (_agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      createItem(sql, {
+        kind: "job",
+        title: "Spending chart",
+        due_at: Date.now(),
+        state: "running",
+        source: { via: "chat", detail: { brief: "x" } },
+      });
+      const system = systemPrompt({
+        settings: readSettings(sql),
+        tz: "America/New_York",
+        now: new Date(Date.now() + 3 * 60_000),
+        surface: "app",
+        sql,
+      });
+      expect(system).toMatch(/Helpers working now[^\n]*\n- Spending chart \(id ag_\w+\): started 3 min ago, 0 lookups so far/);
     });
   });
 

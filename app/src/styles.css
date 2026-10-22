@@ -1974,3 +1974,238 @@ button.chip:hover {
 .r.on {
   background: var(--hover);
 }
+
+/* Atlas's browser, live (M3): the frame fills the sheet's width at a page's shape. */
+.browser-live {
+  display: block;
+  width: 100%;
+  height: min(70vh, 720px);
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--win);
+}
+
+/* Documents, code and files on the stage (M3). */
+.document-text {
+  max-width: 72ch;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.code-block {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--win);
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow: auto;
+  max-height: 70vh;
+  white-space: pre;
+}
+.file-image {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+}
+
+/* The workspace (M3): Atlas's live output and the terminal. */
+.workspace-live {
+  max-height: 40vh;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.workspace-run summary {
+  cursor: pointer;
+  list-style: none;
+}
+.workspace-run[open] .code-block {
+  margin-top: 8px;
+  max-height: 40vh;
+  white-space: pre-wrap;
+}
+.terminal-box {
+  height: min(60vh, 560px);
+  padding: 8px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--win);
+}
+
+/* Chart series (M3): eight categorical slots in fixed order, validated for both surfaces
+   (the dataviz reference palette: CVD ΔE ≥ 8.4, normal-vision ΔE ≥ 19.3). Light-mode slots 3–5 sit under
+   3:1 on white, so every chart ships a legend and a table view. Never cycled: a ninth series folds. */
+:root,
+[data-theme="graphite"] {
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --s4: #c98500;
+  --s5: #d55181;
+  --s6: #008300;
+  --s7: #9085e9;
+  --s8: #e66767;
+}
+[data-theme="daylight"] {
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --s4: #eda100;
+  --s5: #e87ba4;
+  --s6: #008300;
+  --s7: #6250d6;
+  --s8: #e34948;
+}
+.chart {
+  position: relative;
+}
+.chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.chart .axis {
+  fill: var(--tx3);
+  font:
+    11px/1 "Geist Mono",
+    ui-monospace,
+    monospace;
+}
+.chart .grid-line {
+  stroke: var(--sep);
+  stroke-width: 1;
+}
+.chart .baseline {
+  stroke: var(--sep2);
+  stroke-width: 1;
+}
+.chart .crosshair {
+  stroke: var(--tx3);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.chart .direct-label {
+  fill: var(--tx2);
+  font:
+    11px/1 Inter,
+    system-ui,
+    sans-serif;
+}
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 8px;
+  color: var(--tx2);
+  font-size: 12px;
+}
+.chart-legend .sw {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+.chart-tip {
+  position: absolute;
+  pointer-events: none;
+  min-width: 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--win);
+  box-shadow: var(--sh);
+  color: var(--tx);
+  font-size: 12px;
+  line-height: 1.5;
+  z-index: 2;
+}
+.chart-tip .row {
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.stat-tile {
+  padding: 12px 14px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+}
+.stat-tile .value {
+  font:
+    600 24px/1.2 "Inter Tight",
+    Inter,
+    sans-serif;
+  color: var(--tx);
+}
+.compare-pick {
+  background: var(--acs);
+}
+.app-frame {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--win);
+}
+.app-frame.bare {
+  border: none;
+  border-radius: 0;
+}
+.wrap-anywhere {
+  overflow-wrap: anywhere;
+}
+
+/* A turn under way (§21.1): a dotted track on the box's edge, with a short run of sharp ticks
+   travelling all the way round (BusyEdge in Shell.tsx). Send becomes Stop. */
+.console,
+.composer {
+  position: relative;
+}
+.busy-edge {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.busy-edge svg {
+  display: block;
+}
+.busy-edge rect {
+  fill: none;
+  stroke: var(--ac);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.busy-edge .comet {
+  stroke-width: 1.5;
+}
+.busy-edge .track {
+  stroke-dasharray: 1 3;
+  stroke-opacity: 0.35;
+}
+[data-motion="reduced"] .busy-edge .comet {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .busy-edge .comet {
+    display: none;
+  }
+}
+.send.stop {
+  background: var(--btn);
+}
+.stop-square {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: currentColor;
+}

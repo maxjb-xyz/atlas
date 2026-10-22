@@ -6,6 +6,18 @@
 import { parse, type Sql } from "./db";
 
 export type StateName =
+  /** The last twenty MCP tool calls whose pages (MCP Apps) were shown: their input and result, to show them again. */
+  | "mcp_apps"
+  /** The workspace's last twelve commands, for its view: what ran, its exit code and the end of its output. */
+  | "workspace_runs"
+  /** The app's address, from the last socket the owner opened: previews are links under it. */
+  | "origin"
+  /** Websites the workspace may reach (§9.1): each one asked once, then remembered. */
+  | "workspace_sites"
+  /** Atlas's browser (§9.1): its Browser Run session, tab, and where it is. */
+  | "browser"
+  /** Set while the owner has the browser: why, since when, and whether Atlas asked for it. */
+  | "browser_taken"
   /** Atlas's copy of the iCloud calendars: the home, each calendar's change tag and events, and when it was synced. */
   | "icloud_copy"
   /** Set when iCloud refuses the sign-in: when, why, how many times in a row, and when Atlas tries again. */

@@ -8,15 +8,32 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "ai": { "binding": "AI" },
+  // Browser Run (§9.1): Atlas's browser, with its live view on the stage.
+  "browser": { "binding": "BROWSER" },
+  // Code Mode (§9.1): one small program over Atlas's own tools, run in a Dynamic Worker.
+  "worker_loaders": [{ "binding": "LOADER" }],
+  // Files Atlas makes (§21.7). Wrangler creates the bucket on the first deploy, once R2 is
+  // turned on for the account. It's named here so a deploy that can't reach R2 says so,
+  // instead of trying to inherit a bucket an earlier version never had.
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "atlas-files" }],
   "assets": {
     "directory": "../app/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/agents/*"]
+    "run_worker_first": ["/api/*", "/agents/*", "/preview/*", "/mcp/*"]
   },
+  // The workspace (§9.1): a container per person, started by its Durable Object from Cloudflare's
+  // managed Debian image, so deploying needs no Docker.
+  "containers": [{ "class_name": "Workspace", "scheduling_policy": "durable_object" }],
   "durable_objects": {
-    "bindings": [{ "name": "PersonAgent", "class_name": "PersonAgent" }]
+    "bindings": [
+      { "name": "PersonAgent", "class_name": "PersonAgent" },
+      { "name": "WORKSPACE", "class_name": "Workspace" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PersonAgent"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["PersonAgent"] },
+    { "tag": "v2", "new_sqlite_classes": ["Workspace"] }
+  ],
   "observability": { "enabled": true }
 }

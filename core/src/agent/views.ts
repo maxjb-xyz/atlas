@@ -4,6 +4,7 @@
 
 import { getPage, pageVersion, pageVersions, segments } from "../pages";
 import type { ApprovalView, HistoryFilter, HistoryStats, InboxItem, RecordView } from "../protocol";
+import { FIELDS, findEntry } from "../vault";
 import { type Action, actionsOf, ASKS, kindOf, needsHold, TRUST_AFTER, trustTable, waitingApprovals } from "../approvals";
 import type { AgendaItem } from "../store/agenda";
 import { scrub } from "../outbox";
@@ -271,8 +272,20 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
     "automation.run",
     "automation.change",
     "page.change",
+    "file.change",
+    "skill.change",
   ],
-  actions: ["tool.result", "record.change", "agenda.change", "area.change", "delivery", "automation.change", "page.change"],
+  actions: [
+    "tool.result",
+    "record.change",
+    "agenda.change",
+    "area.change",
+    "delivery",
+    "automation.change",
+    "page.change",
+    "file.change",
+    "skill.change",
+  ],
   conversations: ["message.in", "message.out"],
   jobs: ["job.result", "agenda.change", "automation.run"],
 };
@@ -396,14 +409,21 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
   const actions = actionsOf(item);
   const asked = item.source.log_id ? getRow(sql, item.source.log_id) : null;
   const secrets = secretValues(sql);
-  const secretsOk = actions.every((a) => a.kind !== "webhook" || !a.message || scrub(a.message, secrets) === a.message);
+  const clean = (s: string) => scrub(s, secrets) === s;
+  const secretsOk = actions.every((a) =>
+    a.kind === "webhook" ? !a.message || clean(a.message) : a.kind === "mcp" ? clean(JSON.stringify(a.arguments)) : true,
+  );
   const hold = needsHold(actions);
   return {
     id: item.id,
     title: item.title,
     steps: actions.map((a) => stepView(sql, a)),
     asked: asked ? String(asked.body.text ?? "").slice(0, 400) : null,
-    why: hold ? ASKS.irreversible.why : ASKS[kindOf(actions[0] ?? { kind: "webhook", webhook: "", name: "" })].why,
+    why:
+      (hold ? ASKS.irreversible.why : ASKS[kindOf(actions[0] ?? { kind: "webhook", webhook: "", name: "" })].why) +
+      (item.source.detail?.read_web
+        ? " Atlas read the web while working on this, so it asks even for what it usually does without asking."
+        : ""),
     hold,
     expires_at: item.due_at,
     checks: [
@@ -414,6 +434,58 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
 }
 
 function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
+  if (a.kind === "mcp") {
+    return {
+      kind: "mcp",
+      title: a.name,
+      detail: a.what,
+      where: a.where,
+      undo: a.destructive
+        ? "Its server says this can't be undone."
+        : "It reaches one of your connected services, and only that service can undo it. After five yeses as it was, Atlas offers to stop asking.",
+      message: JSON.stringify(a.arguments, null, 2).slice(0, 4_000),
+    };
+  }
+  if (a.kind === "mcp_add") {
+    return {
+      kind: "mcp_add",
+      title: `Connect ${a.name}`,
+      detail: `${a.why} Atlas gets the tools this server offers; ones that do more than read still ask you first.`,
+      where: a.url,
+      undo: "Remove it any time in Settings → Connections → MCP servers.",
+    };
+  }
+  if (a.kind === "site") {
+    return {
+      kind: "site",
+      title: a.name,
+      detail: `${a.why}${a.key ? ` Its requests there will carry your ${a.key.name} from the vault; the workspace never sees the key.` : ""}`,
+      where: a.host,
+      undo: "Remembered for this site and its subdomains. Remove it under Websites it can reach, in the workspace on the stage.",
+    };
+  }
+  if (a.kind === "vault") {
+    const e = findEntry(sql, a.entry);
+    const fields = Object.keys(a.fields).map((f) => (e ? (FIELDS[e.kind][f] ?? f) : f).toLowerCase());
+    return {
+      kind: "vault",
+      title: `Fill in ${a.name} on ${a.host}`,
+      detail: `Its ${fields.join(", ")}${a.press ? `, then press "${a.press.text}"` : ""}. Atlas never sees the values.`,
+      where: a.url,
+      undo: a.card
+        ? "Card details always ask, every time."
+        : `Asks the first time on each site. After your yes, ${a.name} fills on ${a.host} without asking.`,
+    };
+  }
+  if (a.kind === "browser") {
+    return {
+      kind: "browser",
+      title: a.name,
+      detail: a.what,
+      where: a.url,
+      undo: "Can't be taken back once the form is sent.",
+    };
+  }
   if (a.kind === "delete") {
     return {
       kind: "delete",
@@ -441,7 +513,7 @@ function pastItems(sql: Sql): InboxItem[] {
     .exec<{ id: string }>(
       `SELECT id FROM log WHERE at > ? AND (kind = 'job.result'
          OR (kind = 'automation.run' AND json_extract(body, '$.report') = 'inbox' AND json_extract(body, '$.test') = 0 AND json_extract(body, '$.quiet') IS NULL)
-         OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%' AND json_extract(body, '$.trigger') NOT LIKE 'automation%'))
+         OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.interrupted') IS NULL AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%' AND json_extract(body, '$.trigger') NOT LIKE 'automation%'))
          AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 100`,
       since,
       done,

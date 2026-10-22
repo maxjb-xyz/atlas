@@ -67,7 +67,7 @@ export interface CalendarEventView {
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete";
+  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -151,6 +151,9 @@ export const ClientMessage = z.discriminatedUnion("type", [
     type: z.literal("atlas.secret.set"),
     secret: z.discriminatedUnion("name", [
       z.object({ name: z.literal("elevenlabs_api_key"), value: z.string().min(8).max(200).nullable() }),
+      z.object({ name: z.literal("tavily_api_key"), value: z.string().min(8).max(200).nullable() }),
+      z.object({ name: z.literal("brave_api_key"), value: z.string().min(8).max(200).nullable() }),
+      z.object({ name: z.literal("exa_api_key"), value: z.string().min(8).max(200).nullable() }),
       z.object({
         name: z.literal("icloud"),
         value: z.object({ username: z.string().min(3).max(200), app_password: z.string().min(4).max(64) }).nullable(),
@@ -177,7 +180,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
     yes: z.boolean(),
     hold: z.boolean().optional(),
     edits: z
-      .array(z.object({ index: z.number().int().min(0).max(20), message: z.string().max(1_000) }))
+      .array(z.object({ index: z.number().int().min(0).max(20), message: z.string().max(4_000) }))
       .max(20)
       .optional(),
   }),
@@ -193,6 +196,19 @@ export const ClientMessage = z.discriminatedUnion("type", [
     about: z.string().max(300),
   }),
   z.object({ type: z.literal("atlas.webhook.remove"), id: z.string().max(64) }),
+  /** Add or change a vault entry (§15). Empty values on a change keep what was there; `totp: null` removes the seed. */
+  z.object({
+    type: z.literal("atlas.vault.save"),
+    id: z.string().max(64).optional(),
+    name: z.string().trim().min(1).max(60),
+    kind: z.enum(["login", "card", "key"]),
+    sites: z.array(z.string().max(200)).min(1).max(10),
+    values: z.record(z.string().max(40), z.string().max(4_000)),
+    totp: z.string().max(200).nullable().optional(),
+  }),
+  z.object({ type: z.literal("atlas.vault.remove"), id: z.string().max(64) }),
+  /** Take back the owner's yes for one site, so the next use there asks again. */
+  z.object({ type: z.literal("atlas.vault.revoke"), id: z.string().max(64), site: z.string().max(200) }),
   /** The Automations page: every automation. */
   z.object({ type: z.literal("atlas.automations") }),
   /** Make or change an automation in the form. The owner's own start on (§13.4). */
@@ -290,8 +306,47 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.inbox.done"), id: z.string().max(64) }),
   /** The live page behind an area or person view on the stage, or in Library (§21.6). `ref` is echoed back. */
   z.object({ type: z.literal("atlas.stage"), ref: z.string().max(200), view: StageView }),
+  /** The owner's buttons on the browser's view (§9.1): take it over, hand it back to Atlas, or close it. */
+  z.object({ type: z.literal("atlas.browser"), action: z.enum(["take", "give", "close"]) }),
   /** Library's pages (§21.7). */
   z.object({ type: z.literal("atlas.pages") }),
+  /** The Skills page (§9.3): every skill; save one from its SKILL.md (an edit or an import); archive or bring back; restore a version. */
+  z.object({ type: z.literal("atlas.skills") }),
+  z.object({ type: z.literal("atlas.skill.save"), md: z.string().min(20).max(40_000) }),
+  z.object({ type: z.literal("atlas.skill.state"), id: z.string().max(64), state: z.enum(["active", "archived"]) }),
+  z.object({ type: z.literal("atlas.skill.restore"), id: z.string().max(64), n: z.number().int().min(1) }),
+  /** The workspace (§9.1): keep a file from it in Library, or take back a site it may reach. */
+  z.object({ type: z.literal("atlas.workspace.keep"), path: z.string().min(1).max(500) }),
+  z.object({ type: z.literal("atlas.workspace.site.remove"), site: z.string().min(1).max(200) }),
+  /** Stop the workspace's container, so the next command starts it fresh (its files and setup are kept). */
+  z.object({ type: z.literal("atlas.workspace.restart") }),
+  /**
+   * Connected MCP servers (§9.2): the list, adding one by its address (with a
+   * token for servers that take one instead of a sign-in), and removing one.
+   */
+  z.object({ type: z.literal("atlas.mcp") }),
+  z.object({
+    type: z.literal("atlas.mcp.add"),
+    name: z.string().trim().min(1).max(60),
+    url: z.string().url().max(500),
+    token: z.string().max(4_000).optional(),
+  }),
+  z.object({ type: z.literal("atlas.mcp.remove"), id: z.string().max(64) }),
+  /** An MCP App on the stage (§21.6): its page, and what the page asks of its server. `req` is echoed back. */
+  z.object({ type: z.literal("atlas.mcp.app"), req: z.string().max(64), call: z.string().max(64) }),
+  z.object({
+    type: z.literal("atlas.mcp.app.call"),
+    req: z.string().max(64),
+    call: z.string().max(64),
+    name: z.string().min(1).max(200),
+    arguments: z.record(z.string(), z.unknown()).optional(),
+  }),
+  z.object({ type: z.literal("atlas.mcp.app.read"), req: z.string().max(64), call: z.string().max(64), uri: z.string().min(1).max(2_000) }),
+  /** Stop one of the owner's text runs, under way or waiting in line. */
+  z.object({ type: z.literal("atlas.run.stop"), run_id: z.string().max(64) }),
+  /** Library's files (§21.7), and deleting one. */
+  z.object({ type: z.literal("atlas.files") }),
+  z.object({ type: z.literal("atlas.file.delete"), id: z.string().max(64) }),
   /** Keep: saves a view on the stage as a new page. */
   z.object({ type: z.literal("atlas.page.keep"), view: StageView, name: z.string().trim().min(1).max(80) }),
   /** The owner's edit: a new version with this body. */
@@ -310,7 +365,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
-    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push", "webhook"]),
+    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push", "webhook", "search"]),
     /** For "push": the device to send the test notification to. */
     device: z.string().max(64).optional(),
     /** For "webhook": which one to call. */
@@ -329,11 +384,57 @@ export type ClientMessage = z.infer<typeof ClientMessage>;
 
 // --- agent -> app ----------------------------------------------------------
 
+/** A skill as the Skills page shows it (§9.3): what it says, how it's used, its check, and every version. */
+export interface SkillView {
+  id: string;
+  name: string;
+  description: string;
+  body: string;
+  check: string;
+  made_by: "owner" | "atlas";
+  state: "active" | "archived";
+  version: number;
+  uses: number;
+  last_used: number | null;
+  checked: { at: number; ok: boolean; output: string } | null;
+  updated_at: number;
+  versions: Array<{ n: number; at: number; by: "owner" | "atlas"; note: string }>;
+  /** The whole thing as a SKILL.md, to edit or take elsewhere. */
+  md: string;
+}
+
+/** A connected MCP server as Settings shows it (§9.2): never its token. */
+export interface McpServerView {
+  id: string;
+  name: string;
+  url: string;
+  state: string;
+  error: string | null;
+  /** Where the owner signs in, while the server waits for it. */
+  auth_url: string | null;
+  tools: Array<{ name: string; title: string | null; description: string; reads: boolean; page: boolean }>;
+}
+
+/** An MCP App's page and the call it shows, for the frame on the stage (§21.6). */
+export interface McpAppPage {
+  server: string;
+  html: string;
+  /** The Content-Security-Policy its page runs under: nothing outside it unless its server declared the domain. */
+  csp: string;
+  border: boolean;
+  tool: Record<string, unknown>;
+  input: Record<string, unknown>;
+  result: Record<string, unknown>;
+}
+
 /** Settings as the app sees them: values, plus whether each secret is set (never the secret). */
 export interface SettingsView {
   settings: import("./store/settings").Settings;
   secrets: {
     elevenlabs_api_key: boolean;
+    tavily_api_key: boolean;
+    brave_api_key: boolean;
+    exa_api_key: boolean;
     /**
      * `refused` says when and why iCloud last refused the sign-in, how many times in a row, and when Atlas tries
      * again by itself; `note` says all that in a sentence. Meanwhile Atlas answers from its copy of the calendar.
@@ -348,6 +449,8 @@ export interface SettingsView {
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
   /** The owner's passkeys, without their keys (Settings → Devices). */
   passkeys: Array<{ id: string; name: string; created_at: number; last_used: number | null }>;
+  /** The vault's entries, without their values (Settings → Vault). */
+  vault: import("./vault-fields").VaultView[];
   /** The owner's webhooks, without their addresses (Settings → Connections). */
   webhooks: import("./webhooks").WebhookView[];
   /** When Atlas asks (Settings → Permissions): the table by kind, and the outside actions it may do without asking. */
@@ -409,6 +512,14 @@ export type ServerMessage =
   | { type: "atlas.stage.page"; ref: string; page: StagePage | null }
   | { type: "atlas.automations"; automations: AutomationView[]; suggestions: SuggestionView[] }
   | { type: "atlas.pages"; pages: PageSummary[] }
+  | { type: "atlas.files"; files: import("./stage").FileRow[] }
+  | { type: "atlas.skills"; skills: SkillView[] }
+  | { type: "atlas.mcp.servers"; servers: McpServerView[] }
+  | { type: "atlas.mcp.app.result"; req: string; page?: McpAppPage; error?: string }
+  /** What the page's own tool call or read answered: MCP's result as-is, or why it didn't happen. */
+  | { type: "atlas.mcp.app.answer"; req: string; result?: Record<string, unknown>; error?: string }
+  /** What a command in the workspace prints, as it prints it (a progress hint; the tool's result is the truth). */
+  | { type: "atlas.workspace.out"; run_id: string; text: string }
   /** Keep worked: the new page, so the view can say where it went. */
   | { type: "atlas.page.kept"; id: string; name: string }
   | {

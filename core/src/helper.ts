@@ -19,9 +19,11 @@ import { recall } from "./tools/memory";
 import { calendarRead } from "./tools/calendar";
 import { agendaList } from "./tools/agenda";
 import type { Tool, ToolResult } from "./tools/types";
+import { webFetch, webSearch } from "./tools/web";
+import { skillRead } from "./tools/skills";
 
-/** What a helper may use: looking only. Helpers can't change the owner's things or save facts about them (§5.4). */
-export const HELPER_TOOLS: Tool[] = [recall, calendarRead, agendaList];
+/** What a helper may use: looking only, the web included (§8.1: reading untrusted pages is a helper's job). Helpers can't change the owner's things or save facts about them (§5.4). */
+export const HELPER_TOOLS: Tool[] = [recall, calendarRead, agendaList, webSearch, webFetch, skillRead];
 
 export interface HelperJob {
   /** The agenda item for the job; also the helper's name. */

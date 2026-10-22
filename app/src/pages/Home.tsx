@@ -1,6 +1,7 @@
 // Home (§21.2): the stage and the console. The stage shows Now, the Week,
 // helpers' Jobs, the views Atlas shows (§21.6), and whatever a receipt opens into.
 
+import { InlineText } from "../Markdown";
 import { useEffect, useRef, useState } from "react";
 import type { LogRow } from "../../../core/src/protocol";
 import type { StageView } from "../../../core/src/stage";
@@ -19,6 +20,64 @@ const approvalOf = (r: LogRow) => (r.body.receipt as { approval?: string } | und
 /** The most views the stage keeps open as tabs; the oldest closes first. */
 const MAX_VIEWS = 4;
 
+/** What a view shows, for views that are one thing however often they're shown; null for one-off views (a list, a chart). */
+function identity(s: Shown): string | null {
+  const v = s.view;
+  switch (v.kind) {
+    case "workspace":
+    case "browser":
+      return v.kind;
+    case "file":
+      return `file:${v.file}`;
+    case "area":
+      return `area:${v.area}`;
+    case "person":
+      return `person:${v.person}`;
+    case "automation":
+      return `automation:${v.automation}`;
+    case "page":
+      return `page:${v.page}`;
+    case "mcp_app":
+      return `mcp_app:${v.call}`;
+    default:
+      return null;
+  }
+}
+const sameThing = (a: Shown, b: Shown) => {
+  const k = identity(a);
+  return k != null && k === identity(b);
+};
+
+/**
+ * What's on Home's stage, kept while the app is open (and through a reload,
+ * in this tab), so leaving Home and coming back finds it as it was. `seen`
+ * is the last log row the stage has looked at for new views.
+ */
+interface Kept {
+  tab: HomeTab;
+  views: Shown[];
+  approval: string | null;
+  seen: number | null;
+}
+const KEPT_KEY = "atlas.stage";
+let kept: Kept = (() => {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(KEPT_KEY) ?? "null") as Kept | null;
+    if (v && Array.isArray(v.views)) return v;
+  } catch {
+    // No storage here (a private window): the stage starts empty.
+  }
+  return { tab: "now", views: [], approval: null, seen: null };
+})();
+function keep(next: Kept): void {
+  kept = next;
+  try {
+    sessionStorage.setItem(KEPT_KEY, JSON.stringify(next));
+  } catch {
+    // Too big or not allowed: it's still kept for this visit.
+  }
+}
+
 export function Home({
   atlas,
   detail,
@@ -31,19 +90,29 @@ export function Home({
   onTranscript: () => void;
 }) {
   const s = atlas.state;
-  const [tab, setTab] = useState<HomeTab>("now");
+  // The stage outlives a visit to another page: its views and tab come back with Home.
+  const [tab, setTab] = useState<HomeTab>(() => kept.tab);
   const [job, setJob] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<LogRow | null>(null);
-  const [views, setViews] = useState<Shown[]>([]);
-  const [approval, setApproval] = useState<string | null>(null);
+  const [views, setViews] = useState<Shown[]>(() => kept.views);
+  const [approval, setApproval] = useState<string | null>(() => kept.approval);
+  useEffect(() => {
+    keep({ tab: tab === "receipt" ? "now" : tab, views, approval, seen: kept.seen });
+  }, [tab, views, approval]);
   const openApproval = (id: string) => {
     setApproval(id);
     setTab("approval");
   };
 
+  // Showing the same thing again (the workspace, a file, an area) reuses its tab, in its place, instead of adding one.
   const openView = (v: Shown) => {
-    setViews((list) => [...list.filter((x) => x.id !== v.id), v].slice(-MAX_VIEWS));
-    setTab(`view:${v.id}`);
+    const matches = (x: Shown) => x.id === v.id || sameThing(x, v);
+    const at = views.find(matches)?.id ?? v.id;
+    setViews((list) => {
+      const same = list.find(matches);
+      return same ? list.map((x) => (x === same ? { ...v, id: same.id } : x)) : [...list, v].slice(-MAX_VIEWS);
+    });
+    setTab(`view:${at}`);
   };
   const closeView = (id: string) => {
     setViews((list) => list.filter((x) => x.id !== id));
@@ -63,17 +132,17 @@ export function Home({
     }
   }, [detail]);
 
-  // A view Atlas shows while Home is open goes straight onto the stage (§21.6). Views already in the thread when Home opened stay behind their receipts.
-  const seen = useRef<number | null>(null);
+  // A view Atlas shows goes straight onto the stage (§21.6), including one shown while another page was open.
+  // Views already in the thread when the app opened stay behind their receipts.
   useEffect(() => {
     if (!s.loaded) return;
     const last = s.rows.at(-1)?.seq ?? 0;
-    if (seen.current == null) {
-      seen.current = last;
+    if (kept.seen == null) {
+      keep({ ...kept, seen: last });
       return;
     }
-    const fresh = s.rows.filter((r) => r.seq > seen.current! && r.kind === "tool.result");
-    seen.current = Math.max(seen.current, last);
+    const fresh = s.rows.filter((r) => r.seq > kept.seen! && r.kind === "tool.result");
+    keep({ ...kept, seen: Math.max(kept.seen, last) });
     const newest = fresh
       .map(shownFrom)
       .filter((v): v is Shown => v != null)
@@ -477,7 +546,7 @@ function ApprovalTab({ atlas, id }: { atlas: Atlas; id: string }) {
         {item?.approval ? (
           <ApprovalCard atlas={atlas} a={item.approval} />
         ) : (
-          <p className="muted">{settled ? settledDetail(settled) : "It isn't waiting any more."}</p>
+          <p className="muted wrap-anywhere">{settled ? <InlineText text={settledDetail(settled)} /> : "It isn't waiting any more."}</p>
         )}
       </div>
     </Sheet>

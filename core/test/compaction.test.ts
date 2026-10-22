@@ -105,6 +105,10 @@ function deps(sql: Sql, brain: Brain) {
     helpers: null,
     exit: null,
     automations: null,
+    web: null,
+    browser: null,
+    files: null,
+    workspace: null,
   };
   return { log: logTo(sql), router: new BrainRouter(() => brain), chain: [{ provider: "chatgpt" as const, model: "fake" }], toolContext };
 }

@@ -82,6 +82,148 @@ export const PlanStage = z.object({
   source,
 });
 
+export const ResearchStage = z.object({
+  kind: z.literal("research"),
+  title,
+  answer: z
+    .string()
+    .min(1)
+    .max(6_000)
+    .describe("The answer, in Markdown: the pick or the finding first, then why. Mark claims with their source's number, like [1]."),
+  sources: z
+    .array(
+      z.object({
+        title: z.string().min(1).max(200),
+        url: z.string().url().max(2_000),
+        note: z.string().max(300).optional().describe("What this source says or adds, in a line."),
+      }),
+    )
+    .min(1)
+    .max(20)
+    .describe("Only pages you searched or read in this conversation, numbered in this order."),
+});
+
+export const FileStage = z.object({
+  kind: z.literal("file"),
+  file: z.string().min(1).max(120).describe("The file's name or id."),
+});
+
+export const DocumentStage = z.object({
+  kind: z.literal("document"),
+  title,
+  text: z.string().min(1).max(40_000).describe("The document, in Markdown: a write-up, a summary, a study guide, notes to read."),
+  source,
+});
+
+export const CodeStage = z.object({
+  kind: z.literal("code"),
+  title,
+  language: z.string().max(30).describe("The language, such as python, javascript, bash, sql."),
+  code: z.string().min(1).max(40_000),
+  source,
+});
+
+/** Numbers over a few categories or over time (§21.6): bars or lines, one axis, at most eight series. */
+const chartBody = {
+  style: z.enum(["bar", "line"]).describe("Bars to compare amounts across categories; lines for change over time."),
+  x: z.array(z.string().max(40)).min(1).max(60).describe("The categories or times along the bottom, in order."),
+  series: z
+    .array(z.object({ name: z.string().min(1).max(40), values: z.array(z.number().nullable()).max(60) }))
+    .min(1)
+    .max(8)
+    .describe("One per thing measured, each with one value per x (null where there's none). Same unit for all: one axis."),
+  unit: z.string().max(20).optional().describe("What the numbers are: '$', 'km', 'min', '%'."),
+};
+
+export const ChartStage = z.object({ kind: z.literal("chart"), title, ...chartBody, source });
+
+/** Options side by side (§21.6): what each is like on what matters, and the pick. */
+const compareBody = {
+  options: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(60),
+        note: z.string().max(200).optional(),
+        url: z.string().url().max(2_000).optional(),
+      }),
+    )
+    .min(2)
+    .max(6),
+  rows: z
+    .array(z.object({ label: z.string().min(1).max(40), values: z.array(z.union([z.string().max(200), z.number(), z.null()])).max(6) }))
+    .min(1)
+    .max(20)
+    .describe("One per thing that matters (price, distance, hours), with one value per option, in the options' order."),
+  pick: z.string().max(60).optional().describe("The option you'd pick, by its name."),
+  why: z.string().max(600).optional().describe("Why that one, and the tradeoff, in a sentence or two."),
+};
+
+export const CompareStage = z.object({ kind: z.literal("compare"), title, ...compareBody, source });
+
+/** A layout Atlas composes from parts (§21.6: the custom kit), drawn in the current theme. */
+export const KitStage = z.object({
+  kind: z.literal("kit"),
+  title,
+  blocks: z
+    .array(
+      z.discriminatedUnion("type", [
+        z.object({ type: z.literal("text"), text: z.string().min(1).max(6_000).describe("Markdown.") }),
+        z.object({
+          type: z.literal("stats"),
+          items: z
+            .array(z.object({ label: z.string().min(1).max(40), value: z.string().min(1).max(30), note: z.string().max(80).optional() }))
+            .min(1)
+            .max(6),
+        }),
+        z.object({
+          type: z.literal("list"),
+          title: z.string().max(80).optional(),
+          items: ListStage.shape.items,
+          numbered: ListStage.shape.numbered,
+        }),
+        z.object({
+          type: z.literal("table"),
+          title: z.string().max(80).optional(),
+          columns: TableStage.shape.columns,
+          rows: TableStage.shape.rows,
+        }),
+        z.object({ type: z.literal("chart"), title: z.string().max(80).optional(), ...chartBody }),
+        z.object({ type: z.literal("compare"), title: z.string().max(80).optional(), ...compareBody }),
+      ]),
+    )
+    .min(1)
+    .max(12)
+    .describe("The parts, top to bottom: text, stats (a few headline numbers), list, table, chart, compare."),
+  source,
+});
+
+/** A small app for real interactivity (§21.6, §21.7): sandboxed, no network, its data passed in. */
+export const AppStage = z.object({
+  kind: z.literal("app"),
+  title,
+  html: z
+    .string()
+    .min(20)
+    .max(100_000)
+    .describe(
+      "One HTML document with its own CSS and JavaScript inline. It runs sandboxed with no network: no external scripts, fonts or requests. Use the theme's colors, var(--bg), var(--text), var(--muted), var(--line) and var(--accent), so it fits light and dark.",
+    ),
+  data: z.unknown().optional().describe("Data the app needs, as JSON: it reads it as window.ATLAS_DATA."),
+});
+
+/** An MCP App (§21.6): the page a connected server's tool brings, for one call of it. It appears when the tool is called. */
+export const McpAppStage = z.object({
+  kind: z.literal("mcp_app"),
+  call: z.string().max(64).describe("The `page` id mcp_call gave."),
+  title: z.string().max(120),
+});
+
+/** Atlas's workspace (§9.1): its terminal, files and recent commands. There's one. */
+export const WorkspaceStage = z.object({ kind: z.literal("workspace") });
+
+/** Atlas's browser, live (§9.1): there's one, so the view only says to show it. */
+export const BrowserStage = z.object({ kind: z.literal("browser") });
+
 export const PageStage = z.object({
   kind: z.literal("page"),
   page: z.string().min(1).max(80).describe("The page's name or id."),
@@ -97,6 +239,17 @@ export const StageView = z.discriminatedUnion("kind", [
   DraftStage,
   PlanStage,
   PageStage,
+  ResearchStage,
+  BrowserStage,
+  FileStage,
+  DocumentStage,
+  CodeStage,
+  WorkspaceStage,
+  ChartStage,
+  CompareStage,
+  KitStage,
+  AppStage,
+  McpAppStage,
 ]);
 export type StageView = z.infer<typeof StageView>;
 export type StageKind = StageView["kind"];
@@ -188,12 +341,89 @@ export interface PagePage {
   };
 }
 
+/** The browser as its view shows it: where it is, and a live link (§9.1). */
+/** What a live view of the browser needs: where it is, and a link the app can show. */
+export interface BrowserState {
+  open: boolean;
+  url: string;
+  title: string;
+  /** A link to watch it live (read-only), or to drive it when the owner has taken it over. */
+  live: string | null;
+  /** Set while the owner has it: why Atlas handed it over, and when. */
+  taken: { why: string; at: number } | null;
+  error?: string;
+}
+
+export type BrowserStagePage = BrowserState & { kind: "browser" };
+
+/** The workspace as its view shows it: whether it's up, its files, the sites it may reach, and what ran lately. */
+export interface WorkspaceStagePage {
+  kind: "workspace";
+  available: boolean;
+  running: boolean;
+  /** /workspace, while the container is up (listing never starts it). */
+  files: Array<{ path: string; size: number; dir: boolean }> | null;
+  sites: string[];
+  runs: Array<{ id: string; at: number; command: string; exit: number | null; output: string; error?: string }>;
+  error?: string;
+}
+
+/** A file Atlas made (§21.7): what it is. Its bytes live in R2. */
+export interface FileRow {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  made_by: "owner" | "atlas";
+  note: string;
+  run_id: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** A file as its view shows it: what it is, a link to download it, and a look inside when that's possible. */
+export interface FileStagePage {
+  kind: "file";
+  file: { id: string; name: string; type: string; size: number; made_by: "owner" | "atlas"; note: string; updated_at: number; url: string };
+  preview:
+    | { kind: "text"; text: string; more: boolean }
+    | { kind: "table"; columns: string[]; rows: string[][]; more: boolean }
+    | { kind: "image" }
+    | { kind: "pdf" }
+    | { kind: "none" };
+}
+
 /** What a view needs from the agent, or why it can't be shown any more. */
-export type StagePage = AreaPage | PersonPage | AutomationPage | PagePage | { kind: "missing"; why: string };
+export type StagePage =
+  | AreaPage
+  | PersonPage
+  | AutomationPage
+  | PagePage
+  | BrowserStagePage
+  | FileStagePage
+  | WorkspaceStagePage
+  | { kind: "missing"; why: string };
 
 /** The few words a view goes by: on its tab, its receipt and its compact card. */
-export function stageTitle(v: StageView, names: { area?: string; person?: string; automation?: string; page?: string } = {}): string {
+export function stageTitle(
+  v: StageView,
+  names: { area?: string; person?: string; automation?: string; page?: string; file?: string } = {},
+): string {
   switch (v.kind) {
+    case "file":
+      return names.file ?? v.file;
+    case "document":
+    case "code":
+    case "chart":
+    case "compare":
+    case "kit":
+    case "app":
+    case "mcp_app":
+      return v.title;
+    case "browser":
+      return "Browser";
+    case "workspace":
+      return "Workspace";
     case "area":
       return names.area ?? v.area;
     case "person":
@@ -202,6 +432,7 @@ export function stageTitle(v: StageView, names: { area?: string; person?: string
     case "table":
     case "draft":
     case "plan":
+    case "research":
       return v.title;
     case "automation":
       return names.automation ?? v.automation;

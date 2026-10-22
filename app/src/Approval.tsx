@@ -41,18 +41,34 @@ export function ApprovalCard({ atlas, a }: { atlas: Atlas; a: ApprovalView }) {
               <span style={{ fontWeight: 500 }} className="grow">
                 {s.title}
               </span>
-              <span className={`tag ${s.kind === "delete" ? "ac" : ""}`}>
-                {s.kind === "delete" ? "Can't be undone" : "Reaches outside"}
+              <span className={`tag ${s.kind !== "webhook" ? "ac" : ""}`}>
+                {s.kind === "delete"
+                  ? "Can't be undone"
+                  : s.kind === "browser"
+                    ? "Sends a form"
+                    : s.kind === "vault"
+                      ? "Uses the vault"
+                      : s.kind === "site"
+                        ? "Opens a website to the workspace"
+                        : s.kind === "mcp"
+                          ? "Uses a connected service"
+                          : s.kind === "mcp_add"
+                            ? "Connects a service"
+                            : "Reaches outside"}
               </span>
             </div>
             <p className="small">{s.detail}</p>
             <p className="lab faint">{s.where}</p>
             {s.message != null && (
               <label className="field">
-                <span>Message it sends{messages[i] !== s.message ? " · edited" : ""}</span>
+                <span>
+                  {s.kind === "mcp" ? "What it sends" : "Message it sends"}
+                  {messages[i] !== s.message ? " · edited" : ""}
+                </span>
                 <textarea
-                  rows={2}
-                  maxLength={1000}
+                  rows={s.kind === "mcp" ? Math.min(10, s.message.split("\n").length + 1) : 2}
+                  maxLength={s.kind === "mcp" ? 4000 : 1000}
+                  className={s.kind === "mcp" ? "mono" : undefined}
                   value={messages[i]}
                   placeholder="Nothing: it sends its name"
                   onChange={(e) => setMessages(messages.map((m, j) => (j === i ? e.target.value : m)))}

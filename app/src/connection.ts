@@ -81,6 +81,12 @@ export interface State {
   suggestions: SuggestionView[];
   /** The owner's pages (§21.7), once asked for. */
   pages: PageSummary[] | null;
+  files: import("../../core/src/stage").FileRow[] | null;
+  /** What the workspace is printing for Atlas right now (a progress hint; the tool's result is the truth). */
+  workspaceOut: { run_id: string; text: string } | null;
+  skills: import("../../core/src/protocol").SkillView[] | null;
+  /** Connected MCP servers (§9.2), once asked for. */
+  mcpServers: import("../../core/src/protocol").McpServerView[] | null;
   /** The page Keep just made, so the view can say where it went. */
   kept: { id: string; name: string } | null;
 }
@@ -111,6 +117,10 @@ const initial: State = {
   automations: null,
   suggestions: [],
   pages: null,
+  files: null,
+  workspaceOut: null,
+  skills: null,
+  mcpServers: null,
   kept: null,
 };
 
@@ -256,6 +266,16 @@ function reduce(s: State, a: Action): State {
       return { ...s, automations: m.automations, suggestions: m.suggestions };
     case "atlas.pages":
       return { ...s, pages: m.pages };
+    case "atlas.files":
+      return { ...s, files: m.files };
+    case "atlas.skills":
+      return { ...s, skills: m.skills };
+    case "atlas.mcp.servers":
+      return { ...s, mcpServers: m.servers };
+    case "atlas.workspace.out": {
+      const prev = s.workspaceOut?.run_id === m.run_id ? s.workspaceOut.text : "";
+      return { ...s, workspaceOut: { run_id: m.run_id, text: (prev + m.text).slice(-40_000) } };
+    }
     case "atlas.page.kept":
       return { ...s, kept: { id: m.id, name: m.name } };
   }
@@ -304,6 +324,11 @@ export function useAtlas() {
         // This sign-in was ended (a removed passkey, or sign out everywhere): back to the sign-in page.
         c.disconnect();
         location.reload();
+        return;
+      }
+      // An MCP App's frame waits for its own answers by `req`; they go to it, not the state.
+      if (m?.type === "atlas.mcp.app.result" || m?.type === "atlas.mcp.app.answer") {
+        window.dispatchEvent(new CustomEvent("atlas:mcp", { detail: m }));
         return;
       }
       if (m && typeof m === "object" && typeof m.type === "string" && m.type.startsWith("atlas.")) {

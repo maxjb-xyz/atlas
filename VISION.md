@@ -138,7 +138,7 @@ The outbox does three things:
    - approvals (§12);
    - the secrets scrubber;
    - sharing rules (§7);
-   - the public-query check, so private details never go into a web search or a map query.
+   - the public-query check, so private details never go into a web search or a map query. Private means a secret, an email address, a phone number, or a street address Atlas keeps; names, places and topics aren't, on their own (decided 2026-10-22).
 3. **Writes a delivery receipt** into the log.
 
 ---
@@ -601,11 +601,22 @@ In the app, Atlas settings → Notifications shows channels per urgency, quiet h
 Channels are the text surfaces where people reach Atlas or a face:
 - SMS and calls (Telnyx or Twilio);
 - email;
-- Telegram, Discord, WhatsApp and Slack;
+- Telegram, Discord, WhatsApp, Signal and Slack;
 - iMessage, through a Mac node;
 - the website widget.
 
-Each channel is an adapter (§17). A stage view sent to a text-only channel arrives as a link that opens that view.
+Each channel is an adapter (§17). In a messaging thread Atlas texts like a person who has things to show you, the way messaging-native agents such as Instinct do: it sends what the channel can carry, not a link to everything.
+- **Rich where the channel allows.** An adapter says what its channel carries (images, files, reactions, effects, buttons, voice notes, formatting, length), and each stage view goes out in the richest form that fits:
+  - a chart, comparison, table or custom layout as an image drawn from the view's contract, with a line of text and a link that opens the live view;
+  - a list, plan, draft or research answer as text, with its sources as links;
+  - a file as an attachment (a PDF, a spreadsheet), and a document as a file or a link to its page;
+  - the browser as a screenshot;
+  - small apps and MCP Apps, which are for using, as a link.
+  SMS falls back to MMS images and links; email gets attachments.
+- **Texts like a person.** A reaction instead of a reply that would only be noise, emphasis only for what matters, voice notes in and out, and photos and files you send read like any message.
+- **Never silent for long.** A task that takes more than a moment gets a short note that Atlas is on it, a typing indicator where the channel has one, and the result when it's done (§8.1).
+- **Approvals in the thread.** Atlas asks in a sentence, and a "yes" or "no" reply decides, or a button where the channel has them. What needs a hold (§12.1), and anything secret (a card number, a password, the vault, §15), goes through a secure link to the app, never through the chat.
+- **Links open the app,** signed in on your own devices.
 
 ### 16.2 Atlas's own email
 
@@ -709,6 +720,7 @@ Everything installs from the app: browse, preview what it can touch, install, un
 | Code Mode and extensions | Dynamic Workers |
 | Decide and extract | Workers AI: Clef, Clairic |
 | Embeddings and search | Workers AI embeddings and full-text search, kept in each person's agent beside their records (a Vectorize index if one person's memory outgrows that) |
+| Web search | Cloudflare Web Search on the Workers AI binding, through AI Gateway, by default. Tavily, Brave or Exa by key, picked in Settings, for owners who want a free allowance (decided 2026-10-22) |
 | Files | R2 |
 | Email | Email Service for sending, Email Routing for receiving |
 | Brains | AI Gateway |
@@ -727,7 +739,8 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
 ### 19.3 Costs and caveats
 
 - **Plan.** It needs a Cloudflare account on the Workers paid plan, because sandboxes and sending email require it. Model usage is a separate cost, set by the owner's choices.
-- **Previews.** Some pieces are still previews: the Agents SDK's sub-agents, the voice package, Clairic, Artifacts. We wrap each one behind a small interface and keep a stable path ready.
+- **Previews.** Some pieces are still previews: the Agents SDK's sub-agents, the voice package, Clairic, Artifacts, Cloudflare Web Search, and the containers' Durable Object scheduling and snapshots that the workspace runs on. We wrap each one behind a small interface and keep a stable path ready.
+- **The workspace is a Sandbox the 1.0 way** (decided 2026-10-22). Sandbox SDK 1.0 has no ready-made class: the workspace is Atlas's own Durable Object driving a container (`ctx.container`), started from Cloudflare's managed Debian image so deploying needs no Docker, with Python and the rest installed on first start and kept as a snapshot.
 - **Not Project Think.** Think owns its own agent loop, model calls (through the AI SDK), message store and compaction, and offers no way to use Atlas's log as its store. Using it would mean a second log and a second loop (rule 3). Atlas uses the plain Agents SDK, whose fibers, sub-agents and Workflows don't need Think. ThinkWorkflow needs a Think agent, so it's out too. (Decided 2026-10-22.) M2 built automations without Workflows: their steps run in the agent, on the agenda, and a restart is covered by the agenda's lease and wake.
 - **Self-hosting.** People who want everything on their own hardware will prefer Hermes or OpenClaw.
   - The core stays plain TypeScript behind small interfaces (storage, scheduler, sandbox, browser, models, speech), so a self-hosted build is possible later.
@@ -748,7 +761,9 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
 ## 20. Security and privacy
 
 - **At the exits** (rule 2): the outbox checks, the secrets scrubber, the public-query check, sharing rules, approvals and the vault.
-- **Untrusted content** (emails, web pages, messages from other people, web results that tools return) is read by quarantined helpers, and it's marked as untrusted wherever it appears. It can inform Atlas, never instruct it.
+- **Untrusted content** (emails, web pages, messages from other people, web results that tools return) is marked as untrusted wherever it appears. It can inform Atlas, never instruct it.
+  - Atlas reads a page or a search's results itself; long or many reads go to helpers (§8.1), so only what matters comes back.
+  - Once a run has read the web, itself or through its helpers, anything that leaves Atlas in that run asks first, even what Atlas usually does without asking. The safety is at the exit (rule 2), not in the reading. The one exception is a vault login on a site the owner already said yes to (§15): the entry only fills on its own sites, so a page can't steer it anywhere else. (Decided 2026-10-22: a quarantined helper for every page would add a model call to each read, which voice can't afford.)
 - **Members are kept apart** by agent (§19.2).
 - **One audit log:** the log itself, with every action and delivery.
 - **Devices** are paired and can be revoked. Sign-in uses passkeys.
@@ -977,7 +992,7 @@ Atlas should feel like the future: alive, fast, a little magical.
 - **Web app first,** installable to your home screen, with push notifications.
 - **Desktop app** (Tauri): the same app, plus a node and a voice overlay you open with a hotkey.
 - **Phone:** the web app at first, with OwnTracks for location. It uses a tab bar (Home, Inbox, Agenda, Library), with History and settings under Library; this isn't drawn yet. A native app comes later, for location, health data, lock-screen voice and widgets.
-- **Text channels** (SMS, iMessage, Telegram, email): stage views arrive as links.
+- **Text channels** (SMS, iMessage, Telegram, Discord, Signal, WhatsApp, email): stage views arrive in the richest form the channel carries (§16.1): images, files, text, and links for what has to be used in the app.
 
 ---
 

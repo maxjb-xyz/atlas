@@ -4,13 +4,17 @@
 // surface), then every message since that summary. Compaction (§4.1) keeps
 // that last part in bounds; recall finds the rest, on demand.
 
+import { type McpServer, serversLine } from "./mcp";
 import { listPages } from "./pages";
+import { listFiles } from "./files";
+import { listSkills } from "./skills";
 import { focusNow } from "./outbox";
 import type { Message } from "./brains/types";
 import { character, TEXT_PROFILE, VOICE_PROFILE } from "./character";
 import { getItem, upcoming } from "./store/agenda";
 import { actionsOf, needsHold, waitingApprovals } from "./approvals";
 import { webhooks } from "./webhooks";
+import { vault } from "./vault";
 import { type Area, getArea, getScope, listAreas } from "./store/areas";
 import { parse, type Sql } from "./store/db";
 import { type AtlasRecord, standingFacts } from "./store/records";
@@ -61,6 +65,8 @@ export function systemPrompt(opts: {
   /** Only what was known before this point in the log counts (runs wait in line). */
   beforeSeq?: number;
   extra?: string;
+  /** Connected MCP servers, for runs that can use them (§9.2). */
+  mcp?: McpServer[];
 }): string {
   const { settings, tz, now, surface, sql } = opts;
   const summary = latestSummary(sql, opts.beforeSeq);
@@ -83,9 +89,12 @@ export function systemPrompt(opts: {
     `Now: ${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}.`,
     focusLine(sql, tz),
     pagesLine(sql),
+    skillsLine(sql),
+    serversLine(opts.mcp ?? []),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     areaContext(sql, opts.beforeSeq),
     exitsContext(sql, tz, now),
+    jobsLine(sql, now),
     surface === "voice" ? VOICE_PROFILE : surface === "none" ? "" : TEXT_PROFILE,
     opts.extra ?? "",
   ]
@@ -200,11 +209,25 @@ export function hat(sql: Sql, beforeSeq?: number): Area[] {
  * waiting for their OK, and what was settled in the last two hours, so
  * Atlas never says something is done that's still waiting, or the reverse.
  */
+/** The skills index (§9.3): every active skill's one line, most used first, so Atlas finds them again. */
+function skillsLine(sql: Sql): string {
+  const skills = listSkills(sql).slice(0, 60);
+  return skills.length
+    ? `Your skills (open one with skill_read before a task it covers; improve it with skill_save when it was wrong):\n${skills
+        .map((s) => `- ${s.name}: ${s.description}${s.checked && !s.checked.ok ? " (its last check failed)" : ""}`)
+        .join("\n")}`
+    : "";
+}
+
 function pagesLine(sql: Sql): string {
   const pages = listPages(sql).slice(0, 20);
-  return pages.length
-    ? `The owner's pages (newest first; page_read to read one): ${pages.map((p) => `${p.name} (${p.id})`).join(", ")}.`
-    : "";
+  const files = listFiles(sql).slice(0, 20);
+  return [
+    pages.length ? `The owner's pages (newest first; page_read to read one): ${pages.map((p) => `${p.name} (${p.id})`).join(", ")}.` : "",
+    files.length ? `Files you've made (newest first; file_read reads a text one): ${files.map((f) => f.name).join(", ")}.` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function focusLine(sql: Sql, tz: string): string {
@@ -220,6 +243,17 @@ function exitsContext(sql: Sql, tz: string, now: Date): string {
   if (hooks.length) {
     lines.push(
       `The owner's webhooks (call them with webhook_call):\n${hooks.map((w) => `- ${w.name}${w.about ? `: ${w.about}` : ""}`).join("\n")}`,
+    );
+  }
+  const entries = vault(sql);
+  if (entries.length) {
+    lines.push(
+      `The owner's vault (fill an entry into the browser with vault_fill; you never see the values):\n${entries
+        .map(
+          (e) =>
+            `- ${e.name} (${e.kind}, fills on ${e.sites.join(", ")}): ${[...Object.keys(e.values), ...(e.totp ? ["code"] : [])].join(", ")}`,
+        )
+        .join("\n")}`,
     );
   }
   const waiting = waitingApprovals(sql);
@@ -251,6 +285,23 @@ function exitsContext(sql: Sql, tz: string, now: Date): string {
     });
   if (settled.length) lines.push(`Approvals settled lately:\n${settled.join("\n")}`);
   return lines.join("\n\n");
+}
+
+/** Helpers working now (§8.1), so "how's it going?" has an answer while they work. */
+function jobsLine(sql: Sql, now: Date): string {
+  const running = sql
+    .exec<{ id: string; title: string; created_at: number; source: string }>(
+      `SELECT id, title, created_at, source FROM agenda WHERE kind = 'job' AND state IN ('scheduled', 'running') ORDER BY created_at LIMIT 10`,
+    )
+    .toArray();
+  if (!running.length) return "";
+  const lines = running.map((j) => {
+    const run = parse<{ detail?: { helper_run?: string } }>(j.source, {}).detail?.helper_run;
+    const steps = run ? sql.exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE run_id = ? AND kind = 'tool.call'`, run).one().n : 0;
+    const mins = Math.max(0, Math.round((now.getTime() - j.created_at) / 60_000));
+    return `- ${j.title} (id ${j.id}): started ${mins ? `${mins} min` : "under a minute"} ago, ${steps} lookup${steps === 1 ? "" : "s"} so far`;
+  });
+  return `Helpers working now (you get each one's result when it's done, and finish the task then):\n${lines.join("\n")}`;
 }
 
 /** What a run is told about areas: the hat, its tone, and the owner's other areas. */

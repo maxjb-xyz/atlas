@@ -13,6 +13,10 @@ import type { AgendaItem } from "../store/agenda";
 import type { Sql } from "../store/db";
 import type { Receipt } from "../store/log";
 import type { Settings } from "../store/settings";
+import type { LookOut, Page, SearchResult } from "../web";
+import type { BrowserAction, BrowserPage, PageElement } from "../browser";
+import type { McpServer } from "../mcp";
+import type { StageView } from "../stage";
 
 /** What kind of action a tool takes decides when Atlas asks first (§12.1). */
 export type { ToolKind } from "../approvals";
@@ -39,6 +43,22 @@ export interface ToolContext {
    * where nothing may leave, such as inside a helper.
    */
   exit: ExitApi | null;
+  /** The web (§9.1), through the outbox's checks; null where the web isn't reachable. */
+  web: WebApi | null;
+  /** Where files' bytes live (§21.7): R2, or null where there's no bucket. */
+  files: R2Bucket | null;
+  /** The tools this run has, for a program that calls them (Code Mode, §9.1). */
+  tools?: Tool[];
+  /** Runs Code Mode's programs in Dynamic Workers; null where programs can't run. */
+  loader?: WorkerLoader | null;
+  /** Logs a tool call a program made, with its receipt, as a row of this run. */
+  record?: (name: string, input: unknown, result: ToolResult) => Promise<void>;
+  /** The workspace (§9.1): a container with a shell; null where it isn't reachable. */
+  workspace: WorkspaceApi | null;
+  /** The browser (§9.1), for runs that may drive it; null elsewhere. */
+  browser: BrowserApi | null;
+  /** Connected MCP servers (§9.2); absent or null where they can't be used. */
+  mcp?: McpApi | null;
   /** Automations, for owner runs; null elsewhere. */
   automations: AutomationsApi | null;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
@@ -53,6 +73,64 @@ export interface AutomationsApi {
   run(automation: Automation, o: { why: "request" | "test"; inputs?: Record<string, string> }): Promise<RunOutcome>;
   /** Puts its next run on the clock, or takes it off, after a change. */
   arm(id: string): Promise<void>;
+}
+
+/** Searching and reading the web. Each call leaves Atlas, so it passes the exit checks and leaves a receipt (§4.4). */
+export interface WebApi {
+  search(
+    query: string,
+    o: { run_id: string | null; count: number; fresh?: "day" | "week" | "month" | "year" },
+  ): Promise<LookOut<SearchResult[]>>;
+  fetch(url: string, o: { run_id: string; start?: number; links?: boolean }): Promise<LookOut<Page>>;
+}
+
+/**
+ * The browser as tools reach it. Opening and typing leave Atlas, so they
+ * pass the outbox's checks with a receipt; while the owner has taken it
+ * over, everything but `where` says so and waits.
+ */
+export interface BrowserApi {
+  open(url: string, o: { run_id: string; start?: number }): Promise<BrowserPage>;
+  look(o: { start?: number }): Promise<BrowserPage>;
+  act(a: Exclude<BrowserAction, { act: "submit" }>, o: { run_id: string }): Promise<BrowserPage>;
+  find(ref: string): Promise<PageElement | null>;
+  takeOver(why: string): Promise<void>;
+  close(): Promise<void>;
+  where(): { open: boolean; url: string; title: string };
+}
+
+/** Connected MCP servers, as tools reach them (§9.2). */
+export interface McpApi {
+  servers(): McpServer[];
+  /** Calls a tool that only reads, now, through the outbox; a tool with a page puts it on the stage. */
+  call(
+    server: string,
+    tool: string,
+    args: Record<string, unknown>,
+    o: { run_id: string },
+  ): Promise<{ ok: boolean; text: string; view?: StageView }>;
+}
+
+/** What a command in the workspace did. */
+export interface RunResult {
+  exit: number;
+  /** What it printed (stdout and stderr together), at most 200 KB. */
+  output: string;
+  ms: number;
+  /** Websites the workspace tried and wasn't allowed to reach. */
+  blocked: string[];
+  /** Said by the workspace along the way: setting up, starting, or why /workspace wasn't kept. */
+  notes: string[];
+}
+
+/** The workspace (§9.1) as tools reach it. */
+export interface WorkspaceApi {
+  run(command: string, o: { run_id: string; timeout_s: number }): Promise<RunResult>;
+  read(path: string): Promise<{ ok: true; bytes: ArrayBuffer } | { ok: false; error: string }>;
+  /** A link to a server on `port` in the workspace, for a day. */
+  preview(port: number): Promise<{ url: string; expires: number }>;
+  /** Websites the workspace may reach. */
+  sites(): string[];
 }
 
 export interface ExitApi {

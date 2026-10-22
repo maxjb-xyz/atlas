@@ -31,13 +31,33 @@ function inline(text: string, key = "i"): ReactNode[] {
     else if (m[2]) out.push(<strong key={k}>{inline(m[2].slice(2, -2), k)}</strong>);
     else if (m[3]) out.push(<s key={k}>{inline(m[3].slice(2, -2), k)}</s>);
     else if (m[4] && m[5]) out.push(link(m[5], inline(m[4], k), k));
-    else if (m[6]) out.push(link(m[6], m[6], k));
+    else if (m[6]) out.push(link(m[6], shortAddress(m[6]), k));
     else if (m[7]) out.push(<em key={k}>{inline(m[7].slice(1, -1), k)}</em>);
     else if (m[8]) out.push(<em key={k}>{inline(m[8].slice(1, -1), k)}</em>);
     last = at + m[0].length;
   }
   if (last < text.length) out.push(text.slice(last));
   return out;
+}
+
+/**
+ * A long bare address (a sign-in link with its query) is shown by its host
+ * and the start of its path; the link itself is the whole address.
+ */
+function shortAddress(href: string): string {
+  if (href.length <= 60) return href;
+  try {
+    const u = new URL(href);
+    const path = u.pathname === "/" ? "" : u.pathname;
+    return `${u.host}${path.length > 30 ? `${path.slice(0, 29)}…` : path}${u.search || u.hash ? "…" : ""}`;
+  } catch {
+    return `${href.slice(0, 57)}…`;
+  }
+}
+
+/** One line of text with its links and emphasis, for notes and results outside a message. */
+export function InlineText({ text }: { text: string }) {
+  return <>{inline(text)}</>;
 }
 
 function link(href: string, children: ReactNode, key: string): ReactNode {

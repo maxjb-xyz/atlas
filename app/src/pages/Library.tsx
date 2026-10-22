@@ -25,12 +25,12 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
   const s = atlas.state;
   // An area's or a person's page opens in place: "area:<id>" under Areas, "person:<id>" under People (§21.2).
   const [head, rest = ""] = [detail.split(":")[0]!, detail.split(":").slice(1).join(":")];
-  const page = head === "area" || head === "person" || head === "page" ? { kind: head, id: rest } : null;
+  const page = head === "area" || head === "person" || head === "page" || head === "file" ? { kind: head, id: rest } : null;
   const tab = (
     page
       ? page.kind === "area"
         ? "areas"
-        : page.kind === "page"
+        : page.kind === "page" || page.kind === "file"
           ? "files"
           : "people"
       : ["overview", "people", "places", "memory", "areas", "files"].includes(head)
@@ -49,7 +49,7 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
         { id: "places", label: "Places", badge: counts.place || null },
         { id: "areas", label: "Areas", badge: s.areas.filter((a) => a.state !== "archived").length || null },
         { id: "memory", label: "Memory", badge: counts.all || null },
-        { id: "files", label: "Pages", badge: s.pages?.length || null },
+        { id: "files", label: "Pages & files", badge: (s.pages?.length ?? 0) + (s.files?.length ?? 0) || null },
       ]}
       tab={tab}
       onTab={(t) => go(t === "overview" ? "" : t)}
@@ -70,10 +70,12 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
                 ? { kind: "area", area: page.id }
                 : page.kind === "page"
                   ? { kind: "page", page: page.id }
-                  : { kind: "person", person: page.id },
+                  : page.kind === "file"
+                    ? { kind: "file", file: page.id }
+                    : { kind: "person", person: page.id },
             title: "",
           }}
-          onClose={() => go(page.kind === "area" ? "areas" : page.kind === "page" ? "files" : "people")}
+          onClose={() => go(page.kind === "area" ? "areas" : page.kind === "page" || page.kind === "file" ? "files" : "people")}
           onOpen={(v) => {
             if (v.kind === "person") go(`person:${v.person}`);
           }}
@@ -541,6 +543,10 @@ function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; ot
   );
 }
 
+/** A file's size in the words people use. */
+export const sizeOf = (n: number) =>
+  n < 1_000 ? `${n} B` : n < 1_000_000 ? `${Math.round(n / 1_000)} KB` : `${(n / 1_000_000).toFixed(1)} MB`;
+
 const VIEW_WORD: Record<string, string> = {
   area: "area",
   person: "person",
@@ -549,15 +555,29 @@ const VIEW_WORD: Record<string, string> = {
   automation: "automation",
   draft: "draft",
   plan: "plan",
+  research: "research",
+  browser: "browser",
+  file: "file",
+  document: "document",
+  code: "code",
+  chart: "chart",
+  compare: "comparison",
+  kit: "view",
+  app: "app",
+  mcp_app: "app",
+  workspace: "workspace",
 };
 
 /** Pages Atlas made or you kept (§21.7). Files Atlas makes join them in M3. */
 function Pages({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
   const s = atlas.state;
   useEffect(() => {
-    if (atlas.voice.connected) atlas.send({ type: "atlas.pages" });
+    if (!atlas.voice.connected) return;
+    atlas.send({ type: "atlas.pages" });
+    atlas.send({ type: "atlas.files" });
   }, [atlas.voice.connected, s.rows.length]);
   const pages = s.pages;
+  const files = s.files;
   return (
     <Sheet>
       <div className="sheet-in">
@@ -591,9 +611,35 @@ function Pages({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
             versions, and the areas and people in them stay current.
           </Empty>
         )}
-        <p className="faint small" style={{ marginTop: 16 }}>
-          Files Atlas makes, such as PDFs, come later and will live here too.
-        </p>
+        <div className="sheet-title" style={{ marginTop: 28 }}>
+          <h2 className="disp">Files</h2>
+          <span className="muted">What Atlas makes for you to download: spreadsheets, documents, PDFs.</span>
+        </div>
+        {files == null ? (
+          <p className="lab">Looking</p>
+        ) : files.length ? (
+          <div className="rows">
+            {files.map((f) => (
+              <div key={f.id} className="r pickable" {...pressable(() => go(`file:${f.id}`))} style={{ alignItems: "flex-start" }}>
+                <Icon name="file" size={14} />
+                <span className="grow" style={{ minWidth: 0 }}>
+                  <span style={{ fontWeight: 500 }}>{f.name}</span>
+                  {f.note && (
+                    <span className="muted small clamp" style={{ display: "block" }}>
+                      {f.note}
+                    </span>
+                  )}
+                </span>
+                <span className="lab faint hide-phone">{f.made_by === "owner" ? "You" : "Atlas"}</span>
+                <span className="mono faint small" style={{ flex: "none" }}>
+                  {sizeOf(f.size)} · {shortDay(f.updated_at)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="muted small">No files yet. Ask Atlas for one: "make a spreadsheet of my reminders this month".</p>
+        )}
       </div>
     </Sheet>
   );

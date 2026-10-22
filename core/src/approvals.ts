@@ -34,12 +34,59 @@ export const ASKS: Record<ToolKind, { asks: "never" | "until_trusted" | "always"
 
 /** Something Atlas will do once the owner says yes. Executed by the outbox (§4.4), never by the tool that asked. */
 export type Action =
-  { kind: "webhook"; webhook: string; name: string; message?: string } | { kind: "delete"; record: string; name: string; fact: string };
+  | { kind: "webhook"; webhook: string; name: string; message?: string }
+  | { kind: "delete"; record: string; name: string; fact: string }
+  /** Sending a form in the browser (§9.1): pressing its button, or Enter in its field, on the page it was asked on. */
+  | { kind: "browser"; ref: string; name: string; url: string; what: string }
+  /**
+   * Filling a vault entry into the browser's fields (§15), and pressing
+   * `press` after (a login's Sign in). `fields` maps the entry's field to the
+   * element's number.
+   */
+  | {
+      kind: "vault";
+      entry: string;
+      name: string;
+      host: string;
+      url: string;
+      card: boolean;
+      fields: Record<string, string>;
+      press?: { ref: string; text: string };
+    }
+  /** Letting the workspace reach a website (§9.1), asked once per site and remembered; `key` is a vault key it will carry there. */
+  | { kind: "site"; host: string; name: string; why: string; key?: { entry: string; name: string } }
+  /**
+   * A tool on a connected MCP server that does more than read (§9.2). `name`
+   * says it for the card ("create_issue on GitHub"); `destructive` is the
+   * server's own word that it can't be undone.
+   */
+  | {
+      kind: "mcp";
+      server: string;
+      name: string;
+      tool: string;
+      arguments: Record<string, Json>;
+      destructive: boolean;
+      what: string;
+      /** The server's name and host, for the card. */
+      where: string;
+    }
+  /** Connecting a new MCP server (§9.2: growing its own abilities, with the owner's OK). */
+  | { kind: "mcp_add"; name: string; url: string; why: string };
 
-export const kindOf = (a: Action): ToolKind => (a.kind === "delete" ? "irreversible" : "outside");
+/** Sending a form can't be taken back (VISION §12.1 lists submit with the things that can't be undone). */
+export const kindOf = (a: Action): ToolKind =>
+  a.kind === "webhook" ||
+  a.kind === "site" ||
+  a.kind === "mcp_add" ||
+  (a.kind === "vault" && !a.card) ||
+  (a.kind === "mcp" && !a.destructive)
+    ? "outside"
+    : "irreversible";
 
 /** What earned trust is counted by: each webhook on its own. Nothing that can't be undone is ever trusted. */
-export const trustKey = (a: Action): string | null => (a.kind === "webhook" ? `webhook:${a.webhook}` : null);
+export const trustKey = (a: Action): string | null =>
+  a.kind === "webhook" ? `webhook:${a.webhook}` : a.kind === "mcp" ? `mcp:${a.server}:${a.tool}` : null;
 
 export const needsHold = (actions: Action[]) => actions.some((a) => ASKS[kindOf(a)].hold);
 
@@ -124,17 +171,33 @@ export function openApproval(sql: Sql, runId: string): AgendaItem | null {
   return r ? getItem(sql, r.id) : null;
 }
 
-export const titleOf = (actions: Action[]) => actions.map((a) => (a.kind === "webhook" ? a.name : `Delete ${a.name}`)).join(", then ");
+export const titleOf = (actions: Action[]) =>
+  actions
+    .map((a) =>
+      a.kind === "webhook"
+        ? a.name
+        : a.kind === "delete"
+          ? `Delete ${a.name}`
+          : a.kind === "vault"
+            ? `Use ${a.name} on ${a.host}`
+            : a.kind === "mcp_add"
+              ? `Connect ${a.name}`
+              : a.name,
+    )
+    .join(", then ");
 
 /** Adds an action to this run's approval, making the approval if it's the first. */
 export function requestApproval(
   sql: Sql,
-  o: { run_id: string; log_id: string | null; action: Action; now?: number },
+  o: { run_id: string; log_id: string | null; action: Action; now?: number; read_web?: boolean },
 ): { item: AgendaItem; created: boolean } {
   const open = openApproval(sql, o.run_id);
   if (open) {
     const actions = [...actionsOf(open), o.action];
-    const source = { ...open.source, detail: { ...(open.source.detail ?? {}), actions: actions as unknown as Json } };
+    const source = {
+      ...open.source,
+      detail: { ...(open.source.detail ?? {}), actions: actions as unknown as Json, ...(o.read_web ? { read_web: true } : {}) },
+    };
     sql.exec(
       `UPDATE agenda SET title = ?, source = ?, updated_at = ? WHERE id = ?`,
       titleOf(actions),
@@ -152,7 +215,7 @@ export function requestApproval(
       run_id: o.run_id,
       ...(o.log_id ? { log_id: o.log_id } : {}),
       via: "approval",
-      detail: { actions: [o.action] as unknown as Json },
+      detail: { actions: [o.action] as unknown as Json, ...(o.read_web ? { read_web: true } : {}) },
     },
   });
   return { item, created: true };

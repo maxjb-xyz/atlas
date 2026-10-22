@@ -266,8 +266,14 @@ describe("automations", () => {
     expect(test.requests[0]!.tools.map((x) => x.name).sort()).toEqual([
       "agenda_list",
       "calendar_read",
+      "file_read",
+      "mcp_call",
+      "mcp_tools",
       "page_read",
       "recall",
+      "skill_read",
+      "web_fetch",
+      "web_search",
       "webhook_call",
     ]);
     expect(String(test.requests[0]!.messages.filter((m) => m.role === "user").at(-1)!.content)).toContain("This is a test run");

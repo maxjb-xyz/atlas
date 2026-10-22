@@ -16,6 +16,7 @@ import { setupView } from "./setup";
 import { focusNow, interruptionsToday, pushDevices } from "../outbox";
 import { ASKS, trustTable } from "../approvals";
 import { webhooks, webhookView } from "../webhooks";
+import { vault, vaultView } from "../vault";
 import type { VapidKeys } from "../push";
 import type { ChatGPTSignIn } from "./chatgpt";
 
@@ -33,11 +34,15 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
     settings,
     secrets: {
       elevenlabs_api_key: Boolean(getSecret(sql, "elevenlabs_api_key")),
+      tavily_api_key: Boolean(getSecret(sql, "tavily_api_key")),
+      brave_api_key: Boolean(getSecret(sql, "brave_api_key")),
+      exa_api_key: Boolean(getSecret(sql, "exa_api_key")),
       icloud: icloud
         ? { username: icloud.username, refused: refusal ? { ...refusal, note: parts.calendar.note(refusal, settings) } : null }
         : null,
     },
     webhooks: webhooks(sql).map(webhookView),
+    vault: vault(sql).map(vaultView),
     permissions: {
       kinds: ASKS,
       trusted: Object.entries(trustTable(sql))
@@ -76,6 +81,8 @@ export interface TestDeps {
   systemFor(character?: Settings["character"]): string;
   /** Sends a test notification to one device. */
   push(device: string | undefined): Promise<TestOutcome>;
+  /** A real web search with the chosen provider. */
+  search(): Promise<TestOutcome>;
   /** Calls a webhook now, on the owner's own word. */
   webhook(id: string | undefined): Promise<TestOutcome>;
 }
@@ -138,6 +145,7 @@ export async function liveTest(deps: TestDeps, msg: Extract<ClientMessage, { typ
     }
     if (msg.what === "push") return await deps.push(msg.device);
     if (msg.what === "webhook") return await deps.webhook(msg.id);
+    if (msg.what === "search") return await deps.search();
     if (msg.what === "sample") {
       const choice = settings.brains.main.map((c) => deps.makeBrain(c)).find((b) => b != null);
       if (!choice) return { ok: false, message: "There's no brain set up to answer." };
