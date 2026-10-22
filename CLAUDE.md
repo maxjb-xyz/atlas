@@ -8,6 +8,7 @@ A milestone is done when its smoke test passes on the owner's real deployment (V
 
 - `core/`: the Worker and the person agent (TypeScript, Cloudflare Agents SDK). The core runtime has a 25k-line budget (VISION rule 4).
 - `app/`: the web app (React, Vite), served by the Worker. UI v1 is locked in [docs/ui/](docs/ui/README.md).
+- `desktop/`: the desktop app (Tauri, Rust): Atlas in a window, and the first node (VISION §16.3). Built for the Mac by `.github/workflows/desktop.yml`, only on a published release.
 - `bench/`: the voice latency benchmark, run against a deployed Atlas.
 - `docs/ui/`, `brand/`: the locked UI and the diamond mark.
 
