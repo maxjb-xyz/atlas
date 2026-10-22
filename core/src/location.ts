@@ -281,6 +281,8 @@ export function newOwnTracksLogin(sql: Sql): OwnTracksLogin {
     .replace(/=+$/, "");
   const login = { user: "atlas", password, made_at: Date.now() };
   setSecret(sql, "owntracks", login);
+  // A refused post from before is about the old password; the new one starts clean.
+  save(sql, { ...here(sql), refused: null });
   return login;
 }
 

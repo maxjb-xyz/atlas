@@ -98,7 +98,7 @@ export function SettingsPage({
       label="Settings"
       tabs={[{ id: section, label }]}
       tab={section}
-      meta="Atlas · M3"
+      meta="Atlas · M4"
       dock={
         <div className="dock slim">
           {dirty && (
@@ -564,7 +564,9 @@ function WebSearch({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settings
           ))}
         </select>
       </label>
-      <p className="muted small">{p.about} Private details (secrets, emails, phone numbers, saved addresses) never go into a search.</p>
+      <p className="muted small">
+        {p.about} Private details (secrets, emails, phone numbers, saved addresses, where you are) never go into a search.
+      </p>
       {p.key && (
         <SecretField
           label={`${p.name} key`}
@@ -1548,13 +1550,15 @@ function Speaking({ draft, edit }: { draft: SettingsT; edit: Edit }) {
         <input type="checkbox" checked={sp[k].on} onChange={(e) => set({ [k]: { ...sp[k], on: e.target.checked } })} />
         {label}
       </label>
-      <input
-        type="time"
-        style={{ width: 120 }}
-        value={sp[k].at}
-        disabled={!sp[k].on}
-        onChange={(e) => e.target.value && set({ [k]: { ...sp[k], at: e.target.value } })}
-      />
+      <label className="field" style={{ width: 130 }}>
+        <input
+          type="time"
+          aria-label={`${label}: time`}
+          value={sp[k].at}
+          disabled={!sp[k].on}
+          onChange={(e) => e.target.value && set({ [k]: { ...sp[k], at: e.target.value } })}
+        />
+      </label>
     </div>
   );
   return (
@@ -1594,7 +1598,7 @@ function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
   return (
     <>
       <State
-        on={on && l.set_up && fix != null}
+        on={on && l.set_up}
         text={!on ? "Off" : !l.set_up ? "Not set up" : fix ? `Last fix ${shortDay(fix.at)}, ${clock(fix.at)}` : "Waiting for OwnTracks"}
         what="OwnTracks on your phone tells Atlas where you are."
       />
@@ -1621,19 +1625,18 @@ function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
       </p>
       {l.refused && (
         <p className="err small">
-          A post with the wrong password came at {shortDay(l.refused.at)}, {clock(l.refused.at)}. If that was your phone, set OwnTracks up
-          again.
+          A post with the wrong password came {shortDay(l.refused.at)}. If that was your phone, set OwnTracks up again.
         </p>
       )}
       {setup ? (
         <div className="row" style={{ alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
-          <QrCode text={setup.link} size={180} />
+          <QrCode text={setup.link} size={240} />
           <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, maxWidth: 420 }}>
             <p className="small">
               Install OwnTracks on your phone, then scan this with the camera or tap Open in OwnTracks on the phone. It fills in Atlas's
               address, a user and a password made for it alone, and your places.
             </p>
-            <a className="btn primary" href={setup.link}>
+            <a className="btn primary" href={setup.link} style={{ textDecoration: "none", alignSelf: "flex-start" }}>
               Open in OwnTracks
             </a>
             <p className="faint small mono" style={{ wordBreak: "break-all" }}>

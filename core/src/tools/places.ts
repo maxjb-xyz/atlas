@@ -10,6 +10,7 @@ import { KINDS, minutes, type Found, type Point, PLACE_KINDS, type Travel } from
 import { createItem, finish, getItem, upcoming } from "../store/agenda";
 import { correctRecord, createRecord, findRecords, getRecord, type AtlasRecord } from "../store/records";
 import { get as getRow } from "../store/log";
+import { setState } from "../store/state";
 import { clockLocal, isoLocal, parseWhen, shortLocal } from "../time";
 import { defineTool, fail, type ToolContext } from "./types";
 
@@ -123,18 +124,15 @@ export const placePin = defineTool({
     const source = { via: ctx.via, run_id: ctx.run_id, ...(ctx.source_log_id ? { log_id: ctx.source_log_id } : {}) };
     if (existing) {
       const r = correctRecord(ctx.sql, existing.id, { fields }, "pinned on the map", source);
+      if (input.at === "here") hereAt(ctx, r.id, r.name);
       return {
         ok: true,
         output: { id: r.id, pinned: r.name, ...(address ? { address } : {}) },
         receipt: { text: `Pinned · ${r.name}`, undo: { kind: "record.revert", id: r.id, history: r.history_seq } },
       };
     }
-    const r = createRecord(ctx.sql, {
-      type: "place",
-      name: input.place.trim(),
-      fields: { fact: `${input.place.trim()} is a place the owner goes.`, ...fields },
-      source,
-    });
+    const r = createRecord(ctx.sql, { type: "place", name: input.place.trim(), fields, source });
+    if (input.at === "here") hereAt(ctx, r.id, r.name);
     return {
       ok: true,
       output: { id: r.id, pinned: r.name, made: true },
@@ -142,6 +140,18 @@ export const placePin = defineTool({
     };
   },
 });
+
+/** The owner said they're at a place now: Atlas knows it at once, without waiting for the phone's next report. */
+function hereAt(ctx: ToolContext, id: string, name: string): void {
+  const h = here(ctx.sql);
+  if (h.place?.id === id) return;
+  const at = ctx.now.getTime();
+  setState(ctx.sql, "location", {
+    ...h,
+    place: { id, name, since: at },
+    anchor: h.fix ? { lat: h.fix.lat, lon: h.fix.lon, at } : h.anchor,
+  });
+}
 
 export const placeFind = defineTool({
   name: "place_find",

@@ -211,7 +211,11 @@ export function WeatherView({ page, onClose }: { page: WeatherPage; onClose?: ()
               <div key={h.t} className="weather-hour">
                 <span className="faint small">{new Date(h.t).toLocaleTimeString([], { hour: "numeric" })}</span>
                 <span>{temp(h.temp_c, u)}</span>
-                <span className="weather-rain" style={{ height: `${Math.max(2, h.pop * 0.4)}px` }} title={`${h.pop}% chance of rain`} />
+                <span
+                  className="weather-rain"
+                  style={{ height: `${h.pop >= 10 ? Math.max(3, h.pop * 0.4) : 0}px` }}
+                  title={`${h.pop}% chance of rain`}
+                />
                 <span className="faint small">{h.pop >= 10 ? `${h.pop}%` : ""}</span>
               </div>
             ))}

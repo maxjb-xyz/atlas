@@ -351,7 +351,7 @@ export function QrCode({ text, size = 200 }: { text: string; size?: number }) {
   useEffect(() => {
     let gone = false;
     void import("qrcode-generator").then(({ default: qrcode }) => {
-      const qr = qrcode(0, "M");
+      const qr = qrcode(0, "L");
       qr.addData(text);
       qr.make();
       const n = qr.getModuleCount();

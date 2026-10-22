@@ -40,7 +40,7 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
       }
       return {
         who: r.actor === "owner" ? "You" : "Atlas",
-        what: `${str(b.kind) === "job" ? "Job" : str(b.kind) === "promise" ? "Promise" : "Reminder"} ${str(b.change) === "done" && str(b.kind) === "promise" ? "kept" : str(b.change)}: ${str(b.title)}`,
+        what: `${{ job: "Job", promise: "Promise", errand: "Errand", rhythm: "Look", situation: "Situation" }[str(b.kind)] ?? "Reminder"} ${str(b.change) === "done" && str(b.kind) === "promise" ? "kept" : str(b.change) === "cancelled" && str(b.kind) === "errand" ? "dropped" : str(b.change)}: ${str(b.title)}`,
         kind: `${str(b.kind)}.${str(b.change)}`,
       };
     case "area.change":
