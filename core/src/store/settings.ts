@@ -73,8 +73,22 @@ export const Settings = z.object({
 });
 export type Settings = z.infer<typeof Settings>;
 
-/** A partial update from the app. Nested objects are replaced whole. */
-export const SettingsPatch = Settings.partial();
+/**
+ * A partial update from the app. Nested objects are replaced whole. Built
+ * from each field without its default: `Settings.partial()` would fill every
+ * missing key with its default, so changing one setting would reset the rest.
+ */
+const f = Settings.shape;
+export const SettingsPatch = z.object({
+  assistant_name: f.assistant_name.unwrap().optional(),
+  owner_name: f.owner_name.unwrap().optional(),
+  timezone: f.timezone.unwrap().optional(),
+  brains: f.brains.unwrap().optional(),
+  voice: f.voice.unwrap().optional(),
+  character: f.character.unwrap().optional(),
+  pins: f.pins.unwrap().optional(),
+  calendar: f.calendar.unwrap().optional(),
+} satisfies { [K in keyof typeof f]: z.ZodType });
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
 export function readSettings(sql: Sql): Settings {

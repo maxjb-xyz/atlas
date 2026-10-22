@@ -7,6 +7,7 @@ import { upcoming } from "../src/store/agenda";
 import { migrate, type Sql } from "../src/store/db";
 import { forRun, logTo, thread } from "../src/store/log";
 import { correctRecord, createRecord, recordHistory } from "../src/store/records";
+import { ClientMessage } from "../src/protocol";
 import { readSettings, secretValues, setSecret, writeSettings } from "../src/store/settings";
 import { endRun, getRun, startRun, sweepStaleRuns } from "../src/store/runs";
 import { getState } from "../src/store/state";
@@ -283,6 +284,14 @@ describe("the store", () => {
       writeSettings(sql, { owner_name: "Max" });
       expect(readSettings(sql).owner_name).toBe("Max");
       expect(() => writeSettings(sql, { brains: { main: [], voice: [] } } as never)).toThrow();
+      // Changing one setting leaves the others as they were, not back at their defaults.
+      writeSettings(sql, { assistant_name: "Jarvis" });
+      expect(writeSettings(sql, { timezone: "Europe/London" })).toEqual(["timezone"]);
+      expect(readSettings(sql)).toMatchObject({ assistant_name: "Jarvis", owner_name: "Max", timezone: "Europe/London" });
+      expect(ClientMessage.parse({ type: "atlas.settings.update", patch: { pins: [] } })).toEqual({
+        type: "atlas.settings.update",
+        patch: { pins: [] },
+      });
     }));
 
   it("moves what isn't a secret out of the secrets table", async () => {
