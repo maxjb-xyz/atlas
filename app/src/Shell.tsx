@@ -461,10 +461,11 @@ function BusyEdge() {
     const el = comet.current;
     const still = document.documentElement.dataset.motion === "reduced" || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!el || still || perimeter <= 1) return;
-    const a = el.animate([{ strokeDashoffset: 0 }, { strokeDashoffset: -perimeter }], {
-      duration: (perimeter / TRAVEL) * 1000,
-      iterations: Infinity,
-    });
+    const duration = (perimeter / TRAVEL) * 1000;
+    const a = el.animate([{ strokeDashoffset: 0 }, { strokeDashoffset: -perimeter }], { duration, iterations: Infinity });
+    // Where the ticks are follows the clock, not when this started: the box growing as a tool's
+    // status or receipt arrives (or the edge being drawn again) doesn't send them back to the start.
+    a.currentTime = performance.now() % duration;
     return () => a.cancel();
   }, [perimeter]);
   return (

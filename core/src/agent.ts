@@ -1210,12 +1210,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   async #reportJob(item: AgendaItem, result: { state: "done" | "failed"; text: string }): Promise<void> {
     const note =
       result.state === "done"
-        ? `[Atlas's helper, not the owner] The job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nFinish what the owner asked for with it: if they wanted to see something (a chart, a table, a comparison), show it. Then tell them what it found, the way you'd say it, as short as it can be while complete.`
+        ? `[Atlas's helper, not the owner] The job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nFinish what the owner asked for with it: if they wanted to see something (a chart, a table, a comparison), show it; if they wanted a file (a spreadsheet, a document), make it. Then tell them what it found, the way you'd say it, as short as it can be while complete.`
         : `[Atlas's helper, not the owner] The job "${item.title}" you started didn't finish: ${result.text}. Tell the owner in one or two sentences, with what you'd need to try again.`;
     const fallback =
       result.state === "done" ? `Finished: ${item.title}.\n\n${result.text}` : `"${item.title}" didn't finish: ${result.text}`;
-    // The report finishes the owner's task, so it can put a view on the stage (a chart from the helper's numbers).
-    await this.#atlasSays(`job:${item.id}`, note, fallback, "normal", 6, [...TOOLS.atlas, show]);
+    // The report finishes the owner's task, so it can put a view on the stage (a chart from the helper's numbers)
+    // and make the file that was asked for (a spreadsheet), in the workspace if it isn't text.
+    await this.#atlasSays(`job:${item.id}`, note, fallback, "normal", 8, [...TOOLS.atlas, show, ...fileTools, ...workspaceTools]);
     this.#helpers.reported(item.id);
   }
 

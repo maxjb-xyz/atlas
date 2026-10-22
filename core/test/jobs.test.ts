@@ -120,7 +120,7 @@ describe("helpers", () => {
       x: ["W1", "W2"],
       series: [{ name: "Meetings", values: [3, 5] }],
     };
-    brain([
+    const b = brain([
       call("delegate", { title: "Calendar audit", task: "List every clash in the next month." }),
       say("On it; I'll tell you when it's done."),
       say("No clashes found. Meetings: W1 3, W2 5."),
@@ -139,6 +139,10 @@ describe("helpers", () => {
       expect(report.body.text).toBe("Your helper found no clashes next month.");
       const shown = rowsOf(sql, "tool.result").find((r) => r.body.name === "show" && r.run_id === report.run_id)!;
       expect(shown.body.receipt).toEqual({ text: "Showing · Meetings by week", view: chart });
+      // The report can finish the task: a view, or the file that was asked for.
+      expect(b.requests.at(-1)!.tools.map((t) => t.name)).toEqual(
+        expect.arrayContaining(["show", "file_save", "workspace_run", "workspace_keep"]),
+      );
     });
   });
 
