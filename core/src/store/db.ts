@@ -153,6 +153,10 @@ const MIGRATIONS: string[] = [
 
   ALTER TABLE records ADD COLUMN tagged INTEGER NOT NULL DEFAULT 0;
   `,
+  // 5. History's totals and the Inbox read the log by time.
+  `
+  CREATE INDEX log_at ON log(at);
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

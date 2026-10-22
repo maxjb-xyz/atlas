@@ -24,8 +24,12 @@ export type StateName =
   | "unfiled"
   /** The owner's passkeys: public keys only, so not secrets. */
   | "passkeys"
-  /** The WebAuthn challenge in flight, with when it expires. */
-  | "passkey_challenge"
+  /** WebAuthn challenges in flight, by value, with their step and when they expire. */
+  | "passkey_challenges"
+  /** Signed-in browsers: what opened each session, and when it ends. */
+  | "sessions"
+  /** Wrong setup codes in a row, for the wait between tries. */
+  | "code_tries"
   /** Which setup steps are done or skipped (§22). */
   | "setup"
   /** Inbox items the owner marked done. */

@@ -111,7 +111,7 @@ export function SettingsPage({
                 {section === "brains" && <Brains atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "connections" && <Connections atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "devices" && <Devices atlas={atlas} view={view} />}
-                {section === "data" && <Data onSignOut={onSignOut} onSetup={onSetup} />}
+                {section === "data" && <Data atlas={atlas} onSignOut={onSignOut} onSetup={onSetup} />}
               </>
             )}
           </div>
@@ -469,7 +469,7 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
 // --- Devices ----------------------------------------------------------------------------------
 
 function Devices({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
   return (
     <>
       <Head title="Devices" sub="Passkeys that can sign in to Atlas. Each one only works here." />
@@ -484,33 +484,84 @@ function Devices({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
                 Added {shortDay(p.created_at)}
                 {p.last_used ? ` · used ${shortDay(p.last_used)}` : ""}
               </span>
-              <button className="link" onClick={() => atlas.send({ type: "atlas.passkey.remove", id: p.id })}>
-                Remove
-              </button>
+              {removing === p.id ? (
+                <span className="row" style={{ gap: 8 }}>
+                  <span className="small">{view.passkeys.length === 1 ? "Your last passkey. Remove it?" : "Remove it?"}</span>
+                  <button
+                    className="link err"
+                    onClick={() => {
+                      atlas.send({ type: "atlas.passkey.remove", id: p.id });
+                      setRemoving(null);
+                    }}
+                  >
+                    Remove
+                  </button>
+                  <button className="link" onClick={() => setRemoving(null)}>
+                    Keep
+                  </button>
+                </span>
+              ) : (
+                <button className="link" onClick={() => setRemoving(p.id)}>
+                  Remove
+                </button>
+              )}
             </div>
           ))}
           {!view.passkeys.length && <p className="muted small">No passkeys yet. Until you add one, you sign in with your setup code.</p>}
         </div>
-        <div className="row">
-          <button
-            className="btn"
-            disabled={!passkeysSupported()}
-            onClick={async () => {
-              const err = await addPasskey(deviceName());
-              setMsg(err ? { ok: false, text: err } : { ok: true, text: "Added. This device can sign in with its passkey now." });
-            }}
-          >
-            Add a passkey on this device
-          </button>
-          {msg && <span className={`small ${msg.ok ? "ok" : "err"}`}>{msg.text}</span>}
-        </div>
+        <AddPasskey />
         <p className="muted small">Lost every passkey? Your setup code still signs you in.</p>
       </Row>
     </>
   );
 }
 
-function Data({ onSignOut, onSetup }: { onSignOut: () => void; onSetup: () => void }) {
+/**
+ * Adds a passkey on this device. If Atlas asks for the setup code first
+ * (a passkey exists and this sign-in isn't recent), it asks for it here.
+ */
+export function AddPasskey() {
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [askCode, setAskCode] = useState(false);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function add() {
+    setBusy(true);
+    const out = await addPasskey(deviceName(), askCode ? code : undefined);
+    setBusy(false);
+    if (out?.needsCode) setAskCode(true);
+    else if (!out) {
+      setAskCode(false);
+      setCode("");
+    }
+    setMsg(out ? { ok: false, text: out.error } : { ok: true, text: "Added. This device can sign in with its passkey now." });
+  }
+  if (!passkeysSupported()) return <p className="muted small">This browser can't make passkeys. Your setup code still signs you in.</p>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 420 }}>
+      {askCode && (
+        <input
+          type="password"
+          autoFocus
+          autoComplete="current-password"
+          placeholder="Setup code"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && code && void add()}
+        />
+      )}
+      <div className="row">
+        <button className="btn" disabled={busy || (askCode && !code)} onClick={() => void add()}>
+          {busy ? "Waiting for your device" : "Add a passkey on this device"}
+        </button>
+        {msg && <span className={`small ${msg.ok ? "ok" : "err"}`}>{msg.text}</span>}
+      </div>
+    </div>
+  );
+}
+
+function Data({ atlas, onSignOut, onSetup }: { atlas: Atlas; onSignOut: () => void; onSetup: () => void }) {
+  const [ended, setEnded] = useState(false);
   return (
     <>
       <Head title="Your data" sub="Everything Atlas keeps lives in your own Cloudflare account." />
@@ -527,7 +578,18 @@ function Data({ onSignOut, onSetup }: { onSignOut: () => void; onSetup: () => vo
           <button className="btn" onClick={onSignOut}>
             Sign out
           </button>
+          <button
+            className="btn"
+            onClick={() => {
+              atlas.send({ type: "atlas.sessions.end" });
+              setEnded(true);
+              setTimeout(onSignOut, 600);
+            }}
+          >
+            Sign out everywhere
+          </button>
         </div>
+        <p className="muted small">{ended ? "Every device is signed out." : "Ends every sign-in, on every device, including this one."}</p>
       </Row>
     </>
   );

@@ -123,7 +123,12 @@ export function mergeAreas(sql: Sql, fromId: string, intoId: string, by: "owner"
   const into = getArea(sql, intoId);
   if (!from || !into || from.id === into.id) throw new Error("Pick two different areas to merge.");
   for (const table of ["log", "records"] as const) {
-    const rows = sql.exec<{ id: string; areas: string }>(`SELECT id, areas FROM ${table} WHERE areas LIKE ?`, `%"${from.id}"%`).toArray();
+    const rows = sql
+      .exec<{ id: string; areas: string }>(
+        `SELECT id, areas FROM ${table} WHERE EXISTS (SELECT 1 FROM json_each(areas) WHERE value = ?)`,
+        from.id,
+      )
+      .toArray();
     for (const r of rows) {
       const next = [...new Set(parse<string[]>(r.areas, []).map((a) => (a === from.id ? into.id : a)))];
       sql.exec(`UPDATE ${table} SET areas = ? WHERE id = ?`, JSON.stringify(next), r.id);

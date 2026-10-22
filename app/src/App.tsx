@@ -10,7 +10,7 @@ import { Setup } from "./Setup";
 import { Palette, Sidebar, TabBar, Toolbar, Transcript } from "./Shell";
 import { AsciiDiamond, Diamond, useRoute } from "./ui";
 
-type Session = { signed_in: boolean; configured: boolean; passkeys: number } | null;
+type Session = { signed_in: boolean; configured: boolean; problem?: string; has_passkeys: boolean } | null;
 
 export function App() {
   const [session, setSession] = useState<Session>(null);
@@ -31,12 +31,12 @@ export function App() {
   if (!session.configured) {
     return (
       <Notice title="One step left">
-        This deployment has no setup code yet. Set <span className="mono">ATLAS_OWNER_SECRET</span> on your Worker (the Deploy button asks
-        for it), then reload this page.
+        {session.problem ?? "This deployment has no setup code yet. Set ATLAS_OWNER_SECRET on your Worker."} The Deploy button asks for it;
+        after changing it, reload this page.
       </Notice>
     );
   }
-  if (!session.signed_in) return <SignIn first={session.passkeys === 0} onDone={() => setSession({ ...session, signed_in: true })} />;
+  if (!session.signed_in) return <SignIn first={!session.has_passkeys} onDone={() => setSession({ ...session, signed_in: true })} />;
   return <Signed />;
 }
 
@@ -73,7 +73,7 @@ function SignIn({ first, onDone }: { first: boolean; onDone: () => void }) {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (first && passkeysSupported()) await run(() => addPasskey(deviceName(), code));
+    if (first && passkeysSupported()) await run(async () => (await addPasskey(deviceName(), code))?.error ?? null);
     else await run(() => signInWithCode(code));
   }
 

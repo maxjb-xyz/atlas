@@ -12,6 +12,7 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from "@simplewebauthn/server";
+import type { AuthStore } from "./auth";
 
 export interface StoredPasskey {
   /** The credential id, base64url. */
@@ -26,17 +27,8 @@ export interface StoredPasskey {
   last_used: number | null;
 }
 
-/** What the passkey routes need from the owner's agent: its stored passkeys and the challenge in flight. */
-export interface PasskeyStore {
-  passkeys(): Promise<StoredPasskey[]>;
-  savePasskeys(list: StoredPasskey[]): Promise<void>;
-  /** Saves the challenge for the next step, or reads and clears it. */
-  setChallenge(c: { value: string; kind: "register" | "login"; expires: number } | null): Promise<void>;
-  takeChallenge(): Promise<{ value: string; kind: "register" | "login"; expires: number } | null>;
-  ownerName(): Promise<string>;
-}
-
-const CHALLENGE_MS = 5 * 60_000;
+/** How long a challenge stays good. */
+export const CHALLENGE_MS = 5 * 60_000;
 
 const b64url = (bytes: Uint8Array) =>
   btoa(String.fromCharCode(...bytes))
@@ -58,7 +50,25 @@ export function relyingParty(request: Request): { rpID: string; origin: string }
   return { rpID: url.hostname, origin: url.origin };
 }
 
-export async function registrationOptions(store: PasskeyStore, request: Request) {
+/** The challenge a browser answered, read from its signed client data. */
+function answeredChallenge(clientDataJSON: string): string | null {
+  try {
+    const c = JSON.parse(new TextDecoder().decode(fromB64url(clientDataJSON))) as { challenge?: unknown };
+    return typeof c.challenge === "string" ? c.challenge : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Takes the challenge this answer is for, if it was handed out for this step and hasn't expired. */
+async function challengeFor(store: AuthStore, clientDataJSON: string, kind: "register" | "login"): Promise<string | null> {
+  const value = answeredChallenge(clientDataJSON);
+  if (!value) return null;
+  const c = await store.takeChallenge(value);
+  return c && c.kind === kind && c.expires >= Date.now() ? value : null;
+}
+
+export async function registrationOptions(store: AuthStore, request: Request) {
   const { rpID } = relyingParty(request);
   const existing = await store.passkeys();
   const owner = (await store.ownerName()) || "Owner";
@@ -71,28 +81,26 @@ export async function registrationOptions(store: PasskeyStore, request: Request)
     excludeCredentials: existing.map((p) => ({ id: p.id, transports: p.transports as never })),
     authenticatorSelection: { residentKey: "required", userVerification: "preferred" },
   });
-  await store.setChallenge({ value: options.challenge, kind: "register", expires: Date.now() + CHALLENGE_MS });
+  await store.putChallenge(options.challenge, "register");
   return options;
 }
 
 export type PasskeyResult = { ok: true; passkey: StoredPasskey } | { ok: false; status: number; message: string };
 
 export async function verifyRegistration(
-  store: PasskeyStore,
+  store: AuthStore,
   request: Request,
   response: RegistrationResponseJSON,
   name: string,
 ): Promise<PasskeyResult> {
-  const challenge = await store.takeChallenge();
-  if (!challenge || challenge.kind !== "register" || challenge.expires < Date.now()) {
-    return { ok: false, status: 400, message: "That took too long or was already used. Start adding the passkey again." };
-  }
+  const challenge = await challengeFor(store, response.response.clientDataJSON, "register");
+  if (!challenge) return { ok: false, status: 400, message: "That took too long or was already used. Start adding the passkey again." };
   const { rpID, origin } = relyingParty(request);
   let verified;
   try {
     verified = await verifyRegistrationResponse({
       response,
-      expectedChallenge: challenge.value,
+      expectedChallenge: challenge,
       expectedOrigin: origin,
       expectedRPID: rpID,
       requireUserVerification: false,
@@ -111,30 +119,22 @@ export async function verifyRegistration(
     created_at: Date.now(),
     last_used: Date.now(),
   };
-  const list = await store.passkeys();
-  await store.savePasskeys([...list.filter((p) => p.id !== passkey.id), passkey]);
+  await store.addPasskey(passkey);
   return { ok: true, passkey };
 }
 
-export async function loginOptions(store: PasskeyStore, request: Request) {
+export async function loginOptions(store: AuthStore, request: Request) {
   const { rpID } = relyingParty(request);
-  const list = await store.passkeys();
-  const options = await generateAuthenticationOptions({
-    rpID,
-    allowCredentials: list.map((p) => ({ id: p.id, transports: p.transports as never })),
-    userVerification: "preferred",
-  });
-  await store.setChallenge({ value: options.challenge, kind: "login", expires: Date.now() + CHALLENGE_MS });
+  // Passkeys here are discoverable, so the browser finds its own; strangers learn no credential ids.
+  const options = await generateAuthenticationOptions({ rpID, allowCredentials: [], userVerification: "preferred" });
+  await store.putChallenge(options.challenge, "login");
   return options;
 }
 
-export async function verifyLogin(store: PasskeyStore, request: Request, response: AuthenticationResponseJSON): Promise<PasskeyResult> {
-  const challenge = await store.takeChallenge();
-  if (!challenge || challenge.kind !== "login" || challenge.expires < Date.now()) {
-    return { ok: false, status: 400, message: "That took too long or was already used. Try signing in again." };
-  }
-  const list = await store.passkeys();
-  const known = list.find((p) => p.id === response.id);
+export async function verifyLogin(store: AuthStore, request: Request, response: AuthenticationResponseJSON): Promise<PasskeyResult> {
+  const challenge = await challengeFor(store, response.response.clientDataJSON, "login");
+  if (!challenge) return { ok: false, status: 400, message: "That took too long or was already used. Try signing in again." };
+  const known = (await store.passkeys()).find((p) => p.id === response.id);
   if (!known) {
     return {
       ok: false,
@@ -147,7 +147,7 @@ export async function verifyLogin(store: PasskeyStore, request: Request, respons
   try {
     verified = await verifyAuthenticationResponse({
       response,
-      expectedChallenge: challenge.value,
+      expectedChallenge: challenge,
       expectedOrigin: origin,
       expectedRPID: rpID,
       credential: { id: known.id, publicKey: fromB64url(known.public_key), counter: known.counter, transports: known.transports as never },
@@ -157,7 +157,7 @@ export async function verifyLogin(store: PasskeyStore, request: Request, respons
     return { ok: false, status: 401, message: `The passkey couldn't be checked: ${err instanceof Error ? err.message : String(err)}` };
   }
   if (!verified.verified) return { ok: false, status: 401, message: "The passkey didn't verify." };
-  const updated = { ...known, counter: verified.authenticationInfo.newCounter, last_used: Date.now() };
-  await store.savePasskeys(list.map((p) => (p.id === known.id ? updated : p)));
-  return { ok: true, passkey: updated };
+  const used = await store.usePasskey(known.id, verified.authenticationInfo.newCounter);
+  if (!used) return { ok: false, status: 401, message: "This passkey was just removed from Atlas." };
+  return { ok: true, passkey: used };
 }

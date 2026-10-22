@@ -2,7 +2,7 @@
 // log, records, agenda, settings and live connections. Text and voice share
 // one socket and one loop, so voice is the same mind (§11).
 
-import { Agent, type Connection, type WSMessage } from "agents";
+import { Agent, type Connection, type ConnectionContext, type WSMessage } from "agents";
 import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } from "agents/voice";
 import { CalendarSense } from "./agent/calendar";
 import { correctAreas, DISCOVER_AFTER, discoveryPrompt, startDiscovered, tagPending, unfiled } from "./agent/areas";
@@ -22,7 +22,8 @@ import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
 import { cleanCredentials } from "./calendar/caldav";
 import { runCharacterCheck, summary as characterSummary } from "./character-check";
-import type { StoredPasskey } from "./passkeys";
+import { newSessionId, type Session, SESSION_DAYS, SESSION_HEADER } from "./auth";
+import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
 import { compact, planCompaction } from "./compaction";
 import { CONTEXT_TOKENS, history, systemPrompt, tokens, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
@@ -160,6 +161,22 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** Connections in a live voice call. The snapshot goes out on atlas.hello, once the app is listening. */
   #inCall = new Set<string>();
 
+  override onConnect(connection: Connection, ctx: ConnectionContext): void {
+    // Which sign-in opened this socket (the Worker sets it), kept on the socket so it survives hibernation.
+    const session = ctx.request.headers.get(SESSION_HEADER);
+    if (session) connection.setState({ session });
+  }
+
+  /** Closes the sockets opened by sessions that just ended; with no list, every socket. */
+  #signOutSockets(ended?: Set<string>): void {
+    for (const c of this.getConnections()) {
+      const session = (c.state as { session?: string } | null)?.session;
+      if (ended && !(session && ended.has(session))) continue;
+      this.#send(c, { type: "atlas.signed_out" });
+      c.close(4001, "Signed out.");
+    }
+  }
+
   override async onMessage(connection: Connection, message: WSMessage): Promise<void> {
     if (typeof message !== "string") return;
     let data: unknown;
@@ -286,11 +303,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         }
         return;
       }
-      case "atlas.passkey.remove": {
-        const list = await this.passkeys();
-        await this.savePasskeys(list.filter((p) => p.id !== msg.id));
+      case "atlas.passkey.remove":
+        this.#removePasskey(msg.id);
         return;
-      }
+      case "atlas.sessions.end":
+        // Signs out everywhere: every browser has to sign in again.
+        setState(this.#sql, "sessions", {});
+        append(this.#sql, { actor: "owner", kind: "settings.change", body: { sessions: "ended" } });
+        this.#signOutSockets();
+        return;
       case "atlas.records.list": {
         const out = listRecords(this.#sql, { type: msg.record_type, area: msg.area, text: msg.text, limit: msg.limit });
         this.#send(connection, { type: "atlas.records", ref: msg.ref, ...out });
@@ -324,7 +345,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           filter: msg.filter,
           ...out,
           older: msg.before_seq != null,
-          stats: historyStats(this.#sql, msg.day_start),
+          // Today's totals only come with the first page; older pages don't change them.
+          ...(msg.before_seq == null ? { stats: historyStats(this.#sql, msg.day_start) } : {}),
         });
         return;
       }
@@ -727,29 +749,117 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     await this.keepAliveWhile(() => this.#helpers.done(jobId, outcome));
   }
 
-  // --- passkeys (the Worker's sign-in routes keep them here) -----------------------------
+  // --- sign-in (the Worker's routes keep passkeys, challenges and sessions here) -------------
+  // Each method reads and changes in one step, so two requests at once can't undo each other.
 
   async passkeys(): Promise<StoredPasskey[]> {
     return getState<StoredPasskey[]>(this.#sql, "passkeys") ?? [];
   }
 
-  async savePasskeys(list: StoredPasskey[]): Promise<void> {
-    const before = await this.passkeys();
-    setState(this.#sql, "passkeys", list);
-    if (list.length !== before.length) {
-      append(this.#sql, { actor: "owner", kind: "settings.change", body: { passkeys: list.length } });
-      this.#broadcast({ type: "atlas.view", view: this.#view() });
+  async addPasskey(p: StoredPasskey): Promise<void> {
+    const list = (await this.passkeys()).filter((x) => x.id !== p.id);
+    setState(this.#sql, "passkeys", [...list, p]);
+    append(this.#sql, { actor: "owner", kind: "settings.change", body: { passkey: "added", name: p.name } });
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  async usePasskey(id: string, counter: number): Promise<StoredPasskey | null> {
+    const list = await this.passkeys();
+    const found = list.find((p) => p.id === id);
+    if (!found) return null;
+    const used = { ...found, counter, last_used: Date.now() };
+    setState(
+      this.#sql,
+      "passkeys",
+      list.map((p) => (p.id === id ? used : p)),
+    );
+    return used;
+  }
+
+  /** Removes a passkey and ends every session it opened, so a lost device is cut off (§20). */
+  #removePasskey(id: string): void {
+    const list = getState<StoredPasskey[]>(this.#sql, "passkeys") ?? [];
+    const gone = list.find((p) => p.id === id);
+    if (!gone) return;
+    setState(
+      this.#sql,
+      "passkeys",
+      list.filter((p) => p.id !== id),
+    );
+    const sessions = this.#sessions();
+    const ended = new Set<string>();
+    for (const [sid, sess] of Object.entries(sessions)) {
+      if (sess.passkey_id !== id) continue;
+      delete sessions[sid];
+      ended.add(sid);
     }
+    setState(this.#sql, "sessions", sessions);
+    this.#signOutSockets(ended);
+    append(this.#sql, { actor: "owner", kind: "settings.change", body: { passkey: "removed", name: gone.name } });
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
   }
 
-  async setChallenge(c: { value: string; kind: "register" | "login"; expires: number } | null): Promise<void> {
-    setState(this.#sql, "passkey_challenge", c);
+  async putChallenge(value: string, kind: "register" | "login"): Promise<void> {
+    const now = Date.now();
+    const all = getState<Record<string, { kind: "register" | "login"; expires: number }>>(this.#sql, "passkey_challenges") ?? {};
+    const live = Object.entries(all)
+      .filter(([, c]) => c.expires > now)
+      .slice(-30);
+    setState(this.#sql, "passkey_challenges", Object.fromEntries([...live, [value, { kind, expires: now + CHALLENGE_MS }]]));
   }
 
-  async takeChallenge(): Promise<{ value: string; kind: "register" | "login"; expires: number } | null> {
-    const c = getState<{ value: string; kind: "register" | "login"; expires: number }>(this.#sql, "passkey_challenge");
-    setState(this.#sql, "passkey_challenge", null);
+  async takeChallenge(value: string): Promise<{ kind: "register" | "login"; expires: number } | null> {
+    const all = getState<Record<string, { kind: "register" | "login"; expires: number }>>(this.#sql, "passkey_challenges") ?? {};
+    const c = all[value] ?? null;
+    if (c) {
+      delete all[value];
+      setState(this.#sql, "passkey_challenges", all);
+    }
     return c;
+  }
+
+  #sessions(): Record<string, Session> {
+    const now = Date.now();
+    const all = getState<Record<string, Session>>(this.#sql, "sessions") ?? {};
+    return Object.fromEntries(Object.entries(all).filter(([, s]) => s.expires > now));
+  }
+
+  async openSession(s: { kind: Session["kind"]; passkey_id?: string }): Promise<string> {
+    const id = newSessionId();
+    const now = Date.now();
+    const all = Object.entries(this.#sessions())
+      .sort(([, a], [, b]) => a.at - b.at)
+      .slice(-99);
+    setState(this.#sql, "sessions", Object.fromEntries([...all, [id, { ...s, at: now, expires: now + SESSION_DAYS * 86_400_000 }]]));
+    return id;
+  }
+
+  async session(id: string): Promise<Session | null> {
+    return this.#sessions()[id] ?? null;
+  }
+
+  async closeSession(id: string): Promise<void> {
+    const all = this.#sessions();
+    delete all[id];
+    setState(this.#sql, "sessions", all);
+  }
+
+  /** Wrong setup codes earn a growing wait: none for the first five, then doubling up to 15 minutes. */
+  async codeWait(): Promise<number> {
+    const t = getState<{ fails: number; last: number }>(this.#sql, "code_tries");
+    if (!t || t.fails < 5) return 0;
+    const wait = Math.min(15 * 60_000, 1000 * 2 ** (t.fails - 5));
+    return Math.max(0, t.last + wait - Date.now());
+  }
+
+  async codeTried(ok: boolean): Promise<void> {
+    if (ok) {
+      setState(this.#sql, "code_tries", null);
+      return;
+    }
+    const t = getState<{ fails: number; last: number }>(this.#sql, "code_tries") ?? { fails: 0, last: 0 };
+    setState(this.#sql, "code_tries", { fails: t.fails + 1, last: Date.now() });
+    if (t.fails + 1 === 5) console.error(JSON.stringify({ at: "auth", error: "Five wrong setup codes in a row; slowing further tries." }));
   }
 
   async ownerName(): Promise<string> {
@@ -966,8 +1076,21 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   }
 
   #areasView(): AreaView[] {
+    // One pass over each table for every area's counts, not one per area.
+    const tally = (q: string) =>
+      new Map(
+        this.#sql
+          .exec<{ id: string; n: number }>(q)
+          .toArray()
+          .map((r) => [r.id, r.n] as const),
+      );
+    const messages = tally(
+      `SELECT j.value AS id, count(*) AS n FROM log, json_each(log.areas) AS j WHERE log.kind IN ('message.in', 'message.out') AND log.areas != '[]' GROUP BY j.value`,
+    );
+    const records = tally(
+      `SELECT j.value AS id, count(*) AS n FROM records, json_each(records.areas) AS j WHERE records.state = 'active' AND records.areas != '[]' GROUP BY j.value`,
+    );
     return listAreas(this.#sql, { all: true }).map((a) => {
-      const like = `%"${a.id}"%`;
       return {
         id: a.id,
         name: a.name,
@@ -975,10 +1098,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         state: a.state,
         color: a.color,
         settings: a.settings,
-        messages: this.#sql
-          .exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE kind IN ('message.in', 'message.out') AND areas LIKE ?`, like)
-          .one().n,
-        records: this.#sql.exec<{ n: number }>(`SELECT count(*) AS n FROM records WHERE state = 'active' AND areas LIKE ?`, like).one().n,
+        messages: messages.get(a.id) ?? 0,
+        records: records.get(a.id) ?? 0,
         last_seen: a.last_seen,
       };
     });

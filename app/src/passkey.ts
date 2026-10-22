@@ -27,21 +27,28 @@ function deviceError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+export interface AddFailure {
+  error: string;
+  /** Atlas wants the setup code first: there's a passkey already, and this sign-in isn't recent. */
+  needsCode: boolean;
+}
+
 /**
  * Adds a passkey on this device. Pass the setup code when not signed in yet
- * (it signs you in too); once signed in, no code is needed.
+ * (it signs you in too). Once signed in, a recent sign-in is enough;
+ * otherwise Atlas asks for the code, so a borrowed session can't add a key.
  */
-export async function addPasskey(name: string, setupCode?: string): Promise<string | null> {
+export async function addPasskey(name: string, setupCode?: string): Promise<AddFailure | null> {
   const opts = await post("/api/passkey/register/options", setupCode ? { secret: setupCode } : {});
-  if (!opts.ok) return errorOf(opts);
+  if (!opts.ok) return { error: await errorOf(opts), needsCode: opts.status === 403 };
   let response;
   try {
     response = await startRegistration({ optionsJSON: await opts.json() });
   } catch (err) {
-    return deviceError(err);
+    return { error: deviceError(err), needsCode: false };
   }
   const done = await post("/api/passkey/register/verify", { response, name });
-  return done.ok ? null : errorOf(done);
+  return done.ok ? null : { error: await errorOf(done), needsCode: false };
 }
 
 export async function signInWithPasskey(): Promise<string | null> {
@@ -59,7 +66,7 @@ export async function signInWithPasskey(): Promise<string | null> {
 
 export async function signInWithCode(code: string): Promise<string | null> {
   const r = await post("/api/login", { secret: code });
-  return r.ok ? null : r.status === 401 ? "That isn't the setup code." : errorOf(r);
+  return r.ok ? null : errorOf(r);
 }
 
 /** A name for this device's passkey, from what the browser says it is. */

@@ -5,8 +5,7 @@
 import { useEffect, useState } from "react";
 import { PRESETS, type Preset } from "../../core/src/character";
 import type { Atlas } from "./connection";
-import { addPasskey, deviceName, passkeysSupported } from "./passkey";
-import { ChatGPT, ICloud, SecretField, TestRow } from "./Settings";
+import { AddPasskey, ChatGPT, ICloud, SecretField, TestRow } from "./Settings";
 import { AsciiDiamond, Diamond, Icon } from "./ui";
 
 type Step = "passkey" | "meet" | "brain" | "connect" | "look";
@@ -91,33 +90,13 @@ function Footer({ step, onNext, ready = true, label = "Next" }: { step: Step; on
 
 function PasskeyStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
   const has = (atlas.state.view?.passkeys.length ?? 0) > 0;
-  const [msg, setMsg] = useState<string | null>(null);
   return (
     <>
       <h1 className="disp">Your passkey</h1>
       <p className="muted">
         A passkey signs you in with your face, fingerprint or device code. Nothing to remember, and it only works on this Atlas.
       </p>
-      {has ? (
-        <p className="ok">You have a passkey. You can add one for each device in Settings → Devices.</p>
-      ) : (
-        <div className="row">
-          <button
-            className="btn"
-            disabled={!passkeysSupported()}
-            onClick={async () => {
-              const err = await addPasskey(deviceName());
-              setMsg(err);
-            }}
-          >
-            Add a passkey on this device
-          </button>
-          {!passkeysSupported() && (
-            <span className="muted small">This browser can't make passkeys. Your setup code still signs you in.</span>
-          )}
-        </div>
-      )}
-      {msg && <p className="err small">{msg}</p>}
+      {has ? <p className="ok">You have a passkey. You can add one for each device in Settings → Devices.</p> : <AddPasskey />}
       <Footer step="passkey" onNext={onNext} ready={has} />
     </>
   );

@@ -61,7 +61,7 @@ export interface State {
   records: Record<string, { records: RecordView[]; counts: Record<string, number> }>;
   /** Bumped when records change, so pages showing them ask again. */
   recordsVersion: number;
-  history: { filter: HistoryFilter; rows: LogRow[]; has_more: boolean; stats: HistoryStats } | null;
+  history: { filter: HistoryFilter; rows: LogRow[]; has_more: boolean; stats?: HistoryStats } | null;
   runDetail: Record<string, { run: Record<string, unknown> | null; rows: LogRow[] }>;
   calendar: Record<string, { events: CalendarEventView[]; error?: string }>;
   inbox: InboxItem[] | null;
@@ -200,7 +200,7 @@ function reduce(s: State, a: Action): State {
       return { ...s, recordsVersion: s.recordsVersion + 1 };
     case "atlas.history.rows": {
       const keep = m.older && s.history?.filter === m.filter ? s.history.rows : [];
-      return { ...s, history: { filter: m.filter, rows: [...keep, ...m.rows], has_more: m.has_more, stats: m.stats } };
+      return { ...s, history: { filter: m.filter, rows: [...keep, ...m.rows], has_more: m.has_more, stats: m.stats ?? s.history?.stats } };
     }
     case "atlas.run.detail.result":
       return { ...s, runDetail: { ...s.runDetail, [m.run_id]: { run: m.run, rows: m.rows } } };
@@ -246,6 +246,12 @@ export function useAtlas() {
     });
     c.addEventListener("custommessage", (msg) => {
       const m = msg as ServerMessage;
+      if (m?.type === "atlas.signed_out") {
+        // This sign-in was ended (a removed passkey, or sign out everywhere): back to the sign-in page.
+        c.disconnect();
+        location.reload();
+        return;
+      }
       if (m && typeof m === "object" && typeof m.type === "string" && m.type.startsWith("atlas.")) {
         dispatch({ type: "server", msg: m });
       }

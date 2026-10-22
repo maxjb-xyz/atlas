@@ -148,8 +148,10 @@ export const ClientMessage = z.discriminatedUnion("type", [
   }),
   /** The voices the owner can pick from, with samples. */
   z.object({ type: z.literal("atlas.voices.list") }),
-  /** Remove a passkey (Settings → Devices). */
+  /** Remove a passkey (Settings → Devices). It also ends the sessions it opened. */
   z.object({ type: z.literal("atlas.passkey.remove"), id: z.string().max(512) }),
+  /** Sign out everywhere. */
+  z.object({ type: z.literal("atlas.sessions.end") }),
   /** Library: records, by type, area or text. `ref` is echoed back. */
   z.object({
     type: z.literal("atlas.records.list"),
@@ -252,7 +254,7 @@ export type ServerMessage =
   | { type: "atlas.records"; ref: string; records: RecordView[]; counts: Record<string, number> }
   /** Records changed (a correction, a forget, a save): pages showing records ask again. */
   | { type: "atlas.records.changed" }
-  | { type: "atlas.history.rows"; filter: HistoryFilter; rows: LogRow[]; has_more: boolean; older: boolean; stats: HistoryStats }
+  | { type: "atlas.history.rows"; filter: HistoryFilter; rows: LogRow[]; has_more: boolean; older: boolean; stats?: HistoryStats }
   | { type: "atlas.run.detail.result"; run_id: string; run: Record<string, unknown> | null; rows: LogRow[] }
   | { type: "atlas.calendar.events"; ref: string; events: CalendarEventView[]; error?: string }
   | { type: "atlas.inbox.items"; items: InboxItem[] }
@@ -270,4 +272,6 @@ export type ServerMessage =
   | { type: "atlas.jobs"; jobs: JobView[] }
   | { type: "atlas.view"; view: SettingsView }
   | { type: "atlas.test.result"; what: string; ref?: string; ok: boolean; message: string; detail?: unknown }
-  | { type: "atlas.error"; message: string };
+  | { type: "atlas.error"; message: string }
+  /** This socket's sign-in was ended; the app goes back to signing in. */
+  | { type: "atlas.signed_out" };

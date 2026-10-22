@@ -33,6 +33,9 @@ export function recordView(sql: Sql, r: AtlasRecord): RecordView {
   };
 }
 
+/** A row is tagged with an area: its `areas` JSON array holds the id. */
+export const TAGGED = `EXISTS (SELECT 1 FROM json_each(areas) WHERE value = ?)`;
+
 export function listRecords(
   sql: Sql,
   q: { type?: RecordType | "all"; area?: string | null; text?: string; limit?: number },
@@ -44,8 +47,8 @@ export function listRecords(
     args.push(q.type);
   }
   if (q.area) {
-    where.push(`areas LIKE ?`);
-    args.push(`%"${q.area}"%`);
+    where.push(`${TAGGED}`);
+    args.push(q.area);
   }
   if (q.text?.trim()) {
     where.push(`(instr(lower(name), lower(?)) > 0 OR instr(lower(fields), lower(?)) > 0)`);
@@ -56,11 +59,11 @@ export function listRecords(
     .toArray();
   const counts: Record<string, number> = { all: 0 };
   for (const t of RECORD_TYPES) counts[t] = 0;
-  const areaWhere = q.area ? ` AND areas LIKE ?` : "";
+  const areaWhere = q.area ? ` AND ${TAGGED}` : "";
   for (const c of sql
     .exec<{ type: string; n: number }>(
       `SELECT type, count(*) AS n FROM records WHERE state = 'active' AND NOT (type = 'person' AND coalesce(json_extract(fields, '$.is_owner'), 0) = 1)${areaWhere} GROUP BY type`,
-      ...(q.area ? [`%"${q.area}"%`] : []),
+      ...(q.area ? [q.area] : []),
     )
     .toArray()) {
     counts[c.type] = c.n;
@@ -109,10 +112,10 @@ export function history(
   for (let page = 0; page < 10 && out.length < limit && more; page++) {
     const ids = sql
       .exec<{ id: string; seq: number }>(
-        `SELECT id, seq FROM log WHERE kind IN (${kinds.map(() => "?").join(", ")}) AND seq < ?${q.area ? " AND areas LIKE ?" : ""} ORDER BY seq DESC LIMIT ?`,
+        `SELECT id, seq FROM log WHERE kind IN (${kinds.map(() => "?").join(", ")}) AND seq < ?${q.area ? ` AND ${TAGGED}` : ""} ORDER BY seq DESC LIMIT ?`,
         ...kinds,
         before,
-        ...(q.area ? [`%"${q.area}"%`] : []),
+        ...(q.area ? [q.area] : []),
         limit * 2,
       )
       .toArray();
@@ -176,16 +179,16 @@ export function runDetail(sql: Sql, runId: string): { run: Record<string, unknow
  * join with the outbox in M2. Marked done by the owner, never by Atlas.
  */
 export function inbox(sql: Sql): InboxItem[] {
-  const done = new Set(getState<string[]>(sql, "inbox_done") ?? []);
+  const done = JSON.stringify(getState<string[]>(sql, "inbox_done") ?? []);
   const since = Date.now() - 14 * 86_400_000;
   const rows = sql
     .exec<{ id: string }>(
-      `SELECT id FROM log WHERE at > ? AND (kind = 'job.result' OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas'))) ORDER BY seq DESC LIMIT 100`,
+      `SELECT id FROM log WHERE at > ? AND (kind = 'job.result' OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas'))) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 100`,
       since,
+      done,
     )
     .toArray()
-    .map((r) => getRow(sql, r.id)!)
-    .filter((r) => !done.has(r.id));
+    .map((r) => getRow(sql, r.id)!);
   return rows.map((r): InboxItem => {
     if (r.kind === "job.result") {
       const ok = r.body.state === "done";

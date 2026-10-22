@@ -8,7 +8,7 @@ import { scrub, StreamScrubber } from "../src/outbox";
 import { SentenceChunker } from "agents/voice";
 import { auraPcm, elevenLabsPcm, wholeSamples } from "../src/voice/providers";
 import { isoLocal, parseWhen, shortLocal, startOfLocalDay, addLocalDays } from "../src/time";
-import { checkSession, makeSession } from "../src/auth";
+import { newSessionId, readSession, signSession } from "../src/auth";
 import { collect, fakeOpenAI, scripted, sse } from "./helpers";
 
 describe("time", () => {
@@ -322,12 +322,14 @@ describe("secrets scrubber", () => {
 });
 
 describe("sessions", () => {
-  it("signs and checks session cookies", async () => {
-    const v = await makeSession("s3cret");
-    expect(await checkSession("s3cret", v)).toBe(true);
-    expect(await checkSession("other", v)).toBe(false);
-    expect(await checkSession("s3cret", v.replace(/^\d+/, "9999999999999"))).toBe(false);
-    expect(await checkSession("s3cret", await makeSession("s3cret", Date.now() - 40 * 86_400_000))).toBe(false);
+  it("signs session ids so a forged or tampered cookie is turned away", async () => {
+    const id = newSessionId();
+    const v = await signSession("s3cret", id);
+    expect(await readSession("s3cret", v)).toBe(id);
+    expect(await readSession("other", v)).toBeNull();
+    expect(await readSession("s3cret", `${newSessionId()}.${v.split(".")[1]}`)).toBeNull();
+    expect(await readSession("s3cret", "garbage")).toBeNull();
+    expect(await readSession("s3cret", "a.%%%")).toBeNull();
   });
 });
 
