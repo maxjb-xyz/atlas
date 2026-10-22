@@ -82,6 +82,27 @@ export const PlanStage = z.object({
   source,
 });
 
+export const ResearchStage = z.object({
+  kind: z.literal("research"),
+  title,
+  answer: z
+    .string()
+    .min(1)
+    .max(6_000)
+    .describe("The answer, in Markdown: the pick or the finding first, then why. Mark claims with their source's number, like [1]."),
+  sources: z
+    .array(
+      z.object({
+        title: z.string().min(1).max(200),
+        url: z.string().url().max(2_000),
+        note: z.string().max(300).optional().describe("What this source says or adds, in a line."),
+      }),
+    )
+    .min(1)
+    .max(20)
+    .describe("Only pages you searched or read in this conversation, numbered in this order."),
+});
+
 export const PageStage = z.object({
   kind: z.literal("page"),
   page: z.string().min(1).max(80).describe("The page's name or id."),
@@ -97,6 +118,7 @@ export const StageView = z.discriminatedUnion("kind", [
   DraftStage,
   PlanStage,
   PageStage,
+  ResearchStage,
 ]);
 export type StageView = z.infer<typeof StageView>;
 export type StageKind = StageView["kind"];
@@ -202,6 +224,7 @@ export function stageTitle(v: StageView, names: { area?: string; person?: string
     case "table":
     case "draft":
     case "plan":
+    case "research":
       return v.title;
     case "automation":
       return names.automation ?? v.automation;

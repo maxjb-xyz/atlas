@@ -70,6 +70,8 @@ export const Settings = z.object({
       hidden: z.array(z.string().max(200)).max(50).default([]),
     })
     .default({ hidden: [] }),
+  /** The web (§9.1): which search Atlas uses. Each one but Cloudflare's needs its key, kept with the secrets. */
+  web: z.object({ search: z.enum(["cloudflare", "tavily", "brave", "exa"]).default("cloudflare") }).default({ search: "cloudflare" }),
   /** How messages reach the owner when the app isn't in view (§14). */
   notifications: z
     .object({
@@ -112,6 +114,7 @@ export const SettingsPatch = z.object({
   pins: f.pins.unwrap().optional(),
   calendar: f.calendar.unwrap().optional(),
   notifications: f.notifications.unwrap().optional(),
+  web: f.web.unwrap().optional(),
 } satisfies { [K in keyof typeof f]: z.ZodType });
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
@@ -148,6 +151,10 @@ export function writeSettings(sql: Sql, patch: SettingsPatch): string[] {
 
 export type SecretName =
   | "elevenlabs_api_key"
+  /** Keys for the web searches that need one (§9.1). */
+  | "tavily_api_key"
+  | "brave_api_key"
+  | "exa_api_key"
   | "icloud"
   | "chatgpt_tokens"
   | "chatgpt_login"
@@ -175,6 +182,9 @@ export function secretValues(sql: Sql): string[] {
     path.reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), v);
   const wanted: Array<[SecretName, string[]]> = [
     ["elevenlabs_api_key", []],
+    ["tavily_api_key", []],
+    ["brave_api_key", []],
+    ["exa_api_key", []],
     ["icloud", ["app_password"]],
     ["chatgpt_tokens", ["access_token"]],
     ["chatgpt_tokens", ["refresh_token"]],

@@ -2,8 +2,9 @@
 // owner, it picks one channel (§14): the app when it's in view, a live call,
 // or else a push to the device used last, held through quiet hours unless it
 // can't wait. Every delivery beyond the thread leaves a receipt in the log.
-// Approvals join the exit checks next; sharing rules and the public-query
-// check in M3 and M5.
+// A look that leaves Atlas (a web search's query, a page's address) passes
+// the secrets scrubber and the public-query check here too. Sharing rules
+// come with members and faces in M5.
 
 import { type PushSubscriptionJSON, sendPush, vapidKeys } from "./push";
 import { type Action } from "./approvals";
@@ -11,7 +12,8 @@ import type { Sql } from "./store/db";
 import { append, get as getRow, type LogRow, type Surface } from "./store/log";
 import { readSettings, secretValues } from "./store/settings";
 import { getState, setState } from "./store/state";
-import { deleteRecord } from "./store/records";
+import { deleteRecord, findRecords } from "./store/records";
+import type { LookOut } from "./web";
 import { quietUntil, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import { callWebhook, webhooks, webhookView } from "./webhooks";
 
@@ -22,6 +24,54 @@ export function scrub(text: string, secrets: string[]): string {
   let out = text;
   for (const s of secrets) if (s && out.includes(s)) out = out.split(s).join(HIDDEN);
   return out;
+}
+
+/** A street address: a number, a few words, and a street word ("1204 Lake Ave", "55 W. Church Street"). */
+const ADDRESS =
+  /\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Za-z0-9'.-]+\s+){0,4}(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|court|ct|way|place|pl|terrace|ter|circle|cir|parkway|pkwy|highway|hwy|trail|trl)\b\.?(?:\s*(?:apt|unit|suite|ste|#)\.?\s*[A-Za-z0-9-]+)?/gi;
+const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/;
+/**
+ * A phone number as people write one: ten digits in groups ("(407) 555-0134",
+ * "407.555.0134"), or an international number with its +. A run of digits
+ * with no breaks isn't one: page addresses are full of timestamps and ids.
+ */
+const PHONE = /(?:\+?1[\s.-]?)?(?:\(\d{3}\)\s?|\b\d{3}[\s.-])\d{3}[\s.-]\d{4}\b|\+\d{1,3}[\s.-]\d{2,4}(?:[\s.-]\d{2,4}){2,4}\b/;
+
+const SECRET_FOUND = "one of the owner's secrets";
+
+const squash = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[\s.,]+/g, " ")
+    .trim();
+
+/**
+ * The public-query check (§4.4): private details never go into a web
+ * search or a page's address. Returns what was found, in words Atlas can
+ * act on, or null. Private means one of the owner's secrets, an email
+ * address, a phone number, or a street address Atlas keeps in a record.
+ * Names, places and topics are not (decided with the owner, 2026-10-22).
+ */
+export function privateIn(sql: Sql, text: string, secrets: string[]): string | null {
+  let t = text;
+  try {
+    // In a page's address, + is a space and %40 is an @.
+    if (/^https?:\/\//i.test(text)) t = decodeURIComponent(text.replace(/\+/g, " "));
+  } catch {
+    // Not URL-encoded; check it as it is.
+  }
+  const both = (re: RegExp) => re.test(t) || re.test(text);
+  if (scrub(t, secrets) !== t || scrub(text, secrets) !== text) return SECRET_FOUND;
+  if (both(EMAIL)) return "an email address";
+  if (both(PHONE)) return "a phone number";
+  const q = ` ${squash(t)} `;
+  for (const r of [...findRecords(sql, "person"), ...findRecords(sql, "place"), ...findRecords(sql, "organization")]) {
+    for (const v of Object.values(r.fields)) {
+      if (typeof v !== "string") continue;
+      for (const a of v.matchAll(ADDRESS)) if (q.includes(` ${squash(a[0])} `)) return `a street address from what Atlas knows (${r.name})`;
+    }
+  }
+  return null;
 }
 
 /**
@@ -285,6 +335,47 @@ export class Outbox {
       console.error(JSON.stringify({ at: "push", device: d.name, status: out.status, error }));
     }
     return { ok: false, error };
+  }
+
+  /**
+   * A look that leaves Atlas (§4.4): a web search's query or a page's
+   * address goes to someone else's server, so it passes the exit checks
+   * first. Something private in it stops it with the reason, and nothing is
+   * sent. Either way a delivery receipt says what went where, and how it
+   * went: the status, the host and on failure the service's own words.
+   */
+  async look<T>(
+    o: { what: "search" | "fetch"; text: string; to: string; run_id: string | null },
+    go: (f: typeof fetch) => Promise<LookOut<T>>,
+  ): Promise<LookOut<T>> {
+    const base = { channel: "web", what: o.what, to: o.to, text: clip(o.text, 500) };
+    const found = privateIn(this.sql, o.text, this.secrets());
+    if (found) {
+      const error = `Not sent: it held ${found}. Private details never go into a web ${o.what === "search" ? "search" : "address"}.`;
+      const secret = found === SECRET_FOUND;
+      this.receipt(o.run_id, {
+        ...base,
+        ...(secret ? { text: scrub(base.text, this.secrets()) } : {}),
+        ok: false,
+        error,
+        checks: secret ? { secrets: "failed" } : { secrets: "passed", public_query: "failed" },
+      });
+      return { ok: false, status: 0, error };
+    }
+    const out = await go(this.channels.fetch).catch((err: unknown): LookOut<T> => ({
+      ok: false,
+      status: 0,
+      error: `Couldn't reach ${o.to}: ${err instanceof Error ? err.message : String(err)}`,
+    }));
+    this.receipt(o.run_id, {
+      ...base,
+      ok: out.ok,
+      status: out.status,
+      ...(out.ok ? (out.note ? { note: out.note } : {}) : { error: out.error }),
+      checks: { secrets: "passed", public_query: "passed" },
+    });
+    if (!out.ok) console.error(JSON.stringify({ at: `web.${o.what}`, to: o.to, status: out.status, error: out.error }));
+    return out;
   }
 
   /**

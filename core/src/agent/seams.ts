@@ -7,6 +7,7 @@ import type { Embedder } from "../brains/embed";
 import type { Brain } from "../brains/types";
 import type { CalendarSource } from "../calendar/types";
 import type { BrainChoice } from "../store/settings";
+import type { WebSearchBinding } from "../web";
 
 export const seams: {
   makeBrain: ((choice: BrainChoice) => Brain | null) | null;
@@ -18,4 +19,6 @@ export const seams: {
   contextWindow: number | null;
   /** The `decide` role: undefined uses Workers AI's Clef, null means none. */
   decide: Decider | null | undefined;
-} = { makeBrain: null, calendar: undefined, fetch: null, embed: undefined, contextWindow: null, decide: undefined };
+  /** Cloudflare's web search: undefined uses the AI binding, null means none. */
+  websearch: WebSearchBinding | null | undefined;
+} = { makeBrain: null, calendar: undefined, fetch: null, embed: undefined, contextWindow: null, decide: undefined, websearch: undefined };

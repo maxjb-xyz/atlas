@@ -117,6 +117,7 @@ function ViewBody({
       {v.kind === "automation" && <AutomationStage atlas={atlas} view={v} onClose={onClose} />}
       {v.kind === "draft" && <DraftView view={v} onClose={onClose} />}
       {v.kind === "plan" && <PlanView view={v} onClose={onClose} />}
+      {v.kind === "research" && <ResearchView view={v} onClose={onClose} />}
       {v.kind === "page" && <PageView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
     </>
   );
@@ -607,6 +608,59 @@ function PlanView({ view, onClose }: { view: Extract<StageView, { kind: "plan" }
   );
 }
 
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).host.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+};
+
+/** An answer from the web, with the pages it rests on (§21.6). Each source opens in a new tab. */
+function ResearchView({ view, onClose }: { view: Extract<StageView, { kind: "research" }>; onClose?: () => void }) {
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="search" />
+        <h1 className="disp">{view.title}</h1>
+        <span className="muted">
+          {view.sources.length} {view.sources.length === 1 ? "source" : "sources"}
+        </span>
+        <span className="grow" />
+        <Close onClose={onClose} />
+      </div>
+      <div className="panel research-answer">
+        <Markdown text={view.answer} />
+      </div>
+      <p className="lab" style={{ marginTop: 16, marginBottom: 6 }}>
+        Sources
+      </p>
+      <ol className="rows" style={{ listStyle: "none", padding: 0, margin: 0 }}>
+        {view.sources.map((src, i) => (
+          <li className="r" key={i} style={{ alignItems: "flex-start" }}>
+            <span className="mono faint" style={{ flex: "none", width: 22 }}>
+              {i + 1}
+            </span>
+            <span className="grow" style={{ minWidth: 0 }}>
+              <a className="link" href={src.url} target="_blank" rel="noopener noreferrer">
+                {src.title}
+              </a>
+              <span className="lab faint" style={{ display: "block", marginTop: 2 }}>
+                {hostOf(src.url)}
+              </span>
+              {src.note && (
+                <span className="muted small" style={{ display: "block", marginTop: 2 }}>
+                  {src.note}
+                </span>
+              )}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </>
+  );
+}
+
 /** A view's name in a page's editor, where views can be moved out but not rewritten. */
 function viewLabel(atlas: Atlas, v: StageView): string {
   if (v.kind === "area") return atlas.state.areas.find((a) => a.id === v.area)?.name ?? "An area";
@@ -822,6 +876,7 @@ const KIND: Record<StageView["kind"], string> = {
   draft: "Draft",
   plan: "Plan",
   page: "Page",
+  research: "Research",
 };
 
 export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown; onOpen: () => void }) {
@@ -848,7 +903,12 @@ export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown
                     .join(" · ")}`
                 : v.kind === "page"
                   ? atlas.state.pages?.find((p) => p.id === v.page)?.preview || "A page you keep."
-                  : "What Atlas knows about them, and where they came up.";
+                  : v.kind === "research"
+                    ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"} · ${v.sources
+                        .slice(0, 3)
+                        .map((x) => hostOf(x.url))
+                        .join(", ")}`
+                    : "What Atlas knows about them, and where they came up.";
   return (
     <div className="stage-card rise">
       <span className="lab">

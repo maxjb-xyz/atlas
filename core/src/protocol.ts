@@ -151,6 +151,9 @@ export const ClientMessage = z.discriminatedUnion("type", [
     type: z.literal("atlas.secret.set"),
     secret: z.discriminatedUnion("name", [
       z.object({ name: z.literal("elevenlabs_api_key"), value: z.string().min(8).max(200).nullable() }),
+      z.object({ name: z.literal("tavily_api_key"), value: z.string().min(8).max(200).nullable() }),
+      z.object({ name: z.literal("brave_api_key"), value: z.string().min(8).max(200).nullable() }),
+      z.object({ name: z.literal("exa_api_key"), value: z.string().min(8).max(200).nullable() }),
       z.object({
         name: z.literal("icloud"),
         value: z.object({ username: z.string().min(3).max(200), app_password: z.string().min(4).max(64) }).nullable(),
@@ -310,7 +313,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
-    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push", "webhook"]),
+    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push", "webhook", "search"]),
     /** For "push": the device to send the test notification to. */
     device: z.string().max(64).optional(),
     /** For "webhook": which one to call. */
@@ -334,6 +337,9 @@ export interface SettingsView {
   settings: import("./store/settings").Settings;
   secrets: {
     elevenlabs_api_key: boolean;
+    tavily_api_key: boolean;
+    brave_api_key: boolean;
+    exa_api_key: boolean;
     /**
      * `refused` says when and why iCloud last refused the sign-in, how many times in a row, and when Atlas tries
      * again by itself; `note` says all that in a sentence. Meanwhile Atlas answers from its copy of the calendar.

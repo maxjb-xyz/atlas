@@ -30,6 +30,7 @@ import { readSettings } from "../store/settings";
 import { shortLocal, zoneOf } from "../time";
 import type { ToolContext } from "../tools/types";
 import { findWebhook } from "../webhooks";
+import { pageText } from "../web";
 
 export type Why = "button" | "request" | "schedule" | "watch" | "absence" | "event" | "calendar" | "test";
 
@@ -483,23 +484,6 @@ const WHY: Record<Why, string> = {
   calendar: "the calendar changed",
   test: "a test run",
 };
-
-/** A page's words, without its markup. */
-export function pageText(html: string): string {
-  return html
-    .replace(/<(script|style|noscript|svg)[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<[^>]+>/g, "\n")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&quot;/g, '"')
-    .split("\n")
-    .map((l) => l.replace(/\s+/g, " ").trim())
-    .filter(Boolean)
-    .join("\n");
-}
 
 /** The lines that are new, and the lines that went, up to about 2,000 characters. */
 export function diff(before: string, after: string): string {

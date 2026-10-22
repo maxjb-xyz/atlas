@@ -549,6 +549,7 @@ const VIEW_WORD: Record<string, string> = {
   automation: "automation",
   draft: "draft",
   plan: "plan",
+  research: "research",
 };
 
 /** Pages Atlas made or you kept (§21.7). Files Atlas makes join them in M3. */

@@ -13,6 +13,7 @@ import type { AgendaItem } from "../store/agenda";
 import type { Sql } from "../store/db";
 import type { Receipt } from "../store/log";
 import type { Settings } from "../store/settings";
+import type { LookOut, Page, SearchResult } from "../web";
 
 /** What kind of action a tool takes decides when Atlas asks first (§12.1). */
 export type { ToolKind } from "../approvals";
@@ -39,6 +40,8 @@ export interface ToolContext {
    * where nothing may leave, such as inside a helper.
    */
   exit: ExitApi | null;
+  /** The web (§9.1), through the outbox's checks; null where the web isn't reachable. */
+  web: WebApi | null;
   /** Automations, for owner runs; null elsewhere. */
   automations: AutomationsApi | null;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
@@ -53,6 +56,15 @@ export interface AutomationsApi {
   run(automation: Automation, o: { why: "request" | "test"; inputs?: Record<string, string> }): Promise<RunOutcome>;
   /** Puts its next run on the clock, or takes it off, after a change. */
   arm(id: string): Promise<void>;
+}
+
+/** Searching and reading the web. Each call leaves Atlas, so it passes the exit checks and leaves a receipt (§4.4). */
+export interface WebApi {
+  search(
+    query: string,
+    o: { run_id: string | null; count: number; fresh?: "day" | "week" | "month" | "year" },
+  ): Promise<LookOut<SearchResult[]>>;
+  fetch(url: string, o: { run_id: string; start?: number; links?: boolean }): Promise<LookOut<Page>>;
 }
 
 export interface ExitApi {

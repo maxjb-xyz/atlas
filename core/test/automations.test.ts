@@ -268,6 +268,8 @@ describe("automations", () => {
       "calendar_read",
       "page_read",
       "recall",
+      "web_fetch",
+      "web_search",
       "webhook_call",
     ]);
     expect(String(test.requests[0]!.messages.filter((m) => m.role === "user").at(-1)!.content)).toContain("This is a test run");

@@ -129,12 +129,15 @@ export const titleOf = (actions: Action[]) => actions.map((a) => (a.kind === "we
 /** Adds an action to this run's approval, making the approval if it's the first. */
 export function requestApproval(
   sql: Sql,
-  o: { run_id: string; log_id: string | null; action: Action; now?: number },
+  o: { run_id: string; log_id: string | null; action: Action; now?: number; read_web?: boolean },
 ): { item: AgendaItem; created: boolean } {
   const open = openApproval(sql, o.run_id);
   if (open) {
     const actions = [...actionsOf(open), o.action];
-    const source = { ...open.source, detail: { ...(open.source.detail ?? {}), actions: actions as unknown as Json } };
+    const source = {
+      ...open.source,
+      detail: { ...(open.source.detail ?? {}), actions: actions as unknown as Json, ...(o.read_web ? { read_web: true } : {}) },
+    };
     sql.exec(
       `UPDATE agenda SET title = ?, source = ?, updated_at = ? WHERE id = ?`,
       titleOf(actions),
@@ -152,7 +155,7 @@ export function requestApproval(
       run_id: o.run_id,
       ...(o.log_id ? { log_id: o.log_id } : {}),
       via: "approval",
-      detail: { actions: [o.action] as unknown as Json },
+      detail: { actions: [o.action] as unknown as Json, ...(o.read_web ? { read_web: true } : {}) },
     },
   });
   return { item, created: true };

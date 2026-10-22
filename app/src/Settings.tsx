@@ -11,6 +11,7 @@ import { addPasskey, deviceName, passkeysSupported } from "./passkey";
 import { Composer } from "./Shell";
 import { useLook } from "./theme";
 import { Icon, Sheet, shortDay, Stage } from "./ui";
+import { PROVIDERS, type SearchProvider } from "../../core/src/web";
 
 type Section = "character" | "look" | "brains" | "connections" | "devices" | "permissions" | "notifications" | "data";
 
@@ -87,7 +88,7 @@ export function SettingsPage({
       label="Settings"
       tabs={[{ id: section, label }]}
       tab={section}
-      meta="Atlas · M2"
+      meta="Atlas · M3"
       dock={
         <div className="dock slim">
           {dirty && (
@@ -505,6 +506,9 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
           run={() => atlas.test("calendar", { type: "atlas.test", what: "calendar" })}
         />
       </Row>
+      <Row label="Web search">
+        <WebSearch atlas={atlas} draft={draft} edit={edit} view={view} />
+      </Row>
       <Row label="Webhooks">
         <State
           on={view.webhooks.length > 0}
@@ -516,6 +520,45 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
       <Row label="Google, Microsoft, email">
         <p className="muted small">Not yet. Atlas connects to Google and Microsoft calendars, and reads mail, in a later version.</p>
       </Row>
+    </>
+  );
+}
+
+/**
+ * Which search Atlas uses (§9.1). Cloudflare's is built in and paid from AI
+ * Gateway credits; the others have free allowances and take a key.
+ */
+function WebSearch({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
+  const provider = draft.web.search;
+  const p = PROVIDERS[provider];
+  const keyName = `${provider}_api_key` as "tavily_api_key" | "brave_api_key" | "exa_api_key";
+  const ready = !p.key || view.secrets[keyName];
+  return (
+    <>
+      <State on={ready} text={ready ? p.name : `${p.name}: no key yet`} what="Searches the web when Atlas needs to know something." />
+      <label className="field">
+        <span>Search with</span>
+        <select value={provider} onChange={(e) => edit({ web: { search: e.target.value as SearchProvider } })}>
+          {(Object.keys(PROVIDERS) as SearchProvider[]).map((k) => (
+            <option key={k} value={k}>
+              {PROVIDERS[k].name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="muted small">{p.about} Private details (secrets, emails, phone numbers, saved addresses) never go into a search.</p>
+      {p.key && (
+        <SecretField
+          label={`${p.name} key`}
+          set={view.secrets[keyName]}
+          onSave={(value) => atlas.send({ type: "atlas.secret.set", secret: { name: keyName, value: value?.trim() ?? null } })}
+        />
+      )}
+      {view.settings.web.search === provider ? (
+        <TestRow label="Test search" k="search" atlas={atlas} run={() => atlas.test("search", { type: "atlas.test", what: "search" })} />
+      ) : (
+        <p className="muted small">Save to test it.</p>
+      )}
     </>
   );
 }

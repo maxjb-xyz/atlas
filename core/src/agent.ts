@@ -62,11 +62,13 @@ import { automationTools } from "./tools/automations";
 import { seedRoutines } from "./routines";
 import { focusTool, setFocus } from "./tools/focus";
 import { pageRead, pageTools } from "./tools/pages";
+import { webFetch, webSearch, webTools } from "./tools/web";
+import { fetchPage, hostOf, PROVIDERS, search, type WebSearchBinding } from "./web";
 import { deletePage, getPage, listPages, pageSummaries, pageVersion, savePage, viewBlock } from "./pages";
 import { noticeAsk, openSuggestions, settleSuggestion } from "./suggestions";
 import { deleteAutomation, getAutomation, listAutomations, matchPhrase, saveAutomation, setAutomationState } from "./automations";
 import { automationView } from "./agent/views";
-import type { ExitApi, Tool, ToolContext, ToolResult } from "./tools/types";
+import type { ExitApi, Tool, ToolContext, ToolResult, WebApi } from "./tools/types";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
@@ -98,15 +100,16 @@ const TOOLS: Record<Actor, Tool[]> = {
     focusTool,
     ...pageTools,
     ...automationTools,
+    ...webTools,
   ],
-  atlas: [calendarRead, ...agendaTools, recall],
+  atlas: [calendarRead, ...agendaTools, recall, ...webTools],
   system: [],
 };
 
 /** What an automation's Atlas step can reach: what the clock's runs can, and the owner's webhooks (§13.1). */
-const AUTOMATION_TOOLS: Tool[] = [calendarRead, ...agendaTools, recall, webhookCall, focusTool, ...pageTools];
+const AUTOMATION_TOOLS: Tool[] = [calendarRead, ...agendaTools, recall, webhookCall, focusTool, ...pageTools, ...webTools];
 /** A test run only looks: it changes nothing, and webhooks only say what they'd do (§13.4). */
-const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall, pageRead];
+const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall, pageRead, webSearch, webFetch];
 
 /**
  * The most history a voice turn reads, in tokens: about M0's last 40
@@ -1054,6 +1057,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       source_log_id: sourceLogId,
       via,
       exit: this.#exit,
+      web: this.#web,
       automations: {
         run: (a, o) => this.#automations.run(a, { why: o.why, inputs: o.inputs }),
         arm: (id) => this.#automations.arm(id),
@@ -1648,6 +1652,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           if (this.#inCall.has(connection.id)) await this.speak(connection, sample);
           return { ok: true, message: `${(this.tts as { label?: string }).label ?? "voice"} spoke in ${Date.now() - t0} ms.` };
         },
+        search: async () => {
+          const name = PROVIDERS[readSettings(this.#sql).web.search].name;
+          const out = await this.#web.search("Cloudflare Workers", { run_id: null, count: 3 });
+          return out.ok
+            ? { ok: true, message: `${name} works: ${out.value.length} results, the first ${out.value[0]?.title ?? "untitled"}.` }
+            : { ok: false, message: out.error };
+        },
         webhook: async (id) => {
           const hook = webhooks(this.#sql).find((w) => w.id === id);
           if (!hook) return { ok: false, message: "That webhook isn't there any more." };
@@ -1677,6 +1688,54 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (msg.what === "brain") this.#broadcast({ type: "atlas.view", view: this.#view() });
   }
 
+  // --- the web (§9.1) ------------------------------------------------------------------
+
+  /** Searching and reading the web, each through the outbox's checks with a receipt (§4.4). */
+  #web: WebApi = {
+    search: (query, o) => {
+      const provider = readSettings(this.#sql).web.search;
+      const p = PROVIDERS[provider];
+      return this.#outbox.look({ what: "search", text: query, to: p.name, run_id: o.run_id }, (f) =>
+        search(
+          provider,
+          { query, count: o.count, ...(o.fresh ? { fresh: o.fresh } : {}) },
+          {
+            fetch: f,
+            key: p.key ? getSecret<string>(this.#sql, `${provider as "tavily" | "brave" | "exa"}_api_key`) : null,
+            binding: this.#websearch(),
+          },
+        ),
+      );
+    },
+    fetch: (url, o) => this.#outbox.look({ what: "fetch", text: url, to: hostOf(url), run_id: o.run_id }, (f) => fetchPage(f, url, o)),
+  };
+
+  /** Cloudflare's web search, on the Workers AI binding; tests use a fake (never the real one). */
+  #websearch(): WebSearchBinding | null {
+    if (seams.websearch !== undefined) return seams.websearch;
+    const ai = this.env.AI as unknown as { websearch?: WebSearchBinding };
+    return this.env.ATLAS_TEST || typeof ai.websearch !== "function" ? null : (r) => ai.websearch!(r);
+  }
+
+  /**
+   * Whether this run has read the web, itself or through a helper it started.
+   * Once it has, what it read could be steering it, so anything that leaves
+   * Atlas asks first, even what's trusted (§12, §20; decided with the owner, 2026-10-22).
+   */
+  #readTheWeb(runId: string): boolean {
+    return (
+      this.#sql
+        .exec(
+          `SELECT 1 FROM log WHERE kind = 'delivery' AND json_extract(body, '$.channel') = 'web' AND json_extract(body, '$.ok') = 1
+             AND (run_id = ? OR run_id IN (SELECT json_extract(source, '$.detail.helper_run') FROM agenda WHERE kind = 'job' AND json_extract(source, '$.run_id') = ?))
+           LIMIT 1`,
+          runId,
+          runId,
+        )
+        .toArray().length > 0
+    );
+  }
+
   // --- approvals (§12) -----------------------------------------------------------
 
   /** The way out for tools: does an action now when its kind and earned trust allow, or puts it on this run's card. */
@@ -1692,12 +1751,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           },
         };
       }
+      const readWeb = this.#readTheWeb(c.run_id);
       // An automation the owner turned on may call the webhooks they saw in it (§13.1: allowed to).
-      if (auto && action.kind === "webhook" && auto.allowed.includes(action.name.toLowerCase())) {
+      if (!readWeb && auto && action.kind === "webhook" && auto.allowed.includes(action.name.toLowerCase())) {
         const out = await this.#outbox.perform(action, { run_id: c.run_id, by: "automation" });
         return { ok: out.ok, output: out.ok ? { done: out.text } : { error: out.text } };
       }
-      if (ASKS[kindOf(action)].asks === "never" || isTrusted(this.#sql, action)) {
+      if (ASKS[kindOf(action)].asks === "never" || (!readWeb && isTrusted(this.#sql, action))) {
         const out = await this.#outbox.perform(action, { run_id: c.run_id, by: "trusted" });
         return {
           ok: out.ok,
@@ -1705,7 +1765,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           receipt: { text: `${out.ok ? "Done" : "Didn't work"} · ${action.name}` },
         };
       }
-      const { item, created } = requestApproval(this.#sql, { run_id: c.run_id, log_id: c.source_log_id, action });
+      const { item, created } = requestApproval(this.#sql, { run_id: c.run_id, log_id: c.source_log_id, action, read_web: readWeb });
       const hold = needsHold(actionsOf(item));
       if (created) {
         await this.#clock.schedule(item);

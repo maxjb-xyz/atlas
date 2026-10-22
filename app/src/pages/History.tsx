@@ -100,7 +100,11 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
           ? `Notification${b.to ? ` to ${str(b.to)}` : ""}`
           : b.channel === "webhook"
             ? `Called ${str(b.to)}`
-            : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
+            : b.channel === "web"
+              ? b.what === "search"
+                ? `Searched ${str(b.to)} for “${str(b.text)}”`
+                : `Read ${str(b.text)}`
+              : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
       const what =
         b.ok === false
           ? `${where}, but it didn't work: ${str(b.error)}`
@@ -108,7 +112,9 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
             ? `${where}: ${str(b.note)}`
             : b.answer
               ? `${where}: ${str(b.answer)}`
-              : `${where}${b.text ? `: “${str(b.text)}”` : ""}`;
+              : b.channel === "web"
+                ? where
+                : `${where}${b.text ? `: “${str(b.text)}”` : ""}`;
       return { who: b.by === "owner" ? "You" : "Atlas", what, kind: `deliver.${str(b.channel)}` };
     }
     case "settings.change": {

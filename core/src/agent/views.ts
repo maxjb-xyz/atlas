@@ -403,7 +403,11 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
     title: item.title,
     steps: actions.map((a) => stepView(sql, a)),
     asked: asked ? String(asked.body.text ?? "").slice(0, 400) : null,
-    why: hold ? ASKS.irreversible.why : ASKS[kindOf(actions[0] ?? { kind: "webhook", webhook: "", name: "" })].why,
+    why:
+      (hold ? ASKS.irreversible.why : ASKS[kindOf(actions[0] ?? { kind: "webhook", webhook: "", name: "" })].why) +
+      (item.source.detail?.read_web
+        ? " Atlas read the web while working on this, so it asks even for what it usually does without asking."
+        : ""),
     hold,
     expires_at: item.due_at,
     checks: [
