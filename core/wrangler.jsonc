@@ -8,6 +8,8 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "ai": { "binding": "AI" },
+  // Browser Run (§9.1): Atlas's browser, with its live view on the stage.
+  "browser": { "binding": "BROWSER" },
   "assets": {
     "directory": "../app/dist",
     "binding": "ASSETS",
