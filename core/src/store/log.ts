@@ -1,6 +1,7 @@
 // One log (VISION §4.2): every message, tool call, receipt, record change,
 // agenda change and delivery is a row. Rows are only ever appended.
 
+import type { StageView } from "../stage";
 import { type Json, newId, parse, type Sql } from "./db";
 
 export type Actor = "owner" | "atlas" | "system";
@@ -29,6 +30,8 @@ export type LogKind =
 export interface Receipt {
   text: string;
   undo?: Undo;
+  /** The stage view this receipt opens (§21.6), when Atlas showed one. */
+  view?: StageView;
 }
 
 /** What Undo on a receipt does. `history` names the correction to roll back. */

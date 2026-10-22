@@ -3,9 +3,12 @@
 // for its page; nothing here changes anything except marking Inbox items done.
 
 import type { HistoryFilter, HistoryStats, InboxItem, RecordView } from "../protocol";
+import type { AreaPage, PersonPage, StageMessage, StagePage, StageView } from "../stage";
+import { getArea } from "../store/areas";
 import { parse, type Sql } from "../store/db";
 import { get as getRow, type LogKind, type LogRow } from "../store/log";
-import { type AtlasRecord, getRecord, RECORD_TYPES, type RecordType, recordHistory } from "../store/records";
+import { indexNewMessages, keywordSearch } from "../store/memory";
+import { type AtlasRecord, getRecord, linked, RECORD_TYPES, type RecordType, recordHistory } from "../store/records";
 import { getState, setState } from "../store/state";
 
 // --- Library -----------------------------------------------------------------------------
@@ -70,6 +73,99 @@ export function listRecords(
     counts.all! += c.n;
   }
   return { records: rows.map((r) => recordView(sql, getRecord(sql, r.id)!)), counts };
+}
+
+// --- the stage's area and person pages (§21.6) -------------------------------------------
+
+/** What a view on the stage needs from the agent: an area's or a person's page, built live. Lists and tables carry their own. */
+export function stagePage(sql: Sql, view: StageView): StagePage | null {
+  if (view.kind === "area") return areaPage(sql, view.area);
+  if (view.kind === "person") return personPage(sql, view.person);
+  return null;
+}
+
+const PAGE_GROUP = 30;
+
+export function areaPage(sql: Sql, id: string): StagePage {
+  const a = getArea(sql, id);
+  if (!a) return { kind: "missing", why: "That area isn't there any more." };
+  if (a.state === "archived") {
+    const into = mergedInto(sql, a.id);
+    if (into) return { kind: "missing", why: `${a.name} was merged into ${into}.` };
+  }
+  const records = sql
+    .exec<{ id: string }>(
+      `SELECT id FROM records WHERE state = 'active' AND ${TAGGED} AND NOT (type = 'person' AND coalesce(json_extract(fields, '$.is_owner'), 0) = 1) ORDER BY updated_at DESC LIMIT 400`,
+      a.id,
+    )
+    .toArray()
+    .map((r) => recordView(sql, getRecord(sql, r.id)!));
+  const of = (types: string[]) => records.filter((r) => types.includes(r.type)).slice(0, PAGE_GROUP);
+  const recent = sql
+    .exec<{ id: string }>(`SELECT id FROM log WHERE kind IN ('message.in', 'message.out') AND ${TAGGED} ORDER BY seq DESC LIMIT 8`, a.id)
+    .toArray()
+    .map((r) => stageMessage(getRow(sql, r.id)!));
+  const messages = sql
+    .exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE kind IN ('message.in', 'message.out') AND ${TAGGED}`, a.id)
+    .one().n;
+  const page: AreaPage = {
+    kind: "area",
+    area: { id: a.id, name: a.name, about: a.about, state: a.state, color: a.color, tone: a.settings.tone },
+    people: of(["person"]),
+    plans: of(["goal", "task", "commitment", "event"]),
+    places: of(["place", "organization"]),
+    notes: of(["note", "preference", "document"]),
+    recent,
+    counts: { messages, records: records.length },
+  };
+  return page;
+}
+
+function mergedInto(sql: Sql, id: string): string | null {
+  const r = sql
+    .exec<{ target: string | null }>(
+      `SELECT json_extract(body, '$.merged_into') AS target FROM log WHERE kind = 'area.change' AND json_extract(body, '$.area_id') = ? AND json_extract(body, '$.merged_into') IS NOT NULL ORDER BY seq DESC LIMIT 1`,
+      id,
+    )
+    .toArray()[0];
+  return r?.target ? (getArea(sql, r.target)?.name ?? null) : null;
+}
+
+export function personPage(sql: Sql, id: string): StagePage {
+  const r = getRecord(sql, id);
+  if (!r || r.type !== "person") return { kind: "missing", why: "Atlas doesn't have that person any more." };
+  if (r.state !== "active") return { kind: "missing", why: `You asked Atlas to forget ${r.name}.` };
+  // The last few messages may not be in the index yet.
+  while (indexNewMessages(sql) > 0);
+  const mentions = keywordSearch(sql, r.name, { kinds: ["message"] }, 30)
+    .map((h) => getRow(sql, h.ref.slice(4)))
+    .filter((row): row is LogRow => row != null && (row.kind === "message.in" || row.kind === "message.out"))
+    .sort((x, y) => y.seq - x.seq)
+    .slice(0, 6)
+    .map(stageMessage);
+  const page: PersonPage = {
+    kind: "person",
+    person: recordView(sql, r),
+    links: linked(sql, r.id).map((l) => ({ kind: l.kind, record: recordView(sql, l.record) })),
+    mentions,
+    history: recordHistory(sql, r.id).map((h) => ({
+      at: h.at,
+      name: h.name,
+      fact: typeof h.fields.fact === "string" ? h.fields.fact : "",
+      reason: h.reason,
+    })),
+  };
+  return page;
+}
+
+function stageMessage(row: LogRow): StageMessage {
+  return {
+    id: row.id,
+    at: row.at,
+    by: row.kind === "message.in" ? "owner" : "atlas",
+    surface: row.surface,
+    text: String(row.body.text ?? "").slice(0, 400),
+  };
 }
 
 // --- History -----------------------------------------------------------------------------

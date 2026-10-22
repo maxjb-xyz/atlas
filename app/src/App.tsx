@@ -146,6 +146,9 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
     if (atlas.voice.connected) atlas.send({ type: "atlas.inbox" });
   }, [atlas.voice.connected]);
 
+  // Going somewhere, such as opening a view on the stage from the transcript, closes the transcript.
+  useEffect(() => setTranscript(false), [place, detail]);
+
   useEffect(() => {
     const open = () => setTranscript(true);
     window.addEventListener("atlas:transcript", open);

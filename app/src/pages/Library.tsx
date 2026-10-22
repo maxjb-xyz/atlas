@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import type { AreaView, RecordView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Composer } from "../Shell";
+import { StageSheet } from "../StageViews";
 import { AreaChip, areaColor, AreaDot, Empty, Icon, pressable, Sheet, shortDay, Stage } from "../ui";
 
 type LibTab = "overview" | "people" | "places" | "memory" | "areas" | "files";
@@ -22,8 +23,17 @@ function useRecords(atlas: Atlas, ref: string, q: { record_type?: RecordView["ty
 
 export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; go: (d: string) => void }) {
   const s = atlas.state;
+  // An area's or a person's page opens in place: "area:<id>" under Areas, "person:<id>" under People (§21.2).
+  const [head, rest = ""] = [detail.split(":")[0]!, detail.split(":").slice(1).join(":")];
+  const page = head === "area" || head === "person" ? { kind: head, id: rest } : null;
   const tab = (
-    ["overview", "people", "places", "memory", "areas", "files"].includes(detail.split(":")[0]!) ? detail.split(":")[0] : "overview"
+    page
+      ? page.kind === "area"
+        ? "areas"
+        : "people"
+      : ["overview", "people", "places", "memory", "areas", "files"].includes(head)
+        ? head
+        : "overview"
   ) as LibTab;
   const all = useRecords(atlas, "lib:all", { limit: 200 });
   const counts = all?.counts ?? {};
@@ -48,11 +58,25 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
         </div>
       }
     >
-      {tab === "overview" && <Overview atlas={atlas} records={all?.records ?? []} counts={counts} go={go} />}
-      {tab === "people" && <Records atlas={atlas} type="person" title="People" />}
-      {tab === "places" && <Records atlas={atlas} type="place" title="Places" />}
-      {tab === "memory" && <Records atlas={atlas} title="Everything Atlas knows" focus={detail.split(":")[1]} search />}
-      {tab === "areas" && <Areas atlas={atlas} />}
+      {page && (
+        <StageSheet
+          atlas={atlas}
+          shown={{
+            id: detail,
+            view: page.kind === "area" ? { kind: "area", area: page.id } : { kind: "person", person: page.id },
+            title: "",
+          }}
+          onClose={() => go(page.kind === "area" ? "areas" : "people")}
+          onOpen={(v) => {
+            if (v.kind === "person") go(`person:${v.person}`);
+          }}
+        />
+      )}
+      {!page && tab === "overview" && <Overview atlas={atlas} records={all?.records ?? []} counts={counts} go={go} />}
+      {!page && tab === "people" && <Records atlas={atlas} type="person" title="People" go={go} />}
+      {tab === "places" && <Records atlas={atlas} type="place" title="Places" go={go} />}
+      {tab === "memory" && <Records atlas={atlas} title="Everything Atlas knows" focus={detail.split(":")[1]} search go={go} />}
+      {!page && tab === "areas" && <Areas atlas={atlas} go={go} />}
       {tab === "files" && (
         <Sheet>
           <Empty title="No files yet">Files Atlas reads or makes for you will live here.</Empty>
@@ -188,7 +212,7 @@ function Overview({
         )}
         <div className="rows">
           {records.slice(0, 8).map((r) => (
-            <RecordRow key={r.id} atlas={atlas} r={r} />
+            <RecordRow key={r.id} atlas={atlas} r={r} go={go} />
           ))}
         </div>
         {records.length > 8 && (
@@ -213,7 +237,7 @@ function sourceText(r: RecordView): string {
 }
 
 /** One record: what Atlas knows, where it came from, its areas, and Correct. */
-function RecordRow({ atlas, r }: { atlas: Atlas; r: RecordView }) {
+function RecordRow({ atlas, r, go }: { atlas: Atlas; r: RecordView; go: (d: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [fact, setFact] = useState(r.fact);
   const s = atlas.state;
@@ -272,6 +296,11 @@ function RecordRow({ atlas, r }: { atlas: Atlas; r: RecordView }) {
       <span className="mono faint small">{shortDay(r.updated_at)}</span>
       {!editing && (
         <span className="row" style={{ gap: 10 }}>
+          {r.type === "person" && (
+            <button className="link" onClick={() => go(`person:${r.id}`)}>
+              Open
+            </button>
+          )}
           <button
             className="link"
             onClick={() => {
@@ -296,12 +325,14 @@ function Records({
   title,
   focus,
   search,
+  go,
 }: {
   atlas: Atlas;
   type?: RecordView["type"];
   title: string;
   focus?: string;
   search?: boolean;
+  go: (d: string) => void;
 }) {
   const [text, setText] = useState("");
   const data = useRecords(atlas, `lib:${type ?? "memory"}`, { record_type: type, text: text.trim() || undefined, limit: 300 });
@@ -324,7 +355,7 @@ function Records({
         <div className="rows">
           {list.map((r) => (
             <div key={r.id} id={`rec-${r.id}`} style={focus === r.id ? { outline: "1px solid var(--ac)", outlineOffset: 2 } : undefined}>
-              <RecordRow atlas={atlas} r={r} />
+              <RecordRow atlas={atlas} r={r} go={go} />
             </div>
           ))}
         </div>
@@ -333,7 +364,7 @@ function Records({
   );
 }
 
-function Areas({ atlas }: { atlas: Atlas }) {
+function Areas({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
   const s = atlas.state;
   const [name, setName] = useState("");
   const live = s.areas.filter((a) => a.state !== "archived");
@@ -352,7 +383,7 @@ function Areas({ atlas }: { atlas: Atlas }) {
         )}
         <div className="rows">
           {live.map((a) => (
-            <AreaRow key={a.id} atlas={atlas} area={a} others={live.filter((x) => x.id !== a.id)} />
+            <AreaRow key={a.id} atlas={atlas} area={a} others={live.filter((x) => x.id !== a.id)} go={go} />
           ))}
         </div>
         <form
@@ -402,7 +433,7 @@ function Areas({ atlas }: { atlas: Atlas }) {
   );
 }
 
-function AreaRow({ atlas, area, others }: { atlas: Atlas; area: AreaView; others: AreaView[] }) {
+function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; others: AreaView[]; go: (d: string) => void }) {
   const [open, setOpen] = useState(false);
   const saved = { name: area.name, about: area.about, tone: area.settings.tone };
   const [draft, setDraft] = useState(saved);
@@ -455,6 +486,9 @@ function AreaRow({ atlas, area, others }: { atlas: Atlas; area: AreaView; others
             />
           </label>
           <div className="row">
+            <button className="btn sm" onClick={() => go(`area:${area.id}`)}>
+              Open
+            </button>
             <button
               className="btn primary sm"
               disabled={!dirty || !draft.name.trim()}

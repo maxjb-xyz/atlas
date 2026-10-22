@@ -16,6 +16,7 @@ import type {
   RecordView,
   ServerMessage,
   SettingsView,
+  StagePage,
 } from "../../core/src/protocol";
 
 /** One calendar read for a page: the events, why it failed, or how old Atlas's copy is when iCloud couldn't be asked. */
@@ -68,6 +69,8 @@ export interface State {
   runDetail: Record<string, { run: Record<string, unknown> | null; rows: LogRow[] }>;
   calendar: Record<string, CalendarState>;
   inbox: InboxItem[] | null;
+  /** The live pages behind area and person views, by the ref they asked with. */
+  stage: Record<string, StagePage | null>;
 }
 
 const initial: State = {
@@ -92,6 +95,7 @@ const initial: State = {
   runDetail: {},
   calendar: {},
   inbox: null,
+  stage: {},
 };
 
 type Action =
@@ -230,6 +234,8 @@ function reduce(s: State, a: Action): State {
       };
     case "atlas.inbox.items":
       return { ...s, inbox: m.items };
+    case "atlas.stage.page":
+      return { ...s, stage: { ...s.stage, [m.ref]: m.page } };
   }
   return s;
 }

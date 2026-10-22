@@ -1,14 +1,19 @@
 // Home (§21.2): the stage and the console. The stage shows Now, the Week,
-// helpers' Jobs, and whatever a receipt opens into.
+// helpers' Jobs, the views Atlas shows (§21.6), and whatever a receipt opens into.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LogRow } from "../../../core/src/protocol";
+import type { StageView } from "../../../core/src/stage";
 import type { Atlas } from "../connection";
 import { Console, VoiceStrip } from "../Shell";
+import { type Shown, shownFrom, StageSheet, titleOf } from "../StageViews";
 import { addDays, AsciiDiamond, clock, dayName, Empty, Sheet, shortDay, Stage, startOfDay, useNow } from "../ui";
 import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
-type HomeTab = "now" | "week" | "jobs" | "receipt";
+type HomeTab = "now" | "week" | "jobs" | "receipt" | `view:${string}`;
+
+/** The most views the stage keeps open as tabs; the oldest closes first. */
+const MAX_VIEWS = 4;
 
 export function Home({
   atlas,
@@ -25,22 +30,57 @@ export function Home({
   const [tab, setTab] = useState<HomeTab>("now");
   const [job, setJob] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<LogRow | null>(null);
+  const [views, setViews] = useState<Shown[]>([]);
 
-  // A job picked from the toolbar arrives in the address: "jobs:<id>".
+  const openView = (v: Shown) => {
+    setViews((list) => [...list.filter((x) => x.id !== v.id), v].slice(-MAX_VIEWS));
+    setTab(`view:${v.id}`);
+  };
+  const closeView = (id: string) => {
+    setViews((list) => list.filter((x) => x.id !== id));
+    if (tab === `view:${id}`) setTab("now");
+  };
+
+  // A job picked from the toolbar arrives in the address as "jobs:<id>"; a view opened from elsewhere as "view:<receipt id>".
   useEffect(() => {
     if (detail.startsWith("jobs:")) {
       setTab("jobs");
       setJob(detail.slice(5));
+    } else if (detail.startsWith("view:")) {
+      const row = s.rows.find((r) => r.id === detail.slice(5));
+      const shown = row && shownFrom(row);
+      if (shown) openView(shown);
+      go("");
     }
   }, [detail]);
+
+  // A view Atlas shows while Home is open goes straight onto the stage (§21.6). Views already in the thread when Home opened stay behind their receipts.
+  const seen = useRef<number | null>(null);
+  useEffect(() => {
+    if (!s.loaded) return;
+    const last = s.rows.at(-1)?.seq ?? 0;
+    if (seen.current == null) {
+      seen.current = last;
+      return;
+    }
+    const fresh = s.rows.filter((r) => r.seq > seen.current! && r.kind === "tool.result").map(shownFrom);
+    seen.current = Math.max(seen.current, last);
+    const newest = fresh.filter((v): v is Shown => v != null).at(-1);
+    if (newest) openView(newest);
+  }, [s.rows, s.loaded]);
 
   const running = s.jobs.filter((j) => j.state === "running").length;
   const now = useNow();
   const tz = s.view?.settings.timezone;
+  const shownTab = views.find((v) => tab === `view:${v.id}`);
   const meta =
     tab === "week"
       ? `Calendar · ${s.view?.secrets.icloud ? "iCloud" : "not connected"}`
-      : `${dayName(now)} · ${clock(now)}${tz ? ` · ${tz}` : ""}`;
+      : shownTab
+        ? shownTab.view.kind === "area" || shownTab.view.kind === "person"
+          ? "Live from what Atlas knows"
+          : "Put together by Atlas"
+        : `${dayName(now)} · ${clock(now)}${tz ? ` · ${tz}` : ""}`;
 
   return (
     <Stage
@@ -50,6 +90,7 @@ export function Home({
         { id: "now", label: "Now" },
         { id: "week", label: "Week" },
         { id: "jobs", label: "Jobs", badge: running || null },
+        ...views.map((v) => ({ id: `view:${v.id}` as const, label: titleOf(atlas, v) })),
         ...(receipt ? [{ id: "receipt" as const, label: "Receipt" }] : []),
       ]}
       tab={tab}
@@ -65,6 +106,8 @@ export function Home({
             atlas={atlas}
             onTranscript={onTranscript}
             onReceipt={(r) => {
+              const shown = shownFrom(r);
+              if (shown) return openView(shown);
               setReceipt(r);
               setTab("receipt");
             }}
@@ -76,6 +119,17 @@ export function Home({
       {tab === "week" && <WeekTab atlas={atlas} />}
       {tab === "jobs" && <Jobs atlas={atlas} selected={job} onSelect={setJob} />}
       {tab === "receipt" && receipt && <ReceiptView atlas={atlas} row={receipt} />}
+      {views
+        .filter((v) => tab === `view:${v.id}`)
+        .map((v) => (
+          <StageSheet
+            key={v.id}
+            atlas={atlas}
+            shown={v}
+            onClose={() => closeView(v.id)}
+            onOpen={(view: StageView, title: string) => openView({ id: `local:${JSON.stringify(view)}`, view, title })}
+          />
+        ))}
     </Stage>
   );
 }

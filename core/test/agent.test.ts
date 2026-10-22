@@ -152,6 +152,32 @@ describe("the thread", () => {
     s.ws.close();
   });
 
+  it("puts a view on the stage, keeps it on the receipt, and serves the page behind it", async () => {
+    brains([call("show", { view: { kind: "area", area: "Studio" } }), say("Here's the studio.")]);
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "America/New_York" });
+    await s.next("atlas.snapshot");
+    s.send({ type: "atlas.area.create", name: "Studio", about: "Where I edit" });
+    const areas = await s.next("atlas.areas", (m) => m.areas.some((a) => a.name === "Studio"));
+    const studio = areas.areas.find((a) => a.name === "Studio")!;
+
+    s.send({ type: "atlas.say", text: "what's going on with the studio?", client_id: "c-show" });
+    const shown = await s.next("atlas.rows", (m) => rowsOf(m, "tool.result").length > 0);
+    const row = rowsOf(shown, "tool.result")[0]!;
+    expect(row.body.receipt).toEqual({ text: "Showing · Studio", view: { kind: "area", area: studio.id } });
+    await s.next("atlas.run", (m) => m.state === "replied");
+
+    // A refresh still has it: the log is the truth.
+    s.send({ type: "atlas.hello" });
+    const again = await s.next("atlas.snapshot");
+    expect(again.thread.some((r) => r.id === row.id)).toBe(true);
+
+    s.send({ type: "atlas.stage", ref: "t", view: { kind: "area", area: studio.id } });
+    const page = await s.next("atlas.stage.page", (m) => m.ref === "t");
+    expect(page.page).toMatchObject({ kind: "area", area: { name: "Studio", about: "Where I edit" }, people: [] });
+    s.ws.close();
+  });
+
   it("keeps a reminder's promise when it comes due, even with no brain", async () => {
     brains([call("reminder_create", { text: "Take the bread out", at: "2099-01-01T09:00" }), say("Will do."), new Error("down")]);
     const s = await connect();

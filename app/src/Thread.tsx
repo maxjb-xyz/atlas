@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import type { LogRow } from "../../core/src/protocol";
 import type { Atlas } from "./connection";
 import { Receipt } from "./Shell";
+import { openOnStage, shownFrom, StageCard } from "./StageViews";
 import { Markdown } from "./Markdown";
 import { AreaChip, Diamond, clock } from "./ui";
 
@@ -111,12 +112,15 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
           </div>
         </div>
       );
-    case "tool.result":
+    case "tool.result": {
+      const shown = shownFrom(row);
+      if (shown) return <StageCard atlas={atlas} shown={shown} onOpen={() => openOnStage(shown.id)} />;
       return (
         <div className="note">
           <Receipt row={row} atlas={atlas} undone={undone} />
         </div>
       );
+    }
     case "voice.problem":
       return <p className="note fail">{str(b.message)}</p>;
     case "brain.fallback":

@@ -979,6 +979,63 @@ button.chip:hover {
   }
 }
 
+/* --- the stage's views (§21.6) -------------------------------------------------------- */
+
+.stage-card {
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 10px 12px;
+  margin-top: 10px;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+}
+.stage-card .title {
+  font-weight: 500;
+}
+.clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.scroll-x {
+  overflow-x: auto;
+  max-width: 100%;
+}
+/* A table as wide as its content, at least the sheet's width; long text wraps, short cells don't. */
+.grid.stage-table {
+  width: max-content;
+  min-width: 100%;
+}
+.stage-table .cell-text {
+  display: block;
+  max-width: 18rem;
+  overflow-wrap: anywhere;
+}
+.sheet-in.closable {
+  position: relative;
+}
+.sheet-in.closable > .sheet-title {
+  padding-right: 36px;
+}
+.view-close {
+  position: absolute;
+  top: 18px;
+  right: 16px;
+}
+.pickable {
+  cursor: pointer;
+}
+.pickable:hover,
+.pickable:focus-visible {
+  background: var(--hover);
+}
+
 /* --- tables and rows ---------------------------------------------------------------- */
 
 .grid {

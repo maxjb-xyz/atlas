@@ -8,7 +8,7 @@ import { CalendarSense } from "./agent/calendar";
 import { correctAreas, discoveryPrompt, readyToDiscover, startDiscovered, tagPending, triedDiscovery, unfiled } from "./agent/areas";
 import { HelperDesk } from "./agent/helpers";
 import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup";
-import { history as logHistory, historyStats, inbox, inboxDone, listRecords, runDetail } from "./agent/views";
+import { history as logHistory, historyStats, inbox, inboxDone, listRecords, runDetail, stagePage } from "./agent/views";
 import { correctRecord, createRecord, findRecords, forgetRecord, getRecord } from "./store/records";
 import { type Decider, workersAIDecider } from "./brains/decide";
 import { createArea, getScope, listAreas, mergeAreas, setScope, type Tagged, updateArea } from "./store/areas";
@@ -41,6 +41,7 @@ import { calendarRead } from "./tools/calendar";
 import { delegate } from "./tools/delegate";
 import { memoryTools, recall } from "./tools/memory";
 import { reminderTools } from "./tools/reminders";
+import { show } from "./tools/show";
 import type { Tool, ToolContext, ToolResult } from "./tools/types";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from "./helper";
@@ -57,10 +58,11 @@ const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
 
 /**
  * What each kind of run can reach. Runs Atlas starts itself (the clock, and
- * later automations and helpers) can't save facts about the owner (§5.4).
+ * later automations and helpers) can't save facts about the owner (§5.4),
+ * and nobody is looking at the stage when they run, so they can't `show`.
  */
 const TOOLS: Record<Actor, Tool[]> = {
-  owner: [calendarRead, ...reminderTools, ...memoryTools, delegate],
+  owner: [calendarRead, ...reminderTools, ...memoryTools, delegate, show],
   atlas: [calendarRead, ...reminderTools, recall],
   system: [],
 };
@@ -398,6 +400,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       }
       case "atlas.inbox":
         this.#send(connection, { type: "atlas.inbox.items", items: inbox(this.#sql) });
+        return;
+      case "atlas.stage":
+        this.#send(connection, { type: "atlas.stage.page", ref: msg.ref, page: stagePage(this.#sql, msg.view) });
         return;
       case "atlas.inbox.done":
         inboxDone(this.#sql, msg.id);

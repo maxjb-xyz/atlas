@@ -7,8 +7,10 @@ import type { LogRow } from "./store/log";
 import type { AgendaItem } from "./store/agenda";
 import { BrainChoice, Settings, SettingsPatch } from "./store/settings";
 import { RECORD_TYPES } from "./store/records";
+import { StageView, type StagePage } from "./stage";
 
 export type { LogRow, AgendaItem };
+export type { StagePage };
 
 export interface RecordView {
   id: string;
@@ -184,6 +186,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.calendar"), ref: z.string().max(64), start: z.string().max(40), end: z.string().max(40) }),
   z.object({ type: z.literal("atlas.inbox") }),
   z.object({ type: z.literal("atlas.inbox.done"), id: z.string().max(64) }),
+  /** The live page behind an area or person view on the stage, or in Library (§21.6). `ref` is echoed back. */
+  z.object({ type: z.literal("atlas.stage"), ref: z.string().max(200), view: StageView }),
   /** Stop a helper's job (Stop on the Jobs tab). */
   z.object({ type: z.literal("atlas.job.stop"), id: z.string().max(64) }),
   /** Live checks for Settings (§22: every check is a live test). */
@@ -265,6 +269,7 @@ export type ServerMessage =
   /** `stale` is set when iCloud couldn't be asked: the events are Atlas's copy from `as_of`, and `why` says why. */
   | { type: "atlas.calendar.events"; ref: string; events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } }
   | { type: "atlas.inbox.items"; items: InboxItem[] }
+  | { type: "atlas.stage.page"; ref: string; page: StagePage | null }
   | {
       type: "atlas.voices";
       voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>;
