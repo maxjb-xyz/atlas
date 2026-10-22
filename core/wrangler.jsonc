@@ -10,6 +10,8 @@
   "ai": { "binding": "AI" },
   // Browser Run (§9.1): Atlas's browser, with its live view on the stage.
   "browser": { "binding": "BROWSER" },
+  // Files Atlas makes (§21.7). Wrangler creates the bucket on the first deploy.
+  "r2_buckets": [{ "binding": "FILES" }],
   "assets": {
     "directory": "../app/dist",
     "binding": "ASSETS",

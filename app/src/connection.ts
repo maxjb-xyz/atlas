@@ -81,6 +81,7 @@ export interface State {
   suggestions: SuggestionView[];
   /** The owner's pages (§21.7), once asked for. */
   pages: PageSummary[] | null;
+  files: import("../../core/src/stage").FileRow[] | null;
   /** The page Keep just made, so the view can say where it went. */
   kept: { id: string; name: string } | null;
 }
@@ -111,6 +112,7 @@ const initial: State = {
   automations: null,
   suggestions: [],
   pages: null,
+  files: null,
   kept: null,
 };
 
@@ -256,6 +258,8 @@ function reduce(s: State, a: Action): State {
       return { ...s, automations: m.automations, suggestions: m.suggestions };
     case "atlas.pages":
       return { ...s, pages: m.pages };
+    case "atlas.files":
+      return { ...s, files: m.files };
     case "atlas.page.kept":
       return { ...s, kept: { id: m.id, name: m.name } };
   }

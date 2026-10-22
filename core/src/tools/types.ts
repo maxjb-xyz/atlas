@@ -43,6 +43,8 @@ export interface ToolContext {
   exit: ExitApi | null;
   /** The web (§9.1), through the outbox's checks; null where the web isn't reachable. */
   web: WebApi | null;
+  /** Where files' bytes live (§21.7): R2, or null where there's no bucket. */
+  files: R2Bucket | null;
   /** The browser (§9.1), for runs that may drive it; null elsewhere. */
   browser: BrowserApi | null;
   /** Automations, for owner runs; null elsewhere. */

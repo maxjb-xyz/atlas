@@ -32,7 +32,9 @@ export type LogKind =
   /** Something left Atlas on a channel beyond the thread (a push, a webhook call), or was held or refused at the exit (§4.4). */
   | "delivery"
   /** A page was made, given a new version, or deleted (§21.7). */
-  | "page.change";
+  | "page.change"
+  /** A file was made, replaced or deleted (§21.7). */
+  | "file.change";
 
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */
 export interface Receipt {

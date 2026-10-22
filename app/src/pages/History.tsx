@@ -94,6 +94,12 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
             : `${b.change === "made" ? "Made" : `Version ${str(b.version)} of`} the page ${str(b.name)}${b.note && b.change !== "made" ? `: ${str(b.note)}` : ""}`,
         kind: `page.${str(b.change)}`,
       };
+    case "file.change":
+      return {
+        who: r.actor === "owner" ? "You" : "Atlas",
+        what: `${{ made: "Made", replaced: "Replaced", deleted: "Deleted" }[str(b.change)] ?? "Changed"} the file ${str(b.name)}`,
+        kind: `file.${str(b.change)}`,
+      };
     case "delivery": {
       const where =
         b.channel === "push"

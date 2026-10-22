@@ -5,6 +5,7 @@
 // that last part in bounds; recall finds the rest, on demand.
 
 import { listPages } from "./pages";
+import { listFiles } from "./files";
 import { focusNow } from "./outbox";
 import type { Message } from "./brains/types";
 import { character, TEXT_PROFILE, VOICE_PROFILE } from "./character";
@@ -203,9 +204,13 @@ export function hat(sql: Sql, beforeSeq?: number): Area[] {
  */
 function pagesLine(sql: Sql): string {
   const pages = listPages(sql).slice(0, 20);
-  return pages.length
-    ? `The owner's pages (newest first; page_read to read one): ${pages.map((p) => `${p.name} (${p.id})`).join(", ")}.`
-    : "";
+  const files = listFiles(sql).slice(0, 20);
+  return [
+    pages.length ? `The owner's pages (newest first; page_read to read one): ${pages.map((p) => `${p.name} (${p.id})`).join(", ")}.` : "",
+    files.length ? `Files you've made (newest first; file_read reads a text one): ${files.map((f) => f.name).join(", ")}.` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function focusLine(sql: Sql, tz: string): string {

@@ -43,7 +43,9 @@ export const pageRef = (v: StageView) =>
           ? `page:${v.page}:${v.version ?? ""}`
           : v.kind === "browser"
             ? "browser"
-            : null;
+            : v.kind === "file"
+              ? `file:${v.file}`
+              : null;
 
 /** The live page behind an area or person view: undefined while it loads. Asked again when what it's built from changes. */
 function usePage(atlas: Atlas, view: StageView) {
@@ -69,6 +71,10 @@ export function titleOf(atlas: Atlas, shown: Shown): string {
     const id = shown.view.page;
     return atlas.state.pages?.find((p) => p.id === id)?.name ?? shown.title;
   }
+  if (shown.view.kind === "file") {
+    const id = shown.view.file;
+    return atlas.state.files?.find((f) => f.id === id)?.name ?? shown.title;
+  }
   return shown.title;
 }
 
@@ -87,7 +93,7 @@ export function StageSheet({
   onClose?: () => void;
 }) {
   const v = shown.view;
-  const keep = v.kind !== "page" && v.kind !== "browser";
+  const keep = v.kind !== "page" && v.kind !== "browser" && v.kind !== "file";
   return (
     <Sheet className="pick" key={shown.id}>
       <div className={`sheet-in ${onClose ? "closable" : ""} ${keep ? "keepable" : ""}`}>
@@ -121,6 +127,9 @@ function ViewBody({
       {v.kind === "plan" && <PlanView view={v} onClose={onClose} />}
       {v.kind === "research" && <ResearchView view={v} onClose={onClose} />}
       {v.kind === "browser" && <BrowserView atlas={atlas} view={v} onClose={onClose} />}
+      {v.kind === "file" && <FileView atlas={atlas} view={v} onClose={onClose} />}
+      {v.kind === "document" && <DocumentView view={v} onClose={onClose} />}
+      {v.kind === "code" && <CodeView view={v} onClose={onClose} />}
       {v.kind === "page" && <PageView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
     </>
   );
@@ -738,6 +747,141 @@ function BrowserView({ atlas, view, onClose }: { atlas: Atlas; view: Extract<Sta
   );
 }
 
+/** A copy button that says it worked. */
+function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      className="btn sm"
+      onClick={() =>
+        void navigator.clipboard?.writeText(text).then(
+          () => setCopied(true),
+          () => setCopied(false),
+        )
+      }
+    >
+      {copied ? "Copied" : label}
+    </button>
+  );
+}
+
+/** A write-up to read (§21.6): a document in Markdown, on the sheet. */
+function DocumentView({ view, onClose }: { view: Extract<StageView, { kind: "document" }>; onClose?: () => void }) {
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="file" />
+        <h1 className="disp">{view.title}</h1>
+        <span className="grow" />
+        <CopyButton text={view.text} />
+        <Close onClose={onClose} />
+      </div>
+      <Source text={view.source} />
+      <div className="document-text">
+        <Markdown text={view.text} />
+      </div>
+    </>
+  );
+}
+
+/** Code (§21.6), with its language and a copy button. */
+function CodeView({ view, onClose }: { view: Extract<StageView, { kind: "code" }>; onClose?: () => void }) {
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="file" />
+        <h1 className="disp">{view.title}</h1>
+        <span className="tag">{view.language}</span>
+        <span className="grow" />
+        <CopyButton text={view.code} />
+        <Close onClose={onClose} />
+      </div>
+      <Source text={view.source} />
+      <pre className="code-block mono">
+        <code>{view.code}</code>
+      </pre>
+    </>
+  );
+}
+
+const sizeOf = (n: number) => (n < 1_000 ? `${n} B` : n < 1_000_000 ? `${Math.round(n / 1_000)} KB` : `${(n / 1_000_000).toFixed(1)} MB`);
+
+/** A file Atlas made (§21.7): what it is, Download, and a look inside when the stage can show it. */
+function FileView({ atlas, view, onClose }: { atlas: Atlas; view: Extract<StageView, { kind: "file" }>; onClose?: () => void }) {
+  const page = usePage(atlas, view);
+  if (page === undefined) return <p className="lab">Opening</p>;
+  if (!page || page.kind !== "file")
+    return (
+      <>
+        <div className="sheet-title">
+          <h1 className="disp">A file</h1>
+          <span className="grow" />
+          <Close onClose={onClose} />
+        </div>
+        <p className="muted">{page?.kind === "missing" ? page.why : "That file isn't there."}</p>
+      </>
+    );
+  const { file: f, preview: p } = page;
+  return (
+    <>
+      <div className="sheet-title">
+        <Icon name="file" />
+        <h1 className="disp clamp">{f.name}</h1>
+        <span className="muted">{sizeOf(f.size)}</span>
+        <span className="grow" />
+        <a className="btn sm" href={f.url} download={f.name}>
+          Download
+        </a>
+        <Close onClose={onClose} />
+      </div>
+      <p className="lab faint" style={{ marginTop: -6, marginBottom: 10 }}>
+        {f.made_by === "owner" ? "Yours" : "Made by Atlas"} · {shortDay(f.updated_at)}
+        {f.note ? ` · ${f.note}` : ""}
+      </p>
+      {p.kind === "table" && (
+        <div className="scroll-x">
+          <table className="grid stage-table">
+            <thead>
+              <tr>
+                {p.columns.map((c, i) => (
+                  <th key={i} className="lab">
+                    {c}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {p.rows.map((r, i) => (
+                <tr key={i}>
+                  {p.columns.map((_, j) => (
+                    <td key={j}>
+                      <span className="cell-text">{r[j] ?? ""}</span>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {p.kind === "text" &&
+        (f.type === "text/markdown" ? (
+          <div className="document-text">
+            <Markdown text={p.text} />
+          </div>
+        ) : (
+          <pre className="code-block mono">
+            <code>{p.text}</code>
+          </pre>
+        ))}
+      {p.kind === "image" && <img className="file-image" src={`${f.url}?inline=1`} alt={f.name} />}
+      {p.kind === "pdf" && <iframe className="browser-live" src={`${f.url}?inline=1`} title={f.name} />}
+      {p.kind === "none" && <p className="muted small">The stage can't show a {f.type} file. Download it to open it.</p>}
+      {"more" in p && p.more && <p className="faint small">That's the start of it; download it for the rest.</p>}
+    </>
+  );
+}
+
 /** A view's name in a page's editor, where views can be moved out but not rewritten. */
 function viewLabel(atlas: Atlas, v: StageView): string {
   if (v.kind === "area") return atlas.state.areas.find((a) => a.id === v.area)?.name ?? "An area";
@@ -745,6 +889,7 @@ function viewLabel(atlas: Atlas, v: StageView): string {
   if (v.kind === "automation") return atlas.state.automations?.find((a) => a.id === v.automation)?.name ?? "An automation";
   if (v.kind === "page") return "A page";
   if (v.kind === "browser") return "The browser";
+  if (v.kind === "file") return atlas.state.files?.find((f) => f.id === v.file)?.name ?? "A file";
   return v.title;
 }
 
@@ -956,6 +1101,9 @@ const KIND: Record<StageView["kind"], string> = {
   page: "Page",
   research: "Research",
   browser: "Browser",
+  file: "File",
+  document: "Document",
+  code: "Code",
 };
 
 export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown; onOpen: () => void }) {
@@ -984,12 +1132,18 @@ export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown
                   ? atlas.state.pages?.find((p) => p.id === v.page)?.preview || "A page you keep."
                   : v.kind === "browser"
                     ? "Atlas's browser, live."
-                    : v.kind === "research"
-                      ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"} · ${v.sources
-                          .slice(0, 3)
-                          .map((x) => hostOf(x.url))
-                          .join(", ")}`
-                      : "What Atlas knows about them, and where they came up.";
+                    : v.kind === "file"
+                      ? (atlas.state.files?.find((f) => f.id === v.file)?.note ?? "A file to open or download.")
+                      : v.kind === "document"
+                        ? v.text.slice(0, 160)
+                        : v.kind === "code"
+                          ? `${v.language} · ${v.code.split("\n").length} lines`
+                          : v.kind === "research"
+                            ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"} · ${v.sources
+                                .slice(0, 3)
+                                .map((x) => hostOf(x.url))
+                                .join(", ")}`
+                            : "What Atlas knows about them, and where they came up.";
   return (
     <div className="stage-card rise">
       <span className="lab">

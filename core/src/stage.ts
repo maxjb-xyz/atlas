@@ -103,6 +103,26 @@ export const ResearchStage = z.object({
     .describe("Only pages you searched or read in this conversation, numbered in this order."),
 });
 
+export const FileStage = z.object({
+  kind: z.literal("file"),
+  file: z.string().min(1).max(120).describe("The file's name or id."),
+});
+
+export const DocumentStage = z.object({
+  kind: z.literal("document"),
+  title,
+  text: z.string().min(1).max(40_000).describe("The document, in Markdown: a write-up, a summary, a study guide, notes to read."),
+  source,
+});
+
+export const CodeStage = z.object({
+  kind: z.literal("code"),
+  title,
+  language: z.string().max(30).describe("The language, such as python, javascript, bash, sql."),
+  code: z.string().min(1).max(40_000),
+  source,
+});
+
 /** Atlas's browser, live (§9.1): there's one, so the view only says to show it. */
 export const BrowserStage = z.object({ kind: z.literal("browser") });
 
@@ -123,6 +143,9 @@ export const StageView = z.discriminatedUnion("kind", [
   PageStage,
   ResearchStage,
   BrowserStage,
+  FileStage,
+  DocumentStage,
+  CodeStage,
 ]);
 export type StageView = z.infer<typeof StageView>;
 export type StageKind = StageView["kind"];
@@ -229,12 +252,46 @@ export interface BrowserState {
 
 export type BrowserStagePage = BrowserState & { kind: "browser" };
 
+/** A file Atlas made (§21.7): what it is. Its bytes live in R2. */
+export interface FileRow {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  made_by: "owner" | "atlas";
+  note: string;
+  run_id: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** A file as its view shows it: what it is, a link to download it, and a look inside when that's possible. */
+export interface FileStagePage {
+  kind: "file";
+  file: { id: string; name: string; type: string; size: number; made_by: "owner" | "atlas"; note: string; updated_at: number; url: string };
+  preview:
+    | { kind: "text"; text: string; more: boolean }
+    | { kind: "table"; columns: string[]; rows: string[][]; more: boolean }
+    | { kind: "image" }
+    | { kind: "pdf" }
+    | { kind: "none" };
+}
+
 /** What a view needs from the agent, or why it can't be shown any more. */
-export type StagePage = AreaPage | PersonPage | AutomationPage | PagePage | BrowserStagePage | { kind: "missing"; why: string };
+export type StagePage =
+  AreaPage | PersonPage | AutomationPage | PagePage | BrowserStagePage | FileStagePage | { kind: "missing"; why: string };
 
 /** The few words a view goes by: on its tab, its receipt and its compact card. */
-export function stageTitle(v: StageView, names: { area?: string; person?: string; automation?: string; page?: string } = {}): string {
+export function stageTitle(
+  v: StageView,
+  names: { area?: string; person?: string; automation?: string; page?: string; file?: string } = {},
+): string {
   switch (v.kind) {
+    case "file":
+      return names.file ?? v.file;
+    case "document":
+    case "code":
+      return v.title;
     case "browser":
       return "Browser";
     case "area":

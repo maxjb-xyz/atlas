@@ -37,6 +37,7 @@ function ctx(sql: Sql): ToolContext {
     automations: null,
     web: null,
     browser: null,
+    files: null,
   };
 }
 

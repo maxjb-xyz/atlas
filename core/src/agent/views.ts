@@ -272,8 +272,9 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
     "automation.run",
     "automation.change",
     "page.change",
+    "file.change",
   ],
-  actions: ["tool.result", "record.change", "agenda.change", "area.change", "delivery", "automation.change", "page.change"],
+  actions: ["tool.result", "record.change", "agenda.change", "area.change", "delivery", "automation.change", "page.change", "file.change"],
   conversations: ["message.in", "message.out"],
   jobs: ["job.result", "agenda.change", "automation.run"],
 };

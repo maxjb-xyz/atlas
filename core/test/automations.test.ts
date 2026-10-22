@@ -266,6 +266,7 @@ describe("automations", () => {
     expect(test.requests[0]!.tools.map((x) => x.name).sort()).toEqual([
       "agenda_list",
       "calendar_read",
+      "file_read",
       "page_read",
       "recall",
       "web_fetch",

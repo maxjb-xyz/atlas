@@ -310,6 +310,9 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.browser"), action: z.enum(["take", "give", "close"]) }),
   /** Library's pages (§21.7). */
   z.object({ type: z.literal("atlas.pages") }),
+  /** Library's files (§21.7), and deleting one. */
+  z.object({ type: z.literal("atlas.files") }),
+  z.object({ type: z.literal("atlas.file.delete"), id: z.string().max(64) }),
   /** Keep: saves a view on the stage as a new page. */
   z.object({ type: z.literal("atlas.page.keep"), view: StageView, name: z.string().trim().min(1).max(80) }),
   /** The owner's edit: a new version with this body. */
@@ -432,6 +435,7 @@ export type ServerMessage =
   | { type: "atlas.stage.page"; ref: string; page: StagePage | null }
   | { type: "atlas.automations"; automations: AutomationView[]; suggestions: SuggestionView[] }
   | { type: "atlas.pages"; pages: PageSummary[] }
+  | { type: "atlas.files"; files: import("./stage").FileRow[] }
   /** Keep worked: the new page, so the view can say where it went. */
   | { type: "atlas.page.kept"; id: string; name: string }
   | {

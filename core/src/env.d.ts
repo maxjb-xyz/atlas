@@ -3,6 +3,7 @@
 interface Env {
   AI: Ai;
   BROWSER: BrowserRun;
+  FILES: R2Bucket;
   ASSETS: Fetcher;
   PersonAgent: DurableObjectNamespace<import("./index").PersonAgent>;
   ATLAS_OWNER_SECRET?: string;

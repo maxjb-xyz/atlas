@@ -17,6 +17,7 @@ interface OwnerApi {
   apiLastSeq(): Promise<number>;
   apiCharacterCheck(): Promise<unknown>;
   apiApprove(id: string): Promise<{ ok: boolean; text: string }>;
+  apiFile(id: string): Promise<{ key: string; name: string; type: string } | null>;
 }
 
 /** Passkeys, challenges and sessions live in the owner's agent. */
@@ -48,6 +49,24 @@ export default {
         if (typeof body.id !== "string" || body.id.length > 64) return json({ error: 'Send {"id": "..."}.' }, 400);
         const out = await agent.apiApprove(body.id);
         return json(out, out.ok ? 200 : 409);
+      }
+      // A file Atlas made (§21.7), from R2. It's served sandboxed, so an HTML or SVG file can't run scripts as Atlas.
+      const file = /^\/api\/files\/([\w-]{1,64})$/.exec(path);
+      if (file && request.method === "GET") {
+        const meta = await agent.apiFile(file[1]!);
+        const obj = meta ? await env.FILES.get(meta.key) : null;
+        if (!meta || !obj) return json({ error: "That file isn't there any more." }, 404);
+        const inline = url.searchParams.get("inline") === "1";
+        return new Response(obj.body, {
+          headers: {
+            "content-type": meta.type,
+            "content-disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(meta.name)}`,
+            // Chrome's PDF viewer won't run in a sandbox; a PDF can't script this origin anyway.
+            ...(meta.type === "application/pdf" ? {} : { "content-security-policy": "sandbox" }),
+            "x-content-type-options": "nosniff",
+            "cache-control": "private, no-store",
+          },
+        });
       }
       if (path === "/api/character-check" && request.method === "POST") {
         return json(await agent.apiCharacterCheck());

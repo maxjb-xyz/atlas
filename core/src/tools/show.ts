@@ -7,6 +7,7 @@ import { areaPage, personPage } from "../agent/views";
 import { type StageView, StageView as StageViewSchema, stageTitle } from "../stage";
 import { findAutomation } from "../automations";
 import { findPage, listPages, pageVersion } from "../pages";
+import { findFile, listFiles } from "../files";
 import { getArea, listAreas } from "../store/areas";
 import { findRecords, getRecord, recordsNamed } from "../store/records";
 import { defineTool, fail, type ToolResult } from "./types";
@@ -17,7 +18,7 @@ export const show = defineTool({
   description: [
     "Put a view on the stage of the owner's app, beside your reply.",
     "Use it when the owner asks to see something, when they ask what's going on with one of their areas or who someone is, and when the answer is several items that read better as a list or a table than as sentences.",
-    "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `automation` (one of the owner's automations, as When → Do → Report with its runs), `page` (one of the owner's kept pages), `list` and `table` (things you've put together in this turn), `draft` (words for the owner to copy and send themselves, such as an email or a post), `plan` (steps toward something, each with whether it's to do, under way, done or waiting) `research` (an answer from the web, with the sources you searched or read) and `browser` (your browser, live).",
+    "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `automation` (one of the owner's automations, as When → Do → Report with its runs), `page` (one of the owner's kept pages), `list` and `table` (things you've put together in this turn), `draft` (words for the owner to copy and send themselves, such as an email or a post), `plan` (steps toward something, each with whether it's to do, under way, done or waiting) `research` (an answer from the web, with the sources you searched or read), `browser` (your browser, live), `file` (one of the files you made, to look at and download), `document` (a longer write-up to read, in Markdown) and `code` (code, with its language).",
     "Fill a list, table or research view only with what you've looked up or what's in the conversation, never with guesses, and say where it came from in `source` (for research, in its `sources`).",
     "The owner sees the view as you answer, so keep your reply to what matters most and don't read the view out. In a voice conversation, say a sentence or two and let the stage show the rest.",
   ].join(" "),
@@ -36,7 +37,8 @@ export const show = defineTool({
 });
 
 type Resolved =
-  { view: StageView; names: { area?: string; person?: string; automation?: string; page?: string }; what?: unknown } | { error: string };
+  | { view: StageView; names: { area?: string; person?: string; automation?: string; page?: string; file?: string }; what?: unknown }
+  | { error: string };
 
 /** Turns a name into the id the view keeps, and checks a table's rows fit its columns. Pages use it for the views they keep. */
 export function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Resolved {
@@ -97,7 +99,21 @@ export function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Re
     case "plan":
     case "research":
     case "browser":
+    case "document":
+    case "code":
       return { view, names: {} };
+    case "file": {
+      const f = findFile(sql, view.file);
+      if (!f) {
+        const names = listFiles(sql).map((x) => x.name);
+        return {
+          error: names.length
+            ? `There's no file called "${view.file}". Your files are: ${names.slice(0, 30).join(", ")}.`
+            : `There's no file called "${view.file}"; you haven't made any files yet.`,
+        };
+      }
+      return { view: { kind: "file", file: f.id }, names: { file: f.name } };
+    }
     case "page": {
       const p = findPage(sql, view.page);
       if (!p) {

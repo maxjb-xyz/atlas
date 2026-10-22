@@ -66,6 +66,8 @@ import { pageRead, pageTools } from "./tools/pages";
 import { webFetch, webSearch, webTools } from "./tools/web";
 import { browserTools } from "./tools/browser";
 import { vaultFill } from "./tools/vault";
+import { fileRead, fileTools } from "./tools/files";
+import { deleteFile, filePage, getFile, keyOf, listFiles } from "./files";
 import { type BrowserDriver, type BrowserPage, BrowserRunDriver } from "./browser";
 import { findEntry, hiddenValues, removeEntry, saveEntry, siteFor, touchEntry } from "./vault";
 import { scrub } from "./outbox";
@@ -110,8 +112,9 @@ const TOOLS: Record<Actor, Tool[]> = {
     ...webTools,
     ...browserTools,
     vaultFill,
+    ...fileTools,
   ],
-  atlas: [calendarRead, ...agendaTools, recall, ...webTools],
+  atlas: [calendarRead, ...agendaTools, recall, ...webTools, fileRead],
   system: [],
 };
 
@@ -126,9 +129,10 @@ const AUTOMATION_TOOLS: Tool[] = [
   ...webTools,
   ...browserTools,
   vaultFill,
+  ...fileTools,
 ];
 /** A test run only looks: it changes nothing, and webhooks only say what they'd do (§13.4). */
-const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall, pageRead, webSearch, webFetch];
+const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall, pageRead, webSearch, webFetch, fileRead];
 
 /**
  * The most history a voice turn reads, in tokens: about M0's last 40
@@ -679,12 +683,26 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#send(connection, {
           type: "atlas.stage.page",
           ref: msg.ref,
-          page: msg.view.kind === "browser" ? await this.#browserPage() : stagePage(this.#sql, msg.view),
+          page:
+            msg.view.kind === "browser"
+              ? await this.#browserPage()
+              : msg.view.kind === "file"
+                ? await filePage(this.#sql, this.#bucket(), msg.view.file)
+                : stagePage(this.#sql, msg.view),
         });
         return;
       case "atlas.browser":
         await this.#browserButton(msg.action);
         return;
+      case "atlas.files":
+        this.#send(connection, { type: "atlas.files", files: listFiles(this.#sql) });
+        return;
+      case "atlas.file.delete": {
+        const bucket = this.#bucket();
+        if (bucket) await deleteFile(this.#sql, bucket, msg.id, "owner");
+        this.#broadcast({ type: "atlas.files", files: listFiles(this.#sql) });
+        return;
+      }
       case "atlas.pages":
         this.#send(connection, { type: "atlas.pages", pages: pageSummaries(this.#sql) });
         return;
@@ -1112,6 +1130,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       via,
       exit: this.#exit,
       web: this.#web,
+      files: this.#bucket(),
       browser: this.#browserApi,
       automations: {
         run: (a, o) => this.#automations.run(a, { why: o.why, inputs: o.inputs }),
@@ -2147,6 +2166,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
     this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
     return row;
+  }
+
+  /** Where files' bytes live (§21.7). */
+  #bucket(): R2Bucket | null {
+    return (this.env as { FILES?: R2Bucket }).FILES ?? null;
+  }
+
+  /** What the Worker needs to send a file: where its bytes are, its name and type. */
+  async apiFile(id: string): Promise<{ key: string; name: string; type: string } | null> {
+    const f = getFile(this.#sql, id);
+    return f ? { key: keyOf(f), name: f.name, type: f.type } : null;
   }
 
   /** Approve from a push notification's button (the service worker calls /api/approve). */

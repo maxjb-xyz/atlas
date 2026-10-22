@@ -61,6 +61,7 @@ function setup(sql: Sql, steps: Step[], opts: Partial<RunSpec> = {}, extraBrains
     automations: null,
     web: null,
     browser: null,
+    files: null,
   };
   const runId = startRun(sql, { actor: "owner", trigger: "message", surface: "app", role: "main" });
   const events: LoopEvent[] = [];
