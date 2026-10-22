@@ -6,7 +6,7 @@ Atlas is a personal AI that feels like Jarvis. You talk to one character by voic
 
 It's open source and self-deployed with one click to Cloudflare.
 
-> **Status: M0 done (2026-10-21), M1 next.** M0, the voice and core prototype, runs on the owner's Cloudflare account and passed its smoke test. [docs/M0.md](docs/M0.md) covers deploying it and what it found; [docs/HANDOFF-M1.md](docs/HANDOFF-M1.md) covers what's open and the plan for M1 ([VISION.md §25](VISION.md#25-build-order)).
+> **Status: M1 built, waiting on its smoke test (2026-10-22).** M0, the voice and core prototype, passed its smoke test on the owner's Cloudflare account. M1, the companion (memory and recall, compaction, helpers, areas, the character, the UI v1 shell, passkeys and setup), is built; [docs/M1.md](docs/M1.md) covers deploying it, its smoke test, and the decisions made while building it.
 
 ![Atlas UI v1](docs/ui/screenshots/00-overview.png)
 
@@ -18,6 +18,8 @@ It's open source and self-deployed with one click to Cloudflare.
 | [docs/ui/](docs/ui/README.md) | UI v1, locked Oct 21, 2026. It has the shell, the six places, screenshots of every screen, the visual language, and the source files. |
 | [docs/M0.md](docs/M0.md) | The first milestone: deploy, benchmark, the smoke test and what it found, and the decisions made while building. |
 | [docs/HANDOFF-M1.md](docs/HANDOFF-M1.md) | Where things stand after M0, how we work (smoke tests in place of a week of use), open issues, and the M1 plan. |
+| [docs/M1.md](docs/M1.md) | The second milestone: the smoke test, what's built, deploying over M0, and the decisions made while building. |
+| [docs/CHARACTER.md](docs/CHARACTER.md) | Atlas's character, and the eval that checks every brain against it. |
 | [brand/](brand/) | The diamond mark and app icons. |
 
 Old Atlas is kept for reference at [atlas-legacy](https://github.com/maxjb-xyz/atlas-legacy). Ideas carry over from it, code doesn't.
