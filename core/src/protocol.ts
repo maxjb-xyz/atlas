@@ -8,7 +8,6 @@ import type { AgendaItem } from "./store/agenda";
 import { BrainChoice, Settings, SettingsPatch } from "./store/settings";
 import { RECORD_TYPES } from "./store/records";
 import { StageView, type StagePage } from "./stage";
-import type { DiscordCopy } from "./discord";
 
 export type { LogRow, AgendaItem };
 export type { StagePage };
@@ -111,7 +110,6 @@ export const ClientMessage = z.discriminatedUnion("type", [
         name: z.literal("icloud"),
         value: z.object({ username: z.string().min(3).max(200), app_password: z.string().min(4).max(64) }).nullable(),
       }),
-      z.object({ name: z.literal("discord_bot_token"), value: z.string().trim().min(20).max(200).nullable() }),
     ]),
   }),
   /** Whether this device has Atlas in view, sent on connect and whenever it changes, so a message goes to one channel (§14). */
@@ -129,13 +127,6 @@ export const ClientMessage = z.discriminatedUnion("type", [
   }),
   /** Stop sending notifications to a device. */
   z.object({ type: z.literal("atlas.push.remove"), device: z.string().min(1).max(64) }),
-  /** The owner sends a message to a Discord channel from Settings, to check the way out. The result comes back as a test result. */
-  z.object({
-    type: z.literal("atlas.discord.send"),
-    ref: z.string().max(64),
-    channel_id: z.string().min(1).max(32),
-    text: z.string().min(1).max(2_000),
-  }),
   /** "Sign in with ChatGPT": start, then paste the address the browser landed on. */
   z.object({ type: z.literal("atlas.chatgpt.start") }),
   z.object({ type: z.literal("atlas.chatgpt.finish"), url: z.string().min(1).max(8000) }),
@@ -217,7 +208,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
-    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push", "discord"]),
+    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push"]),
     /** For "push": the device to send the test notification to. */
     device: z.string().max(64).optional(),
     /** Echoed back on the result, so the app knows which button it answers. */
@@ -247,8 +238,6 @@ export interface SettingsView {
       username: string;
       refused: { at: number; message: string; tries: number; next_try: number; note: string } | null;
     } | null;
-    /** The Discord bot: set or not, what it could see at its last check, and the link that invites it to a server. */
-    discord: { copy: DiscordCopy | null; invite: string | null } | null;
   };
   chatgpt: ChatGPTView;
   /** Provider health, by "provider:model". */

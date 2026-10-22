@@ -81,9 +81,7 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
                 ? `Passkeys: ${str(b.passkeys)}`
                 : b.push
                   ? `Notifications ${str(b.push)}: ${str(b.name)}`
-                  : b.discord
-                    ? `Discord ${str(b.discord)}${b.message ? `: ${str(b.message)}` : ""}`
-                    : "Changed settings";
+                  : "Changed settings";
       return { who: r.actor === "owner" ? "You" : "Atlas", what, kind: "settings.change" };
     }
     default:

@@ -468,8 +468,6 @@ function Brains({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; 
 
 function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
   const icloud = view.secrets.icloud;
-  const discord = view.secrets.discord;
-  const channels = discord?.copy?.servers.reduce((n, sv) => n + sv.channels.length, 0) ?? 0;
   return (
     <>
       <Head title="Connections" sub="What Atlas can see, and where it can speak. Each one has its own live test." />
@@ -505,20 +503,6 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
           run={() => atlas.test("calendar", { type: "atlas.test", what: "calendar" })}
         />
       </Row>
-      <Row label="Discord">
-        <State
-          on={!!discord?.copy}
-          text={
-            discord?.copy
-              ? `Connected as ${discord.copy.bot} · ${discord.copy.servers.length} ${discord.copy.servers.length === 1 ? "server" : "servers"}, ${channels} ${channels === 1 ? "channel" : "channels"}`
-              : discord
-                ? "Token saved, not checked yet"
-                : "Not connected"
-          }
-          what="Posts in your servers' channels, as a bot you make."
-        />
-        <Discord atlas={atlas} view={view} />
-      </Row>
       <Row label="Google, Microsoft, email">
         <p className="muted small">Not yet. Atlas connects to Google and Microsoft calendars, and reads mail, in a later version.</p>
       </Row>
@@ -534,111 +518,6 @@ function State({ on, bad, text, what }: { on: boolean; bad?: boolean; text: stri
       <span style={{ fontWeight: 500 }}>{text}</span>
       <span className="muted small">{what}</span>
     </div>
-  );
-}
-
-function Discord({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
-  const d = view.secrets.discord;
-  const [token, setToken] = useState("");
-  const channels = (d?.copy?.servers ?? []).flatMap((sv) => sv.channels.map((c) => ({ ...c, server: sv.name })));
-  const [channel, setChannel] = useState("");
-  const [text, setText] = useState("Atlas is connected here.");
-  const [sent, setSent] = useState(0);
-  const result = sent ? atlas.state.tests[`discord:send:${sent}`] : undefined;
-  return (
-    <>
-      {!d && (
-        <p className="muted small">
-          Make a bot for Atlas at{" "}
-          <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer">
-            discord.com/developers
-          </a>
-          : New Application, then Bot, then Reset Token. Paste the token here. Atlas posts as that bot, and only in servers you invite it
-          to.
-        </p>
-      )}
-      <label className="field">
-        <span>Bot token</span>
-        <div className="row">
-          <input
-            type="password"
-            className="mono"
-            autoComplete="new-password"
-            spellCheck={false}
-            value={token}
-            placeholder={d ? "Set. Paste a new one to replace it." : "Paste the bot's token"}
-            onChange={(e) => setToken(e.target.value)}
-          />
-          <button
-            type="button"
-            className="btn"
-            disabled={token.trim().length < 20}
-            onClick={() => {
-              atlas.send({ type: "atlas.secret.set", secret: { name: "discord_bot_token", value: token.trim() } });
-              setToken("");
-              atlas.test("discord", { type: "atlas.test", what: "discord" });
-            }}
-          >
-            Connect
-          </button>
-          {d && (
-            <button
-              type="button"
-              className="btn"
-              onClick={() => atlas.send({ type: "atlas.secret.set", secret: { name: "discord_bot_token", value: null } })}
-            >
-              Disconnect
-            </button>
-          )}
-        </div>
-      </label>
-      {d?.invite && (
-        <p className="small">
-          <a href={d.invite} target="_blank" rel="noreferrer">
-            Add the bot to a server
-          </a>
-          <span className="muted">. It asks only to see channels and send messages. Test again after inviting it.</span>
-        </p>
-      )}
-      {d && (
-        <TestRow
-          label="Test Discord"
-          k="discord"
-          atlas={atlas}
-          run={() => atlas.test("discord", { type: "atlas.test", what: "discord" })}
-        />
-      )}
-      {channels.length > 0 && (
-        <form
-          className="row"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const n = Date.now();
-            setSent(n);
-            atlas.send({ type: "atlas.discord.send", ref: `discord:send:${n}`, channel_id: channel || channels[0]!.id, text });
-          }}
-        >
-          <select value={channel || channels[0]!.id} onChange={(e) => setChannel(e.target.value)} style={{ maxWidth: 220 }}>
-            {channels.map((c) => (
-              <option key={c.id} value={c.id}>
-                #{c.name} · {c.server}
-              </option>
-            ))}
-          </select>
-          <input value={text} maxLength={2000} onChange={(e) => setText(e.target.value)} style={{ flex: 1, minWidth: 160 }} />
-          <button className="btn" disabled={!text.trim()}>
-            Send a test message
-          </button>
-          {sent > 0 && !result && <span className="muted small">Sending</span>}
-          {result && <TestMessage r={result} />}
-        </form>
-      )}
-      {d && (
-        <p className="muted small">
-          Everything sent leaves a receipt in History. Atlas doesn't post on its own yet; when it can, it asks you first.
-        </p>
-      )}
-    </>
   );
 }
 

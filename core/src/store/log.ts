@@ -25,7 +25,7 @@ export type LogKind =
   | "job.result"
   /** An area was created, changed, merged or archived, or the owner moved an item's areas (§6). */
   | "area.change"
-  /** Something left Atlas on a channel beyond the thread (a push, a Discord post), or was held or refused at the exit (§4.4). */
+  /** Something left Atlas on a channel beyond the thread (a push, a webhook call), or was held or refused at the exit (§4.4). */
   | "delivery";
 
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */

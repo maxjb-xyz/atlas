@@ -27,7 +27,6 @@ import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
 import { compact, planCompaction } from "./compaction";
 import { CONTEXT_TOKENS, history, systemPrompt, tokens, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
-import { channelsOf, checkDiscord, type DiscordCopy } from "./discord";
 import { Outbox, type PushDevice, pushDevices, StreamScrubber, type Urgency } from "./outbox";
 import { vapidKeys } from "./push";
 import { type AreaView, ClientMessage, type JobView, type ServerMessage, type SettingsView } from "./protocol";
@@ -261,8 +260,6 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         );
         append(this.#sql, { actor: "owner", kind: "settings.change", body: { secret: msg.secret.name, set: msg.secret.value !== null } });
         if (msg.secret.name === "icloud") this.#calendar.reconnect();
-        // A new token means a new bot: what the old one could see no longer counts. The app tests the new one at once.
-        if (msg.secret.name === "discord_bot_token") setState(this.#sql, "discord", null);
         this.#refreshVoice();
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
@@ -459,20 +456,6 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         );
         append(this.#sql, { actor: "owner", kind: "settings.change", body: { push: "removed", name: gone.name } });
         this.#broadcast({ type: "atlas.view", view: this.#view() });
-        return;
-      }
-      case "atlas.discord.send": {
-        const to = channelsOf(getState<DiscordCopy>(this.#sql, "discord")).find((c) => c.id === msg.channel_id);
-        const out = to
-          ? await this.#outbox.send({ channel: "discord", to, text: msg.text, run_id: null, by: "owner" })
-          : { ok: false, error: "Atlas doesn't know that channel. Press Test to read the bot's channels again." };
-        this.#send(connection, {
-          type: "atlas.test.result",
-          what: "discord",
-          ref: msg.ref,
-          ok: out.ok,
-          message: out.ok ? `Sent to #${to!.name}.` : (out.error ?? "It didn't go out."),
-        });
         return;
       }
       case "atlas.stage":
@@ -1395,22 +1378,6 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           if (this.#inCall.has(connection.id)) await this.speak(connection, sample);
           return { ok: true, message: `${(this.tts as { label?: string }).label ?? "voice"} spoke in ${Date.now() - t0} ms.` };
         },
-        discord: async () => {
-          await this.#checkDiscord();
-          const copy = getState<DiscordCopy>(this.#sql, "discord")!;
-          const channels = channelsOf(copy);
-          if (!copy.servers.length) {
-            return {
-              ok: true,
-              message: `Connected as ${copy.bot}, but it isn't in a server yet. Invite it with the link below, then test again.`,
-            };
-          }
-          const names = channels.slice(0, 6).map((c) => `#${c.name}`);
-          return {
-            ok: true,
-            message: `Connected as ${copy.bot}. It sees ${channels.length} text ${channels.length === 1 ? "channel" : "channels"} in ${copy.servers.length} ${copy.servers.length === 1 ? "server" : "servers"}: ${names.join(", ")}${channels.length > names.length ? ", and more" : ""}.`,
-          };
-        },
         push: async (device) => {
           const out = await this.#outbox.push(
             [{ id: `test-${Date.now()}`, run_id: null, body: { text: "This is how Atlas's notifications look." } } as unknown as LogRow],
@@ -1431,23 +1398,6 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     );
     this.#send(connection, { type: "atlas.test.result", what: msg.what, ref: msg.ref, ...out });
     if (msg.what === "brain") this.#broadcast({ type: "atlas.view", view: this.#view() });
-  }
-
-  /** Asks Discord who the bot is and what it can see, and keeps a copy for Settings and for sending. Throws Discord's own words. */
-  async #checkDiscord(): Promise<void> {
-    const token = getSecret<string>(this.#sql, "discord_bot_token");
-    if (!token) throw new Error("Paste the bot's token first.");
-    try {
-      setState(this.#sql, "discord", await checkDiscord(seams.fetch ?? fetch, token));
-      append(this.#sql, { actor: "system", kind: "settings.change", body: { discord: "checked" } });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      append(this.#sql, { actor: "system", kind: "settings.change", body: { discord: "refused", message } });
-      console.error(JSON.stringify({ at: "discord.check", error: message }));
-      throw err;
-    } finally {
-      this.#broadcast({ type: "atlas.view", view: this.#view() });
-    }
   }
 
   // --- sending ----------------------------------------------------------------

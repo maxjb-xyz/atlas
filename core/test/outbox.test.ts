@@ -1,7 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
-import { checkDiscord } from "../src/discord";
 import { type Channels, Outbox, type PushDevice, pushDevices } from "../src/outbox";
 import { b64url, encryptPayload, fromB64url, type PushSubscriptionJSON, vapidAuth, vapidKeys } from "../src/push";
 import { createItem } from "../src/store/agenda";
@@ -211,75 +210,6 @@ describe("quiet hours", () => {
     expect(quietUntil(at("2026-10-23T13:10:00Z"), "UTC", nap)?.toISOString()).toBe("2026-10-23T14:30:00.000Z");
     expect(quietUntil(at("2026-10-23T14:30:00Z"), "UTC", nap)).toBeNull();
   });
-});
-
-describe("Discord", () => {
-  it("reads who the bot is and the text channels it can see", async () => {
-    const net = fakeNet((url) => {
-      const body = url.endsWith("/users/@me")
-        ? { id: "111", username: "Atlas" }
-        : url.endsWith("/oauth2/applications/@me")
-          ? { id: "111" }
-          : url.endsWith("/users/@me/guilds")
-            ? [{ id: "g1", name: "Studio" }]
-            : [
-                { id: "c2", name: "shoots", type: 0, position: 2 },
-                { id: "v1", name: "Voice", type: 2, position: 0 },
-                { id: "c1", name: "general", type: 0, position: 1 },
-              ];
-      return Response.json(body);
-    });
-    const copy = await checkDiscord(net.f, "a-bot-token-that-is-long-enough");
-    expect(copy).toMatchObject({
-      bot: "Atlas",
-      app_id: "111",
-      servers: [{ name: "Studio", channels: [{ name: "general" }, { name: "shoots" }] }],
-    });
-    expect((net.calls[0]!.init.headers as Record<string, string>).authorization).toBe("Bot a-bot-token-that-is-long-enough");
-  });
-
-  it("posts through the outbox with a receipt, never pings anyone, and keeps Discord's own words when refused", () =>
-    withSql(async (sql) => {
-      setSecret(sql, "discord_bot_token", "a-bot-token-that-is-long-enough");
-      const to = { id: "c1", name: "general", server: "Studio" };
-      const net = fakeNet(() => Response.json({ id: "m1" }));
-      const { box, shown } = outbox(sql, net.f);
-      expect(await box.send({ channel: "discord", to, text: "Shoot moved to Thursday.", run_id: null, by: "owner" })).toEqual({ ok: true });
-      expect(net.calls[0]!.url).toBe("https://discord.com/api/v10/channels/c1/messages");
-      expect(JSON.parse(String(net.calls[0]!.init.body))).toEqual({ content: "Shoot moved to Thursday.", allowed_mentions: { parse: [] } });
-      expect(receipts(shown)[0]).toMatchObject({
-        channel: "discord",
-        to: "#general in Studio",
-        ok: true,
-        message_id: "m1",
-        text: "Shoot moved to Thursday.",
-        checks: { secrets: "passed" },
-      });
-
-      const refused = fakeNet(() => Response.json({ message: "Missing Permissions", code: 50013 }, { status: 403 }));
-      const out = await outbox(sql, refused.f).box.send({ channel: "discord", to, text: "hi", run_id: null, by: "owner" });
-      expect(out.error).toBe(
-        "discord.com answered 403: Missing Permissions (code 50013). The bot isn't allowed to do that there; check its role can view the channel and send messages.",
-      );
-    }));
-
-  it("won't let a secret out", () =>
-    withSql(async (sql) => {
-      setSecret(sql, "discord_bot_token", "a-bot-token-that-is-long-enough");
-      setSecret(sql, "elevenlabs_api_key", "sk_eleven_secret_value");
-      const net = fakeNet();
-      const { box, shown } = outbox(sql, net.f);
-      const out = await box.send({
-        channel: "discord",
-        to: { id: "c1", name: "general", server: "Studio" },
-        text: "the key is sk_eleven_secret_value",
-        run_id: null,
-        by: "owner",
-      });
-      expect(out).toEqual({ ok: false, error: "It held one of your secrets, so it didn't go out." });
-      expect(net.calls).toEqual([]);
-      expect(receipts(shown)[0]).toMatchObject({ ok: false, checks: { secrets: "failed" } });
-    }));
 });
 
 describe("held notifications on the clock", () => {

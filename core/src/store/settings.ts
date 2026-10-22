@@ -149,8 +149,6 @@ export type SecretName =
   | "icloud"
   | "chatgpt_tokens"
   | "chatgpt_login"
-  /** The Discord bot's token. */
-  | "discord_bot_token"
   /** This deployment's VAPID key pair, which signs its push notifications. */
   | "push_vapid";
 
@@ -177,7 +175,6 @@ export function secretValues(sql: Sql): string[] {
     ["chatgpt_tokens", ["access_token"]],
     ["chatgpt_tokens", ["refresh_token"]],
     ["chatgpt_tokens", ["id_token"]],
-    ["discord_bot_token", []],
     ["push_vapid", ["private_jwk", "d"]],
   ];
   const out: string[] = [];

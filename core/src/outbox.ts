@@ -1,16 +1,14 @@
 // One way out (§4.4): every message from Atlas leaves through here. To the
 // owner, it picks one channel (§14): the app when it's in view, a live call,
 // or else a push to the device used last, held through quiet hours unless it
-// can't wait. To other people (Discord, for now), it runs the exit checks
-// first. Every delivery beyond the thread leaves a receipt in the log.
-// Approvals join the checks next; sharing rules and the public-query check
-// in M3 and M5.
+// can't wait. Every delivery beyond the thread leaves a receipt in the log.
+// Approvals join the exit checks next; sharing rules and the public-query
+// check in M3 and M5.
 
-import { type DiscordChannel, DiscordError, postDiscord } from "./discord";
 import { type PushSubscriptionJSON, sendPush, vapidKeys } from "./push";
 import type { Sql } from "./store/db";
 import { append, type LogRow, type Surface } from "./store/log";
-import { getSecret, readSettings, secretValues } from "./store/settings";
+import { readSettings, secretValues } from "./store/settings";
 import { getState, setState } from "./store/state";
 import { quietUntil, shortLocal, zoneOf } from "./time";
 
@@ -227,44 +225,6 @@ export class Outbox {
       console.error(JSON.stringify({ at: "push", device: d.name, status: out.status, error }));
     }
     return { ok: false, error };
-  }
-
-  /**
-   * Something going to other people. The exit checks run first, and a
-   * message that fails one doesn't leave; either way the log has a receipt
-   * with what was checked and, when it went, what was sent. Only the owner
-   * sends to other people until approvals arrive (§12).
-   */
-  async send(o: {
-    channel: "discord";
-    to: DiscordChannel;
-    text: string;
-    run_id: string | null;
-    by: "owner";
-  }): Promise<{ ok: boolean; error?: string }> {
-    const to = `#${o.to.name} in ${o.to.server}`;
-    const base = { channel: o.channel, to, to_id: o.to.id, by: o.by, text: o.text };
-    if (scrub(o.text, this.secrets()) !== o.text) {
-      const error = "It held one of your secrets, so it didn't go out.";
-      this.receipt(o.run_id, { ...base, ok: false, error, checks: { secrets: "failed" } });
-      return { ok: false, error };
-    }
-    const token = getSecret<string>(this.sql, "discord_bot_token");
-    if (!token) {
-      const error = "Discord isn't connected. Add the bot's token in Settings → Connections.";
-      this.receipt(o.run_id, { ...base, ok: false, error, checks: { secrets: "passed" } });
-      return { ok: false, error };
-    }
-    try {
-      const sent = await postDiscord(this.channels.fetch, token, o.to.id, o.text);
-      this.receipt(o.run_id, { ...base, ok: true, message_id: sent.id, checks: { secrets: "passed" } });
-      return { ok: true };
-    } catch (err) {
-      const error = err instanceof DiscordError || err instanceof Error ? err.message : String(err);
-      this.receipt(o.run_id, { ...base, ok: false, error, checks: { secrets: "passed" } });
-      console.error(JSON.stringify({ at: "discord.send", to, error }));
-      return { ok: false, error };
-    }
   }
 
   /** A delivery receipt in the log (§4.2), shown in History. */
