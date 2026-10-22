@@ -2,10 +2,20 @@
 // Inbox's waiting items. Each is a read of the one log or the records, shaped
 // for its page; nothing here changes anything except marking Inbox items done.
 
-import type { HistoryFilter, HistoryStats, InboxItem, RecordView } from "../protocol";
+import { getPage, pageVersion, pageVersions, segments } from "../pages";
+import type { ApprovalView, HistoryFilter, HistoryStats, InboxItem, RecordView } from "../protocol";
+import { type Action, actionsOf, ASKS, kindOf, needsHold, TRUST_AFTER, trustTable, waitingApprovals } from "../approvals";
+import type { AgendaItem } from "../store/agenda";
+import { scrub } from "../outbox";
+import { secretValues } from "../store/settings";
+import { webhooks, webhookView } from "../webhooks";
+import type { AreaPage, AutomationView, PersonPage, StageMessage, StagePage, StageView } from "../stage";
+import { type Automation, getAutomation, needsTest, stepText, whenText } from "../automations";
+import { getArea } from "../store/areas";
 import { parse, type Sql } from "../store/db";
 import { get as getRow, type LogKind, type LogRow } from "../store/log";
-import { type AtlasRecord, getRecord, RECORD_TYPES, type RecordType, recordHistory } from "../store/records";
+import { indexNewMessages, keywordSearch } from "../store/memory";
+import { type AtlasRecord, getRecord, linked, RECORD_TYPES, type RecordType, recordHistory } from "../store/records";
 import { getState, setState } from "../store/state";
 
 // --- Library -----------------------------------------------------------------------------
@@ -72,6 +82,177 @@ export function listRecords(
   return { records: rows.map((r) => recordView(sql, getRecord(sql, r.id)!)), counts };
 }
 
+// --- the stage's area and person pages (§21.6) -------------------------------------------
+
+/** What a view on the stage needs from the agent: an area's or a person's page, built live. Lists and tables carry their own. */
+export function stagePage(sql: Sql, view: StageView): StagePage | null {
+  if (view.kind === "area") return areaPage(sql, view.area);
+  if (view.kind === "person") return personPage(sql, view.person);
+  if (view.kind === "automation") {
+    const a = getAutomation(sql, view.automation);
+    return a ? { kind: "automation", automation: automationView(sql, a) } : { kind: "missing", why: "That automation was deleted." };
+  }
+  if (view.kind === "page") return pagePage(sql, view.page, view.version);
+  return null;
+}
+
+/** A page at one version, with its parts and every version's line (§21.7). */
+export function pagePage(sql: Sql, id: string, n?: number): StagePage {
+  const p = getPage(sql, id);
+  if (!p) return { kind: "missing", why: "That page was deleted." };
+  const v = pageVersion(sql, p.id, n) ?? pageVersion(sql, p.id);
+  if (!v) return { kind: "missing", why: "That page has no versions." };
+  return {
+    kind: "page",
+    page: {
+      id: p.id,
+      name: p.name,
+      made_by: p.made_by,
+      created_at: p.created_at,
+      version: p.version,
+      shown: { n: v.n, at: v.at, by: v.by, note: v.note },
+      segments: segments(v.body),
+      versions: pageVersions(sql, p.id),
+    },
+  };
+}
+
+/** An automation as the app shows it: its parts in words, when it runs next, and its last runs. */
+export function automationView(sql: Sql, a: Automation): AutomationView {
+  const next = sql
+    .exec<{ due_at: number }>(
+      `SELECT due_at FROM agenda WHERE kind = 'automation' AND state IN ('scheduled', 'running') AND json_extract(source, '$.detail.automation') = ? LIMIT 1`,
+      a.id,
+    )
+    .toArray()[0];
+  const runs = sql
+    .exec<{ id: string }>(
+      `SELECT id FROM log WHERE kind = 'automation.run' AND json_extract(body, '$.automation_id') = ? ORDER BY seq DESC LIMIT 12`,
+      a.id,
+    )
+    .toArray()
+    .map((r) => getRow(sql, r.id)!)
+    .map((r) => {
+      const b = r.body as Record<string, unknown>;
+      const usage = (b.usage ?? {}) as { input?: number; output?: number };
+      return {
+        id: r.id,
+        at: r.at,
+        why: String(b.why ?? ""),
+        test: b.test === true,
+        ok: b.ok !== false,
+        quiet: b.quiet === true,
+        text: String(b.text ?? ""),
+        error: typeof b.error === "string" ? b.error : null,
+        ms: typeof b.ms === "number" ? b.ms : null,
+        brain: typeof b.brain === "string" ? b.brain : null,
+        tokens: (usage.input ?? 0) + (usage.output ?? 0),
+        results: (Array.isArray(b.results) ? b.results : []) as AutomationView["runs"][number]["results"],
+      };
+    });
+  return {
+    id: a.id,
+    name: a.name,
+    about: a.about,
+    state: a.state,
+    made_by: a.made_by,
+    when: a.when,
+    when_text: whenText(a.when, (id) => getAutomation(sql, id)?.name ?? null),
+    steps: a.do.map((step) => ({ step, text: stepText(step) })),
+    report: a.report,
+    can_turn_on: !needsTest(a),
+    tested_at: a.tested_at,
+    fails: a.fails,
+    paused_why: a.paused_why,
+    next_at: next?.due_at ?? null,
+    runs,
+  };
+}
+
+const PAGE_GROUP = 30;
+
+export function areaPage(sql: Sql, id: string): StagePage {
+  const a = getArea(sql, id);
+  if (!a) return { kind: "missing", why: "That area isn't there any more." };
+  if (a.state === "archived") {
+    const into = mergedInto(sql, a.id);
+    if (into) return { kind: "missing", why: `${a.name} was merged into ${into}.` };
+  }
+  const records = sql
+    .exec<{ id: string }>(
+      `SELECT id FROM records WHERE state = 'active' AND ${TAGGED} AND NOT (type = 'person' AND coalesce(json_extract(fields, '$.is_owner'), 0) = 1) ORDER BY updated_at DESC LIMIT 400`,
+      a.id,
+    )
+    .toArray()
+    .map((r) => recordView(sql, getRecord(sql, r.id)!));
+  const of = (types: string[]) => records.filter((r) => types.includes(r.type)).slice(0, PAGE_GROUP);
+  const recent = sql
+    .exec<{ id: string }>(`SELECT id FROM log WHERE kind IN ('message.in', 'message.out') AND ${TAGGED} ORDER BY seq DESC LIMIT 8`, a.id)
+    .toArray()
+    .map((r) => stageMessage(getRow(sql, r.id)!));
+  const messages = sql
+    .exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE kind IN ('message.in', 'message.out') AND ${TAGGED}`, a.id)
+    .one().n;
+  const page: AreaPage = {
+    kind: "area",
+    area: { id: a.id, name: a.name, about: a.about, state: a.state, color: a.color, tone: a.settings.tone },
+    people: of(["person"]),
+    plans: of(["goal", "task", "commitment", "event"]),
+    places: of(["place", "organization"]),
+    notes: of(["note", "preference", "document"]),
+    recent,
+    counts: { messages, records: records.length },
+  };
+  return page;
+}
+
+function mergedInto(sql: Sql, id: string): string | null {
+  const r = sql
+    .exec<{ target: string | null }>(
+      `SELECT json_extract(body, '$.merged_into') AS target FROM log WHERE kind = 'area.change' AND json_extract(body, '$.area_id') = ? AND json_extract(body, '$.merged_into') IS NOT NULL ORDER BY seq DESC LIMIT 1`,
+      id,
+    )
+    .toArray()[0];
+  return r?.target ? (getArea(sql, r.target)?.name ?? null) : null;
+}
+
+export function personPage(sql: Sql, id: string): StagePage {
+  const r = getRecord(sql, id);
+  if (!r || r.type !== "person") return { kind: "missing", why: "Atlas doesn't have that person any more." };
+  if (r.state !== "active") return { kind: "missing", why: `You asked Atlas to forget ${r.name}.` };
+  // The last few messages may not be in the index yet.
+  while (indexNewMessages(sql) > 0);
+  const mentions = keywordSearch(sql, r.name, { kinds: ["message"] }, 30)
+    .map((h) => getRow(sql, h.ref.slice(4)))
+    .filter((row): row is LogRow => row != null && (row.kind === "message.in" || row.kind === "message.out"))
+    .sort((x, y) => y.seq - x.seq)
+    .slice(0, 6)
+    .map(stageMessage);
+  const page: PersonPage = {
+    kind: "person",
+    person: recordView(sql, r),
+    links: linked(sql, r.id).map((l) => ({ kind: l.kind, record: recordView(sql, l.record) })),
+    mentions,
+    history: recordHistory(sql, r.id).map((h) => ({
+      at: h.at,
+      name: h.name,
+      fact: typeof h.fields.fact === "string" ? h.fields.fact : "",
+      reason: h.reason,
+    })),
+  };
+  return page;
+}
+
+function stageMessage(row: LogRow): StageMessage {
+  return {
+    id: row.id,
+    at: row.at,
+    by: row.kind === "message.in" ? "owner" : "atlas",
+    surface: row.surface,
+    text: String(row.body.text ?? "").slice(0, 400),
+  };
+}
+
 // --- History -----------------------------------------------------------------------------
 
 const KINDS: Record<HistoryFilter, LogKind[]> = {
@@ -86,10 +267,14 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
     "brain.fallback",
     "context.summary",
     "settings.change",
+    "delivery",
+    "automation.run",
+    "automation.change",
+    "page.change",
   ],
-  actions: ["tool.result", "record.change", "agenda.change", "area.change"],
+  actions: ["tool.result", "record.change", "agenda.change", "area.change", "delivery", "automation.change", "page.change"],
   conversations: ["message.in", "message.out"],
-  jobs: ["job.result", "agenda.change"],
+  jobs: ["job.result", "agenda.change", "automation.run"],
 };
 
 /** Whether a row belongs on History's list for a filter: the things that happened, not the plumbing. */
@@ -97,6 +282,8 @@ function shown(row: LogRow, filter: HistoryFilter): boolean {
   if (row.kind === "tool.result") return row.body.receipt != null;
   if (row.kind === "run.end") return row.body.state === "failed";
   if (filter === "jobs" && row.kind === "agenda.change") return row.body.kind === "job";
+  // A notification held for quiet hours is told by its delivery receipt, and an automation's next run by its run, not as agenda changes.
+  if (row.kind === "agenda.change" && (row.body.kind === "notify" || row.body.kind === "automation")) return false;
   return true;
 }
 
@@ -179,17 +366,102 @@ export function runDetail(sql: Sql, runId: string): { run: Record<string, unknow
  * join with the outbox in M2. Marked done by the owner, never by Atlas.
  */
 export function inbox(sql: Sql): InboxItem[] {
+  const approvals = waitingApprovals(sql).map((a): InboxItem => ({
+    id: a.id,
+    kind: "approval",
+    title: a.title,
+    text: "",
+    at: a.created_at,
+    areas: [],
+    run_id: a.source.run_id ?? null,
+    approval: approvalView(sql, a),
+  }));
+  const questions = Object.entries(trustTable(sql))
+    .filter(([, t]) => t.offered && t.trusted_at == null)
+    .map(([key, t]): InboxItem => ({
+      id: key,
+      kind: "question",
+      title: `Call ${t.name} without asking?`,
+      text: `You've OK'd ${t.name} ${TRUST_AFTER} times in a row as it was. Atlas can call it from now on without asking, and you can take that back in Settings → Permissions.`,
+      at: Date.now(),
+      areas: [],
+      run_id: null,
+      question: { key, yes: "Yes, stop asking", no: "Keep asking" },
+    }));
+  return [...approvals, ...questions, ...pastItems(sql)];
+}
+
+/** An approval as its card shows it: every step, why, and the checks it already passed. */
+export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
+  const actions = actionsOf(item);
+  const asked = item.source.log_id ? getRow(sql, item.source.log_id) : null;
+  const secrets = secretValues(sql);
+  const secretsOk = actions.every((a) => a.kind !== "webhook" || !a.message || scrub(a.message, secrets) === a.message);
+  const hold = needsHold(actions);
+  return {
+    id: item.id,
+    title: item.title,
+    steps: actions.map((a) => stepView(sql, a)),
+    asked: asked ? String(asked.body.text ?? "").slice(0, 400) : null,
+    why: hold ? ASKS.irreversible.why : ASKS[kindOf(actions[0] ?? { kind: "webhook", webhook: "", name: "" })].why,
+    hold,
+    expires_at: item.due_at,
+    checks: [
+      { name: "Secrets", ok: secretsOk },
+      { name: "Your OK", ok: false },
+    ],
+  };
+}
+
+function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
+  if (a.kind === "delete") {
+    return {
+      kind: "delete",
+      title: `Delete ${a.name} for good`,
+      detail: a.fact || a.name,
+      where: "Library",
+      undo: "Can't be undone: the record, its history and its old values are erased. The message you said it in stays in History.",
+    };
+  }
+  const hook = webhooks(sql).find((w) => w.id === a.webhook);
+  return {
+    kind: "webhook",
+    title: `Call ${a.name}`,
+    detail: hook?.about || "Your webhook.",
+    where: hook ? `${webhookView(hook).method} to ${webhookView(hook).host}` : "Removed since",
+    undo: "Can't be taken back once it's called.",
+    ...(hook?.method === "GET" ? {} : { message: a.message ?? "" }),
+  };
+}
+
+function pastItems(sql: Sql): InboxItem[] {
   const done = JSON.stringify(getState<string[]>(sql, "inbox_done") ?? []);
   const since = Date.now() - 14 * 86_400_000;
   const rows = sql
     .exec<{ id: string }>(
-      `SELECT id FROM log WHERE at > ? AND (kind = 'job.result' OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%')) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 100`,
+      `SELECT id FROM log WHERE at > ? AND (kind = 'job.result'
+         OR (kind = 'automation.run' AND json_extract(body, '$.report') = 'inbox' AND json_extract(body, '$.test') = 0 AND json_extract(body, '$.quiet') IS NULL)
+         OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%' AND json_extract(body, '$.trigger') NOT LIKE 'automation%'))
+         AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 100`,
       since,
       done,
     )
     .toArray()
     .map((r) => getRow(sql, r.id)!);
   return rows.map((r): InboxItem => {
+    // An automation that reports to Inbox (§13.1: report here).
+    if (r.kind === "automation.run") {
+      const ok = r.body.ok !== false;
+      return {
+        id: r.id,
+        kind: ok ? "review" : "failed",
+        title: String(r.body.name ?? "An automation"),
+        text: String((ok ? r.body.text : r.body.error) ?? "").slice(0, 2_000),
+        at: r.at,
+        areas: r.areas,
+        run_id: r.run_id,
+      };
+    }
     if (r.kind === "job.result") {
       const ok = r.body.state === "done";
       return {

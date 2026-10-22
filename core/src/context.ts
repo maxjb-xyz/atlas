@@ -4,9 +4,13 @@
 // surface), then every message since that summary. Compaction (§4.1) keeps
 // that last part in bounds; recall finds the rest, on demand.
 
+import { listPages } from "./pages";
+import { focusNow } from "./outbox";
 import type { Message } from "./brains/types";
 import { character, TEXT_PROFILE, VOICE_PROFILE } from "./character";
-import { upcoming } from "./store/agenda";
+import { getItem, upcoming } from "./store/agenda";
+import { actionsOf, needsHold, waitingApprovals } from "./approvals";
+import { webhooks } from "./webhooks";
 import { type Area, getArea, getScope, listAreas } from "./store/areas";
 import { parse, type Sql } from "./store/db";
 import { type AtlasRecord, standingFacts } from "./store/records";
@@ -70,15 +74,18 @@ export function systemPrompt(opts: {
     .filter(Boolean)
     .join("\n\n");
 
-  // Jobs share the agenda; they don't push reminders out of the prompt.
-  const reminders = upcoming(sql, 60)
-    .filter((i) => i.kind === "reminder")
-    .slice(0, 15)
-    .map((i) => `- ${isoLocal(new Date(i.due_at), tz)}: ${i.title} (id ${i.id})`);
+  // Jobs, held notifications and approvals share the agenda; they don't push reminders and promises out of the prompt.
+  const reminders = upcoming(sql, 100)
+    .filter((i) => (i.kind === "reminder" || i.kind === "promise") && i.state === "scheduled")
+    .slice(0, 20)
+    .map((i) => `- ${isoLocal(new Date(i.due_at), tz)}: ${i.kind === "promise" ? "your promise: " : ""}${i.title} (id ${i.id})`);
   const fresh = [
     `Now: ${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}.`,
-    reminders.length ? `Upcoming reminders:\n${reminders.join("\n")}` : "No upcoming reminders.",
+    focusLine(sql, tz),
+    pagesLine(sql),
+    reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     areaContext(sql, opts.beforeSeq),
+    exitsContext(sql, tz, now),
     surface === "voice" ? VOICE_PROFILE : surface === "none" ? "" : TEXT_PROFILE,
     opts.extra ?? "",
   ]
@@ -186,6 +193,64 @@ export function hat(sql: Sql, beforeSeq?: number): Area[] {
   return parse<string[]>(r?.areas, [])
     .map((id) => getArea(sql, id))
     .filter((a): a is Area => a != null && a.state !== "archived");
+}
+
+/**
+ * What a run is told about its ways out (§12): the owner's webhooks, what's
+ * waiting for their OK, and what was settled in the last two hours, so
+ * Atlas never says something is done that's still waiting, or the reverse.
+ */
+function pagesLine(sql: Sql): string {
+  const pages = listPages(sql).slice(0, 20);
+  return pages.length
+    ? `The owner's pages (newest first; page_read to read one): ${pages.map((p) => `${p.name} (${p.id})`).join(", ")}.`
+    : "";
+}
+
+function focusLine(sql: Sql, tz: string): string {
+  const f = focusNow(sql);
+  return f
+    ? `The owner is focusing${f.about ? ` on ${f.about}` : ""} until ${shortLocal(new Date(f.until), tz)}: notifications that can wait are held.`
+    : "";
+}
+
+function exitsContext(sql: Sql, tz: string, now: Date): string {
+  const lines: string[] = [];
+  const hooks = webhooks(sql);
+  if (hooks.length) {
+    lines.push(
+      `The owner's webhooks (call them with webhook_call):\n${hooks.map((w) => `- ${w.name}${w.about ? `: ${w.about}` : ""}`).join("\n")}`,
+    );
+  }
+  const waiting = waitingApprovals(sql);
+  if (waiting.length) {
+    lines.push(
+      `Waiting for the owner's OK:\n${waiting
+        .map(
+          (a) =>
+            `- ${a.title} (id ${a.id}, until ${shortLocal(new Date(a.due_at), tz)}${needsHold(actionsOf(a)) ? ", needs a hold in the app" : ""})`,
+        )
+        .join("\n")}`,
+    );
+  }
+  const settled = sql
+    .exec<{ body: string; at: number }>(
+      `SELECT body, at FROM log WHERE kind = 'agenda.change' AND json_extract(body, '$.kind') = 'approval' AND json_extract(body, '$.change') IN ('done', 'cancelled', 'failed') AND at > ? ORDER BY seq DESC LIMIT 5`,
+      now.getTime() - 2 * 3600_000,
+    )
+    .toArray()
+    .map((r) => {
+      const b = parse<{ title?: string; change?: string; results?: string[]; item_id?: string }>(r.body, {});
+      const what =
+        b.change === "done"
+          ? `approved: ${(b.results ?? []).join(" ")}`
+          : b.change === "cancelled"
+            ? "declined, not done"
+            : "ran out, not done";
+      return `- ${b.title ?? getItem(sql, b.item_id ?? "")?.title ?? "An approval"}, ${what} (${shortLocal(new Date(r.at), tz)})`;
+    });
+  if (settled.length) lines.push(`Approvals settled lately:\n${settled.join("\n")}`);
+  return lines.join("\n\n");
 }
 
 /** What a run is told about areas: the hat, its tone, and the owner's other areas. */

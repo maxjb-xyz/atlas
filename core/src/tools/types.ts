@@ -3,6 +3,9 @@
 // add a filter around the model (rule 1).
 
 import { z } from "zod";
+import type { Action, ToolKind } from "../approvals";
+import type { Automation } from "../automations";
+import type { RunOutcome } from "../agent/automations";
 import type { ToolSpec } from "../brains/types";
 import type { Embedder } from "../brains/embed";
 import type { Calendar } from "../calendar/types";
@@ -12,7 +15,7 @@ import type { Receipt } from "../store/log";
 import type { Settings } from "../store/settings";
 
 /** What kind of action a tool takes decides when Atlas asks first (§12.1). */
-export type ToolKind = "look" | "change_own";
+export type { ToolKind } from "../approvals";
 
 export interface ToolContext {
   sql: Sql;
@@ -30,11 +33,33 @@ export interface ToolContext {
   via: string;
   /** Hands work to a helper (§8.1); null where helpers aren't allowed, such as inside a helper. */
   helpers: HelperDeskApi | null;
+  /**
+   * The way out for actions that may need the owner's OK (§12): the outbox
+   * does it now when the kind allows, or it waits as an approval card. Null
+   * where nothing may leave, such as inside a helper.
+   */
+  exit: ExitApi | null;
+  /** Automations, for owner runs; null elsewhere. */
+  automations: AutomationsApi | null;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
   clock: {
     schedule(item: AgendaItem): Promise<void>;
     unschedule(item: AgendaItem): Promise<void>;
   };
+}
+
+/** Running and arming automations, for Atlas's tools (§13). */
+export interface AutomationsApi {
+  run(automation: Automation, o: { why: "request" | "test"; inputs?: Record<string, string> }): Promise<RunOutcome>;
+  /** Puts its next run on the clock, or takes it off, after a change. */
+  arm(id: string): Promise<void>;
+}
+
+export interface ExitApi {
+  /** Does the action now if its kind and earned trust allow, or adds it to this run's approval card. */
+  request(action: Action, ctx: { run_id: string; source_log_id: string | null }): Promise<ToolResult>;
+  /** The owner's yes or no to a waiting approval, given by voice or text. */
+  decide(id: string, yes: boolean, by: "voice" | "chat"): Promise<{ ok: boolean; text: string }>;
 }
 
 export interface HelperDeskApi {

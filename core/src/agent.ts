@@ -8,7 +8,7 @@ import { CalendarSense } from "./agent/calendar";
 import { correctAreas, discoveryPrompt, readyToDiscover, startDiscovered, tagPending, triedDiscovery, unfiled } from "./agent/areas";
 import { HelperDesk } from "./agent/helpers";
 import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup";
-import { history as logHistory, historyStats, inbox, inboxDone, listRecords, runDetail } from "./agent/views";
+import { history as logHistory, historyStats, inbox, inboxDone, listRecords, runDetail, stagePage } from "./agent/views";
 import { correctRecord, createRecord, findRecords, forgetRecord, getRecord } from "./store/records";
 import { type Decider, workersAIDecider } from "./brains/decide";
 import { createArea, getScope, listAreas, mergeAreas, setScope, type Tagged, updateArea } from "./store/areas";
@@ -27,9 +27,10 @@ import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
 import { compact, planCompaction } from "./compaction";
 import { CONTEXT_TOKENS, history, systemPrompt, tokens, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
-import { Outbox, StreamScrubber } from "./outbox";
+import { Outbox, type PushDevice, pushDevices, StreamScrubber, type Urgency } from "./outbox";
+import { vapidKeys } from "./push";
 import { type AreaView, ClientMessage, type JobView, type ServerMessage, type SettingsView } from "./protocol";
-import { type AgendaItem, due, finish, getItem, lease, setScheduleId, upcoming } from "./store/agenda";
+import { type AgendaItem, createItem, due, finish, getItem, lease, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, type Sql } from "./store/db";
 import { type Actor, append, forRun, get as getRow, type LogRow, logTo, type Surface, thread } from "./store/log";
 import { indexNewMessages } from "./store/memory";
@@ -40,8 +41,32 @@ import { isoLocal, isValidZone, longLocal, parseWhen, shortLocal, zoneOf } from 
 import { calendarRead } from "./tools/calendar";
 import { delegate } from "./tools/delegate";
 import { memoryTools, recall } from "./tools/memory";
-import { reminderTools } from "./tools/reminders";
-import type { Tool, ToolContext, ToolResult } from "./tools/types";
+import { agendaList, agendaTools } from "./tools/agenda";
+import { show } from "./tools/show";
+import { approve, deleteForGood, webhookCall } from "./tools/exits";
+import {
+  type Action,
+  actionsOf,
+  ASKS,
+  countApproval,
+  countDecline,
+  isTrusted,
+  kindOf,
+  needsHold,
+  requestApproval,
+  setTrust,
+} from "./approvals";
+import { removeWebhook, saveWebhook, webhooks } from "./webhooks";
+import { AutomationDesk } from "./agent/automations";
+import { automationTools } from "./tools/automations";
+import { seedRoutines } from "./routines";
+import { focusTool, setFocus } from "./tools/focus";
+import { pageRead, pageTools } from "./tools/pages";
+import { deletePage, getPage, listPages, pageSummaries, pageVersion, savePage, viewBlock } from "./pages";
+import { noticeAsk, openSuggestions, settleSuggestion } from "./suggestions";
+import { deleteAutomation, getAutomation, listAutomations, matchPhrase, saveAutomation, setAutomationState } from "./automations";
+import { automationView } from "./agent/views";
+import type { ExitApi, Tool, ToolContext, ToolResult } from "./tools/types";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
@@ -57,13 +82,31 @@ const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
 
 /**
  * What each kind of run can reach. Runs Atlas starts itself (the clock, and
- * later automations and helpers) can't save facts about the owner (§5.4).
+ * later automations and helpers) can't save facts about the owner (§5.4),
+ * and nobody is looking at the stage when they run, so they can't `show`.
  */
 const TOOLS: Record<Actor, Tool[]> = {
-  owner: [calendarRead, ...reminderTools, ...memoryTools, delegate],
-  atlas: [calendarRead, ...reminderTools, recall],
+  owner: [
+    calendarRead,
+    ...agendaTools,
+    ...memoryTools,
+    delegate,
+    show,
+    webhookCall,
+    deleteForGood,
+    approve,
+    focusTool,
+    ...pageTools,
+    ...automationTools,
+  ],
+  atlas: [calendarRead, ...agendaTools, recall],
   system: [],
 };
+
+/** What an automation's Atlas step can reach: what the clock's runs can, and the owner's webhooks (§13.1). */
+const AUTOMATION_TOOLS: Tool[] = [calendarRead, ...agendaTools, recall, webhookCall, focusTool, ...pageTools];
+/** A test run only looks: it changes nothing, and webhooks only say what they'd do (§13.4). */
+const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall, pageRead];
 
 /**
  * The most history a voice turn reads, in tokens: about M0's last 40
@@ -91,6 +134,8 @@ interface ConverseOpts {
   budget: { steps: number; ms: number };
   signal?: AbortSignal;
   emit: (e: LoopEvent) => void;
+  /** The tools, when they aren't the actor's usual ones (an automation's step, a test run). */
+  tools?: Tool[];
 }
 
 export class PersonAgent extends VoiceAgent implements HelperHost {
@@ -99,6 +144,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #calendar!: CalendarSense;
   #chatgpt!: ChatGPTSignIn;
   #helpers!: HelperDesk;
+  #automations!: AutomationDesk;
   /** Runs go one at a time, so each one sees the last one's answer. */
   #line: Promise<unknown> = Promise.resolve();
 
@@ -119,7 +165,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       makeBrain: (c) => this.#makeBrain(c),
       toolContext: (runId) => {
         const settings = readSettings(this.#sql);
-        return { ...this.#toolContext(settings, new Date(), "helper", null), helpers: null, run_id: runId };
+        return { ...this.#toolContext(settings, new Date(), "helper", null), helpers: null, exit: null, automations: null, run_id: runId };
       },
       launch: async (job) => {
         const child = await this.dynamicAgents.get(HelperAgent, job.id);
@@ -153,7 +199,56 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         await Promise.all(calls.map((c) => this.speak(c, text)));
         return true;
       },
+      looking: () => this.#looking(),
+      hold: async (at, note) => {
+        const item = createItem(this.#sql, {
+          kind: "notify",
+          title: note.text.slice(0, 300),
+          due_at: at.getTime(),
+          source: { log_id: note.id, run_id: note.run_id ?? undefined, via: "outbox" },
+        });
+        await this.#clock.schedule(item);
+      },
+      fetch: (...args) => (seams.fetch ?? fetch)(...args),
     });
+    this.#automations = new AutomationDesk({
+      sql: this.#sql,
+      outbox: this.#outbox,
+      clock: this.#clock,
+      converse: ({ runId, note, test }) => {
+        const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
+        return this.#converse({
+          runId,
+          actor: "atlas",
+          sourceLogId: null,
+          surface: "none",
+          role: "main",
+          input: note,
+          beforeSeq: lastSeq,
+          budget: { steps: 12, ms: 3 * 60_000 },
+          emit: (e) => {
+            if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });
+          },
+          tools: test ? TEST_TOOLS : AUTOMATION_TOOLS,
+        });
+      },
+      decider: () => this.#decider(),
+      calendar: () => this.#calendar.source(readSettings(this.#sql)),
+      fetch: (...args) => (seams.fetch ?? fetch)(...args),
+      changed: () => this.#automationsChanged(),
+      rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
+    });
+    // The default routines are made once; then every automation that's on has its next run on the clock (a missing one is put back).
+    try {
+      seedRoutines(this.#sql);
+    } catch (err) {
+      console.error(JSON.stringify({ at: "routines.seed", error: err instanceof Error ? err.message : String(err) }));
+    }
+    for (const a of listAutomations(this.#sql)) void this.#automations.arm(a.id).catch(() => {});
+    // The key that signs push notifications, made once, so Settings can offer them straight away.
+    void vapidKeys(this.#sql).catch((err: unknown) =>
+      console.error(JSON.stringify({ at: "push.keys", error: err instanceof Error ? err.message : String(err) })),
+    );
     this.#refreshVoice();
     // Anything that came due while the agent was asleep runs now.
     for (const item of due(this.#sql, Date.now())) void this.onAgendaDue({ id: item.id });
@@ -174,13 +269,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   override onConnect(connection: Connection, ctx: ConnectionContext): void {
     // Which sign-in opened this socket (the Worker sets it), kept on the socket so it survives hibernation.
     const session = ctx.request.headers.get(SESSION_HEADER);
-    if (session) connection.setState({ session });
+    if (session) connection.setState({ session } satisfies SocketState);
   }
 
   /** Closes the sockets opened by sessions that just ended; with no list, every socket. */
   #signOutSockets(ended?: Set<string>): void {
     for (const c of this.getConnections()) {
-      const session = (c.state as { session?: string } | null)?.session;
+      const session = (c.state as SocketState | null)?.session;
       if (ended && !(session && ended.has(session))) continue;
       this.#send(c, { type: "atlas.signed_out" });
       c.close(4001, "Signed out.");
@@ -399,6 +494,153 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       case "atlas.inbox":
         this.#send(connection, { type: "atlas.inbox.items", items: inbox(this.#sql) });
         return;
+      case "atlas.presence": {
+        const st = (connection.state as SocketState | null) ?? {};
+        connection.setState({ ...st, device: msg.device, visible: msg.visible } satisfies SocketState);
+        // The device in use is where the next push goes (§14: one channel).
+        if (msg.visible && pushDevices(this.#sql).some((d) => d.id === msg.device)) {
+          setState(
+            this.#sql,
+            "push_devices",
+            pushDevices(this.#sql).map((d) => (d.id === msg.device ? { ...d, last_seen: Date.now() } : d)),
+          );
+        }
+        return;
+      }
+      case "atlas.push.subscribe": {
+        const now = Date.now();
+        const others = pushDevices(this.#sql).filter((d) => d.id !== msg.device && d.sub.endpoint !== msg.subscription.endpoint);
+        const device: PushDevice = {
+          id: msg.device,
+          name: msg.name,
+          sub: msg.subscription,
+          origin: msg.origin,
+          added_at: now,
+          last_seen: now,
+        };
+        setState(this.#sql, "push_devices", [...others, device].slice(-20));
+        append(this.#sql, { actor: "owner", kind: "settings.change", body: { push: "added", name: msg.name } });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.focus":
+        await setFocus(this.#sql, this.#clock, msg.minutes, msg.about ?? "", "owner");
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      case "atlas.push.remove": {
+        const gone = pushDevices(this.#sql).find((d) => d.id === msg.device);
+        if (!gone) return;
+        setState(
+          this.#sql,
+          "push_devices",
+          pushDevices(this.#sql).filter((d) => d.id !== msg.device),
+        );
+        append(this.#sql, { actor: "owner", kind: "settings.change", body: { push: "removed", name: gone.name } });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.approval.decide": {
+        const out = await this.#decide(msg.id, { yes: msg.yes, by: msg.hold ? "hold" : "app", edits: msg.edits });
+        if (!out.ok) this.#send(connection, { type: "atlas.error", message: out.text });
+        return;
+      }
+      case "atlas.trust.set": {
+        const t = setTrust(this.#sql, msg.key, msg.trusted);
+        if (t)
+          append(this.#sql, {
+            actor: "owner",
+            kind: "settings.change",
+            body: { trust: msg.trusted ? "given" : "taken back", name: t.name },
+          });
+        this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.webhook.save":
+      case "atlas.webhook.remove":
+        try {
+          if (msg.type === "atlas.webhook.save") {
+            const w = saveWebhook(this.#sql, msg);
+            append(this.#sql, { actor: "owner", kind: "settings.change", body: { webhook: msg.id ? "changed" : "added", name: w.name } });
+          } else {
+            const gone = removeWebhook(this.#sql, msg.id);
+            if (gone) append(this.#sql, { actor: "owner", kind: "settings.change", body: { webhook: "removed", name: gone.name } });
+          }
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      case "atlas.automations":
+        this.#send(connection, {
+          type: "atlas.automations",
+          automations: this.#automationViews(),
+          suggestions: openSuggestions(this.#sql),
+        });
+        return;
+      case "atlas.suggestion.set":
+        settleSuggestion(this.#sql, msg.id, msg.state);
+        this.#automationsChanged();
+        return;
+      case "atlas.automation.save":
+      case "atlas.automation.set":
+      case "atlas.automation.delete":
+        try {
+          if (msg.type === "atlas.automation.save") {
+            const a = saveAutomation(this.#sql, msg.automation, "owner", msg.id);
+            await this.#automations.arm(a.id);
+          } else if (msg.type === "atlas.automation.set") {
+            setAutomationState(this.#sql, msg.id, msg.on, "owner");
+            await this.#automations.arm(msg.id);
+          } else {
+            await this.#automations.disarm(msg.id);
+            deleteAutomation(this.#sql, msg.id);
+          }
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
+        this.#automationsChanged();
+        return;
+      case "atlas.automation.run": {
+        const a = getAutomation(this.#sql, msg.id);
+        if (!a) {
+          this.#send(connection, { type: "atlas.error", message: "That automation isn't there any more." });
+          return;
+        }
+        void this.keepAliveWhile(() =>
+          this.#inLine(() => this.#automations.run(a, { why: msg.test ? "test" : "button", inputs: msg.inputs })),
+        ).catch((err: unknown) =>
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) }),
+        );
+        return;
+      }
+      case "atlas.agenda.cancel": {
+        const item = getItem(this.#sql, msg.id);
+        if (!item || !["reminder", "promise"].includes(item.kind) || item.state !== "scheduled") {
+          this.#send(connection, { type: "atlas.error", message: "That isn't waiting on the clock any more." });
+          return;
+        }
+        await this.#clock.unschedule(item);
+        finish(this.#sql, item.id, "cancelled", null, { by: "owner" });
+        this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+        return;
+      }
+      case "atlas.stage":
+        this.#send(connection, { type: "atlas.stage.page", ref: msg.ref, page: stagePage(this.#sql, msg.view) });
+        return;
+      case "atlas.pages":
+        this.#send(connection, { type: "atlas.pages", pages: pageSummaries(this.#sql) });
+        return;
+      case "atlas.page.keep":
+      case "atlas.page.save":
+      case "atlas.page.restore":
+      case "atlas.page.delete":
+        try {
+          this.#pageChange(connection, msg);
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
+        return;
       case "atlas.inbox.done":
         inboxDone(this.#sql, msg.id);
         this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
@@ -422,6 +664,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     });
     this.#broadcast({ type: "atlas.rows", rows: [inRow] });
     this.#broadcast({ type: "atlas.run", run_id: runId, state: "running", surface: "app", client_id: clientId });
+
+    const hit = matchPhrase(this.#sql, text);
+    if (hit) {
+      await this.#inLine(() => this.#phraseRun(hit, runId, "app"), { id: runId, surface: "app" }).catch(() => {});
+      return;
+    }
+    if (noticeAsk(this.#sql, text)) this.#automationsChanged();
 
     await this.#inLine(
       async () => {
@@ -453,6 +702,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     this.#broadcast({ type: "atlas.run", run_id: runId, state: "running", surface: "voice" });
 
     const spoken = new Speech();
+    const hit = matchPhrase(this.#sql, transcript);
+    if (hit) {
+      void this.#inLine(async () => spoken.push(await this.#phraseRun(hit, runId, "voice")), { id: runId, surface: "voice" })
+        .catch(() => {})
+        .finally(() => spoken.close());
+      return spoken;
+    }
+    if (noticeAsk(this.#sql, transcript)) this.#automationsChanged();
     const started = Date.now();
     let firstWordsMs: number | null = null;
     let statusMs: number | null = null;
@@ -565,16 +822,69 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       await this.keepAliveWhile(() => this.#helpers.lost(payload.id));
       return;
     }
+    // An approval nobody answered runs out, and the owner hears what didn't happen (§12.2).
+    if (getItem(this.#sql, payload.id)?.kind === "approval") {
+      await this.keepAliveWhile(() => this.#expire(payload.id));
+      return;
+    }
+    // Quiet hours are over: every held notification goes out together, as one push.
+    if (getItem(this.#sql, payload.id)?.kind === "notify") {
+      const held = due(this.#sql, Date.now())
+        .filter((i) => i.kind === "notify")
+        .map((i) => lease(this.#sql, i.id))
+        .filter((i): i is AgendaItem => i != null);
+      for (const i of held) finish(this.#sql, i.id, "done", null);
+      const notes = held.map((i) => ({ id: i.source.log_id ?? i.id, run_id: i.source.run_id ?? null, text: i.title }));
+      await this.keepAliveWhile(() => this.#outbox.release(notes));
+      return;
+    }
     const item = lease(this.#sql, payload.id);
     if (!item) return;
-    await this.keepAliveWhile(() => this.#inLine(() => this.#remind(item)));
+    if (item.kind === "automation") {
+      await this.keepAliveWhile(() => this.#inLine(() => this.#automations.due(item)));
+      return;
+    }
+    // A wake for when the lease runs out: if a restart cuts this run off, the item fires again, once, instead of
+    // staying stuck as running. A finished item isn't leased again, so the wake does nothing.
+    await this.schedule(new Date(item.lease_until ?? Date.now() + 5 * 60_000), "onAgendaDue", { id: item.id });
+    await this.keepAliveWhile(() => this.#inLine(() => (item.kind === "promise" ? this.#keep(item) : this.#remind(item))));
   }
 
   async #remind(item: AgendaItem): Promise<void> {
     const tz = zoneOf(readSettings(this.#sql));
     const note = `[Atlas's clock, not the owner] The reminder "${item.title}" is due now (set ${shortLocal(new Date(item.created_at), tz)}). Give it to the owner in one short message, as you'd say it. Don't ask follow-up questions unless it truly helps.`;
     // The promise is kept even when no brain can answer: the owner still gets the reminder.
-    const runId = await this.#atlasSays(`agenda:${item.id}`, note, `Reminder: ${item.title}`);
+    // The owner chose the time, so it doesn't wait for quiet hours to end.
+    const runId = await this.#atlasSays(`agenda:${item.id}`, note, `Reminder: ${item.title}`, "now");
+    finish(this.#sql, item.id, "done", runId);
+    this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+  }
+
+  /**
+   * A promise comes due (§4.3): Atlas does what it said it would, with its
+   * tools, from the note it left itself, and tells the owner how it went.
+   */
+  async #keep(item: AgendaItem): Promise<void> {
+    const tz = zoneOf(readSettings(this.#sql));
+    const d = item.source.detail ?? {};
+    const said = typeof d.said === "string" ? d.said : null;
+    const saidAt = typeof d.said_at === "number" ? d.said_at : item.created_at;
+    const note = [
+      `[Atlas's clock, not the owner] It's time to keep a promise you made on ${shortLocal(new Date(saidAt), tz)}: "${item.title}".`,
+      said ? `The owner had said: "${said}"` : "",
+      `Your note to yourself: ${typeof d.then === "string" ? d.then : item.title}`,
+      "Do it now with your tools, looking things up rather than assuming. Then tell the owner in a short message what you found or did. If it turned out not to be needed, say so in a sentence.",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    // Kept even when no brain can answer: the owner still hears what was due, and that Atlas couldn't do it.
+    const runId = await this.#atlasSays(
+      `agenda:${item.id}`,
+      note,
+      `It's time for what I promised: ${item.title}. I couldn't look into it just now, because no brain answered.`,
+      "now",
+      8,
+    );
     finish(this.#sql, item.id, "done", runId);
     this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
   }
@@ -611,7 +921,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         : `[Atlas's helper, not the owner] The job "${item.title}" you started didn't finish: ${result.text}. Tell the owner in one or two sentences, with what you'd need to try again.`;
     const fallback =
       result.state === "done" ? `Finished: ${item.title}.\n\n${result.text}` : `"${item.title}" didn't finish: ${result.text}`;
-    await this.#atlasSays(`job:${item.id}`, note, fallback);
+    await this.#atlasSays(`job:${item.id}`, note, fallback, "normal");
     this.#helpers.reported(item.id);
   }
 
@@ -626,7 +936,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    * a job's result. If no brain can answer, `fallback` is sent as it is, so
    * the owner still hears it.
    */
-  async #atlasSays(trigger: string, note: string, fallback: string): Promise<string> {
+  async #atlasSays(trigger: string, note: string, fallback: string, urgency: Urgency, steps = 4): Promise<string> {
     const runId = startRun(this.#sql, { actor: "atlas", trigger, surface: "none", role: "main" });
     const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
     const res: LoopResult = await this.#converse({
@@ -637,7 +947,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       role: "main",
       input: note,
       beforeSeq: lastSeq,
-      budget: { steps: 4, ms: 60_000 },
+      budget: { steps, ms: steps > 4 ? 120_000 : 60_000 },
       emit: (e) => {
         if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });
       },
@@ -652,7 +962,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       error: err instanceof Error ? err.message : String(err),
     }));
     const kept = res.state === "replied" ? res : { ...res, state: "replied" as const, text: fallback, brain: null };
-    await this.#finishRun(runId, "app", kept, false, trigger);
+    await this.#finishRun(runId, "app", kept, false, trigger, urgency);
     return runId;
   }
 
@@ -721,7 +1031,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         surface: o.surface,
         system,
         messages,
-        tools: TOOLS[o.actor],
+        tools: o.tools ?? TOOLS[o.actor],
         budget: o.budget,
         signal: o.signal,
         joiner: o.surface === "voice" ? " " : "\n\n",
@@ -743,6 +1053,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       embed: this.#embedder(),
       source_log_id: sourceLogId,
       via,
+      exit: this.#exit,
+      automations: {
+        run: (a, o) => this.#automations.run(a, { why: o.why, inputs: o.inputs }),
+        arm: (id) => this.#automations.arm(id),
+      },
       helpers: {
         start: async (o) => {
           const job = await this.#helpers.start({
@@ -977,6 +1292,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     res: LoopResult & { timing?: Record<string, unknown> },
     streamed: boolean,
     trigger?: string,
+    // A reply to something the owner just asked can't wait: they're awake and asked for it.
+    urgency: Urgency = "now",
   ): Promise<void> {
     if (res.text.trim()) {
       await this.#outbox.deliver(
@@ -984,6 +1301,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           text: res.text,
           run_id: runId,
           channel,
+          urgency,
           brain: res.brain,
           fallback: res.fallback,
           interrupted: res.interrupted,
@@ -1283,6 +1601,35 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
     this.#broadcast({ type: "atlas.rows", rows: [out.row] });
     if (out.agenda) this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+    if (out.row.kind === "page.change") this.#broadcast({ type: "atlas.pages", pages: pageSummaries(this.#sql) });
+  }
+
+  /** The owner's hands on pages: Keep, an edit, bringing back a version, and delete (§21.7). */
+  #pageChange(
+    connection: Connection,
+    msg: Extract<ClientMessage, { type: "atlas.page.keep" | "atlas.page.save" | "atlas.page.restore" | "atlas.page.delete" }>,
+  ): void {
+    let row: LogRow | null = null;
+    if (msg.type === "atlas.page.keep") {
+      if (msg.view.kind === "page") throw new Error("That's already a page.");
+      const taken = new Set(listPages(this.#sql).map((p) => p.name.toLowerCase()));
+      let name = msg.name;
+      for (let i = 2; taken.has(name.toLowerCase()); i++) name = `${msg.name} ${i}`;
+      const out = savePage(this.#sql, { name, body: viewBlock(msg.view), note: "Kept from the stage", by: "owner" });
+      row = out.row;
+      this.#send(connection, { type: "atlas.page.kept", id: out.page.id, name: out.page.name });
+    } else if (msg.type === "atlas.page.save") {
+      row = savePage(this.#sql, { id: msg.id, name: msg.name, body: msg.body, note: msg.note ?? "Edited", by: "owner" }).row;
+    } else if (msg.type === "atlas.page.restore") {
+      const p = getPage(this.#sql, msg.id);
+      const v = p ? pageVersion(this.#sql, p.id, msg.version) : null;
+      if (!p || !v) throw new Error("That version isn't there.");
+      row = savePage(this.#sql, { id: p.id, name: p.name, body: v.body, note: `Back to version ${v.n}`, by: "owner" }).row;
+    } else {
+      row = deletePage(this.#sql, msg.id, "owner");
+    }
+    if (row) this.#broadcast({ type: "atlas.rows", rows: [row] });
+    this.#broadcast({ type: "atlas.pages", pages: pageSummaries(this.#sql) });
   }
 
   async #test(connection: Connection, msg: Extract<ClientMessage, { type: "atlas.test" }>): Promise<void> {
@@ -1301,6 +1648,23 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           if (this.#inCall.has(connection.id)) await this.speak(connection, sample);
           return { ok: true, message: `${(this.tts as { label?: string }).label ?? "voice"} spoke in ${Date.now() - t0} ms.` };
         },
+        webhook: async (id) => {
+          const hook = webhooks(this.#sql).find((w) => w.id === id);
+          if (!hook) return { ok: false, message: "That webhook isn't there any more." };
+          // The owner's own button: their word is the OK.
+          const out = await this.#outbox.perform({ kind: "webhook", webhook: hook.id, name: hook.name }, { run_id: null, by: "owner" });
+          return { ok: out.ok, message: out.text };
+        },
+        push: async (device) => {
+          const out = await this.#outbox.push(
+            [{ id: `test-${Date.now()}`, run_id: null, text: "This is how Atlas's notifications look." }],
+            "now",
+            { device },
+          );
+          return out.ok
+            ? { ok: true, message: "Sent. It should show on this device in a moment." }
+            : { ok: false, message: out.error ?? "It didn't go." };
+        },
         systemFor: (character) => {
           const settings = readSettings(this.#sql);
           const s = character ? { ...settings, character } : settings;
@@ -1311,6 +1675,191 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     );
     this.#send(connection, { type: "atlas.test.result", what: msg.what, ref: msg.ref, ...out });
     if (msg.what === "brain") this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  // --- approvals (§12) -----------------------------------------------------------
+
+  /** The way out for tools: does an action now when its kind and earned trust allow, or puts it on this run's card. */
+  #exit: ExitApi = {
+    request: async (action, c) => {
+      const auto = this.#automations.runs.get(c.run_id);
+      // A test run sends nothing: it only says what it would do (§13.4).
+      if (auto?.test) {
+        return {
+          ok: true,
+          output: {
+            test_run: `Would ${action.kind === "webhook" ? `call ${action.name}` : `ask to delete ${action.name}`}. Nothing was sent.`,
+          },
+        };
+      }
+      // An automation the owner turned on may call the webhooks they saw in it (§13.1: allowed to).
+      if (auto && action.kind === "webhook" && auto.allowed.includes(action.name.toLowerCase())) {
+        const out = await this.#outbox.perform(action, { run_id: c.run_id, by: "automation" });
+        return { ok: out.ok, output: out.ok ? { done: out.text } : { error: out.text } };
+      }
+      if (ASKS[kindOf(action)].asks === "never" || isTrusted(this.#sql, action)) {
+        const out = await this.#outbox.perform(action, { run_id: c.run_id, by: "trusted" });
+        return {
+          ok: out.ok,
+          output: out.ok ? { done: out.text } : { error: out.text },
+          receipt: { text: `${out.ok ? "Done" : "Didn't work"} · ${action.name}` },
+        };
+      }
+      const { item, created } = requestApproval(this.#sql, { run_id: c.run_id, log_id: c.source_log_id, action });
+      const hold = needsHold(actionsOf(item));
+      if (created) {
+        await this.#clock.schedule(item);
+        // Nobody looking: the card reaches the owner as a push, with Approve when it doesn't need a hold.
+        if (!this.#looking()) {
+          void this.#outbox
+            .notify({ id: item.id, run_id: c.run_id, text: `Waiting for your OK: ${item.title}` }, "normal", {
+              approval: item.id,
+              hold,
+              url: "/#/inbox",
+            })
+            .catch(() => {});
+        }
+      }
+      this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+      return {
+        ok: true,
+        output: {
+          waiting_for_ok: item.id,
+          note: hold
+            ? "Not done yet. It can't be undone, so the owner has to hold to confirm on the card in the app. Tell them it's waiting in Inbox."
+            : "Not done yet. The owner sees a card and decides. Tell them in a few words it's waiting for their OK.",
+        },
+        receipt: { text: `Waiting for your OK · ${action.kind === "delete" ? `Delete ${action.name}` : action.name}`, approval: item.id },
+      };
+    },
+    decide: (id, yes, by) => this.#decide(id, { yes, by }),
+  };
+
+  #automationViews() {
+    return listAutomations(this.#sql).map((a) => automationView(this.#sql, a));
+  }
+
+  #automationsChanged(): void {
+    this.#broadcast({ type: "atlas.automations", automations: this.#automationViews(), suggestions: openSuggestions(this.#sql) });
+    this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+  }
+
+  /**
+   * The owner said an automation's phrase, exactly (§13.2: on request). It
+   * runs in place of a reply: fixed steps with no model call, and an Atlas
+   * step only if it has one. What it says is the run's answer.
+   */
+  async #phraseRun(hit: NonNullable<ReturnType<typeof matchPhrase>>, runId: string, surface: Surface): Promise<string> {
+    const out = await this.#automations.run(hit.automation, { why: "request", inputs: hit.inputs, runId });
+    const text = out.ok ? out.text : `${hit.automation.name} didn't run: ${out.error}`;
+    await this.#finishRun(
+      runId,
+      surface,
+      {
+        state: out.ok ? "replied" : "failed",
+        text,
+        steps: out.steps,
+        brain: out.brain,
+        fallback: false,
+        interrupted: false,
+        usage: out.usage,
+        ...(out.error ? { error: out.error } : {}),
+      },
+      surface === "voice",
+    );
+    return text;
+  }
+
+  #looking(): boolean {
+    return [...this.getConnections()].some((c) => (c.state as SocketState | null)?.visible === true);
+  }
+
+  /**
+   * The owner's yes or no. Yes does every step in order through the outbox,
+   * and counts toward earned trust when nothing was changed. Something that
+   * can't be undone only takes a hold in the app.
+   */
+  async #decide(
+    id: string,
+    o: { yes: boolean; by: "app" | "hold" | "push" | "voice" | "chat"; edits?: Array<{ index: number; message: string }> },
+  ): Promise<{ ok: boolean; text: string }> {
+    const item = getItem(this.#sql, id);
+    if (!item || item.kind !== "approval") return { ok: false, text: "That approval isn't there." };
+    if (item.state !== "scheduled") {
+      const was =
+        item.state === "done"
+          ? "approved"
+          : item.state === "cancelled"
+            ? "declined"
+            : item.state === "running"
+              ? "being done"
+              : "closed: it ran out";
+      return { ok: false, text: `That one was already ${was}.` };
+    }
+    let actions = actionsOf(item);
+    if (o.yes && needsHold(actions) && o.by !== "hold") {
+      return { ok: false, text: "That can't be undone, so it needs a hold to confirm on the card in the app. It's waiting in Inbox." };
+    }
+    if (item.schedule_id) await this.cancelSchedule(item.schedule_id);
+    if (!o.yes) {
+      finish(this.#sql, id, "cancelled", null, { by: "owner", via: o.by });
+      countDecline(this.#sql, actions);
+      this.#approvalSettled(id);
+      return { ok: true, text: "Declined. Nothing was done." };
+    }
+    // An edit made in the card is what goes out (§12.2), and it doesn't count as approved as-is.
+    let edited = false;
+    for (const e of o.edits ?? []) {
+      const a = actions[e.index];
+      if (a?.kind === "webhook" && (a.message ?? "") !== e.message) {
+        actions = actions.map((x, i) => (i === e.index ? ({ ...a, message: e.message } as Action) : x));
+        edited = true;
+      }
+    }
+    this.#sql.exec(`UPDATE agenda SET state = 'running', updated_at = ? WHERE id = ?`, Date.now(), id);
+    const results: Array<{ ok: boolean; text: string }> = [];
+    for (const a of actions) results.push(await this.#outbox.perform(a, { run_id: item.source.run_id ?? null, by: "approved" }));
+    const ok = results.every((r) => r.ok);
+    finish(this.#sql, id, "done", null, { by: "owner", via: o.by, edited, ok, results: results.map((r) => r.text) });
+    const offers = countApproval(this.#sql, actions, !edited && ok);
+    if (offers.length) append(this.#sql, { actor: "atlas", kind: "settings.change", body: { trust: "offered", keys: offers } });
+    if (actions.some((a) => a.kind === "delete")) this.#broadcast({ type: "atlas.records.changed" });
+    this.#approvalSettled(id);
+    return { ok, text: results.map((r) => r.text).join(" ") };
+  }
+
+  /** No answer in time: the card closes, and the owner hears what didn't happen. */
+  async #expire(id: string): Promise<void> {
+    const item = getItem(this.#sql, id);
+    if (!item || item.kind !== "approval" || item.state !== "scheduled" || item.due_at > Date.now()) return;
+    finish(this.#sql, id, "failed", null, { expired: true });
+    const row = this.#approvalSettled(id);
+    if (row && !this.#looking()) {
+      await this.#outbox.notify(
+        { id: row.id, run_id: item.source.run_id ?? null, text: `Your OK for ${item.title} ran out, so it didn't happen.` },
+        "normal",
+      );
+    }
+  }
+
+  /** Tells every app an approval was settled: its line in the thread, Inbox and the agenda. */
+  #approvalSettled(id: string): LogRow | null {
+    const r = this.#sql
+      .exec<{ id: string }>(
+        `SELECT id FROM log WHERE kind = 'agenda.change' AND json_extract(body, '$.item_id') = ? ORDER BY seq DESC LIMIT 1`,
+        id,
+      )
+      .toArray()[0];
+    const row = r ? getRow(this.#sql, r.id) : null;
+    if (row) this.#broadcast({ type: "atlas.rows", rows: [row] });
+    this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+    this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+    return row;
+  }
+
+  /** Approve from a push notification's button (the service worker calls /api/approve). */
+  async apiApprove(id: string): Promise<{ ok: boolean; text: string }> {
+    return this.keepAliveWhile(() => this.#decide(id, { yes: true, by: "push" }));
   }
 
   // --- sending ----------------------------------------------------------------
@@ -1356,6 +1905,13 @@ class Speech implements AsyncIterable<string> {
       this.#wake = null;
     }
   }
+}
+
+/** What each socket remembers about itself, across hibernation: its sign-in, its device, and whether Atlas is in view there. */
+interface SocketState {
+  session?: string;
+  device?: string;
+  visible?: boolean;
 }
 
 /** Lets the agent take other work between batches of background upkeep. */

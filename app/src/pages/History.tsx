@@ -27,9 +27,20 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         kind: `record.${str(b.change)}`,
       };
     case "agenda.change":
+      if (b.kind === "approval") {
+        const what =
+          b.change === "created"
+            ? `Asked for your OK: ${str(b.title)}`
+            : b.change === "done"
+              ? `You OK'd ${str(b.title)}${b.edited ? ", with edits" : ""}`
+              : b.change === "cancelled"
+                ? `You declined ${str(b.title)}`
+                : `Your OK for ${str(b.title)} ran out`;
+        return { who: b.change === "created" || b.change === "failed" ? "Atlas" : "You", what, kind: `approval.${str(b.change)}` };
+      }
       return {
         who: r.actor === "owner" ? "You" : "Atlas",
-        what: `${str(b.kind) === "job" ? "Job" : "Reminder"} ${str(b.change)}: ${str(b.title)}`,
+        what: `${str(b.kind) === "job" ? "Job" : str(b.kind) === "promise" ? "Promise" : "Reminder"} ${str(b.change) === "done" && str(b.kind) === "promise" ? "kept" : str(b.change)}: ${str(b.title)}`,
         kind: `${str(b.kind)}.${str(b.change)}`,
       };
     case "area.change":
@@ -57,6 +68,49 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         what: `Summarized ${str(b.messages)} older messages to keep the conversation in view`,
         kind: "context.summary",
       };
+    case "automation.run": {
+      const first = str(b.text).split("\n")[0]!.slice(0, 140);
+      const what = b.quiet
+        ? `Looked: ${first}`
+        : b.test
+          ? `Test run, sent nothing: ${b.ok === false ? str(b.error) : first}`
+          : b.ok === false
+            ? `Didn't run: ${str(b.error)}`
+            : `Ran${b.brain ? "" : ", no brain"}: ${first}`;
+      return { who: `Automation · ${str(b.name)}`, what, kind: `automation.${str(b.why)}` };
+    }
+    case "automation.change":
+      return {
+        who: r.actor === "owner" ? "You" : "Atlas",
+        what: `${{ made: "Made", changed: "Changed", on: "Turned on", paused: "Paused", deleted: "Deleted" }[str(b.change)] ?? "Changed"} the automation ${str(b.name)}${b.why ? `: ${str(b.why)}` : ""}`,
+        kind: `automation.${str(b.change)}`,
+      };
+    case "page.change":
+      return {
+        who: r.actor === "owner" ? "You" : "Atlas",
+        what:
+          b.change === "deleted"
+            ? `Deleted the page ${str(b.name)}`
+            : `${b.change === "made" ? "Made" : `Version ${str(b.version)} of`} the page ${str(b.name)}${b.note && b.change !== "made" ? `: ${str(b.note)}` : ""}`,
+        kind: `page.${str(b.change)}`,
+      };
+    case "delivery": {
+      const where =
+        b.channel === "push"
+          ? `Notification${b.to ? ` to ${str(b.to)}` : ""}`
+          : b.channel === "webhook"
+            ? `Called ${str(b.to)}`
+            : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
+      const what =
+        b.ok === false
+          ? `${where}, but it didn't work: ${str(b.error)}`
+          : b.note
+            ? `${where}: ${str(b.note)}`
+            : b.answer
+              ? `${where}: ${str(b.answer)}`
+              : `${where}${b.text ? `: “${str(b.text)}”` : ""}`;
+      return { who: b.by === "owner" ? "You" : "Atlas", what, kind: `deliver.${str(b.channel)}` };
+    }
     case "settings.change": {
       const what = Array.isArray(b.keys)
         ? `Changed ${(b.keys as string[]).map((k) => k.replace(/_/g, " ")).join(", ")}`
@@ -68,7 +122,17 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
               ? `iCloud ${str(b.icloud)}: ${str(b.message)}`
               : b.passkeys != null
                 ? `Passkeys: ${str(b.passkeys)}`
-                : "Changed settings";
+                : b.push
+                  ? `Notifications ${str(b.push)}: ${str(b.name)}`
+                  : b.webhook
+                    ? `Webhook ${str(b.webhook)}: ${str(b.name)}`
+                    : b.trust
+                      ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
+                      : b.focus
+                        ? b.focus === "on"
+                          ? `Focus until ${new Date(Number(b.until)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${b.about ? `: ${str(b.about)}` : ""}`
+                          : "Ended focus"
+                        : "Changed settings";
       return { who: r.actor === "owner" ? "You" : "Atlas", what, kind: "settings.change" };
     }
     default:

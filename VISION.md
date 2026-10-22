@@ -557,7 +557,7 @@ Any trigger can have conditions: "only on weekdays", "only when I'm home", "only
 - **Starting paused.** A new automation stays paused until you've seen a test run, unless you made it yourself in the form.
 - **History.** Each run is listed with its result, time and cost. Two failures in a row and Atlas tells you; after several more, it pauses the automation.
 - **Promises are automations.** Anything Atlas says it'll do shows in Agenda as a promise, linked to where it said it. Scheduled runs show there too; the automations themselves live on the Automations page.
-- **Default routines** ship as automations you can edit: a morning brief, an evening wrap-up, a weekly review.
+- **Default routines** ship as automations you can edit: a morning brief, an evening wrap-up, a weekly review. They start off; setup offers each one with its time (§22), and you turn on the ones you want.
 - **Templates** can be shared.
 
 ---
@@ -702,7 +702,7 @@ Everything installs from the app: browse, preview what it can touch, install, un
 | Each person's Atlas: loop, log, records, agenda | An agent (a Durable Object) with its own SQLite database, scheduling and durable execution (the Agents SDK, with fibers) |
 | Voice on the same connection as text | `@cloudflare/voice`, with ElevenLabs |
 | Helpers | The Agents SDK's sub-agents (dynamic agents) with their own storage, running Atlas's loop in durable fibers |
-| Multi-step automations | Cloudflare Workflows through the Agents SDK, under the agenda (decided in M2) |
+| Multi-step automations | The person agent itself: each automation's next run is an agenda item, and its steps run as one of the agent's runs (decided in M2; Workflows weren't needed) |
 | Workspace | Sandboxes: shell, interpreters, files, preview URLs, network rules, credential injection, terminals |
 | Browser | Browser Run: live view, human in the loop, recordings |
 | Repos | Artifacts (git-compatible) |
@@ -728,7 +728,7 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
 
 - **Plan.** It needs a Cloudflare account on the Workers paid plan, because sandboxes and sending email require it. Model usage is a separate cost, set by the owner's choices.
 - **Previews.** Some pieces are still previews: the Agents SDK's sub-agents, the voice package, Clairic, Artifacts. We wrap each one behind a small interface and keep a stable path ready.
-- **Not Project Think.** Think owns its own agent loop, model calls (through the AI SDK), message store and compaction, and offers no way to use Atlas's log as its store. Using it would mean a second log and a second loop (rule 3). Atlas uses the plain Agents SDK, whose fibers, sub-agents and Workflows don't need Think. ThinkWorkflow needs a Think agent, so it's out too; plain Workflows are considered for automations in M2, beneath the agenda rather than beside it. (Decided 2026-10-22.)
+- **Not Project Think.** Think owns its own agent loop, model calls (through the AI SDK), message store and compaction, and offers no way to use Atlas's log as its store. Using it would mean a second log and a second loop (rule 3). Atlas uses the plain Agents SDK, whose fibers, sub-agents and Workflows don't need Think. ThinkWorkflow needs a Think agent, so it's out too. (Decided 2026-10-22.) M2 built automations without Workflows: their steps run in the agent, on the agenda, and a restart is covered by the agenda's lease and wake.
 - **Self-hosting.** People who want everything on their own hardware will prefer Hermes or OpenClaw.
   - The core stays plain TypeScript behind small interfaces (storage, scheduler, sandbox, browser, models, speech), so a self-hosted build is possible later.
   - It isn't promised for version 1.
@@ -883,7 +883,7 @@ Each view gets its design pass, motion included (§21.8), when it arrives.
 
 ### 21.7 Pages and files: things Atlas makes
 
-> **Needs refinement.** This is the agreed direction, not a finished design. The open points are at the end of this section and in §26.
+> **Partly decided (2026-10-22).** Living pages are settled for M2: the name, versions, format, editing and live updates below. Files, small apps, decks, office formats and sharing are still the agreed direction, refined when they arrive (M3 and later).
 
 Atlas makes things you keep: a shoot plan, a trip itinerary, a quote, a study guide, a small checklist app. **A page is a stage view you keep.** It has a name and versions, you can share it, and it can stay live.
 
@@ -914,14 +914,15 @@ Atlas makes things you keep: a shoot plan, a trip itinerary, a quote, a study gu
   - **Small apps stay sandboxed.** Anything someone else edits on a shared page is information, never instructions (§7.2).
   - **Pages and files are included in export** (§23.4).
 
-**To refine:**
-1. **The name.** "Artifacts" collides with Cloudflare Artifacts, which we already use for repos (§19.1). The working names are pages and files.
-2. **Where versions are stored:** Durable Object history, or Cloudflare Artifacts' git-style versions (still a preview).
-3. **The page format:** Markdown with embedded stage views, or a block format.
-4. **The editor,** and how much editing Atlas offers.
-5. **Office formats:** which ones, and how polished they need to be.
-6. **Live updates:** how a page decides what to refresh, and how changes are shown to you.
-7. **The UI:** a page screen in the UI v1 style, and how Library lists pages and files.
+**Decided with the owner (2026-10-22), for living pages:**
+1. **The name:** pages and files. "Artifacts" collides with Cloudflare Artifacts (§19.1).
+2. **Versions** live in the person agent's own storage, as rows. Every version is kept, listed on the page and in History, and any one can be brought back as a new version.
+3. **The format** is Markdown with stage views in it, each kept as its typed contract (§21.6), so a page holds nothing the app can't draw.
+4. **Editing is you and Atlas.** You edit the text in a plain editor and can take views out; anything bigger, you ask Atlas. There's no rich-text toolbar.
+5. **Live updates:** views that point at what Atlas knows (an area, a person, an automation) always show it as it is now. Lists, tables, drafts, plans and the text stay as kept until you or Atlas change them, and each change is a new version saying what changed. An automation can refresh a page on a schedule.
+6. **The UI:** a page opens on the stage like any view, with Edit and Versions; Library lists pages under Pages.
+
+**Still to refine:** office formats (which ones, and how polished), files in R2, small apps, and sharing a page outside Atlas.
 
 ### 21.8 Look and motion: the rule of cool
 
@@ -1002,7 +1003,7 @@ Setup is the first impression, so it has to be polished, quick and useful right 
    - proposed areas, each one tap to accept, rename or merge;
    - key people;
    - three to five things worth knowing: "Two clashes this week", "Your Thursday 9 am has no travel time", "You haven't replied to the landlord in 4 days".
-6. **First useful act.** It offers one or two things it can do right now, like fixing the clash, setting a leave-by reminder or drafting the landlord reply. It does them through a real approval, so you see how approvals work.
+6. **First useful act.** It offers one or two things it can do right now, like fixing the clash, setting a leave-by reminder or drafting the landlord reply. It does them through a real approval, so you see how approvals work. It also offers the default routines (§13.4), each off until you turn it on, with its time.
 7. **Done, with a path forward.** Optional extras appear later, when they become relevant, not as a checklist up front:
    - faces, a phone number, Atlas's own email;
    - members;
@@ -1123,7 +1124,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 4. **License.** MIT, like Hermes and OpenClaw, or Apache-2.0.
 5. **Default phone provider.** Telnyx (what old Atlas used) or Twilio.
 6. **Name.** OpenAI ships a browser called "ChatGPT Atlas" (October 2025). Decide before the public launch whether that matters.
-7. **Pages and files (§21.7) need refinement:** the name, where versions are stored, the page format, the editor, office formats, live updates, and the UI.
+7. **Files (§21.7):** office formats, how polished they need to be, and sharing outside Atlas. Living pages were decided on 2026-10-22.
 
 ---
 

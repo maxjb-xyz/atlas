@@ -1,11 +1,12 @@
 // One clock (VISION §4.3). The agenda holds reminders, and since M1 the
-// jobs helpers run in the background (§8.1). Promises, automations and
-// watches join in M2 as more kinds of the same row.
+// jobs helpers run in the background (§8.1). Since M2 it also holds
+// notifications waiting for quiet hours to end (§14). Promises, automations
+// and watches join in M2 as more kinds of the same row.
 
 import { append } from "./log";
 import { type Json, newId, parse, type Sql } from "./db";
 
-export type AgendaKind = "reminder" | "job";
+export type AgendaKind = "reminder" | "promise" | "job" | "notify" | "approval" | "automation";
 export type AgendaState = "scheduled" | "running" | "done" | "cancelled" | "failed";
 
 export interface AgendaSource {
@@ -129,5 +130,11 @@ export function finish(
     run_id: runId,
     body: { item_id: id, change: state, kind: item.kind, title: item.title, due_at: item.due_at, ...detail },
   });
+  return getItem(sql, id);
+}
+
+/** Puts a recurring item (an automation's next run) back on the clock at its next time. */
+export function rearm(sql: Sql, id: string, dueAt: number): AgendaItem | null {
+  sql.exec(`UPDATE agenda SET state = 'scheduled', due_at = ?, lease_until = NULL, updated_at = ? WHERE id = ?`, dueAt, Date.now(), id);
   return getItem(sql, id);
 }

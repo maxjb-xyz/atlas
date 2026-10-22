@@ -1,8 +1,10 @@
 // One socket to the person agent. VoiceClient carries both the voice protocol
 // and our atlas.* messages; this hook folds what arrives into thread state.
 
+import type { SuggestionView } from "../../core/src/suggestions";
 import { VoiceClient } from "agents/voice/client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { deviceId, inView } from "./notify";
 import type {
   AgendaItem,
   AreaView,
@@ -16,6 +18,9 @@ import type {
   RecordView,
   ServerMessage,
   SettingsView,
+  StagePage,
+  AutomationView,
+  PageSummary,
 } from "../../core/src/protocol";
 
 /** One calendar read for a page: the events, why it failed, or how old Atlas's copy is when iCloud couldn't be asked. */
@@ -68,6 +73,16 @@ export interface State {
   runDetail: Record<string, { run: Record<string, unknown> | null; rows: LogRow[] }>;
   calendar: Record<string, CalendarState>;
   inbox: InboxItem[] | null;
+  /** The live pages behind area and person views, by the ref they asked with. */
+  stage: Record<string, StagePage | null>;
+  /** The automations, once asked for; the agent sends them again whenever they change. */
+  automations: AutomationView[] | null;
+  /** Automations Atlas suggests from requests the owner repeats, shown at the top of Automations. */
+  suggestions: SuggestionView[];
+  /** The owner's pages (§21.7), once asked for. */
+  pages: PageSummary[] | null;
+  /** The page Keep just made, so the view can say where it went. */
+  kept: { id: string; name: string } | null;
 }
 
 const initial: State = {
@@ -92,6 +107,11 @@ const initial: State = {
   runDetail: {},
   calendar: {},
   inbox: null,
+  stage: {},
+  automations: null,
+  suggestions: [],
+  pages: null,
+  kept: null,
 };
 
 type Action =
@@ -230,6 +250,14 @@ function reduce(s: State, a: Action): State {
       };
     case "atlas.inbox.items":
       return { ...s, inbox: m.items };
+    case "atlas.stage.page":
+      return { ...s, stage: { ...s.stage, [m.ref]: m.page } };
+    case "atlas.automations":
+      return { ...s, automations: m.automations, suggestions: m.suggestions };
+    case "atlas.pages":
+      return { ...s, pages: m.pages };
+    case "atlas.page.kept":
+      return { ...s, kept: { id: m.id, name: m.name } };
   }
   return s;
 }
@@ -264,8 +292,12 @@ export function useAtlas() {
       patch(connected ? { connected, error: null } : { connected });
       if (connected) {
         c.sendJSON({ type: "atlas.hello", tz: Intl.DateTimeFormat().resolvedOptions().timeZone } satisfies ClientMessage);
+        c.sendJSON({ type: "atlas.presence", device: deviceId(), visible: inView() } satisfies ClientMessage);
       }
     });
+    // Whether Atlas is in view here decides whether a message also needs a push (§14: one channel).
+    const presence = () => c.sendJSON({ type: "atlas.presence", device: deviceId(), visible: inView() } satisfies ClientMessage);
+    document.addEventListener("visibilitychange", presence);
     c.addEventListener("custommessage", (msg) => {
       const m = msg as ServerMessage;
       if (m?.type === "atlas.signed_out") {
@@ -292,6 +324,7 @@ export function useAtlas() {
     c.addEventListener("error", (error) => patch({ error }));
     c.connect();
     return () => {
+      document.removeEventListener("visibilitychange", presence);
       c.disconnect();
       client.current = null;
     };

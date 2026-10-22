@@ -6,12 +6,13 @@ import { PRESETS, type Preset } from "../../core/src/character";
 import type { ChatGPTView, SettingsView } from "../../core/src/protocol";
 import type { BrainChoice, Settings as SettingsT } from "../../core/src/store/settings";
 import type { Atlas, TestResult } from "./connection";
+import { deviceId, type PushState, pushState, subscribe, unsubscribe } from "./notify";
 import { addPasskey, deviceName, passkeysSupported } from "./passkey";
 import { Composer } from "./Shell";
 import { useLook } from "./theme";
 import { Icon, Sheet, shortDay, Stage } from "./ui";
 
-type Section = "character" | "look" | "brains" | "connections" | "devices" | "data";
+type Section = "character" | "look" | "brains" | "connections" | "devices" | "permissions" | "notifications" | "data";
 
 const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
   {
@@ -29,7 +30,14 @@ const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
       ["devices", "Devices"],
     ],
   },
-  { group: "System", items: [["data", "Your data"]] },
+  { group: "Abilities", items: [["permissions", "Permissions"]] },
+  {
+    group: "System",
+    items: [
+      ["notifications", "Notifications"],
+      ["data", "Your data"],
+    ],
+  },
 ];
 
 export function SettingsPage({
@@ -79,7 +87,7 @@ export function SettingsPage({
       label="Settings"
       tabs={[{ id: section, label }]}
       tab={section}
-      meta="Atlas · M1"
+      meta="Atlas · M2"
       dock={
         <div className="dock slim">
           {dirty && (
@@ -127,6 +135,8 @@ export function SettingsPage({
                 {section === "brains" && <Brains atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "connections" && <Connections atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "devices" && <Devices atlas={atlas} view={view} />}
+                {section === "permissions" && <Permissions atlas={atlas} view={view} />}
+                {section === "notifications" && <Notifications atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "data" && <Data atlas={atlas} onSignOut={onSignOut} onSetup={onSetup} />}
               </>
             )}
@@ -459,10 +469,17 @@ function Brains({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; 
 // --- Connections -------------------------------------------------------------------------------
 
 function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
+  const icloud = view.secrets.icloud;
   return (
     <>
-      <Head title="Connections" sub="What Atlas can see. Each one has a live test." />
+      <Head title="Connections" sub="What Atlas can see, and where it can speak. Each one has its own live test." />
       <Row label="iCloud Calendar">
+        <State
+          on={!!icloud && !icloud.refused}
+          bad={!!icloud?.refused}
+          text={icloud ? (icloud.refused ? "Refused by Apple" : `Connected as ${icloud.username}`) : "Not connected"}
+          what="Reads your calendars."
+        />
         <ICloud view={view} atlas={atlas} />
         <label className="field">
           <span>Calendars to leave out</span>
@@ -488,8 +505,197 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
           run={() => atlas.test("calendar", { type: "atlas.test", what: "calendar" })}
         />
       </Row>
+      <Row label="Webhooks">
+        <State
+          on={view.webhooks.length > 0}
+          text={view.webhooks.length ? `${view.webhooks.length} ${view.webhooks.length === 1 ? "webhook" : "webhooks"}` : "None yet"}
+          what="Lights, scenes, anything with a web address. Atlas asks before calling one."
+        />
+        <Webhooks atlas={atlas} view={view} />
+      </Row>
       <Row label="Google, Microsoft, email">
         <p className="muted small">Not yet. Atlas connects to Google and Microsoft calendars, and reads mail, in a later version.</p>
+      </Row>
+    </>
+  );
+}
+
+/** One connection's state: a tag, what it found, and what it's for. */
+function State({ on, bad, text, what }: { on: boolean; bad?: boolean; text: string; what: string }) {
+  return (
+    <div className="row" style={{ gap: 10 }}>
+      <span className={`tag ${on ? "ok" : bad ? "ac" : ""}`}>{on ? "✓ On" : bad ? "× Refused" : "Off"}</span>
+      <span style={{ fontWeight: 500 }}>{text}</span>
+      <span className="muted small">{what}</span>
+    </div>
+  );
+}
+
+function Webhooks({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const blank = { id: undefined as string | undefined, name: "", url: "", method: "POST" as "POST" | "GET", about: "" };
+  const [form, setForm] = useState(blank);
+  const [open, setOpen] = useState(false);
+  const editing = form.id != null;
+  return (
+    <>
+      <div className="rows">
+        {view.webhooks.map((w) => (
+          <div className="r" key={w.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 500 }}>{w.name}</span>
+              <span className="mono faint small">
+                {w.method} · {w.host}
+              </span>
+              <span className="grow" />
+              <button
+                className="link"
+                onClick={() => {
+                  setForm({ id: w.id, name: w.name, url: "", method: w.method, about: w.about });
+                  setOpen(true);
+                }}
+              >
+                Edit
+              </button>
+              <button className="link" onClick={() => atlas.send({ type: "atlas.webhook.remove", id: w.id })}>
+                Remove
+              </button>
+            </div>
+            {w.about && <p className="muted small">{w.about}</p>}
+            <TestRow
+              label="Call it now"
+              k={`webhook:${w.id}`}
+              atlas={atlas}
+              run={() => atlas.test(`webhook:${w.id}`, { type: "atlas.test", what: "webhook", id: w.id })}
+            />
+          </div>
+        ))}
+      </div>
+      {open ? (
+        <form
+          style={{ display: "flex", flexDirection: "column", gap: 10 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            atlas.send({ type: "atlas.webhook.save", ...form, url: form.url.trim() || undefined });
+            setForm(blank);
+            setOpen(false);
+          }}
+        >
+          <label className="field">
+            <span>Name</span>
+            <input value={form.name} maxLength={60} placeholder="Lights off" onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </label>
+          <label className="field">
+            <span>Address</span>
+            <input
+              className="mono"
+              type="url"
+              autoComplete="off"
+              spellCheck={false}
+              value={form.url}
+              placeholder={editing ? "Kept. Paste a new one to change it." : "https://"}
+              onChange={(e) => setForm({ ...form, url: e.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>What it does, so Atlas knows when to use it</span>
+            <input
+              value={form.about}
+              maxLength={300}
+              placeholder="Turns off the living room lights"
+              onChange={(e) => setForm({ ...form, about: e.target.value })}
+            />
+          </label>
+          <div className="row">
+            <select
+              value={form.method}
+              onChange={(e) => setForm({ ...form, method: e.target.value as "POST" | "GET" })}
+              style={{ width: 90 }}
+            >
+              <option value="POST">POST</option>
+              <option value="GET">GET</option>
+            </select>
+            <button className="btn primary" disabled={!form.name.trim() || (!editing && !/^https:\/\/./.test(form.url.trim()))}>
+              {editing ? "Save" : "Add"}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setForm(blank);
+                setOpen(false);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="muted small">
+            The address is kept with your secrets: Atlas and this page only ever show its host. A POST sends {"{ text, from, at }"} as JSON.
+          </p>
+        </form>
+      ) : (
+        <div className="row">
+          <button className="btn" onClick={() => setOpen(true)}>
+            Add a webhook
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+// --- Permissions --------------------------------------------------------------------------------
+
+const KIND_NAMES: Record<string, { name: string; example: string; rule: string }> = {
+  look: { name: "Looking", example: "Your calendar, what Atlas knows, the web", rule: "Never asks" },
+  change_own: { name: "Changing your own things", example: "Reminders, notes, records", rule: "Does it, tells you, offers Undo" },
+  outside: { name: "Reaching outside", example: "Calling a webhook", rule: "Asks until you trust it" },
+  irreversible: { name: "Can't be undone", example: "Deleting something for good", rule: "Always asks, hold to confirm" },
+};
+
+function Permissions({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  return (
+    <>
+      <Head title="Permissions" sub="The kind of action decides when Atlas asks. That's a rule in Atlas's code, not its judgment." />
+      <Row label="When Atlas asks">
+        <div className="rows">
+          {Object.entries(view.permissions.kinds).map(([k, v]) => (
+            <div className="r" key={k} style={{ alignItems: "flex-start", flexWrap: "wrap" }}>
+              <div className="grow" style={{ minWidth: 200 }}>
+                <p style={{ fontWeight: 500 }}>{KIND_NAMES[k]?.name ?? k}</p>
+                <p className="muted small">{KIND_NAMES[k]?.example}</p>
+                <p className="faint small">{v.why}</p>
+              </div>
+              <span className={`tag ${v.asks === "never" ? "" : "ac"}`}>{KIND_NAMES[k]?.rule ?? v.asks}</span>
+            </div>
+          ))}
+          <div className="r" style={{ alignItems: "flex-start", flexWrap: "wrap" }}>
+            <div className="grow" style={{ minWidth: 200 }}>
+              <p style={{ fontWeight: 500 }}>Money</p>
+              <p className="muted small">When Atlas can spend, in a later version</p>
+            </div>
+            <span className="tag ac">Always asks, showing the amount</span>
+          </div>
+        </div>
+      </Row>
+      <Row label="Atlas doesn't ask for">
+        <div className="rows">
+          {view.permissions.trusted.map((t) => (
+            <div className="r" key={t.key}>
+              <span className="grow" style={{ fontWeight: 500 }}>
+                {t.name}
+              </span>
+              <span className="faint small">Since {shortDay(t.since)}</span>
+              <button className="link" onClick={() => atlas.send({ type: "atlas.trust.set", key: t.key, trusted: false })}>
+                Ask again
+              </button>
+            </div>
+          ))}
+          {!view.permissions.trusted.length && (
+            <p className="muted small">
+              Nothing yet. After you've approved the same webhook five times as it was, Atlas offers to stop asking.
+            </p>
+          )}
+        </div>
       </Row>
     </>
   );
@@ -505,6 +711,224 @@ function draftProblem(d: SettingsT): string | null {
     if (d.brains[role].some((b) => !b.model.trim())) return "Every brain in a chain needs a model name.";
   }
   return null;
+}
+
+// --- Notifications ----------------------------------------------------------------------------
+
+const PUSH_NOTE: Record<PushState, string> = {
+  on: "On. When Atlas isn't open in front of you, messages reach you here.",
+  off: "Off on this device.",
+  blocked: "Blocked in this browser. Allow notifications for this site in the browser's settings, then come back.",
+  install:
+    "On iPhone and iPad, notifications need Atlas on the Home Screen: tap Share, then Add to Home Screen, and open Atlas from there.",
+  unsupported: "This browser can't take notifications.",
+};
+
+function Notifications({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
+  const me = deviceId();
+  const mine = view.push.devices.find((d) => d.id === me);
+  const [browser, setBrowser] = useState<PushState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void pushState().then(setBrowser);
+  }, [view.push.devices.length]);
+  // Subscribed in the browser but forgotten by Atlas (it was removed, or the push service dropped it) reads as off.
+  const state: PushState | null = browser === "on" && !mine ? "off" : browser;
+  const quiet = draft.notifications.quiet;
+
+  async function turnOn() {
+    if (!view.push.public_key) return;
+    setBusy(true);
+    setError(null);
+    const out = await subscribe(view.push.public_key);
+    if ("error" in out) setError(out.error);
+    else {
+      atlas.send({
+        type: "atlas.push.subscribe",
+        device: me,
+        name: deviceName(),
+        origin: location.origin,
+        subscription: out.sub as { endpoint: string; keys: { p256dh: string; auth: string } },
+      });
+    }
+    setBrowser(await pushState());
+    setBusy(false);
+  }
+
+  return (
+    <>
+      <Head
+        title="Notifications"
+        sub="When Atlas isn't open in front of you, each message reaches you once, on the device you used last."
+      />
+      <Row label="This device">
+        <p className={state === "blocked" ? "err small" : "small"}>{state ? PUSH_NOTE[state] : "Checking."}</p>
+        <div className="row">
+          {state === "off" && (
+            <button className="btn primary" disabled={busy || !view.push.public_key} onClick={() => void turnOn()}>
+              {busy ? "Waiting for the browser" : "Turn on notifications here"}
+            </button>
+          )}
+          {state === "on" && (
+            <>
+              <TestRow
+                label="Send a test"
+                k="push"
+                atlas={atlas}
+                run={() => atlas.test("push", { type: "atlas.test", what: "push", device: me })}
+              />
+              <button
+                className="btn"
+                onClick={() => {
+                  void unsubscribe().then(async () => setBrowser(await pushState()));
+                  atlas.send({ type: "atlas.push.remove", device: me });
+                }}
+              >
+                Turn off here
+              </button>
+            </>
+          )}
+        </div>
+        {error && <p className="err small">{error}</p>}
+      </Row>
+      <Row label="Devices">
+        <div className="rows">
+          {view.push.devices.map((d) => (
+            <div className="r" key={d.id}>
+              <span className="grow" style={{ fontWeight: 500 }}>
+                {d.name}
+                {d.id === me && <span className="muted"> · this one</span>}
+              </span>
+              <span className="faint small">Used {shortDay(d.last_seen)}</span>
+              <button className="link" onClick={() => atlas.send({ type: "atlas.push.remove", device: d.id })}>
+                Remove
+              </button>
+            </div>
+          ))}
+          {!view.push.devices.length && <p className="muted small">No device takes notifications yet.</p>}
+        </div>
+      </Row>
+      <Row label="When Atlas isn't open">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.notifications.push}
+            onChange={(e) => edit({ notifications: { ...draft.notifications, push: e.target.checked } })}
+          />
+          Send a notification to the device I used last
+        </label>
+        <p className="muted small">With Atlas open in front of you, or in a voice call, messages just arrive there.</p>
+      </Row>
+      <Row label="Quiet hours">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={quiet.on}
+            onChange={(e) => edit({ notifications: { ...draft.notifications, quiet: { ...quiet, on: e.target.checked } } })}
+          />
+          Hold notifications that can wait
+        </label>
+        <div className="row">
+          <label className="field" style={{ width: 130 }}>
+            <span>From</span>
+            <input
+              type="time"
+              value={quiet.from}
+              disabled={!quiet.on}
+              onChange={(e) =>
+                e.target.value && edit({ notifications: { ...draft.notifications, quiet: { ...quiet, from: e.target.value } } })
+              }
+            />
+          </label>
+          <label className="field" style={{ width: 130 }}>
+            <span>Until</span>
+            <input
+              type="time"
+              value={quiet.to}
+              disabled={!quiet.on}
+              onChange={(e) =>
+                e.target.value && edit({ notifications: { ...draft.notifications, quiet: { ...quiet, to: e.target.value } } })
+              }
+            />
+          </label>
+        </div>
+        <p className="muted small">
+          Reminders you set and answers to what you asked still come right away. Everything else waits, then arrives as one notification
+          when quiet hours end. Times are in {view.settings.timezone || "UTC"}.
+        </p>
+      </Row>
+      <Row label="Focus">
+        {view.focus ? (
+          <>
+            <p className="small">
+              Focusing{view.focus.about ? ` on ${view.focus.about}` : ""} until {shortDay(view.focus.until)}. Notifications that can wait
+              are held until then.
+            </p>
+            <div className="row">
+              <button className="btn" onClick={() => atlas.send({ type: "atlas.focus", minutes: 0 })}>
+                End focus
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="row">
+            {[30, 60, 120, 240].map((m) => (
+              <button key={m} className="btn sm" onClick={() => atlas.send({ type: "atlas.focus", minutes: m })}>
+                {m < 60 ? `${m} min` : `${m / 60} h`}
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="muted small">Like quiet hours, for a while. You can also say "focus for 45 minutes" to Atlas.</p>
+      </Row>
+      <Row label="Interruption budget">
+        <div className="row">
+          <select
+            value={draft.notifications.budget}
+            style={{ width: 200 }}
+            onChange={(e) => edit({ notifications: { ...draft.notifications, budget: Number(e.target.value) } })}
+          >
+            {[3, 5, 10, 20, 50].map((n) => (
+              <option key={n} value={n}>
+                {n} a day
+              </option>
+            ))}
+            <option value={0}>No limit</option>
+          </select>
+          <span className="faint small">{view.push.today} used today</span>
+        </div>
+        <p className="muted small">
+          Notifications for things that could wait, each day. Past it, they wait in the app. Reminders you set and answers to what you asked
+          don't count.
+        </p>
+      </Row>
+      <Row label="By urgency">
+        <div className="rows">
+          <div className="r small">
+            <span style={{ width: 90, flex: "none", fontWeight: 500 }}>Now</span>
+            <span className="grow muted">
+              Reminders you set, answers to what you asked, your routines on their times. A notification at once, through quiet hours and
+              focus.
+            </span>
+          </div>
+          <div className="r small">
+            <span style={{ width: 90, flex: "none", fontWeight: 500 }}>Can wait</span>
+            <span className="grow muted">
+              Job reports, watches, failures, approvals. A notification unless quiet hours or focus hold it, or the day's budget is used.
+            </span>
+          </div>
+          <div className="r small">
+            <span style={{ width: 90, flex: "none", fontWeight: 500 }}>Never</span>
+            <span className="grow muted">Automations that report only to History, and Inbox items. They wait for you to look.</span>
+          </div>
+        </div>
+        <p className="muted small">
+          Either way, one channel: the app when it's open in front of you, a call if you're in one, or else one device.
+        </p>
+      </Row>
+    </>
+  );
 }
 
 // --- Devices ----------------------------------------------------------------------------------

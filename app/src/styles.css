@@ -979,6 +979,260 @@ button.chip:hover {
   }
 }
 
+/* --- the stage's views (§21.6) -------------------------------------------------------- */
+
+.stage-card {
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 10px 12px;
+  margin-top: 10px;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+}
+.stage-card .title {
+  font-weight: 500;
+}
+.clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.scroll-x {
+  overflow-x: auto;
+  max-width: 100%;
+}
+/* A table as wide as its content, at least the sheet's width; long text wraps, short cells don't. */
+.grid.stage-table {
+  width: max-content;
+  min-width: 100%;
+}
+.stage-table .cell-text {
+  display: block;
+  max-width: 18rem;
+  overflow-wrap: anywhere;
+}
+.sheet-in.closable {
+  position: relative;
+}
+.sheet-in.closable > .sheet-title {
+  padding-right: 36px;
+}
+.view-close {
+  position: absolute;
+  top: 18px;
+  right: 16px;
+}
+.pickable {
+  cursor: pointer;
+}
+.pickable:hover,
+.pickable:focus-visible {
+  background: var(--hover);
+}
+
+/* --- approvals (§12.2) --------------------------------------------------------------- */
+
+/* Hold to confirm: a bar that fills while held (transform only; §21.8). */
+.btn.hold {
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.btn.hold .fill {
+  position: absolute;
+  inset: 0;
+  background: var(--ac);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+.btn.hold.on .fill {
+  transform: scaleX(1);
+  transition: transform var(--hold) linear;
+}
+.btn.hold .label {
+  position: relative;
+}
+
+/* --- automations (§13, docs/ui screens 11 and 12) ------------------------------------ */
+
+.auto-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.auto-card {
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--win);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+}
+.auto-card > .body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px 12px;
+  background: none;
+  border: 0;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+.auto-card > .foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--sep);
+}
+.auto-card.new {
+  border-style: dashed;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding: 18px 16px;
+  min-height: 150px;
+  background: transparent;
+  cursor: pointer;
+}
+.run-strip {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+.run-strip i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  background: var(--tx3);
+}
+.run-strip i.none {
+  background: transparent;
+  outline: 1px solid var(--sep2);
+  outline-offset: -1px;
+}
+.run-strip i.ok {
+  background: var(--tx2);
+}
+.run-strip i.bad {
+  background: var(--ac);
+}
+.run-strip i.test {
+  background: transparent;
+  outline: 1px solid var(--tx2);
+  outline-offset: -1px;
+}
+.run-strip i.quiet {
+  transform: scale(0.5);
+}
+.switch {
+  width: 30px;
+  height: 18px;
+  border-radius: 9px;
+  border: 1px solid var(--sep2);
+  background: transparent;
+  position: relative;
+  padding: 0;
+  flex: none;
+}
+.switch i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--tx3);
+  transition: transform 0.15s;
+}
+.switch.on {
+  background: var(--btn);
+  border-color: var(--btn);
+}
+.switch.on i {
+  background: var(--btntx);
+  transform: translateX(12px);
+}
+.switch:disabled {
+  opacity: 0.4;
+}
+.flow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin: 22px 0 8px;
+}
+.flow-box {
+  border: 1px dashed var(--dash);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 260px;
+}
+.flow-box.grow {
+  flex: 1 1 0;
+}
+.flow-item {
+  border: 1px solid var(--sep2);
+  border-radius: 6px;
+  background: var(--win);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+.flow-dash {
+  flex: 0 0 28px;
+  border-top: 1px dashed var(--dash);
+}
+.flow-foot {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 28px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--dash);
+}
+@media (max-width: 760px) {
+  .flow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .flow-box,
+  .flow-box.grow {
+    flex: none;
+  }
+  .flow-dash {
+    flex: 0 0 18px;
+    border-top: 0;
+    border-left: 1px dashed var(--dash);
+    margin-left: 24px;
+  }
+  .flow-foot {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* --- tables and rows ---------------------------------------------------------------- */
 
 .grid {
@@ -1088,6 +1342,19 @@ button.chip:hover {
 }
 
 /* --- forms (settings and setup) --------------------------------------------------------- */
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--tx);
+}
 
 .form-row {
   display: grid;
@@ -1637,4 +1904,73 @@ button.chip:hover {
 .md th {
   font-weight: 600;
   background: var(--sel);
+}
+
+/* --- drafts, plans and pages (§21.6, §21.7) ------------------------------------------------ */
+
+/* Keep sits beside the close button; the title leaves room for both. */
+.view-keep {
+  position: absolute;
+  top: 18px;
+  right: 16px;
+}
+.sheet-in.closable .view-keep {
+  right: 52px;
+}
+.sheet-in.keepable > .sheet-title {
+  padding-right: 84px;
+}
+.sheet-in.keepable.closable > .sheet-title {
+  padding-right: 120px;
+}
+.draft-text {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.plan-mark {
+  width: 22px;
+  flex: none;
+  color: var(--tx3);
+}
+.plan-mark.done {
+  color: var(--ok);
+}
+.plan-mark.doing {
+  color: var(--ac);
+}
+.page-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.page-view {
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.page-view .sheet-title h1.disp {
+  font-size: 19px;
+}
+.page-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+.page-edit textarea {
+  width: 100%;
+}
+.page-chip {
+  width: 100%;
+  border: 1px dashed var(--sep2);
+  border-radius: 8px;
+  padding: 8px 12px;
+  gap: 10px;
+}
+.panel.suggest {
+  margin-bottom: 14px;
+  border-color: var(--ac);
+}
+.r.on {
+  background: var(--hover);
 }

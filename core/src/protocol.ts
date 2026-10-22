@@ -2,13 +2,30 @@
 // Voice uses the same socket with the Agents SDK voice protocol; every Atlas
 // message type starts with "atlas." so the two never collide.
 
+import type { SuggestionView } from "./suggestions";
+
+/** A page as Library lists it (§21.7). */
+export interface PageSummary {
+  id: string;
+  name: string;
+  version: number;
+  updated_at: number;
+  made_by: "owner" | "atlas";
+  /** The first words of its text. */
+  preview: string;
+  /** The kinds of view kept in it. */
+  views: string[];
+}
 import { z } from "zod";
 import type { LogRow } from "./store/log";
 import type { AgendaItem } from "./store/agenda";
 import { BrainChoice, Settings, SettingsPatch } from "./store/settings";
 import { RECORD_TYPES } from "./store/records";
+import { StageView, type AutomationView, type StagePage } from "./stage";
+import { AutomationInput } from "./automations";
 
 export type { LogRow, AgendaItem };
+export type { StagePage, AutomationView };
 
 export interface RecordView {
   id: string;
@@ -48,15 +65,45 @@ export interface CalendarEventView {
   location?: string;
 }
 
-export interface InboxItem {
-  /** The log row it comes from. */
+/** One step of an approval card, as the owner sees it (§12.2). */
+export interface ApprovalStep {
+  kind: "webhook" | "delete";
+  title: string;
+  /** What it does, in a sentence. */
+  detail: string;
+  /** Where it goes, or what it touches. */
+  where: string;
+  /** Whether and how it can be undone. */
+  undo: string;
+  /** The text a webhook gets, which the owner can edit in the card. */
+  message?: string;
+}
+
+/** An approval card: every step of the plan, why it needs the OK, and the checks it passed. */
+export interface ApprovalView {
   id: string;
-  kind: "review" | "failed";
+  title: string;
+  steps: ApprovalStep[];
+  /** What the owner said that led to it, when it came from a conversation. */
+  asked: string | null;
+  why: string;
+  hold: boolean;
+  expires_at: number;
+  checks: Array<{ name: string; ok: boolean }>;
+}
+
+export interface InboxItem {
+  /** The log row it comes from; for an approval, its id; for a question, its key. */
+  id: string;
+  kind: "review" | "failed" | "approval" | "question";
   title: string;
   text: string;
   at: number;
   areas: string[];
   run_id: string | null;
+  approval?: ApprovalView;
+  /** Atlas asking the owner something it can't decide alone, such as whether to stop asking for an action. */
+  question?: { key: string; yes: string; no: string };
 }
 
 /** An area as the app shows it, in Library → Areas and on chips (§6, §21.3). */
@@ -110,6 +157,63 @@ export const ClientMessage = z.discriminatedUnion("type", [
       }),
     ]),
   }),
+  /** Whether this device has Atlas in view, sent on connect and whenever it changes, so a message goes to one channel (§14). */
+  z.object({ type: z.literal("atlas.presence"), device: z.string().min(1).max(64), visible: z.boolean() }),
+  /** This device takes push notifications: its subscription, from PushSubscription.toJSON(). */
+  z.object({
+    type: z.literal("atlas.push.subscribe"),
+    device: z.string().min(1).max(64),
+    name: z.string().min(1).max(80),
+    origin: z.string().url().max(200),
+    subscription: z.object({
+      endpoint: z.string().url().startsWith("https://").max(2_000),
+      keys: z.object({ p256dh: z.string().min(16).max(200), auth: z.string().min(8).max(100) }),
+    }),
+  }),
+  /** The owner's answer to an approval card. `hold` is set when they held to confirm; `edits` change a step's message. */
+  z.object({
+    type: z.literal("atlas.approval.decide"),
+    id: z.string().max(64),
+    yes: z.boolean(),
+    hold: z.boolean().optional(),
+    edits: z
+      .array(z.object({ index: z.number().int().min(0).max(20), message: z.string().max(1_000) }))
+      .max(20)
+      .optional(),
+  }),
+  /** Let Atlas do one outside action without asking, or ask again (earned trust, §12.2). */
+  z.object({ type: z.literal("atlas.trust.set"), key: z.string().max(100), trusted: z.boolean() }),
+  /** Add or change a webhook (Settings → Connections). On a change, an empty url keeps the address it had. */
+  z.object({
+    type: z.literal("atlas.webhook.save"),
+    id: z.string().max(64).optional(),
+    name: z.string().trim().min(1).max(60),
+    url: z.string().max(2_000).optional(),
+    method: z.enum(["POST", "GET"]),
+    about: z.string().max(300),
+  }),
+  z.object({ type: z.literal("atlas.webhook.remove"), id: z.string().max(64) }),
+  /** The Automations page: every automation. */
+  z.object({ type: z.literal("atlas.automations") }),
+  /** Make or change an automation in the form. The owner's own start on (§13.4). */
+  z.object({ type: z.literal("atlas.automation.save"), id: z.string().max(64).optional(), automation: AutomationInput }),
+  z.object({ type: z.literal("atlas.automation.set"), id: z.string().max(64), on: z.boolean() }),
+  /** A suggestion at the top of Automations: made into one, or set aside. Neither is suggested again. */
+  z.object({ type: z.literal("atlas.suggestion.set"), id: z.string().max(64), state: z.enum(["dismissed", "made"]) }),
+  /** Run now (the Run button), or as a test that sends nothing. */
+  z.object({
+    type: z.literal("atlas.automation.run"),
+    id: z.string().max(64),
+    test: z.boolean().optional(),
+    inputs: z.record(z.string().max(30), z.string().max(200)).optional(),
+  }),
+  z.object({ type: z.literal("atlas.automation.delete"), id: z.string().max(64) }),
+  /** Cancel a reminder or promise from Agenda. */
+  z.object({ type: z.literal("atlas.agenda.cancel"), id: z.string().max(64) }),
+  /** Stop sending notifications to a device. */
+  z.object({ type: z.literal("atlas.push.remove"), device: z.string().min(1).max(64) }),
+  /** Focus for a while (§14), or end it with 0 minutes. */
+  z.object({ type: z.literal("atlas.focus"), minutes: z.number().int().min(0).max(720), about: z.string().max(80).optional() }),
   /** "Sign in with ChatGPT": start, then paste the address the browser landed on. */
   z.object({ type: z.literal("atlas.chatgpt.start") }),
   z.object({ type: z.literal("atlas.chatgpt.finish"), url: z.string().min(1).max(8000) }),
@@ -136,7 +240,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Setup (§22): mark a step done, skipped, or open again. */
   z.object({
     type: z.literal("atlas.setup.step"),
-    step: z.enum(["passkey", "meet", "brain", "connect", "look"]),
+    step: z.enum(["passkey", "meet", "brain", "connect", "look", "routines"]),
     state: z.enum(["done", "skipped", "open"]),
   }),
   /** Setup step 5: Atlas reads the calendar and proposes areas, people and things worth knowing. */
@@ -184,12 +288,33 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.calendar"), ref: z.string().max(64), start: z.string().max(40), end: z.string().max(40) }),
   z.object({ type: z.literal("atlas.inbox") }),
   z.object({ type: z.literal("atlas.inbox.done"), id: z.string().max(64) }),
+  /** The live page behind an area or person view on the stage, or in Library (§21.6). `ref` is echoed back. */
+  z.object({ type: z.literal("atlas.stage"), ref: z.string().max(200), view: StageView }),
+  /** Library's pages (§21.7). */
+  z.object({ type: z.literal("atlas.pages") }),
+  /** Keep: saves a view on the stage as a new page. */
+  z.object({ type: z.literal("atlas.page.keep"), view: StageView, name: z.string().trim().min(1).max(80) }),
+  /** The owner's edit: a new version with this body. */
+  z.object({
+    type: z.literal("atlas.page.save"),
+    id: z.string().max(64),
+    name: z.string().trim().min(1).max(80),
+    body: z.string().max(60_000),
+    note: z.string().max(300).optional(),
+  }),
+  /** A new version that brings an older one back. */
+  z.object({ type: z.literal("atlas.page.restore"), id: z.string().max(64), version: z.number().int().min(1) }),
+  z.object({ type: z.literal("atlas.page.delete"), id: z.string().max(64) }),
   /** Stop a helper's job (Stop on the Jobs tab). */
   z.object({ type: z.literal("atlas.job.stop"), id: z.string().max(64) }),
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
-    what: z.enum(["calendar", "brain", "voice", "character", "sample"]),
+    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push", "webhook"]),
+    /** For "push": the device to send the test notification to. */
+    device: z.string().max(64).optional(),
+    /** For "webhook": which one to call. */
+    id: z.string().max(64).optional(),
     /** Echoed back on the result, so the app knows which button it answers. */
     ref: z.string().max(64).optional(),
     /** A brain to test: a spot in a saved chain, or an unsaved choice. */
@@ -223,6 +348,22 @@ export interface SettingsView {
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
   /** The owner's passkeys, without their keys (Settings → Devices). */
   passkeys: Array<{ id: string; name: string; created_at: number; last_used: number | null }>;
+  /** The owner's webhooks, without their addresses (Settings → Connections). */
+  webhooks: import("./webhooks").WebhookView[];
+  /** When Atlas asks (Settings → Permissions): the table by kind, and the outside actions it may do without asking. */
+  permissions: {
+    kinds: typeof import("./approvals").ASKS;
+    trusted: Array<{ key: string; name: string; since: number }>;
+  };
+  /** Push notifications (Settings → Notifications): this deployment's public key, and the devices that take them. */
+  push: {
+    public_key: string | null;
+    devices: Array<{ id: string; name: string; added_at: number; last_seen: number }>;
+    /** Pushes today for things that could wait, against the budget. */
+    today: number;
+  };
+  /** Focus in force, if any (§14). */
+  focus: { until: number; about: string } | null;
   setup: { done: string[]; skipped: string[]; finished: boolean };
 }
 
@@ -265,6 +406,11 @@ export type ServerMessage =
   /** `stale` is set when iCloud couldn't be asked: the events are Atlas's copy from `as_of`, and `why` says why. */
   | { type: "atlas.calendar.events"; ref: string; events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } }
   | { type: "atlas.inbox.items"; items: InboxItem[] }
+  | { type: "atlas.stage.page"; ref: string; page: StagePage | null }
+  | { type: "atlas.automations"; automations: AutomationView[]; suggestions: SuggestionView[] }
+  | { type: "atlas.pages"; pages: PageSummary[] }
+  /** Keep worked: the new page, so the view can say where it went. */
+  | { type: "atlas.page.kept"; id: string; name: string }
   | {
       type: "atlas.voices";
       voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>;

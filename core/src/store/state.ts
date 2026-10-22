@@ -39,7 +39,20 @@ export type StateName =
   /** Helpers whose own storage is still there, deleted once their job ends. */
   | "helper_facets"
   /** How many unfiled messages there were when discovery last ran, so it waits for new ones. */
-  | "unfiled_tried";
+  | "unfiled_tried"
+  /**
+   * The owner's devices that take push notifications: each one's id, name, push subscription, and when it was
+   * last in use. Signed by this deployment's own key, so a subscription alone can't be used by anyone else.
+   */
+  | "push_devices"
+  /** Earned trust (§12.2): for each outside action, approvals in a row as-is, whether Atlas offered to stop asking, and whether it may. */
+  | "trust"
+  /** When the default routines were made (§13.4), so a routine the owner deleted isn't made again. */
+  | "routines"
+  /** Automations Atlas suggests from requests the owner repeats (§13.4): what they said, how often, and whether they made it or set it aside. */
+  | "suggestions"
+  /** Focus (§14): until when things that can wait are held, and what it's for. */
+  | "focus";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

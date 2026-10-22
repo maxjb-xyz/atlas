@@ -6,6 +6,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { LogRow, RecordView } from "../../core/src/protocol";
 import type { Atlas } from "./connection";
 import { Markdown } from "./Markdown";
+import { openOnStage, type Shown, shownFrom, StageCard } from "./StageViews";
 import { Thread } from "./Thread";
 import { AreaChip, AreaDot, Diamond, Icon, type Place, shortDay, useDismiss } from "./ui";
 
@@ -457,6 +458,7 @@ function Exchange({
       : undefined;
   const receipts = runId ? s.rows.filter((r) => r.run_id === runId && r.kind === "tool.result" && r.body.receipt) : [];
   const undone = new Set(s.rows.filter((r) => r.body.undo_of).map((r) => String(r.body.undo_of)));
+  const shown = receipts.map(shownFrom).filter((v): v is Shown => v != null);
   const live = liveRun?.[1];
   const failed = !live && !out && runId ? s.rows.find((r) => r.kind === "run.end" && r.run_id === runId) : undefined;
   const said = live ? live.text : str(out?.body.text);
@@ -501,6 +503,8 @@ function Exchange({
           ))}
         </div>
       )}
+      {/* Away from Home's stage, a view Atlas showed arrives as a card that opens it there (§21.6). */}
+      {!onReceipt && shown.map((v) => <StageCard key={v.id} atlas={atlas} shown={v} onOpen={() => openOnStage(v.id)} />)}
     </div>
   );
 }
@@ -522,6 +526,17 @@ export function Receipt({ row, atlas, undone, onOpen }: { row: LogRow; atlas: At
         <span>{receipt.text}</span>
       )}
       {undone && <span className="lab">Undone</span>}
+      {(receipt as { approval?: string }).approval &&
+        atlas.state.inbox?.some((i) => i.id === (receipt as { approval?: string }).approval) &&
+        (onOpen ? (
+          <button className="link" onClick={onOpen}>
+            Review
+          </button>
+        ) : (
+          <a className="link" href="#/inbox">
+            Review
+          </a>
+        ))}
       {receipt.undo != null && !undone && (
         <button className="link" onClick={() => atlas.send({ type: "atlas.undo", log_id: row.id })}>
           Undo

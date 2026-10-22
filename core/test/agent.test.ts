@@ -152,6 +152,94 @@ describe("the thread", () => {
     s.ws.close();
   });
 
+  it("pushes a reminder to the device used last only while no app is in view", async () => {
+    const pushes: string[] = [];
+    seams.fetch = (async (url: string) => {
+      pushes.push(String(url));
+      return new Response(null, { status: 201 });
+    }) as unknown as typeof fetch;
+    brains([
+      call("reminder_create", { text: "Stretch", at: "2099-01-01T09:00" }),
+      say("Set."),
+      say("Time to stretch."),
+      call("reminder_create", { text: "Water", at: "2099-01-01T09:00" }, "call_2"),
+      say("Set."),
+      say("Drink some water."),
+    ]);
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "America/New_York" });
+    await s.next("atlas.snapshot");
+    const endpoint = "https://web.push.apple.com/QGuQyavXutnMH";
+    s.send({
+      type: "atlas.push.subscribe",
+      device: "phone-1",
+      name: "iPhone",
+      origin: "https://atlas.example.workers.dev",
+      subscription: {
+        endpoint,
+        keys: {
+          p256dh: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
+          auth: "tBHItJI5svbpez7KI4CCXg",
+        },
+      },
+    });
+    const view = await s.next("atlas.view", (m) => m.view.push.devices.length === 1);
+    expect(view.view.push.public_key).toMatch(/^[A-Za-z0-9_-]{80,}$/);
+
+    const fire = async (said: string, visible: boolean) => {
+      s.send({ type: "atlas.presence", device: "phone-1", visible: true });
+      s.send({ type: "atlas.say", text: said, client_id: said });
+      const receiptMsg = await s.next("atlas.rows", (m) => rowsOf(m, "tool.result").length > 0);
+      await s.next("atlas.run", (m) => m.state === "replied");
+      const id = (rowsOf(receiptMsg, "tool.result")[0]!.body.receipt as { undo: { id: string } }).undo.id;
+      s.send({ type: "atlas.presence", device: "phone-1", visible });
+      // Messages are handled in order: once Inbox answers, the presence has landed.
+      s.send({ type: "atlas.inbox" });
+      await s.next("atlas.inbox.items");
+      await runInDurableObject(owner(), async (agent: PersonAgent, state) => {
+        state.storage.sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1000, id);
+        await agent.onAgendaDue({ id });
+      });
+    };
+
+    // The app is in view on this device: the reminder shows there, with no push as well.
+    await fire("remind me to stretch", true);
+    expect(pushes).toEqual([]);
+
+    // Put away: the next one is pushed, once, and History has the receipt.
+    await fire("remind me to drink water", false);
+    const delivered = await s.next("atlas.rows", (m) => rowsOf(m, "delivery").length > 0);
+    expect(rowsOf(delivered, "delivery")[0]!.body).toMatchObject({ channel: "push", to: "iPhone", ok: true });
+    expect(pushes).toEqual([endpoint]);
+    s.ws.close();
+  });
+
+  it("puts a view on the stage, keeps it on the receipt, and serves the page behind it", async () => {
+    brains([call("show", { view: { kind: "area", area: "Studio" } }), say("Here's the studio.")]);
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "America/New_York" });
+    await s.next("atlas.snapshot");
+    s.send({ type: "atlas.area.create", name: "Studio", about: "Where I edit" });
+    const areas = await s.next("atlas.areas", (m) => m.areas.some((a) => a.name === "Studio"));
+    const studio = areas.areas.find((a) => a.name === "Studio")!;
+
+    s.send({ type: "atlas.say", text: "what's going on with the studio?", client_id: "c-show" });
+    const shown = await s.next("atlas.rows", (m) => rowsOf(m, "tool.result").length > 0);
+    const row = rowsOf(shown, "tool.result")[0]!;
+    expect(row.body.receipt).toEqual({ text: "Showing · Studio", view: { kind: "area", area: studio.id } });
+    await s.next("atlas.run", (m) => m.state === "replied");
+
+    // A refresh still has it: the log is the truth.
+    s.send({ type: "atlas.hello" });
+    const again = await s.next("atlas.snapshot");
+    expect(again.thread.some((r) => r.id === row.id)).toBe(true);
+
+    s.send({ type: "atlas.stage", ref: "t", view: { kind: "area", area: studio.id } });
+    const page = await s.next("atlas.stage.page", (m) => m.ref === "t");
+    expect(page.page).toMatchObject({ kind: "area", area: { name: "Studio", about: "Where I edit" }, people: [] });
+    s.ws.close();
+  });
+
   it("keeps a reminder's promise when it comes due, even with no brain", async () => {
     brains([call("reminder_create", { text: "Take the bread out", at: "2099-01-01T09:00" }), say("Will do."), new Error("down")]);
     const s = await connect();

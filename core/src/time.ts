@@ -155,3 +155,21 @@ export function parseWhen(text: string, tz: string): Date | null {
   if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || sec > 59) return null;
   return zonedToUtc(y, mo, d, h, mi, sec, tz);
 }
+
+/**
+ * When the quiet hours `from` to `to` (local HH:mm, which may run past
+ * midnight) end, if `now` is inside them; otherwise null.
+ */
+export function quietUntil(now: Date, tz: string, quiet: { on: boolean; from: string; to: string }): Date | null {
+  if (!quiet.on || quiet.from === quiet.to) return null;
+  const mins = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+  const p = zonedParts(now, tz);
+  const at = p.hour * 60 + p.minute;
+  const from = mins(quiet.from);
+  const to = mins(quiet.to);
+  const inside = from < to ? at >= from && at < to : at >= from || at < to;
+  if (!inside) return null;
+  // The end is today at `to`, or tomorrow when the hours run past midnight and it's still evening.
+  const end = zonedToUtc(p.year, p.month, p.day, Math.floor(to / 60), to % 60, 0, tz);
+  return at < to ? end : addLocalDays(end, 1, tz);
+}

@@ -1,11 +1,11 @@
-// Setup (VISION §22, steps 1 to 5): a passkey, meeting Atlas, a brain, a
-// calendar, and Atlas's first look. Every step can be skipped and picked up
+// Setup (VISION §22): a passkey, meeting Atlas, a brain, a calendar,
+// Atlas's first look, and the default routines. Every step can be skipped and picked up
 // again from settings, so setup only records which steps are done.
 
 import type { Sql } from "../store/db";
 import { getState, setState } from "../store/state";
 
-export const SETUP_STEPS = ["passkey", "meet", "brain", "connect", "look"] as const;
+export const SETUP_STEPS = ["passkey", "meet", "brain", "connect", "look", "routines"] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 
 export interface SetupView {

@@ -1,6 +1,7 @@
 // One log (VISION §4.2): every message, tool call, receipt, record change,
 // agenda change and delivery is a row. Rows are only ever appended.
 
+import type { StageView } from "../stage";
 import { type Json, newId, parse, type Sql } from "./db";
 
 export type Actor = "owner" | "atlas" | "system";
@@ -23,12 +24,24 @@ export type LogKind =
   /** What a helper handed back when its job ended (§8.1). */
   | "job.result"
   /** An area was created, changed, merged or archived, or the owner moved an item's areas (§6). */
-  | "area.change";
+  | "area.change"
+  /** An automation was made, changed, turned on or paused, or deleted (§13). */
+  | "automation.change"
+  /** An automation ran, or ran as a test: each step's result, how long, and what it cost (§13.4). */
+  | "automation.run"
+  /** Something left Atlas on a channel beyond the thread (a push, a webhook call), or was held or refused at the exit (§4.4). */
+  | "delivery"
+  /** A page was made, given a new version, or deleted (§21.7). */
+  | "page.change";
 
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */
 export interface Receipt {
   text: string;
   undo?: Undo;
+  /** The stage view this receipt opens (§21.6), when Atlas showed one. */
+  view?: StageView;
+  /** The approval this receipt waits on (§12), which Review opens. */
+  approval?: string;
 }
 
 /** What Undo on a receipt does. `history` names the correction to roll back. */
@@ -36,7 +49,9 @@ export type Undo =
   | { kind: "reminder.cancel"; id: string }
   | { kind: "record.forget"; id: string }
   | { kind: "record.restore"; id: string }
-  | { kind: "record.revert"; id: string; history: number };
+  | { kind: "record.revert"; id: string; history: number }
+  /** Undoes a page's version `version`: back to the one before, or no page when it was the first. */
+  | { kind: "page.undo"; id: string; version: number };
 
 export interface LogRow {
   seq: number;
@@ -140,7 +155,8 @@ export function forRun(sql: Sql, runId: string): LogRow[] {
 /** What the thread shows: messages, receipts, fallbacks and failed runs. */
 /** Runs whose failure the thread and the Inbox don't show on their own. */
 export function quietTrigger(trigger: string): boolean {
-  return trigger === "compaction" || trigger === "areas" || trigger.startsWith("helper:");
+  // An automation's failure reaches the thread as its own report ("… didn't run"), so its run's end stays quiet.
+  return trigger === "compaction" || trigger === "areas" || trigger.startsWith("helper:") || trigger.startsWith("automation");
 }
 
 export function isThreadRow(row: LogRow): boolean {
@@ -149,6 +165,9 @@ export function isThreadRow(row: LogRow): boolean {
   // Atlas's own upkeep (compaction, area discovery) failing isn't news for the thread; the run and the
   // Worker log say why. A helper's failure reaches the thread as Atlas's report of it.
   if (row.kind === "run.end") return row.body.state === "failed" && !quietTrigger(String(row.body.trigger ?? ""));
+  // An approval's answer (yes, no, or ran out) is said in the thread, so the owner hears what did and didn't happen (§12.2).
+  if (row.kind === "agenda.change" && row.body.kind === "approval")
+    return ["done", "cancelled", "failed"].includes(String(row.body.change));
   // An undo from a receipt shows as its own line, so the thread tells the truth.
   if (row.kind === "agenda.change" || row.kind === "record.change") return row.body.undo_of != null;
   // Atlas starting an area is said once, in the thread (§6.3).

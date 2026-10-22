@@ -1,6 +1,6 @@
 # Atlas
 
-Read [VISION.md](VISION.md) first: it's the founding brief, and every change must agree with it or change it in its own commit. M0 and M1 are closed ([docs/M0.md](docs/M0.md), [docs/M1.md](docs/M1.md)); the current milestone is M2, and [docs/HANDOFF-M2.md](docs/HANDOFF-M2.md) has where M1 left things and the plan.
+Read [VISION.md](VISION.md) first: it's the founding brief, and every change must agree with it or change it in its own commit. M0, M1 and M2 are closed ([docs/M0.md](docs/M0.md), [docs/M1.md](docs/M1.md), [docs/M2.md](docs/M2.md)); the next milestone is M3, hands: [docs/HANDOFF-M3.md](docs/HANDOFF-M3.md) has where M2 left things, the plan, and a draft smoke test to finish as `docs/M3.md` before building.
 
 A milestone is done when its smoke test passes on the owner's real deployment (VISION rule 7), not after a week of use. Write the smoke test before building, and keep earlier milestones' smoke tests as regression lists.
 

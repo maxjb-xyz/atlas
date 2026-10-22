@@ -157,6 +157,51 @@ const MIGRATIONS: string[] = [
   `
   CREATE INDEX log_at ON log(at);
   `,
+  // 6. M2: automations (§13). Their next runs are agenda items; their runs are runs.
+  `
+  CREATE TABLE automations (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    about TEXT NOT NULL DEFAULT '',
+    trigger TEXT NOT NULL,
+    steps TEXT NOT NULL,
+    report TEXT NOT NULL DEFAULT 'thread',
+    state TEXT NOT NULL DEFAULT 'paused',
+    made_by TEXT NOT NULL,
+    allowed TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    tested_at INTEGER,
+    fails INTEGER NOT NULL DEFAULT 0,
+    paused_why TEXT,
+    memo TEXT NOT NULL DEFAULT '{}'
+  );
+  `,
+  // 7. M2: who changed an automation last, since a change by Atlas waits for a test run too (§13.4).
+  `
+  ALTER TABLE automations ADD COLUMN changed_by TEXT NOT NULL DEFAULT 'owner';
+  UPDATE automations SET changed_by = 'atlas' WHERE made_by = 'atlas';
+  `,
+  // 8. M2: pages (§21.7), a stage view you keep, in versions.
+  `
+  CREATE TABLE pages (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    made_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE TABLE page_versions (
+    page_id TEXT NOT NULL,
+    n INTEGER NOT NULL,
+    at INTEGER NOT NULL,
+    by TEXT NOT NULL,
+    body TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (page_id, n)
+  );
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

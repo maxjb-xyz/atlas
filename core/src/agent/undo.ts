@@ -7,6 +7,7 @@ import type { Sql } from "../store/db";
 import { get as getRow, type LogRow, type Receipt } from "../store/log";
 import { forgetRecord, getRecord, restoreRecord, revertRecord } from "../store/records";
 import type { ToolContext } from "../tools/types";
+import { deletePage, getPage, pageVersion, savePage } from "../pages";
 
 export type UndoOutcome = { ok: true; row: LogRow; agenda: boolean } | { ok: false; message: string };
 
@@ -21,7 +22,12 @@ export async function undoReceipt(sql: Sql, logId: string, clock: ToolContext["c
   switch (undo.kind) {
     case "reminder.cancel": {
       const item = getItem(sql, undo.id);
-      if (!item || item.state !== "scheduled") return { ok: false, message: "That reminder already went off or was cancelled." };
+      if (!item || item.state !== "scheduled") {
+        return {
+          ok: false,
+          message: `That ${item?.kind === "promise" ? "promise was already kept" : "reminder already went off"} or was cancelled.`,
+        };
+      }
       await clock.unschedule(item);
       finish(sql, item.id, "cancelled", receiptRow.run_id, mark);
       return { ok: true, row: undoneBy(sql, logId)!, agenda: true };
@@ -48,6 +54,23 @@ export async function undoReceipt(sql: Sql, logId: string, clock: ToolContext["c
       }
       return { ok: true, row: undoneBy(sql, logId)!, agenda: false };
     }
+    case "page.undo": {
+      const p = getPage(sql, undo.id);
+      if (!p) return { ok: false, message: "That page was deleted." };
+      if (p.version !== undo.version)
+        return { ok: false, message: `${p.name} was changed since, so undoing this would lose that. Change it again instead.` };
+      if (undo.version === 1) return { ok: true, row: deletePage(sql, p.id, "owner", logId)!, agenda: false };
+      const before = pageVersion(sql, p.id, undo.version - 1)!;
+      const out = savePage(sql, {
+        id: p.id,
+        name: p.name,
+        body: before.body,
+        note: `Undid version ${undo.version}`,
+        by: "owner",
+        undo_of: logId,
+      });
+      return out.row ? { ok: true, row: out.row, agenda: false } : { ok: false, message: "There was nothing to undo." };
+    }
   }
 }
 
@@ -55,7 +78,7 @@ export async function undoReceipt(sql: Sql, logId: string, clock: ToolContext["c
 function undoneBy(sql: Sql, logId: string): LogRow | null {
   const r = sql
     .exec<{ id: string }>(
-      `SELECT id FROM log WHERE kind IN ('agenda.change', 'record.change') AND json_extract(body, '$.undo_of') = ? LIMIT 1`,
+      `SELECT id FROM log WHERE kind IN ('agenda.change', 'record.change', 'page.change') AND json_extract(body, '$.undo_of') = ? LIMIT 1`,
       logId,
     )
     .toArray()[0];
