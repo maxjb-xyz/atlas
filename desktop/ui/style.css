@@ -1,0 +1,123 @@
+:root {
+  color-scheme: light dark;
+  --bg: #141413;
+  --tx: #f1efea;
+  --muted: #a8a49c;
+  --sep: #2c2a28;
+  --ac: #ff6a3d;
+  --btn: #f1efea;
+  --btntx: #191817;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #faf9f6;
+    --tx: #191817;
+    --muted: #6b675f;
+    --sep: #e7e5df;
+    --ac: #e8501b;
+    --btn: #191817;
+    --btntx: #ffffff;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--tx);
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Inter",
+    system-ui,
+    sans-serif;
+}
+main {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 36px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+}
+.mark {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto;
+}
+h1 {
+  font-size: 22px;
+  margin: 0 0 6px;
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12.5px;
+}
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+label {
+  font-size: 12px;
+  color: var(--muted);
+}
+input {
+  font: inherit;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--sep);
+  background: transparent;
+  color: var(--tx);
+}
+button {
+  font: inherit;
+  padding: 9px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--sep);
+  background: transparent;
+  color: var(--tx);
+  cursor: pointer;
+}
+button.primary {
+  background: var(--btn);
+  color: var(--btntx);
+  border-color: var(--btn);
+  font-weight: 600;
+}
+button.link {
+  border: 0;
+  color: var(--muted);
+  text-decoration: underline;
+}
+#qr svg {
+  width: 240px;
+  height: 240px;
+  border-radius: 10px;
+  background: #fff;
+}
+.code {
+  font:
+    600 26px/1 ui-monospace,
+    "SF Mono",
+    monospace;
+  letter-spacing: 0.08em;
+  margin: 4px 0;
+}
+.error {
+  color: var(--ac);
+}
+section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+}
+section[hidden] {
+  display: none;
+}

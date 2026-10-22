@@ -1,0 +1,60 @@
+# The desktop app (VISION §16.3, §21.10): built on a Mac for Apple silicon,
+# only when a release is published or someone presses Run, to save build
+# minutes (Mac runners count ten times on a private repo). A release gets
+# the .dmg attached; a run by hand keeps it as the run's artifact. It's
+# signed ad hoc, not with an Apple Developer ID, so macOS asks once before
+# opening it (right-click → Open, or System Settings → Privacy & Security).
+
+name: Desktop app
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Install the Tauri CLI
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build, and attach to the release when there is one
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tauriScript: npm run tauri --
+          args: --target aarch64-apple-darwin
+          releaseId: ${{ github.event.release.id }}
+
+      - name: Keep the app as the run's artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Atlas-macOS-arm64
+          path: desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error

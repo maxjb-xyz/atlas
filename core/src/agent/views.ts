@@ -487,7 +487,6 @@ function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
       detail: a.what,
       where: a.device,
       undo: "It runs on your device, and only you can undo what it did there. After five yeses as it was, Atlas offers to stop asking.",
-      message: JSON.stringify(a.input, null, 2).slice(0, 4_000),
     };
   }
   if (a.kind === "mcp") {

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pair Atlas</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <svg class="mark" viewBox="0 0 1024 1024" aria-hidden="true">
+        <polygon points="512,176 318,430 512,506" fill="#F4F4F5" />
+        <polygon points="512,176 512,506 706,430" fill="#A1A1AA" />
+        <polygon points="512,848 318,430 512,506" fill="#52525B" />
+        <polygon points="512,848 512,506 706,430" fill="#27272A" />
+      </svg>
+      <section id="ask">
+        <h1>Pair this Mac with Atlas</h1>
+        <p class="muted">
+          Atlas can then show notifications here, open links, and, once you turn it on in Atlas, run commands, asking you first each time.
+        </p>
+        <form id="form">
+          <label for="url">Your Atlas's address</label>
+          <input id="url" placeholder="atlas.yourname.workers.dev" autocomplete="url" spellcheck="false" required />
+          <button type="submit" class="primary">Get a pairing code</button>
+        </form>
+      </section>
+      <section id="show" hidden>
+        <h1>Say yes in Atlas</h1>
+        <p class="muted">Scan this with your phone's camera, where you're signed in to Atlas, or open it in the browser on this Mac.</p>
+        <div id="qr"></div>
+        <p class="code" id="code"></p>
+        <p class="muted small">Or type the code in Atlas → Settings → Devices. It works for ten minutes.</p>
+        <button id="open">Open in the browser</button>
+        <p class="muted small" id="waiting">Waiting for your yes…</p>
+        <button id="again" class="link">Start again</button>
+      </section>
+      <p id="error" class="error" hidden></p>
+    </main>
+    <script src="main.js"></script>
+  </body>
+</html>
