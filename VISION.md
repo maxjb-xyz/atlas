@@ -100,7 +100,7 @@ How the loop behaves:
 - **Compaction.** At about 70% of the context window, a silent "save what matters" pass runs, then older context is summarized.
 - **Parallel tool calls,** and helpers for big jobs.
 - **When a budget runs out,** one final answer with no tools: "Here's what I found. Want me to keep going?"
-- **Long work moves to the background** on its own, survives restarts, and reports back where it was asked for.
+- **Long work moves to the background** on its own, survives restarts, and reports back where it was asked for. Background runs execute inside durable fibers (the Agents SDK's `runFiber`): the loop saves a checkpoint after each step and picks up from it after a restart. A chat reply that a restart cuts off simply ends as failed, with the reason.
 
 Every run ends in exactly one final state, which is saved: replied, deferred or failed. Live streams are progress hints only. A refresh always shows the saved truth.
 
@@ -328,7 +328,7 @@ The rules:
 - Every helper action goes into the log.
 - When a helper needs a decision, it asks Atlas. Atlas answers from what it knows, or asks you in plain words.
 
-On Cloudflare, helpers are sub-agents with their own storage, and background ones survive restarts.
+On Cloudflare, helpers are the Agents SDK's sub-agents (dynamic agents, with their own storage), each running Atlas's own loop inside a durable fiber, so background ones survive restarts. A helper's storage is only its scratch space: everything it does is written to the log of the agent that started it.
 
 ### 8.2 Coding jobs: Atlas as the middleman
 
@@ -699,9 +699,10 @@ Everything installs from the app: browse, preview what it can touch, install, un
 
 | Atlas needs | Cloudflare piece |
 |---|---|
-| Each person's Atlas: loop, log, records, agenda | An agent (a Durable Object) with its own SQLite database, scheduling and durable execution (Agents SDK, Project Think) |
+| Each person's Atlas: loop, log, records, agenda | An agent (a Durable Object) with its own SQLite database, scheduling and durable execution (the Agents SDK, with fibers) |
 | Voice on the same connection as text | `@cloudflare/voice`, with ElevenLabs |
-| Helpers | Sub-agents with their own storage, including background sub-agents |
+| Helpers | The Agents SDK's sub-agents (dynamic agents) with their own storage, running Atlas's loop in durable fibers |
+| Multi-step automations | Cloudflare Workflows through the Agents SDK, under the agenda (decided in M2) |
 | Workspace | Sandboxes: shell, interpreters, files, preview URLs, network rules, credential injection, terminals |
 | Browser | Browser Run: live view, human in the loop, recordings |
 | Repos | Artifacts (git-compatible) |
@@ -726,7 +727,8 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
 ### 19.3 Costs and caveats
 
 - **Plan.** It needs a Cloudflare account on the Workers paid plan, because sandboxes and sending email require it. Model usage is a separate cost, set by the owner's choices.
-- **Previews.** Some pieces are still previews: Project Think, the voice package, Clairic, Artifacts. We wrap each one behind a small interface and keep a stable path ready.
+- **Previews.** Some pieces are still previews: the Agents SDK's sub-agents, the voice package, Clairic, Artifacts. We wrap each one behind a small interface and keep a stable path ready.
+- **Not Project Think.** Think owns its own agent loop, model calls (through the AI SDK), message store and compaction, and offers no way to use Atlas's log as its store. Using it would mean a second log and a second loop (rule 3). Atlas uses the plain Agents SDK, whose fibers, sub-agents and Workflows don't need Think. ThinkWorkflow needs a Think agent, so it's out too; plain Workflows are considered for automations in M2, beneath the agenda rather than beside it. (Decided 2026-10-22.)
 - **Self-hosting.** People who want everything on their own hardware will prefer Hermes or OpenClaw.
   - The core stays plain TypeScript behind small interfaces (storage, scheduler, sandbox, browser, models, speech), so a self-hosted build is possible later.
   - It isn't promised for version 1.
@@ -1097,6 +1099,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 - **Brains:** the owner's setup in §18. ChatGPT plan sign-in and Workers AI are first-class providers.
 - **Voice out:** ElevenLabs `eleven_v4_turbo`.
 - **Done (rule 7):** a smoke test on the real deployment, not a week of use.
+- **Durable execution (2026-10-22):** the plain Agents SDK's fibers and sub-agents, not Project Think (§19.3).
 
 **Still open:**
 1. **Repo visibility.** Proposed: private until launch.
