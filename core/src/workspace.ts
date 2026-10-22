@@ -47,6 +47,27 @@ const OUTPUT_LIMIT = 200_000;
 const BACKUP = (ws: string) => `workspace/${ws}.tgz`;
 
 const CERTS = "/etc/ssl/certs/ca-certificates.crt";
+const GATE_CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
+
+/** Debian's package sources over HTTP, for setting up before there's a CA bundle. */
+const HTTP_SOURCES =
+  "for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do " +
+  '[ -f "$f" ] && sed -i \'s#https://deb.debian.org#http://deb.debian.org#g; s#https://security.debian.org#http://security.debian.org#g\' "$f"; done; true';
+
+/**
+ * Trusts the gate's certificate: waits for it, adds it to the system bundle
+ * (with update-ca-certificates when there is one, else straight into the
+ * bundle), and checks the bundle is there. Each failure says which step.
+ */
+const TRUST = [
+  `for i in $(seq 1 50); do [ -s ${GATE_CA} ] && break; sleep 0.2; done`,
+  `[ -s ${GATE_CA} ] || { echo "The gate's certificate never appeared at ${GATE_CA}."; exit 1; }`,
+  `mkdir -p /usr/local/share/ca-certificates /etc/ssl/certs /workspace`,
+  `cp ${GATE_CA} /usr/local/share/ca-certificates/cloudflare-containers-ca.crt`,
+  `if command -v update-ca-certificates >/dev/null 2>&1; then out=$(update-ca-certificates 2>&1) || { echo "update-ca-certificates failed: $out" | tail -5; exit 1; }; ` +
+    `else grep -qF "$(sed -n 2p ${GATE_CA})" ${CERTS} 2>/dev/null || cat ${GATE_CA} >> ${CERTS}; fi`,
+  `grep -q "BEGIN CERTIFICATE" ${CERTS} || { echo "${CERTS} has no certificates after trusting the gate."; exit 1; }`,
+].join("; ");
 /** Every command's environment: the container's CA trusted everywhere (the egress gate re-signs HTTPS). */
 const ENV: Record<string, string> = {
   HOME: "/root",
@@ -57,7 +78,7 @@ const ENV: Record<string, string> = {
   SSL_CERT_FILE: CERTS,
   REQUESTS_CA_BUNDLE: CERTS,
   PIP_CERT: CERTS,
-  NODE_EXTRA_CA_CERTS: "/etc/cloudflare/certs/cloudflare-containers-ca.crt",
+  NODE_EXTRA_CA_CERTS: GATE_CA,
   GIT_SSL_CAINFO: CERTS,
 };
 
@@ -211,19 +232,19 @@ export class Workspace extends DurableObject<Env> {
       // The gate's certificate appears once a gate is registered, so register one (setup's package sites, or nothing) first.
       const settingUp = !(await this.#saved()).snapshot;
       await this.#gate(settingUp ? SETUP_HOSTS : [], {});
-      const trust = await this.#exec(
-        "for i in $(seq 1 50); do [ -s /etc/cloudflare/certs/cloudflare-containers-ca.crt ] && break; sleep 0.2; done; " +
-          "mkdir -p /usr/local/share/ca-certificates /workspace && " +
-          "cp /etc/cloudflare/certs/cloudflare-containers-ca.crt /usr/local/share/ca-certificates/ && " +
-          "(update-ca-certificates >/dev/null 2>&1 || cat /usr/local/share/ca-certificates/cloudflare-containers-ca.crt >> /etc/ssl/certs/ca-certificates.crt)",
-      );
-      if (trust.exit !== 0) throw new Error(`The workspace couldn't trust its gate's certificate: ${trust.out.slice(-300)}`);
       if (settingUp) {
+        // The managed image has no CA bundle (no ca-certificates package), so the packages come first,
+        // over plain HTTP: apt checks every package's signature, and HTTPS would need the bundle it's installing.
         const setup = await this.#exec(
-          `apt-get update -qq && apt-get install -y -qq --no-install-recommends ${PACKAGES.join(" ")} >/tmp/setup.log 2>&1 || (tail -40 /tmp/setup.log; exit 1)`,
+          `${HTTP_SOURCES} && apt-get update -qq >/tmp/setup.log 2>&1 && apt-get install -y -qq --no-install-recommends ${PACKAGES.join(" ")} >>/tmp/setup.log 2>&1 || (tail -40 /tmp/setup.log; exit 1)`,
           { timeoutS: 900 },
         );
         if (setup.exit !== 0) throw new Error(`Setting up the workspace failed: ${setup.out.slice(-1_500)}`);
+      }
+      // Then the gate's certificate (it re-signs HTTPS), into the system bundle every tool reads.
+      const trust = await this.#exec(TRUST);
+      if (trust.exit !== 0) throw new Error(`The workspace couldn't trust its gate's certificate: ${trust.out.slice(-500)}`);
+      if (settingUp) {
         const snap = await this.#c.snapshotContainer({ name: "atlas-base" });
         await this.ctx.storage.put<Saved>("saved", { snapshot: { id: snap.id, base: BASE } });
       }
