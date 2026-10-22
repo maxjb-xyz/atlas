@@ -133,6 +133,69 @@ describe("show", () => {
         "Row 1 has 3 cells, but there are 2 columns. Give every row one cell per column, with null for an empty one.",
       );
     }));
+
+  it("shows charts, comparisons, kits and apps, and refuses numbers that don't line up", () =>
+    withSql(async (sql) => {
+      const chart = {
+        kind: "chart",
+        title: "Spending by week",
+        style: "bar",
+        x: ["Oct 1", "Oct 8", "Oct 15"],
+        series: [
+          { name: "Food", values: [82, 64, null] },
+          { name: "Gas", values: [40, 38, 41] },
+        ],
+        unit: "$",
+        source: "Your receipts in Files",
+      };
+      expect((await run({ view: chart }, ctx(sql))).receipt).toEqual({ text: "Showing · Spending by week", view: chart });
+      expect(error(await run({ view: { ...chart, series: [{ name: "Food", values: [82, 64] }] } }, ctx(sql)))).toBe(
+        "Food has 2 values, but there are 3 x labels. Give each series one value per x, with null for none.",
+      );
+
+      const compare = {
+        kind: "compare",
+        title: "Lunch near UCF",
+        options: [{ name: "Pho 88" }, { name: "Banh Mi Bar", url: "https://example.com/bmb" }],
+        rows: [
+          { label: "Price", values: ["$12", "$9"] },
+          { label: "Walk", values: [6, 11] },
+        ],
+        pick: "Pho 88",
+        why: "Closer, and it's open late.",
+      };
+      expect((await run({ view: compare }, ctx(sql))).ok).toBe(true);
+      expect(error(await run({ view: { ...compare, pick: "Ramen" } }, ctx(sql)))).toBe(`The pick "Ramen" isn't one of the options' names.`);
+      expect(error(await run({ view: { ...compare, rows: [{ label: "Price", values: ["$12"] }] } }, ctx(sql)))).toContain(
+        "Price has 1 values, but there are 2 options.",
+      );
+
+      const kit = {
+        kind: "kit",
+        title: "October",
+        blocks: [
+          { type: "stats", items: [{ label: "Spent", value: "$265" }] },
+          { type: "text", text: "Food is down a third from September." },
+          { type: "chart", title: "By week", style: "line", x: ["Oct 1", "Oct 8"], series: [{ name: "Food", values: [82] }] },
+        ],
+      };
+      expect(error(await run({ view: kit }, ctx(sql)))).toBe(
+        `In the chart "By week": Food has 1 values, but there are 2 x labels. Give each series one value per x, with null for none.`,
+      );
+      kit.blocks[2] = { ...kit.blocks[2]!, series: [{ name: "Food", values: [82, 64] }] } as never;
+      expect((await run({ view: kit }, ctx(sql))).ok).toBe(true);
+
+      const app = {
+        kind: "app",
+        title: "Tip split",
+        html: "<button id=b>Split</button><script>b.onclick=()=>{}</script>",
+        data: { people: 3 },
+      };
+      expect((await run({ view: app }, ctx(sql))).receipt).toEqual({ text: "Showing · Tip split", view: app });
+      expect(() =>
+        show.input.parse({ view: { ...chart, series: Array.from({ length: 9 }, (_, i) => ({ name: `S${i}`, values: [1, 2, 3] })) } }),
+      ).toThrow();
+    }));
 });
 
 describe("the stage's pages", () => {

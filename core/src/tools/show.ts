@@ -18,7 +18,7 @@ export const show = defineTool({
   description: [
     "Put a view on the stage of the owner's app, beside your reply.",
     "Use it when the owner asks to see something, when they ask what's going on with one of their areas or who someone is, and when the answer is several items that read better as a list or a table than as sentences.",
-    "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `automation` (one of the owner's automations, as When → Do → Report with its runs), `page` (one of the owner's kept pages), `list` and `table` (things you've put together in this turn), `draft` (words for the owner to copy and send themselves, such as an email or a post), `plan` (steps toward something, each with whether it's to do, under way, done or waiting) `research` (an answer from the web, with the sources you searched or read), `browser` (your browser, live), `file` (one of the files you made, to look at and download), `document` (a longer write-up to read, in Markdown) and `code` (code, with its language).",
+    "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `automation` (one of the owner's automations, as When → Do → Report with its runs), `page` (one of the owner's kept pages), `list` and `table` (things you've put together in this turn), `draft` (words for the owner to copy and send themselves, such as an email or a post), `plan` (steps toward something, each with whether it's to do, under way, done or waiting) `research` (an answer from the web, with the sources you searched or read), `browser` (your browser, live), `file` (one of the files you made, to look at and download), `document` (a longer write-up to read, in Markdown), `code` (code, with its language), `chart` (bars or lines of numbers you have), `compare` (options side by side on what matters, with your pick), `kit` (a layout of parts: text, headline stats, a list, a table, a chart, a compare) and `app` (a small interactive HTML app, sandboxed with no network, for things like a checklist or a calculator).",
     "Fill a list, table or research view only with what you've looked up or what's in the conversation, never with guesses, and say where it came from in `source` (for research, in its `sources`).",
     "The owner sees the view as you answer, so keep your reply to what matters most and don't read the view out. In a voice conversation, say a sentence or two and let the stage show the rest.",
   ].join(" "),
@@ -86,13 +86,8 @@ export function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Re
       };
     }
     case "table": {
-      const bad = view.rows.findIndex((r) => r.length !== view.columns.length);
-      if (bad >= 0) {
-        return {
-          error: `Row ${bad + 1} has ${view.rows[bad]!.length} cells, but there are ${view.columns.length} columns. Give every row one cell per column, with null for an empty one.`,
-        };
-      }
-      return { view, names: {} };
+      const error = tableProblem(view);
+      return error ? { error } : { view, names: {} };
     }
     case "list":
     case "draft":
@@ -102,7 +97,21 @@ export function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Re
     case "workspace":
     case "document":
     case "code":
+    case "app":
       return { view, names: {} };
+    case "chart":
+    case "compare": {
+      const error = view.kind === "chart" ? chartProblem(view) : compareProblem(view);
+      return error ? { error } : { view, names: {} };
+    }
+    case "kit": {
+      for (const b of view.blocks) {
+        const error =
+          b.type === "chart" ? chartProblem(b) : b.type === "compare" ? compareProblem(b) : b.type === "table" ? tableProblem(b) : null;
+        if (error) return { error: `In the ${b.type}${"title" in b && b.title ? ` "${b.title}"` : ""}: ${error}` };
+      }
+      return { view, names: {} };
+    }
     case "file": {
       const f = findFile(sql, view.file);
       if (!f) {
@@ -148,3 +157,24 @@ function areaSummary(page: Extract<ReturnType<typeof areaPage>, { kind: "area" }
     recent: page.recent.slice(0, 6).map((m) => `${m.by === "owner" ? "The owner" : "You"}: ${m.text.slice(0, 200)}`),
   };
 }
+
+const chartProblem = (c: { x: string[]; series: Array<{ name: string; values: unknown[] }> }) => {
+  const bad = c.series.find((s) => s.values.length !== c.x.length);
+  return bad
+    ? `${bad.name} has ${bad.values.length} values, but there are ${c.x.length} x labels. Give each series one value per x, with null for none.`
+    : null;
+};
+
+const compareProblem = (c: { options: Array<{ name: string }>; rows: Array<{ label: string; values: unknown[] }>; pick?: string }) => {
+  const bad = c.rows.find((r) => r.values.length !== c.options.length);
+  if (bad) return `${bad.label} has ${bad.values.length} values, but there are ${c.options.length} options. Give one per option, in order.`;
+  if (c.pick && !c.options.some((o) => o.name === c.pick)) return `The pick "${c.pick}" isn't one of the options' names.`;
+  return null;
+};
+
+const tableProblem = (t: { columns: string[]; rows: unknown[][] }) => {
+  const bad = t.rows.findIndex((r) => r.length !== t.columns.length);
+  return bad >= 0
+    ? `Row ${bad + 1} has ${t.rows[bad]!.length} cells, but there are ${t.columns.length} columns. Give every row one cell per column, with null for an empty one.`
+    : null;
+};

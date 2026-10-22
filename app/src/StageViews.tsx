@@ -12,6 +12,7 @@ import { Markdown } from "./Markdown";
 import type { Atlas } from "./connection";
 import { AreaChip, AreaDot, Diamond, Empty, Icon, pressable, Sheet, shortDay } from "./ui";
 import { AutomationFlow } from "./pages/Automations";
+import { AppFrame, ChartBody, CompareBody, KitBody } from "./ChartViews";
 
 /** A view on the stage: the receipt it came from (or a local id), the view, and its title. */
 export interface Shown {
@@ -136,6 +137,21 @@ function ViewBody({
       {v.kind === "document" && <DocumentView view={v} onClose={onClose} />}
       {v.kind === "code" && <CodeView view={v} onClose={onClose} />}
       {v.kind === "workspace" && <WorkspaceView atlas={atlas} view={v} onClose={onClose} />}
+      {(v.kind === "chart" || v.kind === "compare" || v.kind === "kit" || v.kind === "app") && (
+        <>
+          <div className="sheet-title">
+            <Icon name="grid" />
+            <h1 className="disp">{v.title}</h1>
+            <span className="grow" />
+            <Close onClose={onClose} />
+          </div>
+          {"source" in v && <Source text={v.source} />}
+          {v.kind === "chart" && <ChartBody chart={v} />}
+          {v.kind === "compare" && <CompareBody compare={v} />}
+          {v.kind === "kit" && <KitBody kit={v} />}
+          {v.kind === "app" && <AppFrame app={v} />}
+        </>
+      )}
       {v.kind === "page" && <PageView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
     </>
   );
@@ -1289,6 +1305,10 @@ const KIND: Record<StageView["kind"], string> = {
   document: "Document",
   code: "Code",
   workspace: "Workspace",
+  chart: "Chart",
+  compare: "Compare",
+  kit: "View",
+  app: "App",
 };
 
 export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown; onOpen: () => void }) {
@@ -1317,20 +1337,28 @@ export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown
                   ? atlas.state.pages?.find((p) => p.id === v.page)?.preview || "A page you keep."
                   : v.kind === "browser"
                     ? "Atlas's browser, live."
-                    : v.kind === "workspace"
-                      ? "Atlas's computer: its terminal and files."
-                      : v.kind === "file"
-                        ? (atlas.state.files?.find((f) => f.id === v.file)?.note ?? "A file to open or download.")
-                        : v.kind === "document"
-                          ? v.text.slice(0, 160)
-                          : v.kind === "code"
-                            ? `${v.language} · ${v.code.split("\n").length} lines`
-                            : v.kind === "research"
-                              ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"} · ${v.sources
-                                  .slice(0, 3)
-                                  .map((x) => hostOf(x.url))
-                                  .join(", ")}`
-                              : "What Atlas knows about them, and where they came up.";
+                    : v.kind === "chart"
+                      ? `${v.series.map((s) => s.name).join(", ")} · ${v.x.length} ${v.style === "bar" ? "bars" : "points"}`
+                      : v.kind === "compare"
+                        ? `${v.options.map((o) => o.name).join(" · ")}${v.pick ? ` · pick: ${v.pick}` : ""}`
+                        : v.kind === "kit"
+                          ? `${v.blocks.length} parts`
+                          : v.kind === "app"
+                            ? "A small app."
+                            : v.kind === "workspace"
+                              ? "Atlas's computer: its terminal and files."
+                              : v.kind === "file"
+                                ? (atlas.state.files?.find((f) => f.id === v.file)?.note ?? "A file to open or download.")
+                                : v.kind === "document"
+                                  ? v.text.slice(0, 160)
+                                  : v.kind === "code"
+                                    ? `${v.language} · ${v.code.split("\n").length} lines`
+                                    : v.kind === "research"
+                                      ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"} · ${v.sources
+                                          .slice(0, 3)
+                                          .map((x) => hostOf(x.url))
+                                          .join(", ")}`
+                                      : "What Atlas knows about them, and where they came up.";
   return (
     <div className="stage-card rise">
       <span className="lab">

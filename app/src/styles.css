@@ -2033,3 +2033,126 @@ button.chip:hover {
   border-radius: 8px;
   background: var(--win);
 }
+
+/* Chart series (M3): eight categorical slots in fixed order, validated for both surfaces
+   (the dataviz reference palette: CVD ΔE ≥ 8.4, normal-vision ΔE ≥ 19.3). Light-mode slots 3–5 sit under
+   3:1 on white, so every chart ships a legend and a table view. Never cycled: a ninth series folds. */
+:root,
+[data-theme="graphite"] {
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --s4: #c98500;
+  --s5: #d55181;
+  --s6: #008300;
+  --s7: #9085e9;
+  --s8: #e66767;
+}
+[data-theme="daylight"] {
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --s4: #eda100;
+  --s5: #e87ba4;
+  --s6: #008300;
+  --s7: #6250d6;
+  --s8: #e34948;
+}
+.chart {
+  position: relative;
+}
+.chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.chart .axis {
+  fill: var(--tx3);
+  font:
+    11px/1 "Geist Mono",
+    ui-monospace,
+    monospace;
+}
+.chart .grid-line {
+  stroke: var(--sep);
+  stroke-width: 1;
+}
+.chart .baseline {
+  stroke: var(--sep2);
+  stroke-width: 1;
+}
+.chart .crosshair {
+  stroke: var(--tx3);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.chart .direct-label {
+  fill: var(--tx2);
+  font:
+    11px/1 Inter,
+    system-ui,
+    sans-serif;
+}
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 8px;
+  color: var(--tx2);
+  font-size: 12px;
+}
+.chart-legend .sw {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+.chart-tip {
+  position: absolute;
+  pointer-events: none;
+  min-width: 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--win);
+  box-shadow: var(--sh);
+  color: var(--tx);
+  font-size: 12px;
+  line-height: 1.5;
+  z-index: 2;
+}
+.chart-tip .row {
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.stat-tile {
+  padding: 12px 14px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+}
+.stat-tile .value {
+  font:
+    600 24px/1.2 "Inter Tight",
+    Inter,
+    sans-serif;
+  color: var(--tx);
+}
+.compare-pick {
+  background: var(--acs);
+}
+.app-frame {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--win);
+}

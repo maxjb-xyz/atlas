@@ -123,6 +123,94 @@ export const CodeStage = z.object({
   source,
 });
 
+/** Numbers over a few categories or over time (§21.6): bars or lines, one axis, at most eight series. */
+const chartBody = {
+  style: z.enum(["bar", "line"]).describe("Bars to compare amounts across categories; lines for change over time."),
+  x: z.array(z.string().max(40)).min(1).max(60).describe("The categories or times along the bottom, in order."),
+  series: z
+    .array(z.object({ name: z.string().min(1).max(40), values: z.array(z.number().nullable()).max(60) }))
+    .min(1)
+    .max(8)
+    .describe("One per thing measured, each with one value per x (null where there's none). Same unit for all: one axis."),
+  unit: z.string().max(20).optional().describe("What the numbers are: '$', 'km', 'min', '%'."),
+};
+
+export const ChartStage = z.object({ kind: z.literal("chart"), title, ...chartBody, source });
+
+/** Options side by side (§21.6): what each is like on what matters, and the pick. */
+const compareBody = {
+  options: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(60),
+        note: z.string().max(200).optional(),
+        url: z.string().url().max(2_000).optional(),
+      }),
+    )
+    .min(2)
+    .max(6),
+  rows: z
+    .array(z.object({ label: z.string().min(1).max(40), values: z.array(z.union([z.string().max(200), z.number(), z.null()])).max(6) }))
+    .min(1)
+    .max(20)
+    .describe("One per thing that matters (price, distance, hours), with one value per option, in the options' order."),
+  pick: z.string().max(60).optional().describe("The option you'd pick, by its name."),
+  why: z.string().max(600).optional().describe("Why that one, and the tradeoff, in a sentence or two."),
+};
+
+export const CompareStage = z.object({ kind: z.literal("compare"), title, ...compareBody, source });
+
+/** A layout Atlas composes from parts (§21.6: the custom kit), drawn in the current theme. */
+export const KitStage = z.object({
+  kind: z.literal("kit"),
+  title,
+  blocks: z
+    .array(
+      z.discriminatedUnion("type", [
+        z.object({ type: z.literal("text"), text: z.string().min(1).max(6_000).describe("Markdown.") }),
+        z.object({
+          type: z.literal("stats"),
+          items: z
+            .array(z.object({ label: z.string().min(1).max(40), value: z.string().min(1).max(30), note: z.string().max(80).optional() }))
+            .min(1)
+            .max(6),
+        }),
+        z.object({
+          type: z.literal("list"),
+          title: z.string().max(80).optional(),
+          items: ListStage.shape.items,
+          numbered: ListStage.shape.numbered,
+        }),
+        z.object({
+          type: z.literal("table"),
+          title: z.string().max(80).optional(),
+          columns: TableStage.shape.columns,
+          rows: TableStage.shape.rows,
+        }),
+        z.object({ type: z.literal("chart"), title: z.string().max(80).optional(), ...chartBody }),
+        z.object({ type: z.literal("compare"), title: z.string().max(80).optional(), ...compareBody }),
+      ]),
+    )
+    .min(1)
+    .max(12)
+    .describe("The parts, top to bottom: text, stats (a few headline numbers), list, table, chart, compare."),
+  source,
+});
+
+/** A small app for real interactivity (§21.6, §21.7): sandboxed, no network, its data passed in. */
+export const AppStage = z.object({
+  kind: z.literal("app"),
+  title,
+  html: z
+    .string()
+    .min(20)
+    .max(100_000)
+    .describe(
+      "One HTML document with its own CSS and JavaScript inline. It runs sandboxed with no network: no external scripts, fonts or requests. Use the theme's colors, var(--bg), var(--text), var(--muted), var(--line) and var(--accent), so it fits light and dark.",
+    ),
+  data: z.unknown().optional().describe("Data the app needs, as JSON: it reads it as window.ATLAS_DATA."),
+});
+
 /** Atlas's workspace (§9.1): its terminal, files and recent commands. There's one. */
 export const WorkspaceStage = z.object({ kind: z.literal("workspace") });
 
@@ -150,6 +238,10 @@ export const StageView = z.discriminatedUnion("kind", [
   DocumentStage,
   CodeStage,
   WorkspaceStage,
+  ChartStage,
+  CompareStage,
+  KitStage,
+  AppStage,
 ]);
 export type StageView = z.infer<typeof StageView>;
 export type StageKind = StageView["kind"];
@@ -314,6 +406,10 @@ export function stageTitle(
       return names.file ?? v.file;
     case "document":
     case "code":
+    case "chart":
+    case "compare":
+    case "kit":
+    case "app":
       return v.title;
     case "browser":
       return "Browser";
