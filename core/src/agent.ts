@@ -473,7 +473,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #inCall = new Set<string>();
 
   override onConnect(connection: Connection, ctx: ConnectionContext): void {
-    const node = ctx.request.headers.get(NODE_HEADER);
+    // A device's socket comes only through the Worker's device route, which checked its token and set the header.
+    const node = new URL(ctx.request.url).pathname === "/nodes/connect" ? ctx.request.headers.get(NODE_HEADER) : null;
     if (node) {
       connection.setState({ node } satisfies SocketState);
       this.#nodeOnline(node, connection);

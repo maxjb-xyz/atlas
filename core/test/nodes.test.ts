@@ -5,7 +5,7 @@
 import { SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { seams } from "../src/agent";
-import { call, fakeCalendar, fakeEmbedder, say } from "./helpers";
+import { call, fakeCalendar, fakeEmbedder, say, SECRET } from "./helpers";
 import { brain, connect, inOwner, out, turn } from "./owner";
 
 interface FakeNode {
@@ -212,6 +212,28 @@ describe("pairing and the device's socket", () => {
     await node.next("node.unpaired");
     const again = await dial(token);
     expect(again instanceof Response && again.status).toBe(401);
+  });
+
+  it("lets no other route say a socket is a paired device", async () => {
+    const { token } = await pair();
+    const node = (await dial(token)) as FakeNode;
+    const id = String((await node.next("node.welcome")).node_id);
+    node.ws.close();
+    const forged = await SELF.fetch("https://atlas.test/mcp/callback", { headers: { upgrade: "websocket", "x-atlas-node": id } });
+    expect(forged.webSocket).toBeFalsy();
+    // The owner's own socket with the header is still just the owner's socket.
+    const res = await SELF.fetch("http://atlas.test/agents/person-agent/owner", {
+      headers: { upgrade: "websocket", authorization: `Bearer ${SECRET}`, "x-atlas-node": id },
+    });
+    const ws = res.webSocket!;
+    ws.accept();
+    const got: Array<{ type?: string }> = [];
+    ws.addEventListener("message", (e) => typeof e.data === "string" && got.push(JSON.parse(e.data)));
+    ws.send(JSON.stringify({ type: "atlas.hello" }));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(got.some((m) => m.type === "atlas.snapshot")).toBe(true);
+    expect(got.some((m) => String(m.type).startsWith("node."))).toBe(false);
+    ws.close();
   });
 
   it("refuses a pairing that isn't asked for properly, and too many at once", async () => {

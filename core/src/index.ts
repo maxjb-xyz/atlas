@@ -54,8 +54,11 @@ export default {
 
     // A sign-in to an MCP server comes back here (§9.2). It's a link from the service, so no sign-in cookie
     // comes with it (they're SameSite=Strict); the agent accepts only a sign-in it started, by its state.
-    if (path === "/mcp/callback" && request.method === "GET") {
-      return (await getAgentByName(env.PersonAgent, OWNER)).fetch(request);
+    if (path === "/mcp/callback" && request.method === "GET" && !request.headers.get("upgrade")) {
+      // Only the device route may say a request comes from a paired device.
+      const headers = new Headers(request.headers);
+      headers.delete(NODE_HEADER);
+      return (await getAgentByName(env.PersonAgent, OWNER)).fetch(new Request(request, { headers }));
     }
 
     // OwnTracks on the owner's phone (§10.1). It signs in with its own user and password, which the agent checks;
