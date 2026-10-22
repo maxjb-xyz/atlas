@@ -63,6 +63,8 @@ export interface ToolContext {
   mcp?: McpApi | null;
   /** Maps and weather (§19.1), through the outbox's checks; absent or null where they can't be reached. */
   maps?: MapsApi | null;
+  /** Paired devices (§16.3), through the outbox; absent or null where they can't be reached. */
+  devices?: DevicesApi | null;
   /** Automations, for owner runs; null elsewhere. */
   automations: AutomationsApi | null;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
@@ -119,6 +121,14 @@ export interface MapsApi {
   ): Promise<LookOut<Found[]>>;
   /** The forecast for a rough area around a point (rounded here, so a caller can't send more). */
   weather(p: Point, o: { run_id: string | null; label: string }): Promise<LookOut<Weather>>;
+}
+
+/** Paired devices, as tools reach them: a call now when the device is online, else when it's back. */
+export interface DevicesApi {
+  call(
+    c: { node: string; device: string; tool: string; input: Record<string, import("../store/db").Json> },
+    o: { run_id: string | null; by: string },
+  ): Promise<{ ok: boolean; text: string; queued?: boolean }>;
 }
 
 /** Connected MCP servers, as tools reach them (§9.2). */

@@ -451,7 +451,13 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
   const secrets = secretValues(sql);
   const clean = (s: string) => scrub(s, secrets) === s;
   const secretsOk = actions.every((a) =>
-    a.kind === "webhook" ? !a.message || clean(a.message) : a.kind === "mcp" ? clean(JSON.stringify(a.arguments)) : true,
+    a.kind === "webhook"
+      ? !a.message || clean(a.message)
+      : a.kind === "mcp"
+        ? clean(JSON.stringify(a.arguments))
+        : a.kind === "node"
+          ? clean(JSON.stringify(a.input))
+          : true,
   );
   const hold = needsHold(actions);
   return {
@@ -474,6 +480,16 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
 }
 
 function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
+  if (a.kind === "node") {
+    return {
+      kind: "node",
+      title: a.name,
+      detail: a.what,
+      where: a.device,
+      undo: "It runs on your device, and only you can undo what it did there. After five yeses as it was, Atlas offers to stop asking.",
+      message: JSON.stringify(a.input, null, 2).slice(0, 4_000),
+    };
+  }
   if (a.kind === "mcp") {
     return {
       kind: "mcp",

@@ -204,6 +204,17 @@ export interface Channels {
   browser(): BrowserDriver | null;
   /** Connected MCP servers (§9.2), or null where there's no client. */
   mcp(): McpClient | null;
+  /** Sends a call to a paired device (§16.3) and waits for its answer; `offline` when it isn't connected. */
+  node?(c: { node: string; tool: string; input: Record<string, unknown> }): Promise<{ ok: boolean; text: string; offline?: boolean }>;
+  /** Puts a call to an offline device on the clock, to run when it's back. */
+  later?(c: {
+    node: string;
+    device: string;
+    tool: string;
+    input: Record<string, unknown>;
+    run_id: string | null;
+    by: string;
+  }): Promise<void>;
 }
 
 export class Outbox {
@@ -420,6 +431,7 @@ export class Outbox {
       };
     }
     if (a.kind === "mcp_add") return this.#connect(a, o);
+    if (a.kind === "node") return this.device({ node: a.node, device: a.device, tool: a.tool, input: a.input }, o);
     if (a.kind === "vault") return this.#fill(a, o);
     if (a.kind === "site") {
       const sites = getState<string[]>(this.sql, "workspace_sites") ?? [];
@@ -511,6 +523,38 @@ export class Outbox {
     } catch (err) {
       return fail(`${s.name} (${hostOf(s.url)}) didn't answer: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  /**
+   * A call to a paired device (§16.3). The secrets check first; then the
+   * device, now when it's online, else on the clock until it's back. A
+   * delivery receipt keeps the device, the tool and its answer.
+   */
+  async device(
+    c: { node: string; device: string; tool: string; input: Record<string, unknown> },
+    o: { run_id: string | null; by: string },
+  ): Promise<{ ok: boolean; text: string; queued?: boolean }> {
+    const base = { channel: "node", to: c.device, text: c.tool, by: o.by };
+    const input = JSON.stringify(c.input);
+    if (scrub(input, this.secrets()) !== input) {
+      this.receipt(o.run_id, { ...base, ok: false, error: "Not sent: it held one of your secrets.", checks: { secrets: "failed" } });
+      return { ok: false, text: `Not sent to ${c.device}: what it would send held one of your secrets.` };
+    }
+    if (!this.channels.node || !this.channels.later) return { ok: false, text: "This deployment can't reach paired devices." };
+    const out = await this.channels.node(c);
+    if (out.offline) {
+      await this.channels.later({ ...c, run_id: o.run_id, by: o.by });
+      this.receipt(o.run_id, { ...base, ok: true, note: "Waiting: the device is offline, so it runs when it's back." });
+      return { ok: true, queued: true, text: `${c.device} is offline. It runs when it's back, and the owner hears how it went.` };
+    }
+    this.receipt(o.run_id, {
+      ...base,
+      ok: out.ok,
+      ...(out.ok ? { answer: clip(out.text, 300) } : { error: clip(out.text, 1_000) }),
+      checks: { secrets: "passed" },
+    });
+    if (!out.ok) console.error(JSON.stringify({ at: "node.call", device: c.device, tool: c.tool, error: clip(out.text, 1_000) }));
+    return out;
   }
 
   /** Connects an MCP server once the owner said yes (§9.2). An OAuth server then waits for the owner to sign in. */

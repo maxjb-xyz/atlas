@@ -93,6 +93,9 @@ export interface State {
   situationVersion: number;
   /** OwnTracks' setup, shown once in Settings → Devices. */
   ownTracks: { url: string; user: string; password: string; link: string } | null;
+  /** Pairing codes looked up (null: not waiting), and the answer to Pair (the device's name, or null), by code. */
+  pairing: Record<string, { name: string; kind: string; platform?: string; expires: number } | null>;
+  paired: Record<string, string | null>;
 }
 
 const initial: State = {
@@ -128,6 +131,8 @@ const initial: State = {
   kept: null,
   situationVersion: 0,
   ownTracks: null,
+  pairing: {},
+  paired: {},
 };
 
 type Action =
@@ -284,6 +289,10 @@ function reduce(s: State, a: Action): State {
     }
     case "atlas.page.kept":
       return { ...s, kept: { id: m.id, name: m.name } };
+    case "atlas.node.pairing":
+      return { ...s, pairing: { ...s.pairing, [m.code]: m.pairing } };
+    case "atlas.node.paired":
+      return { ...s, paired: { ...s.paired, [m.code]: m.name } };
     case "atlas.situation":
       return { ...s, situationVersion: s.situationVersion + 1 };
     case "atlas.location.setup":

@@ -67,7 +67,7 @@ export interface CalendarEventView {
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add";
+  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "node";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -231,6 +231,14 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.push.remove"), device: z.string().min(1).max(64) }),
   /** Focus for a while (§14), or end it with 0 minutes. */
   z.object({ type: z.literal("atlas.focus"), minutes: z.number().int().min(0).max(720), about: z.string().max(80).optional() }),
+  /** The pairing a code names (§16.3), so the owner sees what's asking before saying yes. */
+  z.object({ type: z.literal("atlas.node.pairing"), code: z.string().min(4).max(20) }),
+  /** The owner's yes or no to pairing a device. */
+  z.object({ type: z.literal("atlas.node.pair"), code: z.string().min(4).max(20), yes: z.boolean() }),
+  /** A device's capability turned on or off. */
+  z.object({ type: z.literal("atlas.node.allow"), id: z.string().max(64), capability: z.string().max(40), on: z.boolean() }),
+  /** Unpairs a device at once. */
+  z.object({ type: z.literal("atlas.node.remove"), id: z.string().max(64) }),
   /** Agenda's Done or Drop on an errand. */
   z.object({ type: z.literal("atlas.errand.done"), id: z.string().max(64), done: z.boolean() }),
   /** Settings → Devices → Set up OwnTracks: makes OwnTracks' own user and password (replacing any before) and its setup link. */
@@ -476,6 +484,8 @@ export interface SettingsView {
   setup: { done: string[]; skipped: string[]; finished: boolean };
   /** Location (Settings → Devices, §10.1): whether OwnTracks is set up, the last fix and place, and the last refused post. */
   location: LocationView;
+  /** Paired devices (Settings → Devices, §16.3). */
+  nodes: import("./nodes").NodeView[];
 }
 
 export interface LocationView {
@@ -557,6 +567,14 @@ export type ServerMessage =
   | { type: "atlas.view"; view: SettingsView }
   /** The situation changed (a sense event, a refresh): views showing it, and Now, ask again. */
   | { type: "atlas.situation" }
+  /** What a pairing code names, or null when it's wrong or ran out. */
+  | {
+      type: "atlas.node.pairing";
+      code: string;
+      pairing: { code: string; name: string; kind: string; platform?: string; expires: number } | null;
+    }
+  /** The answer to Pair: the device's name, or null when it didn't pair. */
+  | { type: "atlas.node.paired"; code: string; name: string | null }
   /** OwnTracks' setup, shown once: where it posts, its user and password, and the link that fills them in. */
   | { type: "atlas.location.setup"; url: string; user: string; password: string; link: string }
   | { type: "atlas.test.result"; what: string; ref?: string; ok: boolean; message: string; detail?: unknown }

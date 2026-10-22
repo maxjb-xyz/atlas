@@ -25,6 +25,7 @@ import { situationLines } from "./situation";
 import { openErrands } from "./tools/places";
 import { KINDS, type PlaceKind } from "./maps";
 import { speakingLine } from "./agent/senses";
+import { nodesLine } from "./nodes";
 
 /**
  * The context window Atlas plans for, in tokens. Providers don't say what
@@ -92,6 +93,7 @@ export function systemPrompt(opts: {
   const fresh = [
     `Now: ${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}.`,
     situationLines(sql, settings, now.getTime()),
+    nodesLine(sql),
     focusLine(sql, tz),
     pagesLine(sql),
     skillsLine(sql),

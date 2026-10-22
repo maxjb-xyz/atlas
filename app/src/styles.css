@@ -2275,3 +2275,8 @@ button.chip:hover {
 .ac-text {
   color: var(--ac);
 }
+.device-card {
+  border: 1px solid var(--sep);
+  border-radius: 10px;
+  padding: 12px 14px;
+}

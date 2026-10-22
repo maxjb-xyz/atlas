@@ -131,6 +131,22 @@ import type { Append } from "./store/log";
 import { NUDGE_WORDS, nudgeTool, SenseDesk } from "./agent/senses";
 import { errandDone, openErrands, placeLooks, placeTools, NO_DEADLINE } from "./tools/places";
 import {
+  type AtlasToNode,
+  allowedMap,
+  decidePairing,
+  logNode,
+  NodeMessage,
+  type NodeKind,
+  nodeByToken,
+  nodes,
+  pairingFor,
+  pollPairing,
+  removeNode,
+  startPairing,
+  updateNode,
+} from "./nodes";
+import { deviceCall } from "./tools/nodes";
+import {
   locationOff,
   locationOn,
   logSense,
@@ -206,8 +222,9 @@ const TOOLS: Record<Actor, Tool[]> = {
     ...skillTools,
     ...mcpToolset,
     ...placeTools,
+    deviceCall,
   ],
-  atlas: [calendarRead, ...agendaTools, recall, ...webTools, fileRead, skillRead, mcpTools, mcpCall, ...placeLooks, errandDone],
+  atlas: [calendarRead, ...agendaTools, recall, ...webTools, fileRead, skillRead, mcpTools, mcpCall, ...placeLooks, errandDone, deviceCall],
   system: [],
 };
 
@@ -362,7 +379,25 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       fetch: (...args) => (seams.fetch ?? fetch)(...args),
       browser: () => this.#driver(),
       mcp: () => this.#mcpClient(),
+      node: (c) => this.#nodeCall(c),
+      later: async (c) => {
+        const tool = c.tool.replace(/_/g, " ");
+        createItem(this.#sql, {
+          kind: "device",
+          title: `${tool[0]!.toUpperCase()}${tool.slice(1)} on ${c.device}`,
+          due_at: NO_DEADLINE,
+          source: {
+            via: "device",
+            ...(c.run_id ? { run_id: c.run_id } : {}),
+            detail: { node: c.node, tool: c.tool, input: c.input as never, by: c.by },
+          },
+        });
+        this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+      },
     });
+    // A restart drops every socket: devices count as offline until they connect again.
+    for (const n of nodes(this.#sql))
+      if (n.online && !this.#nodeSocket(n.id)) updateNode(this.#sql, n.id, (x) => ({ ...x, online: false }));
     // Connected servers (§9.2): the app's list follows every change, and a sign-in comes back to Settings.
     this.mcp.onServerStateChanged(() => this.#broadcast({ type: "atlas.mcp.servers", servers: this.#mcpView() }));
     this.mcp.configureOAuthCallback({ customHandler: (r) => this.#mcpSignedIn(r) });
@@ -438,6 +473,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #inCall = new Set<string>();
 
   override onConnect(connection: Connection, ctx: ConnectionContext): void {
+    const node = ctx.request.headers.get(NODE_HEADER);
+    if (node) {
+      connection.setState({ node } satisfies SocketState);
+      this.#nodeOnline(node, connection);
+      return;
+    }
     // Which sign-in opened this socket (the Worker sets it), kept on the socket so it survives hibernation.
     const session = ctx.request.headers.get(SESSION_HEADER);
     if (session) connection.setState({ session } satisfies SocketState);
@@ -449,6 +490,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** Closes the sockets opened by sessions that just ended; with no list, every socket. */
   #signOutSockets(ended?: Set<string>): void {
     for (const c of this.getConnections()) {
+      // Paired devices aren't signed in with a session; they're unpaired in Settings → Devices.
+      if ((c.state as SocketState | null)?.node) continue;
       const session = (c.state as SocketState | null)?.session;
       if (ended && !(session && ended.has(session))) continue;
       this.#send(c, { type: "atlas.signed_out" });
@@ -462,6 +505,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     try {
       data = JSON.parse(message);
     } catch {
+      return;
+    }
+    const node = (connection.state as SocketState | null)?.node;
+    if (node) {
+      await this.#nodeMessage(node, connection, data);
       return;
     }
     const parsed = ClientMessage.safeParse(data);
@@ -520,6 +568,44 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#refreshVoice();
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
+      case "atlas.node.pairing": {
+        const p = pairingFor(this.#sql, msg.code);
+        this.#send(connection, { type: "atlas.node.pairing", code: msg.code, pairing: p });
+        return;
+      }
+      case "atlas.node.pair": {
+        const n = await decidePairing(this.#sql, msg.code, msg.yes);
+        this.#send(connection, { type: "atlas.node.paired", code: msg.code, name: n?.name ?? null });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.node.allow": {
+        const n = updateNode(this.#sql, msg.id, (x) => ({ ...x, allowed: { ...x.allowed, [msg.capability]: msg.on } }));
+        if (n) {
+          append(this.#sql, {
+            actor: "owner",
+            kind: "settings.change",
+            body: { node: `${msg.capability} ${msg.on ? "on" : "off"}`, name: n.name },
+          });
+          const socket = this.#nodeSocket(n.id);
+          if (socket) this.#nodeSend(socket, { type: "node.allowed", allowed: allowedMap(n) });
+        }
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.node.remove": {
+        const gone = removeNode(this.#sql, msg.id);
+        const socket = this.#nodeSocket(msg.id);
+        if (socket) {
+          this.#nodeSend(socket, { type: "node.unpaired" });
+          socket.close(4003, "Unpaired.");
+        }
+        for (const i of upcoming(this.#sql, 200).filter((x) => x.kind === "device" && x.source.detail?.node === msg.id)) {
+          finish(this.#sql, i.id, "cancelled", null, { why: `${gone?.name ?? "The device"} was unpaired.` });
+        }
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
       case "atlas.errand.done": {
         const item = getItem(this.#sql, msg.id);
         if (!item || item.kind !== "errand" || item.state !== "scheduled") {
@@ -1191,6 +1277,143 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     });
   }
 
+  // --- paired devices (§16.3) ---------------------------------------------------
+
+  /** Calls sent to devices, waiting for their answers, by call id. */
+  #nodeCalls = new Map<string, (r: { ok: boolean; text: string }) => void>();
+
+  #nodeSocket(id: string): Connection | null {
+    return [...this.getConnections()].find((c) => (c.state as SocketState | null)?.node === id) ?? null;
+  }
+
+  #nodeSend(c: Connection, msg: AtlasToNode): void {
+    c.send(JSON.stringify(msg));
+  }
+
+  #nodeOnline(id: string, connection: Connection): void {
+    const n = updateNode(this.#sql, id, (x) => ({ ...x, online: true, last_seen: Date.now() }));
+    if (!n) {
+      this.#nodeSend(connection, { type: "node.unpaired" });
+      connection.close(4003, "Not paired.");
+      return;
+    }
+    this.#nodeSend(connection, { type: "node.welcome", node_id: n.id, allowed: allowedMap(n) });
+    this.#broadcast({ type: "atlas.rows", rows: [logNode(this.#sql, n, "online")] });
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  override onClose(connection: Connection): void {
+    const id = (connection.state as SocketState | null)?.node;
+    if (!id) return;
+    // Another socket for the same device (a quick reconnect) keeps it online.
+    if ([...this.getConnections()].some((c) => c.id !== connection.id && (c.state as SocketState | null)?.node === id)) return;
+    const n = updateNode(this.#sql, id, (x) => ({ ...x, online: false, last_seen: Date.now() }));
+    if (!n) return;
+    this.#broadcast({ type: "atlas.rows", rows: [logNode(this.#sql, n, "offline")] });
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  async #nodeMessage(id: string, connection: Connection, data: unknown): Promise<void> {
+    const parsed = NodeMessage.safeParse(data);
+    if (!parsed.success) {
+      console.error(
+        JSON.stringify({
+          at: "node.message",
+          node: id,
+          error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+        }),
+      );
+      return;
+    }
+    const m = parsed.data;
+    if (m.type === "node.ping") {
+      updateNode(this.#sql, id, (x) => ({ ...x, last_seen: Date.now(), online: true }));
+      this.#nodeSend(connection, { type: "node.pong" });
+      return;
+    }
+    if (m.type === "node.result") {
+      const done = this.#nodeCalls.get(m.id);
+      if (done) {
+        this.#nodeCalls.delete(m.id);
+        const out = typeof m.output === "string" ? m.output : JSON.stringify(m.output ?? null);
+        done(m.ok ? { ok: true, text: out.slice(0, 8_000) } : { ok: false, text: (m.error ?? out).slice(0, 4_000) });
+      }
+      return;
+    }
+    if (m.type === "node.event") {
+      const n = updateNode(this.#sql, id, (x) => ({ ...x, last_seen: Date.now(), state: { ...x.state, [m.event]: summary(m.body) } }));
+      if (n) this.#broadcast({ type: "atlas.rows", rows: [logNode(this.#sql, n, m.event, { body: m.body as never })] });
+      return;
+    }
+    // hello: what the device is and offers; anything it was asked while offline runs now.
+    const n = updateNode(this.#sql, id, (x) => ({
+      ...x,
+      kind: m.node.kind,
+      ...(m.node.platform ? { platform: m.node.platform } : {}),
+      ...(m.node.version ? { version: m.node.version } : {}),
+      capabilities: m.capabilities,
+      events: m.events,
+      last_seen: Date.now(),
+      online: true,
+    }));
+    if (!n) return;
+    this.#nodeSend(connection, { type: "node.allowed", allowed: allowedMap(n) });
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+    const waiting = upcoming(this.#sql, 200).filter((i) => i.kind === "device" && i.state === "scheduled" && i.source.detail?.node === id);
+    if (waiting.length) void this.keepAliveWhile(() => this.#drainDevice(n.name, waiting));
+  }
+
+  /** Sends a call to a device and waits for its answer: offline when it isn't connected, failed after two minutes. */
+  #nodeCall(c: { node: string; tool: string; input: Record<string, unknown> }): Promise<{ ok: boolean; text: string; offline?: boolean }> {
+    const socket = this.#nodeSocket(c.node);
+    if (!socket) return Promise.resolve({ ok: false, text: "offline", offline: true });
+    const id = crypto.randomUUID();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.#nodeCalls.delete(id);
+        resolve({ ok: false, text: "The device didn't answer within two minutes." });
+      }, 120_000);
+      this.#nodeCalls.set(id, (r) => {
+        clearTimeout(timer);
+        resolve(r);
+      });
+      this.#nodeSend(socket, { type: "node.call", id, tool: c.tool, input: c.input });
+    });
+  }
+
+  /** Calls that waited for a device run once it's back, and the owner hears how they went. */
+  async #drainDevice(device: string, items: AgendaItem[]): Promise<void> {
+    const lines: string[] = [];
+    for (const item of items) {
+      const leased = lease(this.#sql, item.id, Number.MAX_SAFE_INTEGER - 1);
+      if (!leased) continue;
+      const d = item.source.detail ?? {};
+      const out = await this.#outbox.device(
+        { node: String(d.node), device, tool: String(d.tool), input: (d.input ?? {}) as Record<string, unknown> },
+        { run_id: item.source.run_id ?? null, by: String(d.by ?? "owner") },
+      );
+      finish(this.#sql, item.id, out.ok ? "done" : "failed", null, { result: out.text.slice(0, 500) });
+      lines.push(`- ${item.title}: ${out.ok ? "done" : "didn't work"}. ${out.text.slice(0, 1_000)}`);
+    }
+    if (!lines.length) return;
+    const note = `[Atlas's devices, not the owner] ${device} is back, and what you asked it for while it was away has run:\n${lines.join("\n")}\n\nTell the owner in a short message how it went.`;
+    await this.#inLine(() => this.#atlasSays(`device:${device}`, note, `${device} is back. ${lines.join(" ")}`, "normal"));
+  }
+
+  /** A device asks to pair (§16.3): a code to show, and a secret to poll with. */
+  async apiPairStart(o: { name: string; kind: NodeKind; platform?: string }): Promise<{ code: string; poll: string; expires: number }> {
+    return startPairing(this.#sql, o);
+  }
+
+  async apiPairPoll(poll: string): Promise<Awaited<ReturnType<typeof pollPairing>>> {
+    return pollPairing(this.#sql, poll);
+  }
+
+  /** The node a device's token belongs to, for the Worker before it lets the socket in. */
+  async apiNodeAuth(token: string): Promise<string | null> {
+    return (await nodeByToken(this.#sql, token))?.id ?? null;
+  }
+
   // --- the clock -------------------------------------------------------------
 
   /** Woken by the scheduler (a Durable Object alarm) when an agenda item is due. */
@@ -1566,6 +1789,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       exit: this.#exit,
       web: this.#web,
       maps: this.#maps,
+      devices: { call: (c, o) => this.#outbox.device(c, o) },
       files: this.#bucket(),
       workspace: this.#workspaceApi,
       browser: this.#browserApi,
@@ -3109,7 +3333,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   }
 
   #broadcast(msg: ServerMessage): void {
-    this.broadcast(JSON.stringify(msg));
+    // Paired devices have their own protocol; the app's messages are for the app.
+    const devices = [...this.getConnections()].filter((c) => (c.state as SocketState | null)?.node).map((c) => c.id);
+    this.broadcast(JSON.stringify(msg), devices);
   }
 }
 
@@ -3152,6 +3378,18 @@ interface SocketState {
   session?: string;
   device?: string;
   visible?: boolean;
+  /** Set on a paired device's socket (§16.3): which node it is. The Worker sets it only after checking the node's token. */
+  node?: string;
+}
+
+/** The header the Worker puts on a paired device's socket, after checking its token. */
+export const NODE_HEADER = "x-atlas-node";
+
+/** A device's event in a few words, for its state in the situation. */
+function summary(body: Record<string, unknown>): string {
+  const v = body.value ?? body.state;
+  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return String(v);
+  return JSON.stringify(body).slice(0, 120);
 }
 
 /** Lets the agent take other work between batches of background upkeep. */

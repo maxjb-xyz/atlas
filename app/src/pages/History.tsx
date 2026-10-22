@@ -114,6 +114,16 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         kind: `file.${str(b.change)}`,
       };
     case "sense": {
+      if (b.source === "node") {
+        const device = str((b.node as { name?: string } | undefined)?.name);
+        const what =
+          b.event === "online"
+            ? "Came online"
+            : b.event === "offline"
+              ? "Went offline"
+              : `${str(b.event).replace(/_/g, " ")}: ${JSON.stringify(b.body ?? {}).slice(0, 120)}`;
+        return { who: device, what, kind: `device.${str(b.event)}` };
+      }
       const place = (b.place as { name?: string } | undefined)?.name ?? "a saved place";
       const stayed = typeof b.stayed_ms === "number" && b.stayed_ms >= 60_000 ? `, after ${minutesText(b.stayed_ms)}` : "";
       const what =
@@ -185,9 +195,11 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
                           : b.what === "reverse"
                             ? `Looked up the address of where you are on ${str(b.to)}`
                             : `Looked for ${str(b.text)} on ${str(b.to)}`
-                      : b.channel === "weather"
-                        ? `Looked at ${str(b.text)} on ${str(b.to)}`
-                        : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
+                      : b.channel === "node"
+                        ? `Used ${str(b.text).replace(/_/g, " ")} on ${str(b.to)}`
+                        : b.channel === "weather"
+                          ? `Looked at ${str(b.text)} on ${str(b.to)}`
+                          : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
       const what =
         b.ok === false
           ? `${where}, but it didn't work: ${str(b.error)}`
@@ -195,7 +207,7 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
             ? `${where}: ${str(b.note)}`
             : b.answer
               ? `${where}: ${str(b.answer)}`
-              : ["web", "browser", "vault", "mcp", "maps", "weather"].includes(str(b.channel))
+              : ["web", "browser", "vault", "mcp", "maps", "weather", "node"].includes(str(b.channel))
                 ? where
                 : `${where}${b.text ? `: “${str(b.text)}”` : ""}`;
       return { who: b.by === "owner" ? "You" : "Atlas", what, kind: `deliver.${str(b.channel)}` };
@@ -223,15 +235,17 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
                           : `Workspace: ${str(b.workspace)}${b.name ? ` (${str(b.name)})` : ""}`
                         : b.mcp
                           ? `${b.mcp === "added" ? "Added" : "Removed"} the MCP server ${str(b.name)} (${str(b.url)})`
-                          : b.owntracks
-                            ? "Set up OwnTracks, with a new password"
-                            : b.trust
-                              ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
-                              : b.focus
-                                ? b.focus === "on"
-                                  ? `Focus until ${new Date(Number(b.until)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${b.about ? `: ${str(b.about)}` : ""}`
-                                  : "Ended focus"
-                                : "Changed settings";
+                          : b.node
+                            ? `${str(b.name)}: ${str(b.node)}`
+                            : b.owntracks
+                              ? "Set up OwnTracks, with a new password"
+                              : b.trust
+                                ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
+                                : b.focus
+                                  ? b.focus === "on"
+                                    ? `Focus until ${new Date(Number(b.until)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${b.about ? `: ${str(b.about)}` : ""}`
+                                    : "Ended focus"
+                                  : "Changed settings";
       return { who: r.actor === "owner" ? "You" : "Atlas", what, kind: "settings.change" };
     }
     default:

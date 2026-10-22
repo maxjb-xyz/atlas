@@ -19,7 +19,9 @@ export type AgendaKind =
   /** A rhythm moment (§10.3): start of day, evening, or a look before leaving for an event. */
   | "rhythm"
   /** The situation's refresh (§10.2): the weather and travel time, kept current while they're needed. */
-  | "situation";
+  | "situation"
+  /** A call to a paired device that was offline (§16.3), run when it's back. */
+  | "device";
 export type AgendaState = "scheduled" | "running" | "done" | "cancelled" | "failed";
 
 export interface AgendaSource {

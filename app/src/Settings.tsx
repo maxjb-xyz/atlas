@@ -1491,6 +1491,9 @@ function Devices({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
       <Row label="Location">
         <Location atlas={atlas} view={view} />
       </Row>
+      <Row label="Paired devices">
+        <PairedDevices atlas={atlas} view={view} />
+      </Row>
       <Row label="Passkeys">
         <div className="rows">
           {view.passkeys.map((p) => (
@@ -1531,6 +1534,179 @@ function Devices({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
         <p className="muted small">Lost every passkey? Your setup code still signs you in.</p>
       </Row>
     </>
+  );
+}
+
+/**
+ * Paired devices (§16.3): each one online or not, its capabilities with a
+ * switch (sensitive ones start off), and Remove, which unpairs it at once.
+ * Pairing starts on the device, which shows a QR code and a short code.
+ */
+function PairedDevices({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const [code, setCode] = useState("");
+  const [removing, setRemoving] = useState<string | null>(null);
+  return (
+    <>
+      {view.nodes.map((n) => (
+        <div key={n.id} className="device-card">
+          <div className="row" style={{ gap: 10 }}>
+            <span className={`tag ${n.online ? "ok" : ""}`}>{n.online ? "● Online" : "Offline"}</span>
+            <span style={{ fontWeight: 500 }}>{n.name}</span>
+            <span className="muted small">
+              {n.platform ?? n.kind}
+              {!n.online && n.last_seen ? ` · last seen ${shortDay(n.last_seen)}` : ""}
+            </span>
+            <span className="grow" />
+            {removing === n.id ? (
+              <span className="row" style={{ gap: 8 }}>
+                <span className="small">Unpair it?</span>
+                <button
+                  className="link err"
+                  onClick={() => {
+                    atlas.send({ type: "atlas.node.remove", id: n.id });
+                    setRemoving(null);
+                  }}
+                >
+                  Remove
+                </button>
+                <button className="link" onClick={() => setRemoving(null)}>
+                  Keep
+                </button>
+              </span>
+            ) : (
+              <button className="link" onClick={() => setRemoving(n.id)}>
+                Remove
+              </button>
+            )}
+          </div>
+          {n.capabilities.length ? (
+            <div className="rows" style={{ marginTop: 6 }}>
+              {n.capabilities.map((c) => (
+                <label className="r check" key={c.name} style={{ alignItems: "flex-start" }}>
+                  <input
+                    type="checkbox"
+                    checked={c.on}
+                    onChange={(e) => atlas.send({ type: "atlas.node.allow", id: n.id, capability: c.name, on: e.target.checked })}
+                  />
+                  <span className="grow">
+                    <span style={{ fontWeight: 500 }}>{c.name.replace(/_/g, " ")}</span>
+                    {c.sensitive && (
+                      <span className="tag ac" style={{ marginLeft: 8 }}>
+                        Sensitive
+                      </span>
+                    )}
+                    {c.acts && (
+                      <span className="tag" style={{ marginLeft: 8 }}>
+                        Asks first
+                      </span>
+                    )}
+                    <span className="muted small" style={{ display: "block" }}>
+                      {c.description}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="muted small">It says what it can do when it first connects.</p>
+          )}
+        </div>
+      ))}
+      {!view.nodes.length && (
+        <p className="muted small">
+          No devices yet. Install the Atlas desktop app on your Mac (from the repo's releases), and it shows a QR code to scan with your
+          phone, or a code to type here.
+        </p>
+      )}
+      <div className="row">
+        <input
+          value={code}
+          placeholder="Code from the device, like K7Q2-M9XA"
+          onChange={(e) => setCode(e.target.value)}
+          style={{ maxWidth: 260 }}
+        />
+        <a
+          className="btn"
+          href={`#/pair/${encodeURIComponent(code.trim())}`}
+          aria-disabled={!code.trim()}
+          onClick={(e) => !code.trim() && e.preventDefault()}
+        >
+          Pair
+        </a>
+      </div>
+    </>
+  );
+}
+
+/** Pairing a device (§16.3): what's asking, and a yes or no. The device shows the code; this is where it lands when scanned. */
+export function Pair({ atlas, code }: { atlas: Atlas; code: string }) {
+  const s = atlas.state;
+  const [said, setSaid] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (atlas.voice.connected && code) atlas.send({ type: "atlas.node.pairing", code });
+  }, [code, atlas.voice.connected]);
+  const asked = code in s.pairing ? { pairing: s.pairing[code] ?? null } : null;
+  const done = said == null ? null : { yes: said, name: code in s.paired ? s.paired[code]! : null };
+  const p = asked?.pairing;
+  return (
+    <Stage label="Pair a device" meta="Atlas · M4">
+      <Sheet>
+        <div className="sheet-in" style={{ maxWidth: 560 }}>
+          <div className="sheet-title">
+            <h1 className="disp">
+              {done ? (done.yes ? (done.name ? `Paired ${done.name}` : "Pairing") : "Not paired") : "Pair this device?"}
+            </h1>
+          </div>
+          {done ? (
+            <p>
+              {done.yes && done.name
+                ? `${done.name} connects in a moment. Its tools are in Settings → Devices, with the sensitive ones off until you turn them on.`
+                : "Nothing was paired."}{" "}
+              <a className="link" href="#/settings/devices">
+                Settings → Devices
+              </a>
+            </p>
+          ) : !asked ? (
+            <p className="muted">{s.view ? "Looking up the code." : "Connecting to Atlas."}</p>
+          ) : !p ? (
+            <p className="err">
+              That code isn't waiting to pair: it may be mistyped, or it ran out (codes last ten minutes). Start again on the device.
+            </p>
+          ) : (
+            <>
+              <p style={{ fontSize: 15, marginBottom: 8 }}>
+                <b>{p.name}</b> ({p.platform ?? p.kind}) wants to connect to your Atlas with code{" "}
+                <span className="mono">{code.toUpperCase()}</span>.
+              </p>
+              <p className="muted small" style={{ marginBottom: 16 }}>
+                Pair only a device you're setting up yourself, right now. Once paired, Atlas can use what it offers while it's online;
+                anything that acts on it asks you first, and sensitive things start off. You can remove it any time.
+              </p>
+              <div className="row">
+                <button
+                  className="btn primary"
+                  onClick={() => {
+                    setSaid(true);
+                    atlas.send({ type: "atlas.node.pair", code, yes: true });
+                  }}
+                >
+                  Pair
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    setSaid(false);
+                    atlas.send({ type: "atlas.node.pair", code, yes: false });
+                  }}
+                >
+                  Not now
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </Sheet>
+    </Stage>
   );
 }
 

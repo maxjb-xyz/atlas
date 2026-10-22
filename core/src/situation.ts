@@ -12,6 +12,7 @@ import type { Calendar, CalendarEvent } from "./calendar/types";
 import { focusNow } from "./outbox";
 import type { SituationPage, WeatherPage } from "./stage";
 import { upcoming } from "./store/agenda";
+import { nodes } from "./nodes";
 import { here, homePin, metres, nearest, pins } from "./location";
 import { type Found, MAPS, minutes, type Point, type Route, type Travel } from "./maps";
 import type { Sql } from "./store/db";
@@ -383,7 +384,17 @@ export function situationPage(sql: Sql, settings: Settings, now = Date.now(), de
       c.weather && now - c.weather.at < 3 * WEATHER_MS
         ? { line: weatherLine(c.weather, tz, units, now), matters: whatMatters(c.weather, tz, units, now), at: c.weather.at }
         : null,
-    devices: [...phone, ...devices],
+    devices: [
+      ...phone,
+      ...nodes(sql).map((n) => ({
+        name: n.name,
+        state: Object.values(n.state)
+          .map((v) => String(v))
+          .join(", "),
+        online: n.online,
+      })),
+      ...devices,
+    ],
     errands: upcoming(sql, 200)
       .filter((i) => i.kind === "errand" && i.state === "scheduled")
       .map((i) => ({

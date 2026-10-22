@@ -70,7 +70,11 @@ export type StateName =
   /** The situation's cache (§10.2): today's events, the weather for a rough area, the travel time to the next event with a place. */
   | "situation"
   /** Nudges Atlas sent on its own (§10.3), lately: their kind, what they were about, and how the owner reacted. */
-  | "nudges";
+  | "nudges"
+  /** Paired devices (§16.3): each one's name, token hash, capabilities, switches, and whether it's online. */
+  | "nodes"
+  /** Devices waiting for the owner to say yes to pairing, each with its code, for ten minutes. */
+  | "node_pairings";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

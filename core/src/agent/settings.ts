@@ -20,6 +20,7 @@ import { vault, vaultView } from "../vault";
 import type { VapidKeys } from "../push";
 import type { ChatGPTSignIn } from "./chatgpt";
 import { here, nearest, ownTracksLogin, pins } from "../location";
+import { nodes, nodeView } from "../nodes";
 import type { LocationView } from "../protocol";
 
 export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar: CalendarSense; router: BrainRouter }): SettingsView {
@@ -63,6 +64,7 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
     passkeys,
     setup: setupView(sql),
     location: locationView(sql),
+    nodes: nodes(sql).map(nodeView),
   };
 }
 

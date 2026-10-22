@@ -322,13 +322,13 @@ export function useNow(ms = 30_000): number {
 
 // --- routing ------------------------------------------------------------------------------
 
-export type Place = "home" | "inbox" | "agenda" | "automations" | "library" | "history" | "settings";
+export type Place = "home" | "inbox" | "agenda" | "automations" | "library" | "history" | "settings" | "pair";
 
 /** The place, and an optional detail ("library/areas"), kept in the address so back and forward work. */
 export function useRoute(): [Place, string, (p: Place, detail?: string) => void] {
   const read = (): [Place, string] => {
     const [p = "home", d = ""] = location.hash.replace(/^#\/?/, "").split("/");
-    const places: Place[] = ["home", "inbox", "agenda", "automations", "library", "history", "settings"];
+    const places: Place[] = ["home", "inbox", "agenda", "automations", "library", "history", "settings", "pair"];
     return [places.includes(p as Place) ? (p as Place) : "home", decodeURIComponent(d)];
   };
   const [route, setRoute] = useState(read);

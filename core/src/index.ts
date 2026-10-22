@@ -3,7 +3,8 @@
 
 import { getAgentByName, routeAgentRequest } from "agents";
 import { SESSION_HEADER } from "./auth";
-import { OWNER } from "./agent";
+import { NODE_HEADER, OWNER } from "./agent";
+import { NODE_KINDS } from "./nodes";
 import { type AuthStore, handleAuth, owner, sameOrigin } from "./auth";
 
 export { PersonAgent } from "./agent";
@@ -24,6 +25,13 @@ interface OwnerApi {
 
 interface SenseApi {
   apiOwnTracks(authorization: string | null, text: string): Promise<{ status: number; body: unknown }>;
+  apiPairStart(o: {
+    name: string;
+    kind: (typeof NODE_KINDS)[number];
+    platform?: string;
+  }): Promise<{ code: string; poll: string; expires: number }>;
+  apiPairPoll(poll: string): Promise<unknown>;
+  apiNodeAuth(token: string): Promise<string | null>;
 }
 
 /** Passkeys, challenges and sessions live in the owner's agent. */
@@ -59,6 +67,44 @@ export default {
       const res = json(out.body, out.status);
       if (out.status === 401) res.headers.set("www-authenticate", 'Basic realm="Atlas"');
       return res;
+    }
+
+    // Paired devices (§16.3). Pairing is the device flow: the device asks for a code, shows it, and polls;
+    // the owner says yes in the app, signed in. Only then does the device get a token, which opens its socket.
+    if (path.startsWith("/nodes/")) {
+      const agent = (await getAgentByName(env.PersonAgent, OWNER)) as unknown as SenseApi;
+      if (path === "/nodes/pair/start" && request.method === "POST") {
+        const b = (await request.json().catch(() => ({}))) as { name?: unknown; kind?: unknown; platform?: unknown };
+        const kind = NODE_KINDS.find((k) => k === b.kind);
+        if (typeof b.name !== "string" || !b.name.trim() || !kind) {
+          return json({ error: `Send {"name": "...", "kind": one of ${NODE_KINDS.join(", ")}}.` }, 400);
+        }
+        try {
+          const p = await agent.apiPairStart({
+            name: b.name.trim().slice(0, 80),
+            kind,
+            ...(typeof b.platform === "string" ? { platform: b.platform } : {}),
+          });
+          return json({ ...p, link: `${url.origin}/#/pair/${p.code}` });
+        } catch (err) {
+          return json({ error: err instanceof Error ? err.message : String(err) }, 429);
+        }
+      }
+      if (path === "/nodes/pair/poll" && request.method === "POST") {
+        const b = (await request.json().catch(() => ({}))) as { poll?: unknown };
+        if (typeof b.poll !== "string" || b.poll.length > 100) return json({ error: 'Send {"poll": "..."}.' }, 400);
+        return json(await agent.apiPairPoll(b.poll));
+      }
+      if (path === "/nodes/connect" && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+        const token = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
+        const id = token ? await agent.apiNodeAuth(token) : null;
+        if (!id) return json({ error: "This device isn't paired with this Atlas any more. Pair it again." }, 401);
+        const headers = new Headers(request.headers);
+        headers.set(NODE_HEADER, id);
+        headers.delete("authorization");
+        return (await getAgentByName(env.PersonAgent, OWNER)).fetch(new Request(request, { headers }));
+      }
+      return json({ error: "Not found." }, 404);
     }
 
     if (path.startsWith("/api/")) {
@@ -131,6 +177,8 @@ export default {
           // The agent learns which sign-in opened this socket, so ending that sign-in can close it.
           const headers = new Headers(req.headers);
           headers.set(SESSION_HEADER, who.via === "session" ? who.id : "");
+          // Only the Worker's own device route says a socket is a paired device.
+          headers.delete(NODE_HEADER);
           return new Request(req, { headers });
         },
         // The agent is only reached over its socket; plain HTTP to it is refused.
