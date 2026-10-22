@@ -702,7 +702,7 @@ Everything installs from the app: browse, preview what it can touch, install, un
 | Each person's Atlas: loop, log, records, agenda | An agent (a Durable Object) with its own SQLite database, scheduling and durable execution (the Agents SDK, with fibers) |
 | Voice on the same connection as text | `@cloudflare/voice`, with ElevenLabs |
 | Helpers | The Agents SDK's sub-agents (dynamic agents) with their own storage, running Atlas's loop in durable fibers |
-| Multi-step automations | Cloudflare Workflows through the Agents SDK, under the agenda (decided in M2) |
+| Multi-step automations | The person agent itself: each automation's next run is an agenda item, and its steps run as one of the agent's runs (decided in M2; Workflows weren't needed) |
 | Workspace | Sandboxes: shell, interpreters, files, preview URLs, network rules, credential injection, terminals |
 | Browser | Browser Run: live view, human in the loop, recordings |
 | Repos | Artifacts (git-compatible) |
@@ -728,7 +728,7 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
 
 - **Plan.** It needs a Cloudflare account on the Workers paid plan, because sandboxes and sending email require it. Model usage is a separate cost, set by the owner's choices.
 - **Previews.** Some pieces are still previews: the Agents SDK's sub-agents, the voice package, Clairic, Artifacts. We wrap each one behind a small interface and keep a stable path ready.
-- **Not Project Think.** Think owns its own agent loop, model calls (through the AI SDK), message store and compaction, and offers no way to use Atlas's log as its store. Using it would mean a second log and a second loop (rule 3). Atlas uses the plain Agents SDK, whose fibers, sub-agents and Workflows don't need Think. ThinkWorkflow needs a Think agent, so it's out too; plain Workflows are considered for automations in M2, beneath the agenda rather than beside it. (Decided 2026-10-22.)
+- **Not Project Think.** Think owns its own agent loop, model calls (through the AI SDK), message store and compaction, and offers no way to use Atlas's log as its store. Using it would mean a second log and a second loop (rule 3). Atlas uses the plain Agents SDK, whose fibers, sub-agents and Workflows don't need Think. ThinkWorkflow needs a Think agent, so it's out too. (Decided 2026-10-22.) M2 built automations without Workflows: their steps run in the agent, on the agenda, and a restart is covered by the agenda's lease and wake.
 - **Self-hosting.** People who want everything on their own hardware will prefer Hermes or OpenClaw.
   - The core stays plain TypeScript behind small interfaces (storage, scheduler, sandbox, browser, models, speech), so a self-hosted build is possible later.
   - It isn't promised for version 1.
