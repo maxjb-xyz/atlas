@@ -204,7 +204,9 @@ export class HelperDesk {
       )
       .toArray()
       .map((r) => {
-        const run = (JSON.parse(r.source) as { detail?: { helper_run?: string } }).detail?.helper_run;
+        const detail = (JSON.parse(r.source) as { detail?: { helper_run?: string; brief?: string } }).detail;
+        const run = detail?.helper_run;
+        const out = r.state === "running" ? null : this.#outcomeOf(r.id);
         return {
           id: r.id,
           title: r.title,
@@ -214,6 +216,9 @@ export class HelperDesk {
             ? this.host.sql.exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE run_id = ? AND kind = 'tool.call'`, run).one().n
             : 0,
           started_at: r.created_at,
+          brief: detail?.brief ?? "",
+          result: out ? out.text || out.error || null : null,
+          run_id: run ?? null,
         };
       });
   }

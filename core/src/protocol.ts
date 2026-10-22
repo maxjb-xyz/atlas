@@ -6,8 +6,58 @@ import { z } from "zod";
 import type { LogRow } from "./store/log";
 import type { AgendaItem } from "./store/agenda";
 import { BrainChoice, Settings, SettingsPatch } from "./store/settings";
+import { RECORD_TYPES } from "./store/records";
 
 export type { LogRow, AgendaItem };
+
+export interface RecordView {
+  id: string;
+  type: string;
+  name: string;
+  fact: string;
+  details: Record<string, unknown>;
+  areas: string[];
+  learned_at: number;
+  updated_at: number;
+  confidence: number;
+  /** Where it came from: the message it was learned from, when there is one. */
+  source: { via: string; text?: string; at?: number; surface?: string | null };
+  corrections: number;
+  /** The value before the latest correction. */
+  was: { name: string; fact: string; at: number } | null;
+}
+
+export type HistoryFilter = "everything" | "actions" | "conversations" | "jobs";
+
+export interface HistoryStats {
+  actions: number;
+  conversations: number;
+  jobs: number;
+  tokens: number;
+  /** Activity in each hour since local midnight. */
+  per_hour: number[];
+}
+
+export interface CalendarEventView {
+  id: string;
+  calendar: string;
+  title: string;
+  start: string;
+  end: string;
+  all_day: boolean;
+  location?: string;
+}
+
+export interface InboxItem {
+  /** The log row it comes from. */
+  id: string;
+  kind: "review" | "failed";
+  title: string;
+  text: string;
+  at: number;
+  areas: string[];
+  run_id: string | null;
+}
 
 /** An area as the app shows it, in Library → Areas and on chips (§6, §21.3). */
 export interface AreaView {
@@ -31,6 +81,10 @@ export interface JobView {
   status: string | null;
   steps: number;
   started_at: number;
+  /** What the helper was asked, and what it handed back once done. */
+  brief: string;
+  result: string | null;
+  run_id: string | null;
 }
 
 // --- app -> agent ----------------------------------------------------------
@@ -96,6 +150,38 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.voices.list") }),
   /** Remove a passkey (Settings → Devices). */
   z.object({ type: z.literal("atlas.passkey.remove"), id: z.string().max(512) }),
+  /** Library: records, by type, area or text. `ref` is echoed back. */
+  z.object({
+    type: z.literal("atlas.records.list"),
+    ref: z.string().max(64),
+    record_type: z.enum(["all", ...RECORD_TYPES]).optional(),
+    area: z.string().max(64).nullable().optional(),
+    text: z.string().max(200).optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  }),
+  /** Correct a record by hand (Library's Correct link): the old value stays in history. */
+  z.object({
+    type: z.literal("atlas.record.correct"),
+    id: z.string().max(64),
+    name: z.string().min(1).max(120).optional(),
+    fact: z.string().max(600).optional(),
+  }),
+  z.object({ type: z.literal("atlas.record.forget"), id: z.string().max(64) }),
+  /** History: the log, newest first. */
+  z.object({
+    type: z.literal("atlas.history"),
+    filter: z.enum(["everything", "actions", "conversations", "jobs"]),
+    before_seq: z.number().int().optional(),
+    area: z.string().max(64).nullable().optional(),
+    /** Local midnight, for today's totals. */
+    day_start: z.number().int(),
+  }),
+  /** Everything one run did, for a History row's receipt. */
+  z.object({ type: z.literal("atlas.run.detail"), run_id: z.string().max(64) }),
+  /** Calendar events for Week and Agenda, as local dates or times. `ref` is echoed back. */
+  z.object({ type: z.literal("atlas.calendar"), ref: z.string().max(64), start: z.string().max(40), end: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.inbox") }),
+  z.object({ type: z.literal("atlas.inbox.done"), id: z.string().max(64) }),
   /** Stop a helper's job (Stop on the Jobs tab). */
   z.object({ type: z.literal("atlas.job.stop"), id: z.string().max(64) }),
   /** Live checks for Settings (§22: every check is a live test). */
@@ -147,7 +233,8 @@ export type ServerMessage =
       thread: LogRow[];
       agenda: AgendaItem[];
       view: SettingsView;
-      running: Array<{ run_id: string; surface: string }>;
+      /** Runs in progress, with what they've streamed so far, so a refresh mid-answer picks up where it was. */
+      running: Array<{ run_id: string; surface: string; text?: string; status?: string | null }>;
       jobs: JobView[];
       areas: AreaView[];
       /** The area the owner is focused on, or null for all. */
@@ -162,6 +249,13 @@ export type ServerMessage =
   | { type: "atlas.run"; run_id: string; state: RunState; surface: string; client_id?: string }
   | { type: "atlas.agenda"; agenda: AgendaItem[] }
   | { type: "atlas.areas"; areas: AreaView[]; scope: string | null }
+  | { type: "atlas.records"; ref: string; records: RecordView[]; counts: Record<string, number> }
+  /** Records changed (a correction, a forget, a save): pages showing records ask again. */
+  | { type: "atlas.records.changed" }
+  | { type: "atlas.history.rows"; filter: HistoryFilter; rows: LogRow[]; has_more: boolean; older: boolean; stats: HistoryStats }
+  | { type: "atlas.run.detail.result"; run_id: string; run: Record<string, unknown> | null; rows: LogRow[] }
+  | { type: "atlas.calendar.events"; ref: string; events: CalendarEventView[]; error?: string }
+  | { type: "atlas.inbox.items"; items: InboxItem[] }
   | {
       type: "atlas.voices";
       voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>;

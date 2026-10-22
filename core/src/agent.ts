@@ -8,7 +8,8 @@ import { CalendarSense } from "./agent/calendar";
 import { correctAreas, DISCOVER_AFTER, discoveryPrompt, startDiscovered, tagPending, unfiled } from "./agent/areas";
 import { HelperDesk } from "./agent/helpers";
 import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup";
-import { createRecord, findRecords } from "./store/records";
+import { history as logHistory, historyStats, inbox, inboxDone, listRecords, runDetail } from "./agent/views";
+import { correctRecord, createRecord, findRecords, forgetRecord, getRecord } from "./store/records";
 import { type Decider, workersAIDecider } from "./brains/decide";
 import { createArea, getScope, listAreas, mergeAreas, setScope, type Tagged, updateArea } from "./store/areas";
 import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
@@ -34,7 +35,7 @@ import { indexNewMessages } from "./store/memory";
 import { getState, setState } from "./store/state";
 import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
 import { type BrainChoice, getSecret, readSettings, type Settings, setSecret, writeSettings } from "./store/settings";
-import { isoLocal, isValidZone, longLocal, shortLocal, zoneOf } from "./time";
+import { isoLocal, isValidZone, longLocal, parseWhen, shortLocal, zoneOf } from "./time";
 import { calendarRead } from "./tools/calendar";
 import { delegate } from "./tools/delegate";
 import { memoryTools, recall } from "./tools/memory";
@@ -149,6 +150,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     void this.#maybeCompact();
   }
 
+  /**
+   * What each run in progress has streamed so far. A progress hint only
+   * (§4.1): the snapshot sends it so a refresh mid-answer picks up where it
+   * was, and the saved answer replaces it when the run ends.
+   */
+  #live = new Map<string, { text: string; status: string | null }>();
+
   /** Connections in a live voice call. The snapshot goes out on atlas.hello, once the app is listening. */
   #inCall = new Set<string>();
 
@@ -177,7 +185,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           view: this.#view(),
           running: runningRuns(this.#sql)
             .filter((r) => r.surface !== "none")
-            .map((r) => ({ run_id: r.id, surface: r.surface })),
+            .map((r) => ({ run_id: r.id, surface: r.surface, ...(this.#live.get(r.id) ?? {}) })),
           jobs: this.#helpers.list(),
           areas: this.#areasView(),
           scope: getScope(this.#sql),
@@ -283,6 +291,81 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         await this.savePasskeys(list.filter((p) => p.id !== msg.id));
         return;
       }
+      case "atlas.records.list": {
+        const out = listRecords(this.#sql, { type: msg.record_type, area: msg.area, text: msg.text, limit: msg.limit });
+        this.#send(connection, { type: "atlas.records", ref: msg.ref, ...out });
+        return;
+      }
+      case "atlas.record.correct":
+      case "atlas.record.forget": {
+        const rec = getRecord(this.#sql, msg.id);
+        if (!rec || rec.state !== "active") {
+          this.#send(connection, { type: "atlas.error", message: "That record isn't there anymore." });
+          return;
+        }
+        if (msg.type === "atlas.record.forget") forgetRecord(this.#sql, rec.id, { via: "owner" });
+        else {
+          correctRecord(
+            this.#sql,
+            rec.id,
+            { ...(msg.name ? { name: msg.name } : {}), ...(msg.fact != null ? { fields: { fact: msg.fact } } : {}) },
+            "corrected in Library",
+            { via: "owner" },
+          );
+        }
+        this.#broadcast({ type: "atlas.records.changed" });
+        void this.#tendMemory();
+        return;
+      }
+      case "atlas.history": {
+        const out = logHistory(this.#sql, { filter: msg.filter, before_seq: msg.before_seq, area: msg.area });
+        this.#send(connection, {
+          type: "atlas.history.rows",
+          filter: msg.filter,
+          ...out,
+          older: msg.before_seq != null,
+          stats: historyStats(this.#sql, msg.day_start),
+        });
+        return;
+      }
+      case "atlas.run.detail":
+        this.#send(connection, { type: "atlas.run.detail.result", run_id: msg.run_id, ...runDetail(this.#sql, msg.run_id) });
+        return;
+      case "atlas.calendar": {
+        const settings = readSettings(this.#sql);
+        const tz = zoneOf(settings);
+        const source = this.#calendar.source(settings);
+        const start = parseWhen(msg.start, tz);
+        const end = parseWhen(msg.end, tz);
+        if (!source || !start || !end) {
+          this.#send(connection, {
+            type: "atlas.calendar.events",
+            ref: msg.ref,
+            events: [],
+            error: source ? "Those dates don't read." : "The calendar isn't connected. Connect iCloud in Settings → Connections.",
+          });
+          return;
+        }
+        try {
+          const events = await source.list({ start, end });
+          this.#send(connection, { type: "atlas.calendar.events", ref: msg.ref, events: events.map(({ notes: _n, ...e }) => e) });
+        } catch (err) {
+          this.#send(connection, {
+            type: "atlas.calendar.events",
+            ref: msg.ref,
+            events: [],
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+      case "atlas.inbox":
+        this.#send(connection, { type: "atlas.inbox.items", items: inbox(this.#sql) });
+        return;
+      case "atlas.inbox.done":
+        inboxDone(this.#sql, msg.id);
+        this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+        return;
       case "atlas.job.stop":
         if (!this.#helpers.stop(msg.id)) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
         return;
@@ -558,6 +641,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   }
 
   #failRun(runId: string, surface: Surface, err: unknown): void {
+    this.#live.delete(runId);
     endRun(this.#sql, runId, "failed", 0, { error: err instanceof Error ? err.message : String(err) });
     const end = this.#sql.exec<{ id: string }>(`SELECT id FROM log WHERE run_id = ? AND kind = 'run.end'`, runId).toArray()[0];
     if (end) this.#broadcast({ type: "atlas.rows", rows: [getRow(this.#sql, end.id)!] });
@@ -781,6 +865,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     });
     const end = this.#sql.exec<{ id: string }>(`SELECT id FROM log WHERE run_id = ? AND kind = 'run.end'`, runId).toArray()[0];
     if (res.state === "failed" && end) this.#broadcast({ type: "atlas.rows", rows: [getRow(this.#sql, end.id)!] });
+    this.#live.delete(runId);
     this.#broadcast({ type: "atlas.run", run_id: runId, state: res.state, surface: channel });
     void this.#tendMemory();
     void this.#maybeCompact();
@@ -916,8 +1001,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #relay(runId: string, e: LoopEvent, scrubber: StreamScrubber | null): void {
     if (e.type === "text") {
       const text = scrubber ? scrubber.push(e.text) : e.text;
-      if (text) this.#broadcast({ type: "atlas.delta", run_id: runId, text });
+      if (text) {
+        const live = this.#live.get(runId) ?? { text: "", status: null };
+        this.#live.set(runId, { text: live.text + text, status: null });
+        this.#broadcast({ type: "atlas.delta", run_id: runId, text });
+      }
     } else if (e.type === "status") {
+      const live = this.#live.get(runId) ?? { text: "", status: null };
+      this.#live.set(runId, { ...live, status: e.text });
       this.#broadcast({ type: "atlas.status", run_id: runId, text: e.text });
     } else if (e.type === "row") {
       this.#broadcast({ type: "atlas.rows", rows: [e.row] });

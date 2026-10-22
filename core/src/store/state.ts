@@ -27,7 +27,9 @@ export type StateName =
   /** The WebAuthn challenge in flight, with when it expires. */
   | "passkey_challenge"
   /** Which setup steps are done or skipped (§22). */
-  | "setup";
+  | "setup"
+  /** Inbox items the owner marked done. */
+  | "inbox_done";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

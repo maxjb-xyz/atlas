@@ -62,6 +62,8 @@ export const Settings = z.object({
       notes: z.string().max(2_000).default(""),
     })
     .default({ preset: "atlas", warmth: 4, humor: 3, directness: 4, initiative: 3, notes: "" }),
+  /** What the owner keeps in the sidebar's Pinned list: area ids and record ids (§21.1). */
+  pins: z.array(z.string().max(64)).max(20).default([]),
   calendar: z
     .object({
       /** Calendar names to leave out of what Atlas reads. Empty means read them all. */

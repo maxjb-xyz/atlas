@@ -1,0 +1,381 @@
+// Setup (§22, steps 1 to 5): a passkey, meeting Atlas, a brain, a calendar,
+// and Atlas's first look. Every step can be skipped and picked up again from
+// Settings → Your data.
+
+import { useEffect, useState } from "react";
+import { PRESETS, type Preset } from "../../core/src/character";
+import type { Atlas } from "./connection";
+import { addPasskey, deviceName, passkeysSupported } from "./passkey";
+import { ChatGPT, ICloud, SecretField, TestRow } from "./Settings";
+import { AsciiDiamond, Diamond, Icon } from "./ui";
+
+type Step = "passkey" | "meet" | "brain" | "connect" | "look";
+const STEPS: Array<[Step, string]> = [
+  ["passkey", "Your passkey"],
+  ["meet", "Meet Atlas"],
+  ["brain", "A brain"],
+  ["connect", "Your calendar"],
+  ["look", "Atlas looks"],
+];
+
+export function Setup({ atlas, onDone }: { atlas: Atlas; onDone: () => void }) {
+  const view = atlas.state.view;
+  const setup = view?.setup;
+  const [step, setStep] = useState<Step>("passkey");
+  const mark = (s: Step, state: "done" | "skipped") => atlas.send({ type: "atlas.setup.step", step: s, state });
+  const next = (from: Step, state: "done" | "skipped") => {
+    mark(from, state);
+    const i = STEPS.findIndex(([id]) => id === from);
+    const after = STEPS[i + 1];
+    if (after) setStep(after[0]);
+    else onDone();
+  };
+
+  // A passkey made at sign-in already counts.
+  useEffect(() => {
+    if (view && view.passkeys.length > 0 && !setup?.done.includes("passkey")) mark("passkey", "done");
+  }, [view?.passkeys.length]);
+
+  if (!view || !setup) return <div className="center muted">Connecting to Atlas.</div>;
+  const status = (s: Step) => (setup.done.includes(s) ? "done" : setup.skipped.includes(s) ? "skipped" : "open");
+
+  return (
+    <div className="center">
+      <div className="setup rise">
+        <nav className="setup-steps" aria-label="Setup steps">
+          <div className="row" style={{ padding: "0 10px 14px", gap: 8 }}>
+            <Diamond size={18} />
+            <span className="disp">Setup</span>
+          </div>
+          {STEPS.map(([id, name], i) => (
+            <button key={id} className={id === step ? "on" : ""} onClick={() => setStep(id)}>
+              <span className="mono faint" style={{ width: 14 }}>
+                {status(id) === "done" ? <Icon name="check" size={13} /> : i + 1}
+              </span>
+              <span className="grow">{name}</span>
+              {status(id) === "skipped" && <span className="lab">Later</span>}
+            </button>
+          ))}
+          <span className="grow" />
+          <button onClick={onDone}>
+            <span className="grow">Go to Atlas</span>
+            <Icon name="up" size={13} style={{ transform: "rotate(90deg)" }} />
+          </button>
+        </nav>
+        <div className="setup-body">
+          {step === "passkey" && <PasskeyStep atlas={atlas} onNext={next} />}
+          {step === "meet" && <MeetStep atlas={atlas} onNext={next} />}
+          {step === "brain" && <BrainStep atlas={atlas} onNext={next} />}
+          {step === "connect" && <ConnectStep atlas={atlas} onNext={next} />}
+          {step === "look" && <LookStep atlas={atlas} onNext={next} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type Next = (from: Step, state: "done" | "skipped") => void;
+
+function Footer({ step, onNext, ready = true, label = "Next" }: { step: Step; onNext: Next; ready?: boolean; label?: string }) {
+  return (
+    <div className="row" style={{ marginTop: "auto", paddingTop: 12 }}>
+      <button className="btn primary" disabled={!ready} onClick={() => onNext(step, "done")}>
+        {label}
+      </button>
+      <button className="link" onClick={() => onNext(step, "skipped")}>
+        Skip for now
+      </button>
+    </div>
+  );
+}
+
+function PasskeyStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
+  const has = (atlas.state.view?.passkeys.length ?? 0) > 0;
+  const [msg, setMsg] = useState<string | null>(null);
+  return (
+    <>
+      <h1 className="disp">Your passkey</h1>
+      <p className="muted">
+        A passkey signs you in with your face, fingerprint or device code. Nothing to remember, and it only works on this Atlas.
+      </p>
+      {has ? (
+        <p className="ok">You have a passkey. You can add one for each device in Settings → Devices.</p>
+      ) : (
+        <div className="row">
+          <button
+            className="btn"
+            disabled={!passkeysSupported()}
+            onClick={async () => {
+              const err = await addPasskey(deviceName());
+              setMsg(err);
+            }}
+          >
+            Add a passkey on this device
+          </button>
+          {!passkeysSupported() && (
+            <span className="muted small">This browser can't make passkeys. Your setup code still signs you in.</span>
+          )}
+        </div>
+      )}
+      {msg && <p className="err small">{msg}</p>}
+      <Footer step="passkey" onNext={onNext} ready={has} />
+    </>
+  );
+}
+
+function MeetStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
+  const s = atlas.state.view!.settings;
+  const [name, setName] = useState(s.assistant_name);
+  const [owner, setOwner] = useState(s.owner_name);
+  const [preset, setPreset] = useState<Preset>(s.character.preset);
+  const [voice, setVoice] = useState(s.voice.elevenlabs_voice_id);
+  const hasKey = atlas.state.view!.secrets.elevenlabs_api_key;
+  useEffect(() => {
+    if (hasKey) atlas.send({ type: "atlas.voices.list" });
+  }, [hasKey]);
+  const voices = atlas.state.voices;
+  const save = () =>
+    atlas.send({
+      type: "atlas.settings.update",
+      patch: {
+        assistant_name: name.trim() || "Atlas",
+        owner_name: owner.trim(),
+        character: { ...s.character, preset, ...PRESETS[preset].scales },
+        voice: { ...s.voice, elevenlabs_voice_id: voice },
+      },
+    });
+  return (
+    <>
+      <div className="row" style={{ gap: 18, flexWrap: "nowrap" }}>
+        <AsciiDiamond rows={16} />
+        <div>
+          <h1 className="disp">Hi. I'm {name || "Atlas"}.</h1>
+          <p className="muted">I'll learn your world as we go. First, a few things about how I should be.</p>
+        </div>
+      </div>
+      <div className="row">
+        <label className="field" style={{ flex: 1 }}>
+          <span>My name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className="field" style={{ flex: 1 }}>
+          <span>What I call you</span>
+          <input value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="Your first name" />
+        </label>
+      </div>
+      <div className="field">
+        <span>How I talk</span>
+        <div className="cards">
+          {(Object.keys(PRESETS) as Preset[]).map((p) => (
+            <button key={p} className={`card ${preset === p ? "on" : ""}`} onClick={() => setPreset(p)}>
+              <span style={{ fontWeight: 600 }}>{PRESETS[p].label}</span>
+              <span className="muted small">{PRESETS[p].blurb}</span>
+            </button>
+          ))}
+        </div>
+        <span className="faint small">You can fine-tune this, or write your own, in Settings → Character & voice.</span>
+      </div>
+      <div className="field">
+        <span>My voice</span>
+        {!hasKey && (
+          <>
+            <p className="muted small">
+              With an ElevenLabs key you can pick from their voices, and your own. Without one, I speak with Workers AI's Aura.
+            </p>
+            <SecretField
+              label="ElevenLabs key"
+              set={false}
+              onSave={(value) => atlas.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value } })}
+            />
+          </>
+        )}
+        {voices?.error && hasKey && <p className="err small">{voices.error}</p>}
+        {hasKey && voices && (
+          <div className="cards">
+            {voices.voices.slice(0, 12).map((v) => (
+              <div key={v.id} className={`card ${voice === v.id ? "on" : ""}`}>
+                <span style={{ fontWeight: 600 }}>{v.name}</span>
+                <span className="muted small">{v.description}</span>
+                <div className="row">
+                  {v.preview_url && (
+                    <button className="btn sm" onClick={() => void new Audio(v.preview_url!).play()}>
+                      <Icon name="play" size={11} /> Hear
+                    </button>
+                  )}
+                  <button className="btn sm" onClick={() => setVoice(v.id)} disabled={voice === v.id}>
+                    {voice === v.id ? "Chosen" : "Choose"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <Footer
+        step="meet"
+        onNext={(st, state) => {
+          if (state === "done") save();
+          onNext(st, state);
+        }}
+      />
+    </>
+  );
+}
+
+function BrainStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
+  const view = atlas.state.view!;
+  const main = view.settings.brains.main;
+  return (
+    <>
+      <h1 className="disp">A brain</h1>
+      <p className="muted">
+        I already work on Workers AI, which comes with your Cloudflare account. Signing in with ChatGPT makes me better, on your plan at no
+        extra cost.
+      </p>
+      <ChatGPT chatgpt={view.chatgpt} atlas={atlas} />
+      <div className="field">
+        <span>Test the brains I'll use, in order</span>
+        {main.map((b, i) => (
+          <TestRow
+            key={i}
+            label={`Test ${b.provider === "chatgpt" ? "ChatGPT" : "Workers AI"} · ${b.model}`}
+            k={`brain:main:${i}`}
+            atlas={atlas}
+            run={() => atlas.test(`brain:main:${i}`, { type: "atlas.test", what: "brain", role: "main", index: i })}
+          />
+        ))}
+      </div>
+      <Footer step="brain" onNext={onNext} />
+    </>
+  );
+}
+
+function ConnectStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
+  const view = atlas.state.view!;
+  const tested = atlas.state.tests.calendar;
+  return (
+    <>
+      <h1 className="disp">Your calendar</h1>
+      <p className="muted">So I can see your week. Google and Microsoft calendars, and your mail, come in a later version.</p>
+      <ICloud view={view} atlas={atlas} />
+      <TestRow
+        label="Test calendar"
+        k="calendar"
+        atlas={atlas}
+        run={() => atlas.test("calendar", { type: "atlas.test", what: "calendar" })}
+      />
+      <Footer step="connect" onNext={onNext} ready={Boolean(view.secrets.icloud) && tested?.ok !== false} />
+    </>
+  );
+}
+
+function LookStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
+  const look = atlas.state.look;
+  const [areas, setAreas] = useState<Set<string>>(new Set());
+  const [people, setPeople] = useState<Set<string>>(new Set());
+  const result = look && look !== "pending" ? look : null;
+  useEffect(() => {
+    if (result?.look) {
+      setAreas(new Set(result.look.areas.map((a) => a.name)));
+      setPeople(new Set(result.look.people.map((p) => p.name)));
+    }
+  }, [result?.look]);
+  const toggle = (set: Set<string>, v: string, put: (s: Set<string>) => void) => {
+    const n = new Set(set);
+    if (n.has(v)) n.delete(v);
+    else n.add(v);
+    put(n);
+  };
+  const keep = () => {
+    for (const a of result?.look?.areas ?? [])
+      if (areas.has(a.name)) atlas.send({ type: "atlas.area.create", name: a.name, about: a.about });
+    const kept = (result?.look?.people ?? []).filter((p) => people.has(p.name));
+    if (kept.length) atlas.send({ type: "atlas.setup.people", people: kept });
+  };
+  return (
+    <>
+      <h1 className="disp">Let me look</h1>
+      <p className="muted">
+        I'll read your calendar for the next two weeks and tell you what I see: the areas of your life, the people who matter, and a few
+        things worth knowing.
+      </p>
+      {!look && (
+        <div className="row">
+          <button className="btn primary" onClick={atlas.firstLook}>
+            Look now
+          </button>
+        </div>
+      )}
+      {look === "pending" && (
+        <div className="row">
+          <span className="mono spin ac" aria-hidden />
+          <span className="muted">Reading your calendar</span>
+        </div>
+      )}
+      {result?.error && (
+        <p className="err small">
+          {result.error}{" "}
+          <button className="link" onClick={atlas.firstLook}>
+            Try again
+          </button>
+        </p>
+      )}
+      {result?.look && (
+        <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {result.look.notes.length > 0 && (
+            <div className="panel">
+              <span className="lab">Worth knowing</span>
+              {result.look.notes.map((n) => (
+                <p key={n} style={{ marginTop: 6 }}>
+                  {n}
+                </p>
+              ))}
+            </div>
+          )}
+          {result.look.areas.length > 0 && (
+            <div className="field">
+              <span>Areas I can see. Keep the ones that fit.</span>
+              {result.look.areas.map((a) => (
+                <label key={a.name} className="row small">
+                  <input
+                    type="checkbox"
+                    style={{ height: "auto" }}
+                    checked={areas.has(a.name)}
+                    onChange={() => toggle(areas, a.name, setAreas)}
+                  />
+                  <strong>{a.name}</strong>
+                  <span className="muted">{a.about}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          {result.look.people.length > 0 && (
+            <div className="field">
+              <span>People who matter</span>
+              {result.look.people.map((p) => (
+                <label key={p.name} className="row small">
+                  <input
+                    type="checkbox"
+                    style={{ height: "auto" }}
+                    checked={people.has(p.name)}
+                    onChange={() => toggle(people, p.name, setPeople)}
+                  />
+                  <strong>{p.name}</strong>
+                  <span className="muted">{p.why}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <Footer
+        step="look"
+        label={result?.look ? "Keep these and finish" : "Finish"}
+        onNext={(st, state) => {
+          if (state === "done") keep();
+          onNext(st, state);
+        }}
+      />
+    </>
+  );
+}

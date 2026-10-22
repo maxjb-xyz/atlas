@@ -3,7 +3,22 @@
 
 import { VoiceClient } from "agents/voice/client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import type { AgendaItem, ClientMessage, LogRow, ServerMessage, SettingsView } from "../../core/src/protocol";
+import type {
+  AgendaItem,
+  AreaView,
+  CalendarEventView,
+  ClientMessage,
+  HistoryFilter,
+  HistoryStats,
+  InboxItem,
+  JobView,
+  LogRow,
+  RecordView,
+  ServerMessage,
+  SettingsView,
+} from "../../core/src/protocol";
+
+export type Look = Extract<ServerMessage, { type: "atlas.setup.look.result" }>["look"];
 
 export type VoiceStatus = "idle" | "listening" | "thinking" | "speaking";
 
@@ -37,6 +52,19 @@ export interface State {
   error: string | null;
   loaded: boolean;
   noOlder: boolean;
+  jobs: JobView[];
+  areas: AreaView[];
+  scope: string | null;
+  voices: { voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>; error?: string } | null;
+  look: { look: Look; error?: string } | "pending" | null;
+  /** Library's answers, by the ref they asked with. */
+  records: Record<string, { records: RecordView[]; counts: Record<string, number> }>;
+  /** Bumped when records change, so pages showing them ask again. */
+  recordsVersion: number;
+  history: { filter: HistoryFilter; rows: LogRow[]; has_more: boolean; stats: HistoryStats } | null;
+  runDetail: Record<string, { run: Record<string, unknown> | null; rows: LogRow[] }>;
+  calendar: Record<string, { events: CalendarEventView[]; error?: string }>;
+  inbox: InboxItem[] | null;
 }
 
 const initial: State = {
@@ -50,10 +78,22 @@ const initial: State = {
   error: null,
   loaded: false,
   noOlder: false,
+  jobs: [],
+  areas: [],
+  scope: null,
+  voices: null,
+  look: null,
+  records: {},
+  recordsVersion: 0,
+  history: null,
+  runDetail: {},
+  calendar: {},
+  inbox: null,
 };
 
 type Action =
   | { type: "server"; msg: ServerMessage }
+  | { type: "look" }
   | { type: "say"; pending: Pending }
   | { type: "test"; what: string; key: string }
   | { type: "dismiss" };
@@ -82,6 +122,8 @@ function reduce(s: State, a: Action): State {
       return { ...s, testKeys: { ...s.testKeys, [a.what]: a.key }, tests: without(s.tests, a.key) };
     case "dismiss":
       return { ...s, error: null };
+    case "look":
+      return { ...s, look: "pending" };
     case "server":
       break;
   }
@@ -89,8 +131,21 @@ function reduce(s: State, a: Action): State {
   switch (m.type) {
     case "atlas.snapshot": {
       const live: Record<string, Live> = {};
-      for (const r of m.running) live[r.run_id] = s.live[r.run_id] ?? { text: "", status: null, surface: r.surface };
-      return { ...s, rows: mergeRows([], m.thread), agenda: m.agenda, view: m.view, live, loaded: true, noOlder: false };
+      // What a run in progress has said so far comes back with the snapshot, so a refresh mid-answer picks up there.
+      for (const r of m.running)
+        live[r.run_id] = { text: r.text ?? s.live[r.run_id]?.text ?? "", status: r.status ?? null, surface: r.surface };
+      return {
+        ...s,
+        rows: mergeRows([], m.thread),
+        agenda: m.agenda,
+        view: m.view,
+        live,
+        loaded: true,
+        noOlder: false,
+        jobs: m.jobs,
+        areas: m.areas,
+        scope: m.scope,
+      };
     }
     case "atlas.rows": {
       let { live, pending } = s;
@@ -131,6 +186,28 @@ function reduce(s: State, a: Action): State {
     }
     case "atlas.error":
       return { ...s, error: m.message };
+    case "atlas.jobs":
+      return { ...s, jobs: m.jobs };
+    case "atlas.areas":
+      return { ...s, areas: m.areas, scope: m.scope };
+    case "atlas.voices":
+      return { ...s, voices: { voices: m.voices, ...(m.error ? { error: m.error } : {}) } };
+    case "atlas.setup.look.result":
+      return { ...s, look: { look: m.look, ...(m.error ? { error: m.error } : {}) } };
+    case "atlas.records":
+      return { ...s, records: { ...s.records, [m.ref]: { records: m.records, counts: m.counts } } };
+    case "atlas.records.changed":
+      return { ...s, recordsVersion: s.recordsVersion + 1 };
+    case "atlas.history.rows": {
+      const keep = m.older && s.history?.filter === m.filter ? s.history.rows : [];
+      return { ...s, history: { filter: m.filter, rows: [...keep, ...m.rows], has_more: m.has_more, stats: m.stats } };
+    }
+    case "atlas.run.detail.result":
+      return { ...s, runDetail: { ...s.runDetail, [m.run_id]: { run: m.run, rows: m.rows } } };
+    case "atlas.calendar.events":
+      return { ...s, calendar: { ...s.calendar, [m.ref]: { events: m.events, ...(m.error ? { error: m.error } : {}) } } };
+    case "atlas.inbox.items":
+      return { ...s, inbox: m.items };
   }
   return s;
 }
@@ -231,7 +308,12 @@ export function useAtlas() {
     setVoice((v) => ({ ...v, error: null }));
   }, []);
 
-  return { state, voice, inCall, send, say, test, toggleCall, dismiss };
+  const firstLook = useCallback(() => {
+    dispatch({ type: "look" });
+    send({ type: "atlas.setup.look" });
+  }, [send]);
+
+  return { state, voice, inCall, send, say, test, toggleCall, dismiss, firstLook };
 }
 
 export type Atlas = ReturnType<typeof useAtlas>;
