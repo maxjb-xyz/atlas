@@ -883,7 +883,7 @@ Each view gets its design pass, motion included (§21.8), when it arrives.
 
 ### 21.7 Pages and files: things Atlas makes
 
-> **Needs refinement.** This is the agreed direction, not a finished design. The open points are at the end of this section and in §26.
+> **Partly decided (2026-10-22).** Living pages are settled for M2: the name, versions, format, editing and live updates below. Files, small apps, decks, office formats and sharing are still the agreed direction, refined when they arrive (M3 and later).
 
 Atlas makes things you keep: a shoot plan, a trip itinerary, a quote, a study guide, a small checklist app. **A page is a stage view you keep.** It has a name and versions, you can share it, and it can stay live.
 
@@ -914,14 +914,15 @@ Atlas makes things you keep: a shoot plan, a trip itinerary, a quote, a study gu
   - **Small apps stay sandboxed.** Anything someone else edits on a shared page is information, never instructions (§7.2).
   - **Pages and files are included in export** (§23.4).
 
-**To refine:**
-1. **The name.** "Artifacts" collides with Cloudflare Artifacts, which we already use for repos (§19.1). The working names are pages and files.
-2. **Where versions are stored:** Durable Object history, or Cloudflare Artifacts' git-style versions (still a preview).
-3. **The page format:** Markdown with embedded stage views, or a block format.
-4. **The editor,** and how much editing Atlas offers.
-5. **Office formats:** which ones, and how polished they need to be.
-6. **Live updates:** how a page decides what to refresh, and how changes are shown to you.
-7. **The UI:** a page screen in the UI v1 style, and how Library lists pages and files.
+**Decided with the owner (2026-10-22), for living pages:**
+1. **The name:** pages and files. "Artifacts" collides with Cloudflare Artifacts (§19.1).
+2. **Versions** live in the person agent's own storage, as rows. Every version is kept, listed on the page and in History, and any one can be brought back as a new version.
+3. **The format** is Markdown with stage views in it, each kept as its typed contract (§21.6), so a page holds nothing the app can't draw.
+4. **Editing is you and Atlas.** You edit the text in a plain editor and can take views out; anything bigger, you ask Atlas. There's no rich-text toolbar.
+5. **Live updates:** views that point at what Atlas knows (an area, a person, an automation) always show it as it is now. Lists, tables, drafts, plans and the text stay as kept until you or Atlas change them, and each change is a new version saying what changed. An automation can refresh a page on a schedule.
+6. **The UI:** a page opens on the stage like any view, with Edit and Versions; Library lists pages under Pages.
+
+**Still to refine:** office formats (which ones, and how polished), files in R2, small apps, and sharing a page outside Atlas.
 
 ### 21.8 Look and motion: the rule of cool
 
@@ -1123,7 +1124,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 4. **License.** MIT, like Hermes and OpenClaw, or Apache-2.0.
 5. **Default phone provider.** Telnyx (what old Atlas used) or Twilio.
 6. **Name.** OpenAI ships a browser called "ChatGPT Atlas" (October 2025). Decide before the public launch whether that matters.
-7. **Pages and files (§21.7) need refinement:** the name, where versions are stored, the page format, the editor, office formats, live updates, and the UI.
+7. **Files (§21.7):** office formats, how polished they need to be, and sharing outside Atlas. Living pages were decided on 2026-10-22.
 
 ---
 
