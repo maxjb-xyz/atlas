@@ -59,6 +59,9 @@ import {
 import { removeWebhook, saveWebhook, webhooks } from "./webhooks";
 import { AutomationDesk } from "./agent/automations";
 import { automationTools } from "./tools/automations";
+import { seedRoutines } from "./routines";
+import { focusTool, setFocus } from "./tools/focus";
+import { noticeAsk, openSuggestions, settleSuggestion } from "./suggestions";
 import { deleteAutomation, getAutomation, listAutomations, matchPhrase, saveAutomation, setAutomationState } from "./automations";
 import { automationView } from "./agent/views";
 import type { ExitApi, Tool, ToolContext, ToolResult } from "./tools/types";
@@ -81,13 +84,13 @@ const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
  * and nobody is looking at the stage when they run, so they can't `show`.
  */
 const TOOLS: Record<Actor, Tool[]> = {
-  owner: [calendarRead, ...agendaTools, ...memoryTools, delegate, show, webhookCall, deleteForGood, approve, ...automationTools],
+  owner: [calendarRead, ...agendaTools, ...memoryTools, delegate, show, webhookCall, deleteForGood, approve, focusTool, ...automationTools],
   atlas: [calendarRead, ...agendaTools, recall],
   system: [],
 };
 
 /** What an automation's Atlas step can reach: what the clock's runs can, and the owner's webhooks (§13.1). */
-const AUTOMATION_TOOLS: Tool[] = [calendarRead, ...agendaTools, recall, webhookCall];
+const AUTOMATION_TOOLS: Tool[] = [calendarRead, ...agendaTools, recall, webhookCall, focusTool];
 /** A test run only looks: it changes nothing, and webhooks only say what they'd do (§13.4). */
 const TEST_TOOLS: Tool[] = [calendarRead, agendaList, recall, webhookCall];
 
@@ -216,11 +219,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         });
       },
       decider: () => this.#decider(),
+      calendar: () => this.#calendar.source(readSettings(this.#sql)),
       fetch: (...args) => (seams.fetch ?? fetch)(...args),
       changed: () => this.#automationsChanged(),
       rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
     });
-    // Every automation that's on has its next run on the clock (a missing one is put back).
+    // The default routines are made once; then every automation that's on has its next run on the clock (a missing one is put back).
+    seedRoutines(this.#sql);
     for (const a of listAutomations(this.#sql)) void this.#automations.arm(a.id).catch(() => {});
     // The key that signs push notifications, made once, so Settings can offer them straight away.
     void vapidKeys(this.#sql).catch((err: unknown) =>
@@ -500,6 +505,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       }
+      case "atlas.focus":
+        await setFocus(this.#sql, this.#clock, msg.minutes, msg.about ?? "", "owner");
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
       case "atlas.push.remove": {
         const gone = pushDevices(this.#sql).find((d) => d.id === msg.device);
         if (!gone) return;
@@ -545,7 +554,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       case "atlas.automations":
-        this.#send(connection, { type: "atlas.automations", automations: this.#automationViews() });
+        this.#send(connection, {
+          type: "atlas.automations",
+          automations: this.#automationViews(),
+          suggestions: openSuggestions(this.#sql),
+        });
+        return;
+      case "atlas.suggestion.set":
+        settleSuggestion(this.#sql, msg.id, msg.state);
+        this.#automationsChanged();
         return;
       case "atlas.automation.save":
       case "atlas.automation.set":
@@ -573,15 +590,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           return;
         }
         void this.keepAliveWhile(() =>
-          this.#inLine(async () => {
-            // A test of a watch or an absence looks first, the way the clock would, then runs the steps sending nothing.
-            const look = msg.test && (a.when.kind === "watch" || a.when.kind === "absence") ? await this.#automations.look(a, true) : null;
-            await this.#automations.run(a, {
-              why: msg.test ? "test" : "button",
-              inputs: msg.inputs,
-              ...(look ? { context: `What the look found (in a real run, the steps only run when it says so): ${look.note}` } : {}),
-            });
-          }),
+          this.#inLine(() => this.#automations.run(a, { why: msg.test ? "test" : "button", inputs: msg.inputs })),
         ).catch((err: unknown) =>
           this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) }),
         );
@@ -630,6 +639,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       await this.#inLine(() => this.#phraseRun(hit, runId, "app"), { id: runId, surface: "app" }).catch(() => {});
       return;
     }
+    if (noticeAsk(this.#sql, text)) this.#automationsChanged();
 
     await this.#inLine(
       async () => {
@@ -668,6 +678,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         .finally(() => spoken.close());
       return spoken;
     }
+    if (noticeAsk(this.#sql, transcript)) this.#automationsChanged();
     const started = Date.now();
     let firstWordsMs: number | null = null;
     let statusMs: number | null = null;
@@ -1669,7 +1680,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   }
 
   #automationsChanged(): void {
-    this.#broadcast({ type: "atlas.automations", automations: this.#automationViews() });
+    this.#broadcast({ type: "atlas.automations", automations: this.#automationViews(), suggestions: openSuggestions(this.#sql) });
     this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
   }
 

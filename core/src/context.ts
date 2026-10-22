@@ -4,6 +4,7 @@
 // surface), then every message since that summary. Compaction (§4.1) keeps
 // that last part in bounds; recall finds the rest, on demand.
 
+import { focusNow } from "./outbox";
 import type { Message } from "./brains/types";
 import { character, TEXT_PROFILE, VOICE_PROFILE } from "./character";
 import { getItem, upcoming } from "./store/agenda";
@@ -79,6 +80,7 @@ export function systemPrompt(opts: {
     .map((i) => `- ${isoLocal(new Date(i.due_at), tz)}: ${i.kind === "promise" ? "your promise: " : ""}${i.title} (id ${i.id})`);
   const fresh = [
     `Now: ${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}.`,
+    focusLine(sql, tz),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     areaContext(sql, opts.beforeSeq),
     exitsContext(sql, tz, now),
@@ -196,6 +198,13 @@ export function hat(sql: Sql, beforeSeq?: number): Area[] {
  * waiting for their OK, and what was settled in the last two hours, so
  * Atlas never says something is done that's still waiting, or the reverse.
  */
+function focusLine(sql: Sql, tz: string): string {
+  const f = focusNow(sql);
+  return f
+    ? `The owner is focusing${f.about ? ` on ${f.about}` : ""} until ${shortLocal(new Date(f.until), tz)}: notifications that can wait are held.`
+    : "";
+}
+
 function exitsContext(sql: Sql, tz: string, now: Date): string {
   const lines: string[] = [];
   const hooks = webhooks(sql);

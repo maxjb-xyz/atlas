@@ -9,7 +9,7 @@ import { scrub } from "../outbox";
 import { secretValues } from "../store/settings";
 import { webhooks, webhookView } from "../webhooks";
 import type { AreaPage, AutomationView, PersonPage, StageMessage, StagePage, StageView } from "../stage";
-import { type Automation, getAutomation, stepText, whenText } from "../automations";
+import { type Automation, getAutomation, needsTest, stepText, whenText } from "../automations";
 import { getArea } from "../store/areas";
 import { parse, type Sql } from "../store/db";
 import { get as getRow, type LogKind, type LogRow } from "../store/log";
@@ -137,7 +137,7 @@ export function automationView(sql: Sql, a: Automation): AutomationView {
     when_text: whenText(a.when, (id) => getAutomation(sql, id)?.name ?? null),
     steps: a.do.map((step) => ({ step, text: stepText(step) })),
     report: a.report,
-    can_turn_on: a.made_by === "owner" || a.tested_at != null,
+    can_turn_on: !needsTest(a),
     tested_at: a.tested_at,
     fails: a.fails,
     paused_why: a.paused_why,

@@ -2,6 +2,7 @@
 // Voice uses the same socket with the Agents SDK voice protocol; every Atlas
 // message type starts with "atlas." so the two never collide.
 
+import type { SuggestionView } from "./suggestions";
 import { z } from "zod";
 import type { LogRow } from "./store/log";
 import type { AgendaItem } from "./store/agenda";
@@ -184,6 +185,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Make or change an automation in the form. The owner's own start on (§13.4). */
   z.object({ type: z.literal("atlas.automation.save"), id: z.string().max(64).optional(), automation: AutomationInput }),
   z.object({ type: z.literal("atlas.automation.set"), id: z.string().max(64), on: z.boolean() }),
+  /** A suggestion at the top of Automations: made into one, or set aside. Neither is suggested again. */
+  z.object({ type: z.literal("atlas.suggestion.set"), id: z.string().max(64), state: z.enum(["dismissed", "made"]) }),
   /** Run now (the Run button), or as a test that sends nothing. */
   z.object({
     type: z.literal("atlas.automation.run"),
@@ -196,6 +199,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.agenda.cancel"), id: z.string().max(64) }),
   /** Stop sending notifications to a device. */
   z.object({ type: z.literal("atlas.push.remove"), device: z.string().min(1).max(64) }),
+  /** Focus for a while (§14), or end it with 0 minutes. */
+  z.object({ type: z.literal("atlas.focus"), minutes: z.number().int().min(0).max(720), about: z.string().max(80).optional() }),
   /** "Sign in with ChatGPT": start, then paste the address the browser landed on. */
   z.object({ type: z.literal("atlas.chatgpt.start") }),
   z.object({ type: z.literal("atlas.chatgpt.finish"), url: z.string().min(1).max(8000) }),
@@ -323,7 +328,14 @@ export interface SettingsView {
     trusted: Array<{ key: string; name: string; since: number }>;
   };
   /** Push notifications (Settings → Notifications): this deployment's public key, and the devices that take them. */
-  push: { public_key: string | null; devices: Array<{ id: string; name: string; added_at: number; last_seen: number }> };
+  push: {
+    public_key: string | null;
+    devices: Array<{ id: string; name: string; added_at: number; last_seen: number }>;
+    /** Pushes today for things that could wait, against the budget. */
+    today: number;
+  };
+  /** Focus in force, if any (§14). */
+  focus: { until: number; about: string } | null;
   setup: { done: string[]; skipped: string[]; finished: boolean };
 }
 
@@ -367,7 +379,7 @@ export type ServerMessage =
   | { type: "atlas.calendar.events"; ref: string; events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } }
   | { type: "atlas.inbox.items"; items: InboxItem[] }
   | { type: "atlas.stage.page"; ref: string; page: StagePage | null }
-  | { type: "atlas.automations"; automations: AutomationView[] }
+  | { type: "atlas.automations"; automations: AutomationView[]; suggestions: SuggestionView[] }
   | {
       type: "atlas.voices";
       voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>;

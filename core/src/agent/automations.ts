@@ -18,6 +18,7 @@ import {
   stepText,
 } from "../automations";
 import type { Decider } from "../brains/decide";
+import type { Calendar, CalendarEvent } from "../calendar/types";
 import type { LoopResult } from "../loop";
 import type { Outbox, Urgency } from "../outbox";
 import { type AgendaItem, createItem, finish, getItem, rearm } from "../store/agenda";
@@ -30,7 +31,7 @@ import { shortLocal, zoneOf } from "../time";
 import type { ToolContext } from "../tools/types";
 import { findWebhook } from "../webhooks";
 
-export type Why = "button" | "request" | "schedule" | "watch" | "absence" | "event" | "test";
+export type Why = "button" | "request" | "schedule" | "watch" | "absence" | "event" | "calendar" | "test";
 
 export interface RunOutcome {
   ok: boolean;
@@ -51,6 +52,8 @@ export interface DeskDeps {
   /** Runs Atlas with a note (an Atlas step); `test` gives it tools that can't change or send anything. */
   converse(o: { runId: string; note: string; test: boolean }): Promise<LoopResult>;
   decider(): Decider | null;
+  /** The owner's calendar, or null when it isn't connected. */
+  calendar(): Calendar | null;
   fetch: typeof fetch;
   /** Tells every app the automations changed. */
   changed(): void;
@@ -91,6 +94,15 @@ export class AutomationDesk {
       });
     const started = Date.now();
     const inputs = o.inputs ?? {};
+    let context = o.context;
+    // A test of a trigger that looks first (a watch, an absence, the calendar) looks the way the clock would, remembering nothing.
+    if (test && !context && looksFirst(a)) {
+      try {
+        context = `What the look found (in a real run, the steps only run when it says so): ${(await this.look(a, true)).note}`;
+      } catch (err) {
+        context = `The look failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
     const fixed = a.do.filter((s) => s.kind === "webhook").map((s) => (s as { webhook: string }).webhook.toLowerCase());
     this.runs.set(runId, { test, allowed: [...new Set([...a.allowed, ...fixed])] });
     const results: RunOutcome["results"] = [];
@@ -127,7 +139,7 @@ export class AutomationDesk {
             break;
           }
         } else {
-          const note = this.#note(a, o.why, step.instructions, inputs, results, o.context, test);
+          const note = this.#note(a, o.why, step.instructions, inputs, results, context, test);
           const res = await this.d.converse({ runId, note, test });
           steps += res.steps;
           brain = res.brain ?? brain;
@@ -180,7 +192,7 @@ export class AutomationDesk {
     // Another automation waiting for this one runs next (§13.2: another automation finishing).
     if (!test && ok && (o.depth ?? 0) < 3) {
       for (const next of listAutomations(this.d.sql)) {
-        if (next.state === "on" && next.when.kind === "event" && next.when.after === a.id) {
+        if (next.state === "on" && next.when.kind === "event" && next.when.on === "automation" && next.when.after === a.id) {
           await this.run(next, {
             why: "event",
             context: `"${a.name}" just finished. What it said: ${text.slice(0, 1_500)}`,
@@ -304,7 +316,7 @@ export class AutomationDesk {
       if (a.when.kind === "schedule") await this.run(a, { why: "schedule" });
       else {
         const look = await this.look(a, false);
-        if (look.run) await this.run(a, { why: a.when.kind === "watch" ? "watch" : "absence", context: look.note });
+        if (look.run) await this.run(a, { why: a.when.kind === "event" ? "calendar" : a.when.kind, context: look.note });
       }
     } finally {
       // The next time is set even if this one failed, so a bad night doesn't stop tomorrow's.
@@ -341,6 +353,7 @@ export class AutomationDesk {
         note: `Nothing about "${t.nothing_about}" has come up since ${shortLocal(new Date(since), tz)} (${t.for_days} days).`,
       };
     }
+    if (t.kind === "event" && t.on === "calendar") return this.#calendarLook(a, test);
     if (t.kind !== "watch") return { run: true, note: "" };
     let text: string;
     try {
@@ -369,6 +382,52 @@ export class AutomationDesk {
     return { run: true, note: `The page changed in a way that matters (${Math.round(p * 100)}% sure). What's new:\n${change}` };
   }
 
+  /**
+   * A calendar trigger's look: the next 14 days, compared with what the last
+   * look saw. An event added, moved, renamed or removed counts, filtered to
+   * the trigger's words when it has them. Events that only came into the
+   * window, or passed out of it, don't count as changes.
+   */
+  async #calendarLook(a: Automation, test: boolean): Promise<{ run: boolean; note: string }> {
+    const t = a.when as Extract<Automation["when"], { kind: "event" }>;
+    const cal = this.d.calendar();
+    if (!cal) throw new Error("The calendar isn't connected. Connect it in Settings → Connections.");
+    const now = Date.now();
+    const until = now + WINDOW_MS;
+    const read = await cal.read({ start: new Date(now), end: new Date(until) });
+    const tz = zoneOf(readSettings(this.d.sql));
+    if (read.stale) return this.#quiet(a, test, `Couldn't ask the calendar, so this look is skipped: ${read.stale.why}`);
+    const seen: Record<string, Seen> = Object.fromEntries(read.events.map((e) => [e.id, seenOf(e)]));
+    const before = a.memo.events && typeof a.memo.events === "object" ? (a.memo.events as unknown as Record<string, Seen>) : null;
+    const prevUntil = typeof a.memo.until === "number" ? a.memo.until : 0;
+    if (!test) setMemo(this.d.sql, a.id, { ...a.memo, events: seen as unknown as Json, until, at: now });
+    if (!before) {
+      const list = read.events.slice(0, 8).map((e) => `- ${eventText(seenOf(e), tz)}`);
+      return test
+        ? { run: true, note: `There's no earlier look to compare with yet. The next 14 days:\n${list.join("\n") || "- nothing"}` }
+        : this.#quiet(a, test, `First look: ${read.events.length} events in the next 14 days. Atlas watches for changes from here.`);
+    }
+    const about = t.about?.trim().toLowerCase();
+    const counts = (e: Seen) => !about || `${e.t} ${e.l ?? ""} ${e.n ?? ""}`.toLowerCase().includes(about);
+    const changes: string[] = [];
+    for (const [id, e] of Object.entries(seen)) {
+      const old = before[id];
+      if (!old) {
+        if (Date.parse(e.s) < prevUntil && counts(e)) changes.push(`Added: ${eventText(e, tz)}`);
+      } else if (old.s !== e.s || old.e !== e.e) {
+        if (counts(e) || counts(old)) changes.push(`Moved: ${old.t}, from ${whenOf(old, tz)} to ${whenOf(e, tz)}`);
+      } else if (old.t !== e.t || (old.l ?? "") !== (e.l ?? "")) {
+        if (counts(e) || counts(old)) changes.push(`Changed: ${eventText(old, tz)} is now ${eventText(e, tz)}`);
+      }
+    }
+    for (const [id, old] of Object.entries(before)) {
+      if (!seen[id] && Date.parse(old.e) > now && Date.parse(old.s) < until && counts(old)) changes.push(`Removed: ${eventText(old, tz)}`);
+    }
+    if (!changes.length)
+      return this.#quiet(a, test, about ? `Nothing about "${t.about}" changed on the calendar.` : "No calendar changes.");
+    return { run: true, note: `The calendar changed since ${shortLocal(new Date(Number(a.memo.at ?? now)), tz)}:\n${changes.join("\n")}` };
+  }
+
   #quiet(a: Automation, test: boolean, note: string): { run: boolean; note: string } {
     if (!test) {
       const row = append(this.d.sql, {
@@ -382,6 +441,35 @@ export class AutomationDesk {
   }
 }
 
+/** How far ahead a calendar trigger watches. */
+const WINDOW_MS = 14 * 86_400_000;
+
+/** What a calendar look remembers of an event: title, start, end, place and the start of its notes. */
+interface Seen {
+  t: string;
+  s: string;
+  e: string;
+  l?: string;
+  n?: string;
+  d?: boolean;
+}
+
+const seenOf = (e: CalendarEvent): Seen => ({
+  t: e.title,
+  s: e.start,
+  e: e.end,
+  ...(e.location ? { l: e.location } : {}),
+  ...(e.notes ? { n: e.notes.slice(0, 200) } : {}),
+  ...(e.all_day ? { d: true } : {}),
+});
+
+const whenOf = (e: Seen, tz: string) => (e.d ? `${e.s} (all day)` : shortLocal(new Date(e.s), tz));
+const eventText = (e: Seen, tz: string) => `${e.t}, ${whenOf(e, tz)}${e.l ? `, at ${e.l}` : ""}`;
+
+/** Whether a trigger looks at something before its steps run. */
+const looksFirst = (a: Automation) =>
+  a.when.kind === "watch" || a.when.kind === "absence" || (a.when.kind === "event" && a.when.on === "calendar");
+
 export const TELL_AFTER = 2;
 export const PAUSE_AFTER = 5;
 
@@ -392,6 +480,7 @@ const WHY: Record<Why, string> = {
   watch: "the page it watches changed",
   absence: "something it watches for didn't happen",
   event: "another automation finished",
+  calendar: "the calendar changed",
   test: "a test run",
 };
 

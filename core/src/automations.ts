@@ -35,7 +35,21 @@ export const Trigger = z.discriminatedUnion("kind", [
     for_days: z.number().int().min(1).max(60).describe("How many days without it before this runs."),
     at: HHMM.describe("When to check each day, local HH:mm."),
   }),
-  z.object({ kind: z.literal("event"), after: z.string().max(64).describe("Runs after this automation (its id) finishes.") }),
+  z.object({
+    kind: z.literal("event"),
+    on: z
+      .enum(["automation", "calendar"])
+      .default("automation")
+      .describe("What it follows: another automation finishing, or the calendar changing."),
+    after: z.string().max(64).optional().describe("With on: automation, the automation (its id) it runs after."),
+    about: z
+      .string()
+      .max(120)
+      .optional()
+      .describe(
+        "With on: calendar, words an event's title, place or notes must have for its change to count, like 'Riverside'. Empty for any change.",
+      ),
+  }),
 ]);
 export type Trigger = z.infer<typeof Trigger>;
 
@@ -73,12 +87,16 @@ export const AutomationInput = z.object({
 });
 export type AutomationInput = z.infer<typeof AutomationInput>;
 
+/** Who made an automation: the owner in the form, Atlas from what the owner said, or Atlas's defaults (the routines). */
+export type Maker = "owner" | "atlas" | "default";
+
 export interface Automation extends AutomationInput {
   id: string;
   /** "on" runs on its trigger; "paused" runs only by hand or as a test. */
   state: "on" | "paused";
-  /** Who made it: the owner in the form, or Atlas, whose automations start paused until there's a test run. */
-  made_by: "owner" | "atlas";
+  made_by: Maker;
+  /** Who changed it last. When it's Atlas, it waits for a test run before it can be turned on. */
+  changed_by: "owner" | "atlas";
   /** Webhooks it may call without asking, granted when the owner turns it on (§13.1: allowed to). */
   allowed: string[];
   created_at: number;
@@ -102,6 +120,7 @@ type Raw = {
   report: string;
   state: string;
   made_by: string;
+  changed_by: string;
   allowed: string;
   created_at: number;
   updated_at: number;
@@ -119,7 +138,8 @@ const fromRaw = (r: Raw): Automation => ({
   do: parse(r.steps, []) as Step[],
   report: (Report.safeParse(r.report).data ?? "thread") as Report,
   state: r.state === "on" ? "on" : "paused",
-  made_by: r.made_by === "owner" ? "owner" : "atlas",
+  made_by: r.made_by === "owner" || r.made_by === "default" ? r.made_by : "atlas",
+  changed_by: r.changed_by === "atlas" ? "atlas" : "owner",
   allowed: parse(r.allowed, []),
   created_at: r.created_at,
   updated_at: r.updated_at,
@@ -143,12 +163,16 @@ export function findAutomation(sql: Sql, nameOrId: string): Automation | null {
   return getAutomation(sql, nameOrId) ?? listAutomations(sql).find((a) => a.name.toLowerCase() === want) ?? null;
 }
 
+/** Whether it waits for a test run before it can be turned on: Atlas made or changed it, and nobody has seen it run since. */
+export const needsTest = (a: Pick<Automation, "changed_by" | "tested_at">) => a.changed_by === "atlas" && a.tested_at == null;
+
 /**
- * Saves a new automation or a change. The owner's own (from the form) start
- * on; Atlas's start paused, and a change by Atlas pauses one until there's a
- * test run, so nothing Atlas wrote runs unattended before the owner has seen it.
+ * Saves a new automation or a change. The owner's own (from the form) and
+ * the default routines start on; Atlas's start paused, and a change by Atlas
+ * pauses one until there's a test run, so nothing Atlas wrote runs
+ * unattended before the owner has seen it.
  */
-export function saveAutomation(sql: Sql, input: AutomationInput, by: "owner" | "atlas", id?: string): Automation {
+export function saveAutomation(sql: Sql, input: AutomationInput, by: Maker, id?: string): Automation {
   const old = id ? getAutomation(sql, id) : null;
   if (id && !old) throw new Error("That automation isn't there any more.");
   const clash = listAutomations(sql).find((a) => a.id !== old?.id && a.name.toLowerCase() === input.name.toLowerCase());
@@ -160,13 +184,18 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: "owner" | "
     );
     if (taken) throw new Error(`"${phrase}" already runs ${taken.name}.`);
   }
+  if (input.when.kind === "event" && input.when.on === "automation") {
+    if (!input.when.after) throw new Error("Say which automation it runs after.");
+    if (input.when.after === old?.id) throw new Error("An automation can't run after itself.");
+  }
   const now = Date.now();
-  const state = by === "owner" ? (old?.state ?? "on") : "paused";
+  const atlas = by === "atlas";
+  const state = atlas ? "paused" : (old?.state ?? "on");
   // What it may call without asking was granted for the steps the owner saw; a change takes it back until they turn it on again.
-  const allowed = by === "owner" && state === "on" ? webhookNames(input) : [];
+  const allowed = !atlas && state === "on" ? webhookNames(input) : [];
   if (old) {
     sql.exec(
-      `UPDATE automations SET name = ?, about = ?, trigger = ?, steps = ?, report = ?, state = ?, allowed = ?, updated_at = ?, tested_at = NULL, fails = 0, paused_why = NULL WHERE id = ?`,
+      `UPDATE automations SET name = ?, about = ?, trigger = ?, steps = ?, report = ?, state = ?, allowed = ?, changed_by = ?, updated_at = ?, tested_at = NULL, fails = 0, paused_why = NULL, memo = ? WHERE id = ?`,
       input.name,
       input.about,
       JSON.stringify(input.when),
@@ -174,13 +203,16 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: "owner" | "
       input.report,
       state,
       JSON.stringify(allowed),
+      atlas ? "atlas" : "owner",
       now,
+      // A new trigger starts looking afresh.
+      JSON.stringify(JSON.stringify(old.when) === JSON.stringify(input.when) ? old.memo : {}),
       old.id,
     );
   } else {
     id = newId("au");
     sql.exec(
-      `INSERT INTO automations (id, name, about, trigger, steps, report, state, made_by, allowed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO automations (id, name, about, trigger, steps, report, state, made_by, changed_by, allowed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       input.name,
       input.about,
@@ -189,6 +221,7 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: "owner" | "
       input.report,
       state,
       by,
+      atlas ? "atlas" : "owner",
       JSON.stringify(allowed),
       now,
       now,
@@ -196,7 +229,7 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: "owner" | "
   }
   const saved = getAutomation(sql, id!)!;
   append(sql, {
-    actor: by,
+    actor: by === "default" ? "system" : by,
     kind: "automation.change",
     body: { automation_id: saved.id, name: saved.name, change: old ? "changed" : "made", state: saved.state },
   });
@@ -207,7 +240,7 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: "owner" | "
 export function setAutomationState(sql: Sql, id: string, on: boolean, by: "owner" | "atlas", why?: string): Automation {
   const a = getAutomation(sql, id);
   if (!a) throw new Error("That automation isn't there any more.");
-  if (on && a.made_by === "atlas" && a.tested_at == null) {
+  if (on && needsTest(a)) {
     throw new Error(`${a.name} needs a test run first, so you can see what it would do before it runs on its own.`);
   }
   sql.exec(
@@ -263,11 +296,16 @@ const webhookNames = (a: Pick<AutomationInput, "do">) => [
 // --- when it runs --------------------------------------------------------------------------
 
 /** Whether an automation's trigger runs on the clock (and so has an agenda item). */
-export const onClock = (t: Trigger) => t.kind === "schedule" || t.kind === "watch" || t.kind === "absence";
+export const onClock = (t: Trigger) =>
+  t.kind === "schedule" || t.kind === "watch" || t.kind === "absence" || (t.kind === "event" && t.on === "calendar");
+
+/** How often a calendar trigger reads the calendar for changes. Each read is at most one sign-in, and Atlas keeps a copy. */
+export const CALENDAR_EVERY_MS = 30 * 60_000;
 
 /** The next time a clock trigger fires after `from`, in the owner's time zone, or null for triggers that don't run on the clock. */
 export function nextRun(t: Trigger, from: Date, tz: string): Date | null {
   if (t.kind === "watch") return new Date(from.getTime() + t.every_hours * 3600_000);
+  if (t.kind === "event") return t.on === "calendar" ? new Date(from.getTime() + CALENDAR_EVERY_MS) : null;
   if (t.kind !== "schedule" && t.kind !== "absence") return null;
   const days = t.kind === "schedule" ? t.days : [];
   const [h, m] = t.at.split(":").map(Number) as [number, number];
@@ -339,7 +377,8 @@ export function whenText(t: Trigger, names: (id: string) => string | null = () =
     case "absence":
       return `Nothing about "${t.nothing_about}" for ${t.for_days} ${t.for_days === 1 ? "day" : "days"} (checked at ${t.at})`;
     case "event":
-      return `After ${names(t.after) ?? "another automation"} finishes`;
+      if (t.on === "calendar") return t.about ? `When an event about "${t.about}" changes on your calendar` : "When your calendar changes";
+      return `After ${(t.after && names(t.after)) ?? "another automation"} finishes`;
   }
 }
 

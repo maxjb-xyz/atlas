@@ -1,6 +1,7 @@
 // One socket to the person agent. VoiceClient carries both the voice protocol
 // and our atlas.* messages; this hook folds what arrives into thread state.
 
+import type { SuggestionView } from "../../core/src/suggestions";
 import { VoiceClient } from "agents/voice/client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { deviceId, inView } from "./notify";
@@ -75,6 +76,8 @@ export interface State {
   stage: Record<string, StagePage | null>;
   /** The automations, once asked for; the agent sends them again whenever they change. */
   automations: AutomationView[] | null;
+  /** Automations Atlas suggests from requests the owner repeats, shown at the top of Automations. */
+  suggestions: SuggestionView[];
 }
 
 const initial: State = {
@@ -101,6 +104,7 @@ const initial: State = {
   inbox: null,
   stage: {},
   automations: null,
+  suggestions: [],
 };
 
 type Action =
@@ -242,7 +246,7 @@ function reduce(s: State, a: Action): State {
     case "atlas.stage.page":
       return { ...s, stage: { ...s.stage, [m.ref]: m.page } };
     case "atlas.automations":
-      return { ...s, automations: m.automations };
+      return { ...s, automations: m.automations, suggestions: m.suggestions };
   }
   return s;
 }

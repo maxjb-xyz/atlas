@@ -1,6 +1,7 @@
 // What Settings shows (values, whether each secret is set, sign-in state and
 // brain health) and its live tests (§22: every check is a live test).
 
+import { zoneOf } from "../time";
 import type { BrainRouter } from "../brains/router";
 import { type Brain, brainKey } from "../brains/types";
 import { CalendarError, type ICloudCredentials } from "../calendar/types";
@@ -12,7 +13,7 @@ import type { StoredPasskey } from "../passkeys";
 import { getState } from "../store/state";
 import type { CalendarSense } from "./calendar";
 import { setupView } from "./setup";
-import { pushDevices } from "../outbox";
+import { focusNow, interruptionsToday, pushDevices } from "../outbox";
 import { ASKS, trustTable } from "../approvals";
 import { webhooks, webhookView } from "../webhooks";
 import type { VapidKeys } from "../push";
@@ -46,7 +47,9 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
     push: {
       public_key: getSecret<VapidKeys>(sql, "push_vapid")?.public ?? null,
       devices: pushDevices(sql).map((d) => ({ id: d.id, name: d.name, added_at: d.added_at, last_seen: d.last_seen })),
+      today: interruptionsToday(sql, zoneOf(settings)),
     },
+    focus: focusNow(sql),
     chatgpt: parts.chatgpt.view(),
     health: parts.router.snapshot(),
     passkeys,

@@ -46,7 +46,13 @@ export type StateName =
    */
   | "push_devices"
   /** Earned trust (§12.2): for each outside action, approvals in a row as-is, whether Atlas offered to stop asking, and whether it may. */
-  | "trust";
+  | "trust"
+  /** When the default routines were made (§13.4), so a routine the owner deleted isn't made again. */
+  | "routines"
+  /** Automations Atlas suggests from requests the owner repeats (§13.4): what they said, how often, and whether they made it or set it aside. */
+  | "suggestions"
+  /** Focus (§14): until when things that can wait are held, and what it's for. */
+  | "focus";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

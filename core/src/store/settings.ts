@@ -89,8 +89,10 @@ export const Settings = z.object({
             .default("07:00"),
         })
         .default({ on: false, from: "22:00", to: "07:00" }),
+      /** The daily interruption budget (§14): pushes a day for things that can wait. 0 means no limit. */
+      budget: z.number().int().min(0).max(100).default(10),
     })
-    .default({ push: true, quiet: { on: false, from: "22:00", to: "07:00" } }),
+    .default({ push: true, quiet: { on: false, from: "22:00", to: "07:00" }, budget: 10 }),
 });
 export type Settings = z.infer<typeof Settings>;
 

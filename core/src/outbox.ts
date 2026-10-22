@@ -12,7 +12,7 @@ import { append, get as getRow, type LogRow, type Surface } from "./store/log";
 import { readSettings, secretValues } from "./store/settings";
 import { getState, setState } from "./store/state";
 import { deleteRecord } from "./store/records";
-import { quietUntil, shortLocal, zoneOf } from "./time";
+import { quietUntil, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import { callWebhook, webhooks, webhookView } from "./webhooks";
 
 export const HIDDEN = "[hidden]";
@@ -65,7 +65,30 @@ export class StreamScrubber {
   }
 }
 
-/** "now" goes out at once; "normal" waits for quiet hours to end (§14). */
+/** Focus (§14): until when things that can wait are held, and what for. */
+export interface Focus {
+  until: number;
+  about: string;
+}
+
+/** The focus in force now, or null. */
+export function focusNow(sql: Sql, now = Date.now()): Focus | null {
+  const f = getState<Focus>(sql, "focus");
+  return f && f.until > now ? f : null;
+}
+
+/** Pushes for things that could wait, sent so far today in the owner's time zone. */
+export function interruptionsToday(sql: Sql, tz: string, now = new Date()): number {
+  return sql
+    .exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM log WHERE kind = 'delivery' AND at >= ? AND json_extract(body, '$.channel') = 'push'
+         AND json_extract(body, '$.ok') = 1 AND json_extract(body, '$.to') IS NOT NULL AND json_extract(body, '$.urgency') = 'normal'`,
+      startOfLocalDay(now, tz).getTime(),
+    )
+    .one().n;
+}
+
+/** "now" goes out at once; "normal" waits for quiet hours and focus to end, and counts against the day's budget (§14). */
 export type Urgency = "now" | "normal";
 
 export interface Delivery {
@@ -165,19 +188,38 @@ export class Outbox {
   async notify(row: Note, urgency: Urgency, extra?: Record<string, unknown>): Promise<void> {
     const settings = readSettings(this.sql);
     if (!settings.notifications.push || !pushDevices(this.sql).length) return;
-    const until = urgency === "now" ? null : quietUntil(new Date(), zoneOf(settings), settings.notifications.quiet);
+    const tz = zoneOf(settings);
+    const quiet = urgency === "now" ? null : quietUntil(new Date(), tz, settings.notifications.quiet);
+    const focus = urgency === "now" ? null : focusNow(this.sql);
+    const until = Math.max(quiet?.getTime() ?? 0, focus?.until ?? 0);
     if (until) {
-      await this.channels.hold(until, row);
+      const why = quiet && quiet.getTime() >= until ? "quiet hours" : `focus${focus!.about ? ` (${focus!.about})` : ""}`;
+      await this.channels.hold(new Date(until), row);
       this.receipt(row.run_id, {
         of: [row.id],
         channel: "push",
         ok: true,
-        held_until: until.getTime(),
-        note: `Held for quiet hours, until ${shortLocal(until, zoneOf(settings))}.`,
+        held_until: until,
+        note: `Held for ${why}, until ${shortLocal(new Date(until), tz)}.`,
       });
       return;
     }
+    if (urgency === "normal" && this.#overBudget([row])) return;
     await this.push([row], urgency, { extra });
+  }
+
+  /** Past the day's budget, something that can wait doesn't push: it waits in the app, and the receipt says so. */
+  #overBudget(rows: Note[]): boolean {
+    const settings = readSettings(this.sql);
+    const budget = settings.notifications.budget;
+    if (!budget || interruptionsToday(this.sql, zoneOf(settings)) < budget) return false;
+    this.receipt(rows[0]!.run_id, {
+      of: rows.map((r) => r.id),
+      channel: "push",
+      ok: true,
+      note: `Not sent: today's ${budget} interruptions are used. It waits in the app.`,
+    });
+    return true;
   }
 
   /** Notifications held through quiet hours: one push for all of them, unless the owner has opened Atlas since. */
@@ -187,6 +229,7 @@ export class Outbox {
       this.receipt(rows[0]!.run_id, { of: rows.map((r) => r.id), channel: "push", ok: true, note: "Not sent: you had Atlas open." });
       return;
     }
+    if (this.#overBudget(rows)) return;
     await this.push(rows, "normal");
   }
 
@@ -228,7 +271,7 @@ export class Outbox {
         ttl: 24 * 3600,
       });
       if (out.ok) {
-        this.receipt(first.run_id, { of: rows.map((r) => r.id), channel: "push", to: d.name, ok: true });
+        this.receipt(first.run_id, { of: rows.map((r) => r.id), channel: "push", to: d.name, ok: true, urgency });
         return { ok: true };
       }
       error = out.gone ? `${out.error}. That device stopped taking notifications, so Atlas forgot it.` : (out.error ?? "It failed.");
@@ -238,7 +281,7 @@ export class Outbox {
           "push_devices",
           pushDevices(this.sql).filter((x) => x.id !== d.id),
         );
-      this.receipt(first.run_id, { of: rows.map((r) => r.id), channel: "push", to: d.name, ok: false, error });
+      this.receipt(first.run_id, { of: rows.map((r) => r.id), channel: "push", to: d.name, ok: false, error, urgency });
       console.error(JSON.stringify({ at: "push", device: d.name, status: out.status, error }));
     }
     return { ok: false, error };

@@ -858,6 +858,75 @@ function Notifications({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
           when quiet hours end. Times are in {view.settings.timezone || "UTC"}.
         </p>
       </Row>
+      <Row label="Focus">
+        {view.focus ? (
+          <>
+            <p className="small">
+              Focusing{view.focus.about ? ` on ${view.focus.about}` : ""} until {shortDay(view.focus.until)}. Notifications that can wait
+              are held until then.
+            </p>
+            <div className="row">
+              <button className="btn" onClick={() => atlas.send({ type: "atlas.focus", minutes: 0 })}>
+                End focus
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="row">
+            {[30, 60, 120, 240].map((m) => (
+              <button key={m} className="btn sm" onClick={() => atlas.send({ type: "atlas.focus", minutes: m })}>
+                {m < 60 ? `${m} min` : `${m / 60} h`}
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="muted small">Like quiet hours, for a while. You can also say "focus for 45 minutes" to Atlas.</p>
+      </Row>
+      <Row label="Interruption budget">
+        <div className="row">
+          <select
+            value={draft.notifications.budget}
+            style={{ width: 200 }}
+            onChange={(e) => edit({ notifications: { ...draft.notifications, budget: Number(e.target.value) } })}
+          >
+            {[3, 5, 10, 20, 50].map((n) => (
+              <option key={n} value={n}>
+                {n} a day
+              </option>
+            ))}
+            <option value={0}>No limit</option>
+          </select>
+          <span className="faint small">{view.push.today} used today</span>
+        </div>
+        <p className="muted small">
+          Notifications for things that could wait, each day. Past it, they wait in the app. Reminders you set and answers to what you asked
+          don't count.
+        </p>
+      </Row>
+      <Row label="By urgency">
+        <div className="rows">
+          <div className="r small">
+            <span style={{ width: 90, flex: "none", fontWeight: 500 }}>Now</span>
+            <span className="grow muted">
+              Reminders you set, answers to what you asked, your routines on their times. A notification at once, through quiet hours and
+              focus.
+            </span>
+          </div>
+          <div className="r small">
+            <span style={{ width: 90, flex: "none", fontWeight: 500 }}>Can wait</span>
+            <span className="grow muted">
+              Job reports, watches, failures, approvals. A notification unless quiet hours or focus hold it, or the day's budget is used.
+            </span>
+          </div>
+          <div className="r small">
+            <span style={{ width: 90, flex: "none", fontWeight: 500 }}>Never</span>
+            <span className="grow muted">Automations that report only to History, and Inbox items. They wait for you to look.</span>
+          </div>
+        </div>
+        <p className="muted small">
+          Either way, one channel: the app when it's open in front of you, a call if you're in one, or else one device.
+        </p>
+      </Row>
     </>
   );
 }

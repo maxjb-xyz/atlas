@@ -7,6 +7,8 @@ import type { AutomationView, ServerMessage } from "../src/protocol";
 import { migrate, type Sql } from "../src/store/db";
 import { append, type LogRow } from "../src/store/log";
 import { indexNewMessages } from "../src/store/memory";
+import { seedRoutines } from "../src/routines";
+import { noticeAsk, openSuggestions, settleSuggestion } from "../src/suggestions";
 import { call, env, fakeCalendar, fakeEmbedder, say, scripted, SECRET, type Step } from "./helpers";
 
 const ORIGIN = "http://atlas.test";
@@ -231,7 +233,7 @@ describe("automations", () => {
     await hook(s);
     const b = brain([
       call("automation_save", {
-        name: "Morning brief",
+        name: "Weekday brief",
         when: { kind: "schedule", at: "08:00", days: [1, 2, 3, 4, 5] },
         do: [
           { kind: "atlas", instructions: "Look at today's calendar and reminders and give a three-line brief." },
@@ -242,13 +244,13 @@ describe("automations", () => {
     ]);
     const made = await turn(s, "every weekday at 8, give me a short brief");
     expect(made.thread.find((r) => r.kind === "tool.result")!.body.receipt).toMatchObject({
-      text: "Made automation · Morning brief · paused until you've seen a test run",
+      text: "Made automation · Weekday brief · paused until you've seen a test run",
       view: { kind: "automation" },
     });
     expect(b.requests[0]!.tools.map((x) => x.name)).toEqual(
       expect.arrayContaining(["automation_save", "automation_test", "automation_set"]),
     );
-    let v = await view(s, "Morning brief");
+    let v = await view(s, "Weekday brief");
     expect(v).toMatchObject({ state: "paused", made_by: "atlas", can_turn_on: false, next_at: null, when_text: "At 08:00, weekdays" });
 
     // Not before a test run.
@@ -257,7 +259,7 @@ describe("automations", () => {
 
     const test = brain([say("Two meetings today, nothing urgent.")]);
     s.send({ type: "atlas.automation.run", id: v.id, test: true });
-    v = await view(s, "Morning brief", (a) => a.tested_at != null);
+    v = await view(s, "Weekday brief", (a) => a.tested_at != null);
     expect(v.runs[0]).toMatchObject({ test: true, ok: true, text: "Two meetings today, nothing urgent." });
     expect(v.runs[0]!.results[1]).toMatchObject({ ok: true, text: "Would call Lights off." });
     expect(fetched).toEqual([]); // a test sends nothing
@@ -265,7 +267,7 @@ describe("automations", () => {
     expect(String(test.requests[0]!.messages.filter((m) => m.role === "user").at(-1)!.content)).toContain("This is a test run");
 
     s.send({ type: "atlas.automation.set", id: v.id, on: true });
-    v = await view(s, "Morning brief", (a) => a.state === "on" && a.next_at != null);
+    v = await view(s, "Weekday brief", (a) => a.state === "on" && a.next_at != null);
     expect(new Date(v.next_at!).getUTCMinutes()).toBe(0);
 
     // The clock wakes it: it runs, reports in the thread, calls the webhook it was allowed, and is set for next time.
@@ -418,7 +420,7 @@ describe("automations", () => {
         {
           name: "After pack up",
           about: "",
-          when: { kind: "event", after: first.id },
+          when: { kind: "event", on: "automation", after: first.id },
           do: [{ kind: "atlas", instructions: "Say what the first one said." }],
           report: "thread",
         },
@@ -435,4 +437,106 @@ describe("automations", () => {
     expect(await inOwner((_a, sql) => getAutomation(sql, ids.then)!.fails)).toBe(0);
     s.close();
   });
+
+  it("include the default routines, made once and on, each with its next run on the clock", async () => {
+    const s = await connect();
+    const brief = await view(s, "Morning brief");
+    expect(brief).toMatchObject({ made_by: "default", state: "on", can_turn_on: true, when: { kind: "schedule", at: "08:00" } });
+    expect(brief.next_at).not.toBeNull();
+    expect((await view(s, "Weekly review")).when).toMatchObject({ kind: "schedule", days: [0] });
+    s.send({ type: "atlas.automation.delete", id: (await view(s, "Evening wrap-up")).id });
+    await s.next("atlas.automations", (m) => !m.automations.some((a) => a.name === "Evening wrap-up"));
+    // Starting again doesn't make a deleted routine again.
+    const again = await inOwner((_a, sql) => seedRoutines(sql));
+    expect(again).toEqual([]);
+    s.close();
+  });
+
+  it("follow the calendar: the first look only remembers, a moved event runs once with the change", async () => {
+    const at = (h: number) => new Date(Date.now() + h * 3600_000).toISOString();
+    const events = [
+      { id: "e1", calendar: "Work", title: "Riverside walkthrough", start: at(30), end: at(31), all_day: false },
+      { id: "e2", calendar: "Home", title: "Dentist", start: at(50), end: at(51), all_day: false },
+    ];
+    let current = events;
+    seams.calendar = {
+      async list() {
+        return current;
+      },
+      async check() {
+        return { calendars: ["Work"], events_next_30_days: current.length };
+      },
+    };
+    const s = await connect();
+    const id = await save(s, {
+      name: "Riverside changes",
+      about: "",
+      when: { kind: "event", on: "calendar", about: "riverside" },
+      do: [{ kind: "say", text: "Riverside moved." }],
+      report: "thread",
+    });
+    const wake = () =>
+      inOwner(async (agent, sql) => {
+        const item = sql
+          .exec<{ id: string }>(
+            `SELECT id FROM agenda WHERE kind = 'automation' AND state = 'scheduled' AND json_extract(source, '$.detail.automation') = ?`,
+            id,
+          )
+          .one().id;
+        sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1000, item);
+        await agent.onAgendaDue({ id: item });
+      });
+    await wake();
+    const moved = { ...events[0]!, start: at(32), end: at(33) };
+    current = [moved, { ...events[1]!, start: at(52), end: at(53) }];
+    await wake();
+    await wake();
+    current = [moved];
+    await wake();
+    const all = await inOwner((_a, sql) => runs(sql, id));
+    expect(all.map((r) => (r.quiet ? "quiet" : "ran"))).toEqual(["quiet", "ran", "quiet", "quiet"]);
+    expect(String(all[0]!.text)).toContain("First look");
+    expect(all[1]).toMatchObject({ why: "calendar", ok: true, text: "Riverside moved." });
+    // Only the Riverside event counts: the dentist moving, then going, isn't about it.
+    expect(String(all[3]!.text)).toContain('Nothing about "riverside" changed');
+    s.close();
+  });
+
+  it("are suggested after the same ask three times, an hour or more apart, and not again once set aside", () =>
+    runInDurableObject(env.PersonAgent.get(env.PersonAgent.idFromName(`s-${crypto.randomUUID()}`)), (_a, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      const ask = (text: string, hoursAgo: number) => {
+        const row = append(sql, { actor: "owner", kind: "message.in", surface: "app", body: { text } });
+        sql.exec(`UPDATE log SET at = ? WHERE id = ?`, Date.now() - hoursAgo * 3600_000, row.id);
+        return noticeAsk(sql, text);
+      };
+      expect(ask("Send me the shoot gear checklist", 50)).toBe(false);
+      // A retry a few minutes later counts as the same time.
+      expect(ask("send me the shoot gear checklist please", 49.9)).toBe(false);
+      expect(ask("What's the weather", 30)).toBe(false);
+      expect(ask("shoot gear checklist", 26)).toBe(false);
+      expect(ask("the shoot gear checklists?", 0)).toBe(true);
+      expect(openSuggestions(sql)).toMatchObject([{ said: "the shoot gear checklists?", times: 3 }]);
+      // Once more updates the same suggestion.
+      expect(ask("shoot gear checklist again", 0)).toBe(true);
+      expect(openSuggestions(sql)).toHaveLength(1);
+      settleSuggestion(sql, openSuggestions(sql)[0]!.id, "dismissed");
+      expect(ask("shoot gear checklist", 0)).toBe(false);
+      expect(openSuggestions(sql)).toEqual([]);
+      // Something an automation already does isn't suggested.
+      saveAutomation(
+        sql,
+        {
+          name: "Weather",
+          about: "",
+          when: { kind: "request", phrase: "weather forecast" },
+          do: [{ kind: "say", text: "x" }],
+          report: "thread",
+        },
+        "owner",
+      );
+      for (const h of [80, 60, 0]) ask("weather forecast today", h);
+      expect(openSuggestions(sql)).toEqual([]);
+    }));
 });

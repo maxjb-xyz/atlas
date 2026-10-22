@@ -168,6 +168,7 @@ const MIGRATIONS: string[] = [
     report TEXT NOT NULL DEFAULT 'thread',
     state TEXT NOT NULL DEFAULT 'paused',
     made_by TEXT NOT NULL,
+    changed_by TEXT NOT NULL DEFAULT 'owner',
     allowed TEXT NOT NULL DEFAULT '[]',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,

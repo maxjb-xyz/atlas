@@ -38,6 +38,7 @@ function headLine(a: AutomationView): string {
   if (t.kind === "schedule") return a.when_text.replace(/^At (\S+), (.*)$/, "$2 · $1");
   if (t.kind === "watch") return `Watching ${new URL(t.url).host}`;
   if (t.kind === "absence") return `No "${t.nothing_about}" in ${t.for_days} days`;
+  if (t.on === "calendar") return t.about ? `Calendar · "${t.about}"` : "Calendar changes";
   return "After another automation";
 }
 
@@ -54,6 +55,9 @@ export function Automations({ atlas, detail, go }: { atlas: Atlas; detail: strin
   const runsToday = all.flatMap((a) => a.runs).filter((r) => r.at >= today && !r.test && !r.quiet);
   const count = (f: Filter) => all.filter((a) => kindOf(a.when) === f).length || null;
   const shown = all.filter((a) => filter === "all" || kindOf(a.when) === filter);
+  // Make it on a suggestion opens the form filled in from what the owner asked.
+  const [draft, setDraft] = useState<{ from: string; input: AutomationInput } | null>(null);
+  const suggestions = atlas.state.suggestions;
 
   return (
     <Stage
@@ -80,7 +84,16 @@ export function Automations({ atlas, detail, go }: { atlas: Atlas; detail: strin
       <Sheet>
         <div className="sheet-in">
           {editing ? (
-            <AutomationForm atlas={atlas} a={editing === "new" ? null : editing} done={(id) => go(id ? `a:${id}` : "")} />
+            <AutomationForm
+              atlas={atlas}
+              a={editing === "new" ? null : editing}
+              start={editing === "new" ? draft?.input : undefined}
+              done={(id, saved) => {
+                if (saved && editing === "new" && draft) atlas.send({ type: "atlas.suggestion.set", id: draft.from, state: "made" });
+                setDraft(null);
+                go(id ? `a:${id}` : "");
+              }}
+            />
           ) : open ? (
             <>
               <button className="link small" onClick={() => go("")} style={{ marginBottom: 14 }}>
@@ -91,28 +104,56 @@ export function Automations({ atlas, detail, go }: { atlas: Atlas; detail: strin
           ) : list == null ? (
             <p className="lab">Looking</p>
           ) : (
-            <div className="auto-grid">
-              {shown.map((a) => (
-                <AutomationCard key={a.id} atlas={atlas} a={a} open={() => go(`a:${a.id}`)} />
-              ))}
-              <button className="auto-card new" onClick={() => go("new")}>
-                <span className="icon" aria-hidden>
-                  <Icon name="plus" />
-                </span>
-                <span className="disp" style={{ fontSize: 18 }}>
-                  New automation
-                </span>
-                <span className="muted small">Describe it to Atlas below, or build it here.</span>
-              </button>
-              {!all.length && (
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <Empty title="No automations yet">
-                    Say "every weekday at 8, give me a short brief", or "when I say goodnight, turn off the lights". Atlas fills it in, and
-                    you see a test run before it runs on its own.
-                  </Empty>
-                </div>
-              )}
-            </div>
+            <>
+              {filter === "all" &&
+                suggestions.map((sg) => (
+                  <div key={sg.id} className="panel suggest">
+                    <span className="lab">Suggestion · asked {sg.times} times</span>
+                    <p style={{ margin: "6px 0 10px" }}>
+                      You've asked for "{sg.said}" {sg.times} times. Make it an automation, so it's one word or a time away?
+                    </p>
+                    <div className="row">
+                      <button
+                        className="btn primary sm"
+                        onClick={() => {
+                          setDraft({ from: sg.id, input: fromSuggestion(sg.said) });
+                          go("new");
+                        }}
+                      >
+                        Make it
+                      </button>
+                      <button
+                        className="btn sm"
+                        onClick={() => atlas.send({ type: "atlas.suggestion.set", id: sg.id, state: "dismissed" })}
+                      >
+                        Not this one
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              <div className="auto-grid">
+                {shown.map((a) => (
+                  <AutomationCard key={a.id} atlas={atlas} a={a} open={() => go(`a:${a.id}`)} />
+                ))}
+                <button className="auto-card new" onClick={() => go("new")}>
+                  <span className="icon" aria-hidden>
+                    <Icon name="plus" />
+                  </span>
+                  <span className="disp" style={{ fontSize: 18 }}>
+                    New automation
+                  </span>
+                  <span className="muted small">Describe it to Atlas below, or build it here.</span>
+                </button>
+                {!all.length && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <Empty title="No automations yet">
+                      Say "every weekday at 8, give me a short brief", or "when I say goodnight, turn off the lights". Atlas fills it in,
+                      and you see a test run before it runs on its own.
+                    </Empty>
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       </Sheet>
@@ -142,7 +183,7 @@ function RunStrip({ a }: { a: AutomationView }) {
 function AutomationCard({ atlas, a, open }: { atlas: Atlas; a: AutomationView; open: () => void }) {
   const last = a.runs.find((r) => !r.quiet);
   const powers = new Set(a.steps.filter((s) => s.step.kind === "webhook").map((s) => (s.step as { webhook: string }).webhook)).size;
-  const asks = a.made_by === "atlas" && !a.can_turn_on;
+  const asks = !a.can_turn_on;
   return (
     <div className="auto-card">
       <button className="body" onClick={open}>
@@ -217,7 +258,7 @@ export function AutomationFlow({
   const webhooksUsed = [...new Set(a.steps.filter((s) => s.step.kind === "webhook").map((s) => (s.step as { webhook: string }).webhook))];
   const test = a.runs.find((r) => r.test);
   const real = a.runs.filter((r) => !r.test);
-  const needsTest = a.made_by === "atlas" && !a.can_turn_on;
+  const needsTest = !a.can_turn_on;
   return (
     <div className="flow-view">
       <div className="row" style={{ gap: 10, marginBottom: 6 }}>
@@ -283,7 +324,8 @@ export function AutomationFlow({
       {a.paused_why && <p className="err small">Paused itself. {a.paused_why}</p>}
       {needsTest && (
         <p className="small" style={{ color: "var(--ac)" }}>
-          Atlas made this, so it stays paused until you've seen a test run. A test run uses real data and sends nothing.
+          Atlas {a.made_by === "atlas" ? "made" : "changed"} this, so it stays paused until you've seen a test run. A test run uses real
+          data and sends nothing.
         </p>
       )}
 
@@ -292,7 +334,15 @@ export function AutomationFlow({
           <span className="lab">When</span>
           <div className="flow-item">
             <span className="lab faint">
-              {{ request: "On request", schedule: "Schedule", watch: "Watch", absence: "Absence", event: "Event" }[a.when.kind]}
+              {
+                {
+                  request: "On request",
+                  schedule: "Schedule",
+                  watch: "Watch",
+                  absence: "Absence",
+                  event: a.when.kind === "event" && a.when.on === "calendar" ? "Calendar" : "Event",
+                }[a.when.kind]
+              }
             </span>
             <span>{a.when_text}</span>
           </div>
@@ -362,7 +412,11 @@ export function AutomationFlow({
             Made
           </span>
           <p className="small" style={{ marginTop: 6 }}>
-            {a.made_by === "owner" ? "By you, in the form." : "By Atlas, from what you said."}
+            {a.made_by === "owner"
+              ? "By you, in the form."
+              : a.made_by === "default"
+                ? "One of Atlas's default routines. Change it, pause it or delete it as you like."
+                : "By Atlas, from what you said."}
           </p>
           {onDeleted && (
             <p className="small" style={{ marginTop: 14 }}>
@@ -426,24 +480,52 @@ export function AutomationFlow({
 
 const DAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
-const blankTrigger = (kind: Trigger["kind"]): Trigger =>
-  kind === "request"
-    ? { kind, phrase: "" }
-    : kind === "schedule"
-      ? { kind, at: "08:00", days: [1, 2, 3, 4, 5] }
-      : kind === "watch"
-        ? { kind, url: "https://", every_hours: 6, matters: "" }
-        : kind === "absence"
-          ? { kind, nothing_about: "", for_days: 3, at: "20:00" }
-          : { kind, after: "" };
+/** The form's trigger choices: the five kinds, with events split into another automation and the calendar. */
+type Choice = Exclude<Trigger["kind"], "event"> | "after" | "calendar";
+const choiceOf = (t: Trigger): Choice => (t.kind === "event" ? (t.on === "calendar" ? "calendar" : "after") : t.kind);
 
-function AutomationForm({ atlas, a, done }: { atlas: Atlas; a: AutomationView | null; done: (id?: string) => void }) {
+const blankTrigger = (kind: Choice): Trigger =>
+  kind === "calendar"
+    ? { kind: "event", on: "calendar", about: "" }
+    : kind === "after"
+      ? { kind: "event", on: "automation", after: "" }
+      : kind === "request"
+        ? { kind, phrase: "" }
+        : kind === "schedule"
+          ? { kind, at: "08:00", days: [1, 2, 3, 4, 5] }
+          : kind === "watch"
+            ? { kind, url: "https://", every_hours: 6, matters: "" }
+            : { kind, nothing_about: "", for_days: 3, at: "20:00" };
+
+/** A suggestion as a first draft: on request, with the owner's own words as its phrase and as Atlas's note. */
+function fromSuggestion(said: string): AutomationInput {
+  const words = said.replace(/[?.!]+$/, "").trim();
+  return {
+    name: (words.charAt(0).toUpperCase() + words.slice(1)).slice(0, 60),
+    about: "",
+    when: { kind: "request", phrase: words.toLowerCase().slice(0, 80) },
+    do: [{ kind: "atlas", instructions: `The owner asked: "${words}". Do that, the way you have before.` }],
+    report: "thread",
+  };
+}
+
+function AutomationForm({
+  atlas,
+  a,
+  start,
+  done,
+}: {
+  atlas: Atlas;
+  a: AutomationView | null;
+  start?: AutomationInput;
+  done: (id?: string, saved?: boolean) => void;
+}) {
   const others = (atlas.state.automations ?? []).filter((x) => x.id !== a?.id);
   const webhooks = atlas.state.view?.webhooks ?? [];
   const [f, setF] = useState<AutomationInput>(() =>
     a
       ? { name: a.name, about: a.about, when: a.when, do: a.steps.map((s) => s.step), report: a.report }
-      : { name: "", about: "", when: blankTrigger("request"), do: [{ kind: "say", text: "" }], report: "thread" },
+      : (start ?? { name: "", about: "", when: blankTrigger("request"), do: [{ kind: "say", text: "" }], report: "thread" }),
   );
   const t = f.when;
   const setT = (p: Partial<Trigger>) => setF({ ...f, when: { ...t, ...p } as Trigger });
@@ -456,13 +538,18 @@ function AutomationForm({ atlas, a, done }: { atlas: Atlas; a: AutomationView | 
         ? "A watch needs an https address and what change matters."
         : t.kind === "absence" && !t.nothing_about.trim()
           ? "Say what words would show it happened."
-          : t.kind === "event" && !t.after
+          : t.kind === "event" && t.on === "automation" && !t.after
             ? "Pick the automation it runs after."
             : null;
   const clean = (): AutomationInput => ({
     ...f,
     name: f.name.trim(),
-    when: t.kind === "request" ? { kind: "request", ...(t.phrase?.trim() ? { phrase: t.phrase.trim() } : {}) } : t,
+    when:
+      t.kind === "request"
+        ? { kind: "request", ...(t.phrase?.trim() ? { phrase: t.phrase.trim() } : {}) }
+        : t.kind === "event" && t.on === "calendar"
+          ? { kind: "event", on: "calendar", ...(t.about?.trim() ? { about: t.about.trim() } : {}) }
+          : t,
   });
   return (
     <form
@@ -471,7 +558,7 @@ function AutomationForm({ atlas, a, done }: { atlas: Atlas; a: AutomationView | 
         e.preventDefault();
         if (problem) return;
         atlas.send({ type: "atlas.automation.save", ...(a ? { id: a.id } : {}), automation: clean() });
-        done(a?.id);
+        done(a?.id, true);
       }}
     >
       <div className="sheet-title">
@@ -494,11 +581,11 @@ function AutomationForm({ atlas, a, done }: { atlas: Atlas; a: AutomationView | 
 
       <span className="lab">When</span>
       <div className="row" style={{ gap: 6 }}>
-        {(["request", "schedule", "watch", "absence", "event"] as const).map((k) => (
+        {(["request", "schedule", "watch", "absence", "calendar", "after"] as const).map((k) => (
           <button
             type="button"
             key={k}
-            className={`btn sm ${t.kind === k ? "on" : ""}`}
+            className={`btn sm ${choiceOf(t) === k ? "on" : ""}`}
             onClick={() => setF({ ...f, when: blankTrigger(k) })}
           >
             {
@@ -507,7 +594,8 @@ function AutomationForm({ atlas, a, done }: { atlas: Atlas; a: AutomationView | 
                 schedule: "On a schedule",
                 watch: "Watch a page",
                 absence: "When something doesn't happen",
-                event: "After another",
+                calendar: "When the calendar changes",
+                after: "After another",
               }[k]
             }
           </button>
@@ -595,8 +683,20 @@ function AutomationForm({ atlas, a, done }: { atlas: Atlas; a: AutomationView | 
           </label>
         </div>
       )}
-      {t.kind === "event" && (
-        <select value={t.after} onChange={(e) => setT({ after: e.target.value })}>
+      {t.kind === "event" && t.on === "calendar" && (
+        <label className="field">
+          <span>Only events about (optional)</span>
+          <input
+            value={t.about ?? ""}
+            maxLength={120}
+            placeholder="Riverside, or leave empty for any change"
+            onChange={(e) => setT({ about: e.target.value })}
+          />
+          <span className="faint small">Atlas reads the next two weeks every half hour, and runs this once for each change it finds.</span>
+        </label>
+      )}
+      {t.kind === "event" && t.on === "automation" && (
+        <select value={t.after ?? ""} onChange={(e) => setT({ after: e.target.value })}>
           <option value="">After which automation?</option>
           {others.map((o) => (
             <option key={o.id} value={o.id}>

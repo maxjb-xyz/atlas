@@ -9,6 +9,7 @@ import { append, type LogRow } from "../src/store/log";
 import { readSettings, setSecret, writeSettings } from "../src/store/settings";
 import { setState } from "../src/store/state";
 import { quietUntil } from "../src/time";
+import { setFocus } from "../src/tools/focus";
 import { env } from "./helpers";
 
 async function withSql<T>(fn: (sql: Sql) => Promise<T> | T): Promise<T> {
@@ -142,7 +143,7 @@ describe("push notifications", () => {
       const net = fakeNet();
       await outbox(sql, net.f, { looking: true }).box.deliver({ text: "a", run_id: null, channel: "app" }, { alreadyStreamed: false });
       await outbox(sql, net.f, { inCall: true }).box.deliver({ text: "b", run_id: null, channel: "app" }, { alreadyStreamed: false });
-      writeSettings(sql, { notifications: { push: false, quiet: readSettings(sql).notifications.quiet } });
+      writeSettings(sql, { notifications: { push: false, quiet: readSettings(sql).notifications.quiet, budget: 10 } });
       await outbox(sql, net.f).box.deliver({ text: "c", run_id: null, channel: "app" }, { alreadyStreamed: false });
       expect(net.calls).toEqual([]);
     }));
@@ -155,7 +156,11 @@ describe("push notifications", () => {
       const hhmm = (ms: number) => new Date(ms).toISOString().slice(11, 16);
       writeSettings(sql, {
         timezone: "UTC",
-        notifications: { push: true, quiet: { on: true, from: hhmm(Date.now() - 3_600_000), to: hhmm(Date.now() + 3_600_000) } },
+        notifications: {
+          push: true,
+          quiet: { on: true, from: hhmm(Date.now() - 3_600_000), to: hhmm(Date.now() + 3_600_000) },
+          budget: 10,
+        },
       });
       const net = fakeNet();
       const { box, held, shown } = outbox(sql, net.f);
@@ -192,6 +197,52 @@ describe("push notifications", () => {
             "fcm.googleapis.com answered 410: push subscription has unsubscribed or expired.. That device stopped taking notifications, so Atlas forgot it.",
         }),
         expect.objectContaining({ to: "Phone laptop", ok: true }),
+      ]);
+    }));
+});
+
+describe("focus and the budget", () => {
+  it("focus holds what can wait until it ends, and ending it early lets it out", () =>
+    withSql(async (sql) => {
+      const phone = await fakeBrowser();
+      setState(sql, "push_devices", [device("phone", phone.sub, 1)]);
+      const scheduled: string[] = [];
+      const clock = { schedule: async (i: { id: string }) => void scheduled.push(i.id), unschedule: async () => {} };
+      await setFocus(sql, clock, 45, "the quote", "owner");
+      const net = fakeNet();
+      const { box, held, shown } = outbox(sql, net.f);
+      await box.deliver({ text: "Your job finished.", run_id: null, channel: "app", urgency: "normal" }, { alreadyStreamed: false });
+      await box.deliver({ text: "Call the landlord.", run_id: null, channel: "app", urgency: "now" }, { alreadyStreamed: false });
+      expect(net.calls).toHaveLength(1);
+      expect(held).toHaveLength(1);
+      expect(String(receipts(shown)[0]!.note)).toContain("Held for focus (the quote)");
+      // The agent's hold puts it on the clock; ending focus brings that item forward.
+      const item = createItem(sql, {
+        kind: "notify",
+        title: "Your job finished.",
+        due_at: held[0]!.at.getTime(),
+        source: { via: "outbox" },
+      });
+      await setFocus(sql, clock, 0, "", "owner");
+      expect(scheduled).toEqual([item.id]);
+    }));
+
+  it("past the day's budget, what can wait stays in the app", () =>
+    withSql(async (sql) => {
+      const phone = await fakeBrowser();
+      setState(sql, "push_devices", [device("phone", phone.sub, 1)]);
+      writeSettings(sql, { notifications: { ...readSettings(sql).notifications, budget: 2 } });
+      const net = fakeNet();
+      const { box, shown } = outbox(sql, net.f);
+      for (const text of ["one", "two", "three"])
+        await box.deliver({ text, run_id: null, channel: "app", urgency: "normal" }, { alreadyStreamed: false });
+      await box.deliver({ text: "A reminder you set.", run_id: null, channel: "app", urgency: "now" }, { alreadyStreamed: false });
+      expect(net.calls).toHaveLength(3);
+      expect(receipts(shown).map((r) => r.note ?? r.urgency)).toEqual([
+        "normal",
+        "normal",
+        "Not sent: today's 2 interruptions are used. It waits in the app.",
+        "now",
       ]);
     }));
 });

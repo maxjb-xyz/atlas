@@ -100,7 +100,7 @@ export interface AutomationView {
   name: string;
   about: string;
   state: "on" | "paused";
-  made_by: "owner" | "atlas";
+  made_by: import("./automations").Maker;
   when: import("./automations").Trigger;
   when_text: string;
   steps: Array<{ step: import("./automations").Step; text: string }>;

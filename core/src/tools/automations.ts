@@ -9,6 +9,7 @@ import {
   findAutomation,
   getAutomation,
   listAutomations,
+  needsTest,
   saveAutomation,
   setAutomationState,
   stepText,
@@ -25,7 +26,7 @@ export const automationSave = defineTool({
   description: [
     "Make an automation, or change one (pass its id): when it runs, what it does, and where it reports.",
     "Use it when the owner asks for something to happen on its own or on request: 'every weekday at 8, give me a short brief', 'when I say goodnight, turn off the lights', 'tell me if I haven't logged a workout in 3 days', 'watch this page for a price drop'.",
-    "`when`: request (a phrase, with $inputs, or just the Run button), schedule (a local time and days, 0 for Sunday to 6 for Saturday; empty for every day), watch (a page, how often, and what change matters), absence (words that would show something happened, how many days without them, and when to check), or event (after another automation's id).",
+    "`when`: request (a phrase, with $inputs, or just the Run button), schedule (a local time and days, 0 for Sunday to 6 for Saturday; empty for every day), watch (a page, how often, and what change matters), absence (words that would show something happened, how many days without them, and when to check), or event (after another automation's id, or when the calendar changes, optionally only for events about some words).",
     "`do` is a list of steps: say (fixed words, sent as written), webhook (one of the owner's webhooks by name), or atlas (your own note for that moment, for anything that needs looking up or judgment). Use fixed steps when nothing needs judgment: they run fast, with no model.",
     "What you make starts paused, and a change you make pauses it, until the owner has seen a test run: offer to run one with automation_test.",
   ].join(" "),
@@ -40,8 +41,10 @@ export const automationSave = defineTool({
         );
       }
     }
-    if (input.when.kind === "event" && !getAutomation(ctx.sql, input.when.after))
-      return fail(`There's no automation with id ${input.when.after} to run after.`);
+    if (input.when.kind === "event" && input.when.on === "automation" && !getAutomation(ctx.sql, input.when.after ?? ""))
+      return fail(`There's no automation with id ${input.when.after ?? "(none given)"} to run after.`);
+    if (input.when.kind === "event" && input.when.on === "calendar" && !ctx.calendar)
+      return fail("The calendar isn't connected, so nothing can follow its changes yet. The owner connects it in Settings → Connections.");
     const { id, ...rest } = input;
     let saved;
     try {
@@ -157,7 +160,7 @@ export const automationList = defineTool({
           when: whenText(a.when, names(ctx.sql)),
           do: a.do.map(stepText),
           report: a.report,
-          ...(a.made_by === "atlas" && !a.tested_at ? { needs: "a test run before it can be turned on" } : {}),
+          ...(needsTest(a) ? { needs: "a test run before it can be turned on" } : {}),
         })),
       },
     };
