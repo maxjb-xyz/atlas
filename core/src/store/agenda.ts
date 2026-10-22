@@ -68,7 +68,7 @@ export function getItem(sql: Sql, id: string): AgendaItem | null {
   return r ? fromRaw(r) : null;
 }
 
-export function upcoming(sql: Sql, limit = 50): AgendaItem[] {
+export function upcoming(sql: Sql, limit = 100): AgendaItem[] {
   return sql
     .exec<RawItem>(`SELECT * FROM agenda WHERE state IN ('scheduled', 'running') ORDER BY due_at LIMIT ?`, limit)
     .toArray()

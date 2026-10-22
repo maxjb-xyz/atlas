@@ -312,6 +312,8 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
     "page.change",
     "file.change",
     "skill.change",
+    "sense",
+    "awareness",
   ],
   actions: [
     "tool.result",

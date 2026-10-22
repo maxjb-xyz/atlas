@@ -342,3 +342,31 @@ export function useRoute(): [Place, string, (p: Place, detail?: string) => void]
   };
   return [route[0], route[1], go];
 }
+
+// --- QR codes ------------------------------------------------------------------------------
+
+/** A QR code for a link, drawn in the theme's colours on a light square so any camera reads it. */
+export function QrCode({ text, size = 200 }: { text: string; size?: number }) {
+  const [cells, setCells] = useState<boolean[][] | null>(null);
+  useEffect(() => {
+    let gone = false;
+    void import("qrcode-generator").then(({ default: qrcode }) => {
+      const qr = qrcode(0, "M");
+      qr.addData(text);
+      qr.make();
+      const n = qr.getModuleCount();
+      if (!gone) setCells(Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => qr.isDark(r, c))));
+    });
+    return () => {
+      gone = true;
+    };
+  }, [text]);
+  if (!cells) return <div style={{ width: size, height: size }} />;
+  const n = cells.length + 4;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${n} ${n}`} role="img" aria-label="QR code" style={{ borderRadius: 8 }}>
+      <rect width={n} height={n} fill="#ffffff" />
+      <path fill="#191817" d={cells.flatMap((row, r) => row.map((dark, c) => (dark ? `M${c + 2} ${r + 2}h1v1h-1z` : ""))).join("")} />
+    </svg>
+  );
+}

@@ -8,6 +8,9 @@ import { Markdown } from "../Markdown";
 import { Composer, compose } from "../Shell";
 import { addDays, AreaChip, clock, dayName, Empty, pressable, Sheet, shortDay, Stage, startOfDay } from "../ui";
 import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
+import { KINDS } from "../../../core/src/maps";
+
+const KIND_WORDS: Record<string, string> = Object.fromEntries(Object.entries(KINDS).map(([k, v]) => [k, v.words]));
 
 // --- Inbox: everything waiting on you ------------------------------------------------------
 
@@ -192,7 +195,9 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
     ...s.agenda
       // Notifications held for quiet hours are the outbox's, and approvals wait in Inbox: neither is something on your clock.
       .filter(
-        (a) => (a.state === "scheduled" || a.state === "running") && a.kind !== "notify" && a.kind !== "approval" && a.kind !== "skills",
+        (a) =>
+          (a.state === "scheduled" || a.state === "running") &&
+          !["notify", "approval", "skills", "situation", "rhythm", "errand"].includes(a.kind),
       )
       .map((a): AgendaEntry => {
         const d = a.source.detail ?? {};
@@ -208,6 +213,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
         };
       }),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
+  const errands = s.agenda.filter((a) => a.kind === "errand" && a.state === "scheduled").sort((a, b) => a.created_at - b.created_at);
   const strip = Array.from({ length: 7 }, (_, i) => addDays(today, i));
   const key = (d: Date) => startOfDay(d).toDateString();
   const shown = day ? entries.filter((e) => key(e.at) === day) : entries;
@@ -267,7 +273,43 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                 })}
               </div>
               <CalendarNote atlas={atlas} cal={cal} />
-              {!shown.length && (
+              {errands.length > 0 && !day && (
+                <div>
+                  <div className="section-rule">
+                    <span className="lab">Errands · {errands.length}</span>
+                  </div>
+                  <div className="rows">
+                    {errands.map((e) => {
+                      const kind = e.source.detail?.place_kind;
+                      const by = e.due_at < 8_000_000_000_000 ? e.due_at : null;
+                      return (
+                        <div key={e.id} className="r" style={{ flexWrap: "wrap", rowGap: 4 }}>
+                          <span className="tag ac" style={{ width: 84, flex: "none", justifyContent: "center" }}>
+                            ◆ Errand
+                          </span>
+                          <span style={{ flex: "1 1 220px", minWidth: 0 }}>
+                            {e.title}
+                            <span className="faint small" style={{ display: "block", marginTop: 2 }}>
+                              {typeof kind === "string" ? `At ${KIND_WORDS[kind] ?? kind}` : "Anywhere"}
+                              {by ? ` · by ${shortDay(by)}` : ""} · Atlas suggests a stop when you're on the way
+                            </span>
+                          </span>
+                          <button className="link small" onClick={() => atlas.send({ type: "atlas.errand.done", id: e.id, done: true })}>
+                            Done
+                          </button>
+                          <button
+                            className="link small faint"
+                            onClick={() => atlas.send({ type: "atlas.errand.done", id: e.id, done: false })}
+                          >
+                            Drop
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {!shown.length && !errands.length && (
                 <Empty title="Nothing on the clock">Events, reminders, what Atlas promised to do, and its background jobs show here.</Empty>
               )}
               {[...byDay].map(([d, list]) => (

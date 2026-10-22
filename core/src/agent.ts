@@ -520,6 +520,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#refreshVoice();
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
+      case "atlas.errand.done": {
+        const item = getItem(this.#sql, msg.id);
+        if (!item || item.kind !== "errand" || item.state !== "scheduled") {
+          this.#send(connection, { type: "atlas.error", message: "That errand isn't open any more." });
+          return;
+        }
+        await this.#clock.unschedule(item);
+        finish(this.#sql, item.id, msg.done ? "done" : "cancelled", null, { by: "owner" });
+        this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+        return;
+      }
       case "atlas.location.setup": {
         const origin = getState<string>(this.#sql, "origin") ?? new URL(connection.uri ?? "https://atlas.invalid").origin;
         const login = newOwnTracksLogin(this.#sql);
@@ -2213,6 +2224,22 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           return out.ok
             ? { ok: true, message: "Sent. It should show on this device in a moment." }
             : { ok: false, message: out.error ?? "It didn't go." };
+        },
+        maps: async () => {
+          const provider = readSettings(this.#sql).maps.provider;
+          const a = await this.#maps.geocode("Times Square, New York", { run_id: null });
+          if (!a.ok) return { ok: false, message: a.error };
+          const b = await this.#maps.geocode("Grand Central Terminal, New York", { run_id: null });
+          if (!b.ok || !a.value[0] || !b.value[0])
+            return { ok: false, message: b.ok ? "OpenStreetMap's address search found nothing for a well-known place." : b.error };
+          const r = await this.#maps.route([a.value[0], b.value[0]], "drive", { run_id: null, label: "a test route in New York" });
+          if (!r.ok) return { ok: false, message: r.error };
+          const w = await this.#maps.weather(a.value[0], { run_id: null, label: "a test look at the weather" });
+          if (!w.ok) return { ok: false, message: w.error };
+          return {
+            ok: true,
+            message: `${MAPS[provider].name} works: a test route took ${Math.max(1, Math.round(r.value.s / 60))} min${r.value.traffic ? " with traffic" : ""}. Open-Meteo works: ${Math.round(w.value.now.temp_c)}°C there now.`,
+          };
         },
         systemFor: (character) => {
           const settings = readSettings(this.#sql);

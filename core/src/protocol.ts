@@ -231,6 +231,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.push.remove"), device: z.string().min(1).max(64) }),
   /** Focus for a while (§14), or end it with 0 minutes. */
   z.object({ type: z.literal("atlas.focus"), minutes: z.number().int().min(0).max(720), about: z.string().max(80).optional() }),
+  /** Agenda's Done or Drop on an errand. */
+  z.object({ type: z.literal("atlas.errand.done"), id: z.string().max(64), done: z.boolean() }),
   /** Settings → Devices → Set up OwnTracks: makes OwnTracks' own user and password (replacing any before) and its setup link. */
   z.object({ type: z.literal("atlas.location.setup") }),
   /** "Sign in with ChatGPT": start, then paste the address the browser landed on. */

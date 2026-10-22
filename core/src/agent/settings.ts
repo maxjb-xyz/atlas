@@ -114,6 +114,8 @@ export interface TestDeps {
   search(): Promise<TestOutcome>;
   /** Calls a webhook now, on the owner's own word. */
   webhook(id: string | undefined): Promise<TestOutcome>;
+  /** Looks up a place, a route and the weather, with the maps the owner picked. */
+  maps(): Promise<TestOutcome>;
 }
 
 /** What the Character page's sample answers, so the owner hears the character before saving it. */
@@ -137,6 +139,7 @@ export async function liveTest(deps: TestDeps, msg: Extract<ClientMessage, { typ
         detail: c,
       };
     }
+    if (msg.what === "maps") return await deps.maps();
     if (msg.what === "brain") {
       if (!choice) return { ok: false, message: "There's no brain at that spot." };
       const brain = deps.makeBrain(choice);

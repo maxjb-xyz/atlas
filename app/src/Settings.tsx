@@ -10,7 +10,8 @@ import { deviceId, type PushState, pushState, subscribe, unsubscribe } from "./n
 import { addPasskey, deviceName, passkeysSupported } from "./passkey";
 import { Composer } from "./Shell";
 import { useLook } from "./theme";
-import { Icon, Sheet, shortDay, Stage } from "./ui";
+import { clock, Icon, QrCode, Sheet, shortDay, Stage } from "./ui";
+import { MAPS, type MapsProvider } from "../../core/src/maps";
 import { Markdown } from "./Markdown";
 import { PROVIDERS, type SearchProvider } from "../../core/src/web";
 import { FIELDS, type VaultKind } from "../../core/src/vault-fields";
@@ -519,6 +520,9 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
       </Row>
       <Row label="Web search">
         <WebSearch atlas={atlas} draft={draft} edit={edit} view={view} />
+      </Row>
+      <Row label="Maps and weather">
+        <Maps atlas={atlas} draft={draft} edit={edit} view={view} />
       </Row>
       <Row label="Webhooks">
         <State
@@ -1361,6 +1365,9 @@ function Notifications({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
         </label>
         <p className="muted small">With Atlas open in front of you, or in a voice call, messages just arrive there.</p>
       </Row>
+      <Row label="Speaking up">
+        <Speaking draft={draft} edit={edit} />
+      </Row>
       <Row label="Quiet hours">
         <label className="check">
           <input
@@ -1478,7 +1485,10 @@ function Devices({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
   const [removing, setRemoving] = useState<string | null>(null);
   return (
     <>
-      <Head title="Devices" sub="Passkeys that can sign in to Atlas. Each one only works here." />
+      <Head title="Devices" sub="Where you are, from your phone, and the passkeys that sign in to Atlas." />
+      <Row label="Location">
+        <Location atlas={atlas} view={view} />
+      </Row>
       <Row label="Passkeys">
         <div className="rows">
           {view.passkeys.map((p) => (
@@ -1518,6 +1528,200 @@ function Devices({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
         <AddPasskey />
         <p className="muted small">Lost every passkey? Your setup code still signs you in.</p>
       </Row>
+    </>
+  );
+}
+
+/** Speaking up (§10.3): what Atlas may tell you about on its own, each with a switch; the moments have a time. */
+function Speaking({ draft, edit }: { draft: SettingsT; edit: Edit }) {
+  const sp = draft.speaking;
+  const set = (patch: Partial<SettingsT["speaking"]>) => edit({ speaking: { ...sp, ...patch } });
+  const flag = (k: "errands" | "leave" | "noticed", label: string) => (
+    <label className="check">
+      <input type="checkbox" checked={sp[k]} onChange={(e) => set({ [k]: e.target.checked })} />
+      {label}
+    </label>
+  );
+  const moment = (k: "morning" | "evening", label: string) => (
+    <div className="row">
+      <label className="check" style={{ minWidth: 200 }}>
+        <input type="checkbox" checked={sp[k].on} onChange={(e) => set({ [k]: { ...sp[k], on: e.target.checked } })} />
+        {label}
+      </label>
+      <input
+        type="time"
+        style={{ width: 120 }}
+        value={sp[k].at}
+        disabled={!sp[k].on}
+        onChange={(e) => e.target.value && set({ [k]: { ...sp[k], at: e.target.value } })}
+      />
+    </div>
+  );
+  return (
+    <>
+      {flag("errands", "Errands near you, like a store on your way home")}
+      {flag("leave", "When to leave for events with a place, from the travel time")}
+      {moment("morning", "A look at the start of the day")}
+      {moment("evening", "A look in the evening")}
+      {flag("noticed", "Other things Atlas notices that matter to something open")}
+      <p className="muted small">
+        Atlas speaks up only when it matters, and stays silent otherwise; History shows what it decided each time and why. Replying "stop"
+        to one turns its kind off here. These wait for quiet hours and count against the day's interruptions.
+      </p>
+    </>
+  );
+}
+
+/**
+ * Location (§10.1): OwnTracks on the phone posts to Atlas with its own user
+ * and password. Set up makes them (replacing any before) and a link that
+ * fills them into OwnTracks in one tap, with a QR code for the phone's camera.
+ * The switch stops it at once.
+ */
+function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const l = view.location;
+  const on = view.settings.location.on;
+  const setup = atlas.state.ownTracks;
+  const [asking, setAsking] = useState(false);
+  const fix = l.fix;
+  const where = l.place
+    ? `At ${l.place.name} since ${clock(l.place.since)}`
+    : l.near
+      ? `${(l.near.m / 1000).toFixed(1)} km from ${l.near.name}`
+      : fix
+        ? "Not at a saved place"
+        : null;
+  return (
+    <>
+      <State
+        on={on && l.set_up && fix != null}
+        text={!on ? "Off" : !l.set_up ? "Not set up" : fix ? `Last fix ${shortDay(fix.at)}, ${clock(fix.at)}` : "Waiting for OwnTracks"}
+        what="OwnTracks on your phone tells Atlas where you are."
+      />
+      {on && fix && (
+        <p className="small">
+          {where}
+          <span className="muted">
+            {" "}
+            · accurate to {fix.acc} m{fix.batt != null ? ` · phone ${fix.batt}%${fix.charging ? ", charging" : ""}` : ""}
+          </span>
+        </p>
+      )}
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => atlas.send({ type: "atlas.settings.update", patch: { location: { on: e.target.checked } } })}
+        />
+        Take in my location. Off drops what the phone sends, and Atlas says it doesn't know where you are.
+      </label>
+      <p className="muted small">
+        {l.pins} saved {l.pins === 1 ? "place has" : "places have"} a pin, sent to OwnTracks as regions so arriving and leaving are noticed.
+        Say "this is my gym" somewhere, or "pin the dentist at 12 Main St", to add one.
+      </p>
+      {l.refused && (
+        <p className="err small">
+          A post with the wrong password came at {shortDay(l.refused.at)}, {clock(l.refused.at)}. If that was your phone, set OwnTracks up
+          again.
+        </p>
+      )}
+      {setup ? (
+        <div className="row" style={{ alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
+          <QrCode text={setup.link} size={180} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, maxWidth: 420 }}>
+            <p className="small">
+              Install OwnTracks on your phone, then scan this with the camera or tap Open in OwnTracks on the phone. It fills in Atlas's
+              address, a user and a password made for it alone, and your places.
+            </p>
+            <a className="btn primary" href={setup.link}>
+              Open in OwnTracks
+            </a>
+            <p className="faint small mono" style={{ wordBreak: "break-all" }}>
+              {setup.url} · user {setup.user} · password {setup.password}
+            </p>
+            <p className="muted small">
+              This is the only time the password is shown. Setting up again makes a new one, and the old one stops working.
+            </p>
+          </div>
+        </div>
+      ) : asking ? (
+        <div className="row">
+          <span className="small">
+            {l.set_up ? "This makes a new password; the phone stops reporting until it has it." : "Make OwnTracks' user and password?"}
+          </span>
+          <button
+            className="btn primary"
+            onClick={() => {
+              setAsking(false);
+              atlas.send({ type: "atlas.location.setup" });
+            }}
+          >
+            Set up
+          </button>
+          <button className="link" onClick={() => setAsking(false)}>
+            Not now
+          </button>
+        </div>
+      ) : (
+        <div className="row">
+          <button className="btn" onClick={() => setAsking(true)}>
+            {l.set_up ? "Set up OwnTracks again" : "Set up OwnTracks"}
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Maps and weather (§19.1): OpenStreetMap's free services, or Mapbox by key; units; a live test. */
+function Maps({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
+  const provider = draft.maps.provider;
+  const ready = provider === "osm" || view.secrets.mapbox_token;
+  return (
+    <>
+      <State
+        on={ready}
+        text={ready ? MAPS[provider].name : "Mapbox: no token yet"}
+        what="Routes, travel times, and places near you or on your way."
+      />
+      <label className="field">
+        <span>Maps from</span>
+        <select value={provider} onChange={(e) => edit({ maps: { provider: e.target.value as MapsProvider } })}>
+          <option value="osm">OpenStreetMap (free, nothing to set up)</option>
+          <option value="mapbox">Mapbox (free tier, needs a token)</option>
+        </select>
+      </label>
+      <p className="muted small">
+        {provider === "osm"
+          ? "OpenStreetMap's free, volunteer-run services: travel times are typical, without live traffic, and opening hours are often missing. Atlas asks them little and caches what it can."
+          : "Mapbox adds live traffic to travel times and better store search. Pins for your places still come from OpenStreetMap, since Mapbox's free answers can't be kept."}{" "}
+        Where you are and your saved addresses go only to the maps service; the weather (Open-Meteo, free) gets a rough area.
+      </p>
+      {provider === "mapbox" && (
+        <SecretField
+          label="Mapbox token"
+          set={view.secrets.mapbox_token}
+          onSave={(value) => atlas.send({ type: "atlas.secret.set", secret: { name: "mapbox_token", value: value?.trim() ?? null } })}
+        />
+      )}
+      <label className="field">
+        <span>Units</span>
+        <select value={draft.units} onChange={(e) => edit({ units: e.target.value as SettingsT["units"] })}>
+          <option value="auto">From the time zone</option>
+          <option value="us">°F and miles</option>
+          <option value="metric">°C and kilometres</option>
+        </select>
+      </label>
+      {view.settings.maps.provider === provider ? (
+        <TestRow
+          label="Test maps and weather"
+          k="maps"
+          atlas={atlas}
+          run={() => atlas.test("maps", { type: "atlas.test", what: "maps" })}
+        />
+      ) : (
+        <p className="muted small">Save to test it.</p>
+      )}
     </>
   );
 }
