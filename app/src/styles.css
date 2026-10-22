@@ -1036,6 +1036,31 @@ button.chip:hover {
   background: var(--hover);
 }
 
+/* --- approvals (§12.2) --------------------------------------------------------------- */
+
+/* Hold to confirm: a bar that fills while held (transform only; §21.8). */
+.btn.hold {
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.btn.hold .fill {
+  position: absolute;
+  inset: 0;
+  background: var(--ac);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+.btn.hold.on .fill {
+  transform: scaleX(1);
+  transition: transform var(--hold) linear;
+}
+.btn.hold .label {
+  position: relative;
+}
+
 /* --- tables and rows ---------------------------------------------------------------- */
 
 .grid {

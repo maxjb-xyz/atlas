@@ -44,7 +44,9 @@ export type StateName =
    * The owner's devices that take push notifications: each one's id, name, push subscription, and when it was
    * last in use. Signed by this deployment's own key, so a subscription alone can't be used by anyone else.
    */
-  | "push_devices";
+  | "push_devices"
+  /** Earned trust (§12.2): for each outside action, approvals in a row as-is, whether Atlas offered to stop asking, and whether it may. */
+  | "trust";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

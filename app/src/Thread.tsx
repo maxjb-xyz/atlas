@@ -130,6 +130,18 @@ function Row({ row, atlas, undone }: { row: LogRow; atlas: Atlas; undone: boolea
         </p>
       );
     case "agenda.change":
+      if (b.kind === "approval") {
+        const results = Array.isArray(b.results) ? b.results.map(String).join(" ") : "";
+        return (
+          <p className={`note ${b.change === "done" && b.ok === false ? "fail" : ""}`}>
+            {b.change === "done"
+              ? `You OK'd ${str(b.title)}${b.edited ? " with your edits" : ""}. ${results}`
+              : b.change === "cancelled"
+                ? `You declined ${str(b.title)}, so nothing was done.`
+                : `Your OK for ${str(b.title)} ran out, so it didn't happen.`}
+          </p>
+        );
+      }
       return <p className="note">You undid it: {str(b.title)}. Atlas won't remind you.</p>;
     case "record.change":
       return (

@@ -6,11 +6,14 @@
 // check in M3 and M5.
 
 import { type PushSubscriptionJSON, sendPush, vapidKeys } from "./push";
+import { type Action } from "./approvals";
 import type { Sql } from "./store/db";
-import { append, type LogRow, type Surface } from "./store/log";
+import { append, get as getRow, type LogRow, type Surface } from "./store/log";
 import { readSettings, secretValues } from "./store/settings";
 import { getState, setState } from "./store/state";
+import { deleteRecord } from "./store/records";
 import { quietUntil, shortLocal, zoneOf } from "./time";
+import { callWebhook, webhooks, webhookView } from "./webhooks";
 
 export const HIDDEN = "[hidden]";
 
@@ -91,6 +94,15 @@ export interface PushDevice {
   last_seen: number;
 }
 
+/** What a push is about: a message in the log, or something with no row of its own (a test, an approval). */
+export interface Note {
+  id: string;
+  run_id: string | null;
+  text: string;
+}
+
+const noteOf = (row: LogRow): Note => ({ id: row.id, run_id: row.run_id, text: String(row.body.text ?? "") });
+
 export const pushDevices = (sql: Sql): PushDevice[] => getState<PushDevice[]>(sql, "push_devices") ?? [];
 
 /** The live ends of each channel. The agent provides them. */
@@ -102,7 +114,7 @@ export interface Channels {
   /** Whether the owner has Atlas open and in view on some device right now. */
   looking(): boolean;
   /** Puts a held notification on the one clock (§4.3), to be released at `at`. */
-  hold(at: Date, row: LogRow): Promise<void>;
+  hold(at: Date, note: Note): Promise<void>;
   fetch: typeof fetch;
 }
 
@@ -145,12 +157,12 @@ export class Outbox {
     });
     this.channels.broadcast([row]);
     // One channel (§14): heard in a call, or seen in an app in view, needs no push as well.
-    if (channel !== "voice" && channel !== "api" && !this.channels.looking()) await this.notify(row, d.urgency ?? "normal");
+    if (channel !== "voice" && channel !== "api" && !this.channels.looking()) await this.notify(noteOf(row), d.urgency ?? "normal");
     return row;
   }
 
-  /** Tells the owner, on one device, about a message they haven't seen. */
-  async notify(row: LogRow, urgency: Urgency): Promise<void> {
+  /** Tells the owner, on one device, about something they haven't seen. `extra` goes to the service worker with it. */
+  async notify(row: Note, urgency: Urgency, extra?: Record<string, unknown>): Promise<void> {
     const settings = readSettings(this.sql);
     if (!settings.notifications.push || !pushDevices(this.sql).length) return;
     const until = urgency === "now" ? null : quietUntil(new Date(), zoneOf(settings), settings.notifications.quiet);
@@ -165,11 +177,11 @@ export class Outbox {
       });
       return;
     }
-    await this.push([row], urgency);
+    await this.push([row], urgency, { extra });
   }
 
   /** Notifications held through quiet hours: one push for all of them, unless the owner has opened Atlas since. */
-  async release(rows: LogRow[]): Promise<void> {
+  async release(rows: Note[]): Promise<void> {
     if (!rows.length) return;
     if (this.channels.looking()) {
       this.receipt(rows[0]!.run_id, { of: rows.map((r) => r.id), channel: "push", ok: true, note: "Not sent: you had Atlas open." });
@@ -181,9 +193,16 @@ export class Outbox {
   /**
    * One push for `rows`, to the device used last; if that one fails, the
    * next. A device the push service says is gone is forgotten, with the
-   * reason in the receipt. `device` sends to that one only (Settings' test).
+   * reason in the receipt. `device` sends to that one only (Settings' test);
+   * `extra` adds to what the service worker gets, such as an approval to
+   * offer an Approve button for.
    */
-  async push(rows: LogRow[], urgency: Urgency, device?: string): Promise<{ ok: boolean; error?: string }> {
+  async push(
+    rows: Note[],
+    urgency: Urgency,
+    o: { device?: string; extra?: Record<string, unknown> } = {},
+  ): Promise<{ ok: boolean; error?: string }> {
+    const device = o.device;
     const devices = pushDevices(this.sql)
       .filter((d) => !device || d.id === device)
       .sort((a, b) => b.last_seen - a.last_seen);
@@ -192,15 +211,13 @@ export class Outbox {
     const settings = readSettings(this.sql);
     const keys = await vapidKeys(this.sql);
     const first = rows[0]!;
-    const words = (r: LogRow) =>
-      String(r.body.text ?? "")
-        .replace(/\s+/g, " ")
-        .trim();
+    const words = (r: Note) => r.text.replace(/\s+/g, " ").trim();
     const payload = {
       title: settings.assistant_name,
       body: rows.length === 1 ? clip(words(first), 240) : `${rows.length} messages. The first: ${clip(words(first), 180)}`,
       tag: first.id,
       url: "/",
+      ...(o.extra ?? {}),
     };
     let error = "";
     for (const d of devices) {
@@ -225,6 +242,45 @@ export class Outbox {
       console.error(JSON.stringify({ at: "push", device: d.name, status: out.status, error }));
     }
     return { ok: false, error };
+  }
+
+  /**
+   * Does what the owner's OK (or earned trust, or the owner's own button)
+   * allowed. The exit checks run first; a webhook call leaves a delivery
+   * receipt with what it answered. `by` says whose word it went out on.
+   */
+  async perform(a: Action, o: { run_id: string | null; by: "approved" | "trusted" | "owner" }): Promise<{ ok: boolean; text: string }> {
+    if (a.kind === "delete") {
+      const touched = deleteRecord(this.sql, a.record, { via: "owner", ...(o.run_id ? { run_id: o.run_id } : {}) });
+      // Open apps get the blanked rows at once, so the deleted words don't linger on screen.
+      if (touched?.length) this.channels.broadcast(touched.map((id) => getRow(this.sql, id)).filter((r): r is LogRow => r != null));
+      return { ok: touched != null, text: touched ? `Deleted ${a.name} for good.` : `${a.name} was already gone.` };
+    }
+    const hook = webhooks(this.sql).find((w) => w.id === a.webhook);
+    const base = { channel: "webhook", by: o.by, ...(a.message ? { text: a.message } : {}) };
+    if (!hook) {
+      const text = `The webhook ${a.name} isn't there any more, so it wasn't called.`;
+      this.receipt(o.run_id, { ...base, to: a.name, ok: false, error: text });
+      return { ok: false, text };
+    }
+    const to = `${hook.name} · ${webhookView(hook).host}`;
+    if (a.message && scrub(a.message, this.secrets()) !== a.message) {
+      const text = `${hook.name} wasn't called: the message held one of your secrets.`;
+      this.receipt(o.run_id, { ...base, to, ok: false, error: text, checks: { secrets: "failed" } });
+      return { ok: false, text };
+    }
+    const out = await callWebhook(this.channels.fetch, hook, { message: a.message, from: readSettings(this.sql).assistant_name });
+    this.receipt(o.run_id, {
+      ...base,
+      to,
+      ok: out.ok,
+      status: out.status,
+      ...(out.ok ? { answer: out.answer } : { error: out.answer }),
+      ...(out.reply ? { reply: out.reply } : {}),
+      checks: { secrets: "passed", ok: o.by },
+    });
+    if (!out.ok) console.error(JSON.stringify({ at: "webhook", name: hook.name, error: out.answer }));
+    return { ok: out.ok, text: out.ok ? `Called ${hook.name}: ${out.answer}.` : `${hook.name} didn't work: ${out.answer}.` };
   }
 
   /** A delivery receipt in the log (§4.2), shown in History. */

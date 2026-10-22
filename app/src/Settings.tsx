@@ -12,7 +12,7 @@ import { Composer } from "./Shell";
 import { useLook } from "./theme";
 import { Icon, Sheet, shortDay, Stage } from "./ui";
 
-type Section = "character" | "look" | "brains" | "connections" | "devices" | "notifications" | "data";
+type Section = "character" | "look" | "brains" | "connections" | "devices" | "permissions" | "notifications" | "data";
 
 const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
   {
@@ -30,6 +30,7 @@ const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
       ["devices", "Devices"],
     ],
   },
+  { group: "Abilities", items: [["permissions", "Permissions"]] },
   {
     group: "System",
     items: [
@@ -134,6 +135,7 @@ export function SettingsPage({
                 {section === "brains" && <Brains atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "connections" && <Connections atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "devices" && <Devices atlas={atlas} view={view} />}
+                {section === "permissions" && <Permissions atlas={atlas} view={view} />}
                 {section === "notifications" && <Notifications atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "data" && <Data atlas={atlas} onSignOut={onSignOut} onSetup={onSetup} />}
               </>
@@ -503,6 +505,14 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
           run={() => atlas.test("calendar", { type: "atlas.test", what: "calendar" })}
         />
       </Row>
+      <Row label="Webhooks">
+        <State
+          on={view.webhooks.length > 0}
+          text={view.webhooks.length ? `${view.webhooks.length} ${view.webhooks.length === 1 ? "webhook" : "webhooks"}` : "None yet"}
+          what="Lights, scenes, anything with a web address. Atlas asks before calling one."
+        />
+        <Webhooks atlas={atlas} view={view} />
+      </Row>
       <Row label="Google, Microsoft, email">
         <p className="muted small">Not yet. Atlas connects to Google and Microsoft calendars, and reads mail, in a later version.</p>
       </Row>
@@ -518,6 +528,176 @@ function State({ on, bad, text, what }: { on: boolean; bad?: boolean; text: stri
       <span style={{ fontWeight: 500 }}>{text}</span>
       <span className="muted small">{what}</span>
     </div>
+  );
+}
+
+function Webhooks({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const blank = { id: undefined as string | undefined, name: "", url: "", method: "POST" as "POST" | "GET", about: "" };
+  const [form, setForm] = useState(blank);
+  const [open, setOpen] = useState(false);
+  const editing = form.id != null;
+  return (
+    <>
+      <div className="rows">
+        {view.webhooks.map((w) => (
+          <div className="r" key={w.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 500 }}>{w.name}</span>
+              <span className="mono faint small">
+                {w.method} · {w.host}
+              </span>
+              <span className="grow" />
+              <button
+                className="link"
+                onClick={() => {
+                  setForm({ id: w.id, name: w.name, url: "", method: w.method, about: w.about });
+                  setOpen(true);
+                }}
+              >
+                Edit
+              </button>
+              <button className="link" onClick={() => atlas.send({ type: "atlas.webhook.remove", id: w.id })}>
+                Remove
+              </button>
+            </div>
+            {w.about && <p className="muted small">{w.about}</p>}
+            <TestRow
+              label="Call it now"
+              k={`webhook:${w.id}`}
+              atlas={atlas}
+              run={() => atlas.test(`webhook:${w.id}`, { type: "atlas.test", what: "webhook", id: w.id })}
+            />
+          </div>
+        ))}
+      </div>
+      {open ? (
+        <form
+          style={{ display: "flex", flexDirection: "column", gap: 10 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            atlas.send({ type: "atlas.webhook.save", ...form, url: form.url.trim() || undefined });
+            setForm(blank);
+            setOpen(false);
+          }}
+        >
+          <label className="field">
+            <span>Name</span>
+            <input value={form.name} maxLength={60} placeholder="Lights off" onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </label>
+          <label className="field">
+            <span>Address</span>
+            <input
+              className="mono"
+              type="url"
+              autoComplete="off"
+              spellCheck={false}
+              value={form.url}
+              placeholder={editing ? "Kept. Paste a new one to change it." : "https://"}
+              onChange={(e) => setForm({ ...form, url: e.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>What it does, so Atlas knows when to use it</span>
+            <input
+              value={form.about}
+              maxLength={300}
+              placeholder="Turns off the living room lights"
+              onChange={(e) => setForm({ ...form, about: e.target.value })}
+            />
+          </label>
+          <div className="row">
+            <select
+              value={form.method}
+              onChange={(e) => setForm({ ...form, method: e.target.value as "POST" | "GET" })}
+              style={{ width: 90 }}
+            >
+              <option value="POST">POST</option>
+              <option value="GET">GET</option>
+            </select>
+            <button className="btn primary" disabled={!form.name.trim() || (!editing && !/^https:\/\/./.test(form.url.trim()))}>
+              {editing ? "Save" : "Add"}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setForm(blank);
+                setOpen(false);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="muted small">
+            The address is kept with your secrets: Atlas and this page only ever show its host. A POST sends {"{ text, from, at }"} as JSON.
+          </p>
+        </form>
+      ) : (
+        <div className="row">
+          <button className="btn" onClick={() => setOpen(true)}>
+            Add a webhook
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+// --- Permissions --------------------------------------------------------------------------------
+
+const KIND_NAMES: Record<string, { name: string; example: string; rule: string }> = {
+  look: { name: "Looking", example: "Your calendar, what Atlas knows, the web", rule: "Never asks" },
+  change_own: { name: "Changing your own things", example: "Reminders, notes, records", rule: "Does it, tells you, offers Undo" },
+  outside: { name: "Reaching outside", example: "Calling a webhook", rule: "Asks until you trust it" },
+  irreversible: { name: "Can't be undone", example: "Deleting something for good", rule: "Always asks, hold to confirm" },
+};
+
+function Permissions({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  return (
+    <>
+      <Head title="Permissions" sub="The kind of action decides when Atlas asks. That's a rule in Atlas's code, not its judgment." />
+      <Row label="When Atlas asks">
+        <div className="rows">
+          {Object.entries(view.permissions.kinds).map(([k, v]) => (
+            <div className="r" key={k} style={{ alignItems: "flex-start", flexWrap: "wrap" }}>
+              <div className="grow" style={{ minWidth: 200 }}>
+                <p style={{ fontWeight: 500 }}>{KIND_NAMES[k]?.name ?? k}</p>
+                <p className="muted small">{KIND_NAMES[k]?.example}</p>
+                <p className="faint small">{v.why}</p>
+              </div>
+              <span className={`tag ${v.asks === "never" ? "" : "ac"}`}>{KIND_NAMES[k]?.rule ?? v.asks}</span>
+            </div>
+          ))}
+          <div className="r" style={{ alignItems: "flex-start", flexWrap: "wrap" }}>
+            <div className="grow" style={{ minWidth: 200 }}>
+              <p style={{ fontWeight: 500 }}>Money</p>
+              <p className="muted small">When Atlas can spend, in a later version</p>
+            </div>
+            <span className="tag ac">Always asks, showing the amount</span>
+          </div>
+        </div>
+      </Row>
+      <Row label="Atlas doesn't ask for">
+        <div className="rows">
+          {view.permissions.trusted.map((t) => (
+            <div className="r" key={t.key}>
+              <span className="grow" style={{ fontWeight: 500 }}>
+                {t.name}
+              </span>
+              <span className="faint small">Since {shortDay(t.since)}</span>
+              <button className="link" onClick={() => atlas.send({ type: "atlas.trust.set", key: t.key, trusted: false })}>
+                Ask again
+              </button>
+            </div>
+          ))}
+          {!view.permissions.trusted.length && (
+            <p className="muted small">
+              Nothing yet. After you've approved the same webhook five times as it was, Atlas offers to stop asking.
+            </p>
+          )}
+        </div>
+      </Row>
+    </>
   );
 }
 

@@ -33,6 +33,7 @@ function ctx(sql: Sql): ToolContext {
     source_log_id: null,
     via: "chat",
     helpers: null,
+    exit: null,
   };
 }
 

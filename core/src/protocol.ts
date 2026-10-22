@@ -50,15 +50,45 @@ export interface CalendarEventView {
   location?: string;
 }
 
-export interface InboxItem {
-  /** The log row it comes from. */
+/** One step of an approval card, as the owner sees it (§12.2). */
+export interface ApprovalStep {
+  kind: "webhook" | "delete";
+  title: string;
+  /** What it does, in a sentence. */
+  detail: string;
+  /** Where it goes, or what it touches. */
+  where: string;
+  /** Whether and how it can be undone. */
+  undo: string;
+  /** The text a webhook gets, which the owner can edit in the card. */
+  message?: string;
+}
+
+/** An approval card: every step of the plan, why it needs the OK, and the checks it passed. */
+export interface ApprovalView {
   id: string;
-  kind: "review" | "failed";
+  title: string;
+  steps: ApprovalStep[];
+  /** What the owner said that led to it, when it came from a conversation. */
+  asked: string | null;
+  why: string;
+  hold: boolean;
+  expires_at: number;
+  checks: Array<{ name: string; ok: boolean }>;
+}
+
+export interface InboxItem {
+  /** The log row it comes from; for an approval, its id; for a question, its key. */
+  id: string;
+  kind: "review" | "failed" | "approval" | "question";
   title: string;
   text: string;
   at: number;
   areas: string[];
   run_id: string | null;
+  approval?: ApprovalView;
+  /** Atlas asking the owner something it can't decide alone, such as whether to stop asking for an action. */
+  question?: { key: string; yes: string; no: string };
 }
 
 /** An area as the app shows it, in Library → Areas and on chips (§6, §21.3). */
@@ -125,6 +155,29 @@ export const ClientMessage = z.discriminatedUnion("type", [
       keys: z.object({ p256dh: z.string().min(16).max(200), auth: z.string().min(8).max(100) }),
     }),
   }),
+  /** The owner's answer to an approval card. `hold` is set when they held to confirm; `edits` change a step's message. */
+  z.object({
+    type: z.literal("atlas.approval.decide"),
+    id: z.string().max(64),
+    yes: z.boolean(),
+    hold: z.boolean().optional(),
+    edits: z
+      .array(z.object({ index: z.number().int().min(0).max(20), message: z.string().max(1_000) }))
+      .max(20)
+      .optional(),
+  }),
+  /** Let Atlas do one outside action without asking, or ask again (earned trust, §12.2). */
+  z.object({ type: z.literal("atlas.trust.set"), key: z.string().max(100), trusted: z.boolean() }),
+  /** Add or change a webhook (Settings → Connections). On a change, an empty url keeps the address it had. */
+  z.object({
+    type: z.literal("atlas.webhook.save"),
+    id: z.string().max(64).optional(),
+    name: z.string().trim().min(1).max(60),
+    url: z.string().max(2_000).optional(),
+    method: z.enum(["POST", "GET"]),
+    about: z.string().max(300),
+  }),
+  z.object({ type: z.literal("atlas.webhook.remove"), id: z.string().max(64) }),
   /** Stop sending notifications to a device. */
   z.object({ type: z.literal("atlas.push.remove"), device: z.string().min(1).max(64) }),
   /** "Sign in with ChatGPT": start, then paste the address the browser landed on. */
@@ -208,9 +261,11 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
-    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push"]),
+    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push", "webhook"]),
     /** For "push": the device to send the test notification to. */
     device: z.string().max(64).optional(),
+    /** For "webhook": which one to call. */
+    id: z.string().max(64).optional(),
     /** Echoed back on the result, so the app knows which button it answers. */
     ref: z.string().max(64).optional(),
     /** A brain to test: a spot in a saved chain, or an unsaved choice. */
@@ -244,6 +299,13 @@ export interface SettingsView {
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
   /** The owner's passkeys, without their keys (Settings → Devices). */
   passkeys: Array<{ id: string; name: string; created_at: number; last_used: number | null }>;
+  /** The owner's webhooks, without their addresses (Settings → Connections). */
+  webhooks: import("./webhooks").WebhookView[];
+  /** When Atlas asks (Settings → Permissions): the table by kind, and the outside actions it may do without asking. */
+  permissions: {
+    kinds: typeof import("./approvals").ASKS;
+    trusted: Array<{ key: string; name: string; since: number }>;
+  };
   /** Push notifications (Settings → Notifications): this deployment's public key, and the devices that take them. */
   push: { public_key: string | null; devices: Array<{ id: string; name: string; added_at: number; last_seen: number }> };
   setup: { done: string[]; skipped: string[]; finished: boolean };

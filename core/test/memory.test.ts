@@ -38,6 +38,7 @@ function ctx(sql: Sql, opts: { embed?: Embedder | null; source?: string | null }
     source_log_id: opts.source ?? null,
     via: "chat",
     helpers: null,
+    exit: null,
   };
 }
 

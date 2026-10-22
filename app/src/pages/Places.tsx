@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { CalendarEventView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
+import { ApprovalCard } from "../Approval";
 import { Markdown } from "../Markdown";
 import { Composer, compose } from "../Shell";
 import { addDays, AreaChip, clock, dayName, Empty, pressable, Sheet, shortDay, Stage, startOfDay } from "../ui";
@@ -12,13 +13,17 @@ import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } 
 
 export function Inbox({ atlas }: { atlas: Atlas }) {
   const s = atlas.state;
-  const [tab, setTab] = useState<"all" | "review" | "failed">("all");
+  const [tab, setTab] = useState<"all" | "approval" | "question" | "review" | "failed">("all");
   const [open, setOpen] = useState<string | null>(null);
   useEffect(() => {
     atlas.send({ type: "atlas.inbox" });
   }, [atlas.voice.connected]);
-  // Oldest first, one open at a time (docs/ui §3). The scope switcher narrows it to one area.
-  const items = [...(s.inbox ?? [])].reverse().filter((i) => (tab === "all" || i.kind === tab) && (!s.scope || i.areas.includes(s.scope)));
+  // What needs a decision first, then the rest; oldest first, one open at a time (docs/ui §3). The scope switcher narrows it to one area.
+  const all = s.inbox ?? [];
+  const deciding = all.filter((i) => i.kind === "approval" || i.kind === "question");
+  const items = [...deciding, ...all.filter((i) => !deciding.includes(i)).reverse()].filter(
+    (i) => (tab === "all" || i.kind === tab) && (!s.scope || !i.areas.length || i.areas.includes(s.scope)),
+  );
   const current = items.find((i) => i.id === open) ?? items[0];
 
   useEffect(() => {
@@ -29,7 +34,10 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
       const i = items.findIndex((x) => x.id === current?.id);
       if (e.key === "j") setOpen(items[Math.min(items.length - 1, i + 1)]?.id ?? null);
       if (e.key === "k") setOpen(items[Math.max(0, i - 1)]?.id ?? null);
-      if (e.key === "Enter" && current) atlas.send({ type: "atlas.inbox.done", id: current.id });
+      // Enter marks finished work done; it never answers an approval or a question.
+      if (e.key === "Enter" && current && (current.kind === "review" || current.kind === "failed")) {
+        atlas.send({ type: "atlas.inbox.done", id: current.id });
+      }
     };
     window.addEventListener("keydown", on);
     return () => window.removeEventListener("keydown", on);
@@ -40,6 +48,8 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
       label="Inbox"
       tabs={[
         { id: "all", label: "All", badge: s.inbox?.length || null },
+        { id: "approval", label: "Approvals", badge: s.inbox?.filter((i) => i.kind === "approval").length || null },
+        { id: "question", label: "Questions", badge: s.inbox?.filter((i) => i.kind === "question").length || null },
         { id: "review", label: "Reviews", badge: s.inbox?.filter((i) => i.kind === "review").length || null },
         { id: "failed", label: "Didn't finish", badge: s.inbox?.filter((i) => i.kind === "failed").length || null },
       ]}
@@ -61,7 +71,9 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
             </span>
           </div>
           {!items.length && (
-            <Empty title="Nothing is waiting on you">Finished background work and anything that didn't finish land here.</Empty>
+            <Empty title="Nothing is waiting on you">
+              What needs your OK, questions Atlas can't answer alone, finished background work and anything that didn't finish land here.
+            </Empty>
           )}
           <div className="rows">
             {items.map((i) => {
@@ -74,8 +86,16 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                   {...pressable(() => setOpen(i.id))}
                 >
                   <div className="row" style={{ flexWrap: "nowrap" }}>
-                    <span className={`tag ${i.kind === "failed" ? "ac" : ""}`}>
-                      {i.kind === "failed" ? "Didn't finish" : "Ready for review"}
+                    <span className={`tag ${i.kind === "failed" || i.kind === "approval" ? "ac" : ""}`}>
+                      {i.kind === "failed"
+                        ? "Didn't finish"
+                        : i.kind === "approval"
+                          ? i.approval?.hold
+                            ? "Can't be undone"
+                            : "Needs your OK"
+                          : i.kind === "question"
+                            ? "Question"
+                            : "Ready for review"}
                     </span>
                     <span style={{ fontWeight: 500 }} className="grow">
                       {i.title}
@@ -83,7 +103,35 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                     <AreaChip ids={i.areas} areas={s.areas} />
                     <span className="mono faint small">{shortDay(i.at)}</span>
                   </div>
-                  {on && (
+                  {on && i.approval && (
+                    <div className="rise" onClick={(e) => e.stopPropagation()}>
+                      <ApprovalCard atlas={atlas} a={i.approval} />
+                    </div>
+                  )}
+                  {on && i.question && (
+                    <div
+                      className="rise"
+                      style={{ display: "flex", flexDirection: "column", gap: 10 }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <p>{i.text}</p>
+                      <div className="row">
+                        <button
+                          className="btn primary"
+                          onClick={() => atlas.send({ type: "atlas.trust.set", key: i.question!.key, trusted: true })}
+                        >
+                          {i.question.yes}
+                        </button>
+                        <button
+                          className="btn"
+                          onClick={() => atlas.send({ type: "atlas.trust.set", key: i.question!.key, trusted: false })}
+                        >
+                          {i.question.no}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {on && !i.approval && !i.question && (
                     <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       <div className="panel">{i.text ? <Markdown text={i.text} /> : "No details."}</div>
                       <div className="chain">
@@ -138,8 +186,8 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
       .filter((e: CalendarEventView) => eventEnd(e).getTime() > Date.now())
       .map((e) => ({ at: eventStart(e), allDay: e.all_day, kind: "Event" as const, title: e.title, source: e.calendar, id: e.id })),
     ...s.agenda
-      // Notifications held for quiet hours are the outbox's, not something on your clock.
-      .filter((a) => (a.state === "scheduled" || a.state === "running") && a.kind !== "notify")
+      // Notifications held for quiet hours are the outbox's, and approvals wait in Inbox: neither is something on your clock.
+      .filter((a) => (a.state === "scheduled" || a.state === "running") && a.kind !== "notify" && a.kind !== "approval")
       .map((a) => ({
         at: new Date(a.due_at),
         allDay: false,

@@ -2,7 +2,12 @@
 // Inbox's waiting items. Each is a read of the one log or the records, shaped
 // for its page; nothing here changes anything except marking Inbox items done.
 
-import type { HistoryFilter, HistoryStats, InboxItem, RecordView } from "../protocol";
+import type { ApprovalView, HistoryFilter, HistoryStats, InboxItem, RecordView } from "../protocol";
+import { type Action, actionsOf, ASKS, kindOf, needsHold, TRUST_AFTER, trustTable, waitingApprovals } from "../approvals";
+import type { AgendaItem } from "../store/agenda";
+import { scrub } from "../outbox";
+import { secretValues } from "../store/settings";
+import { webhooks, webhookView } from "../webhooks";
 import type { AreaPage, PersonPage, StageMessage, StagePage, StageView } from "../stage";
 import { getArea } from "../store/areas";
 import { parse, type Sql } from "../store/db";
@@ -278,6 +283,75 @@ export function runDetail(sql: Sql, runId: string): { run: Record<string, unknow
  * join with the outbox in M2. Marked done by the owner, never by Atlas.
  */
 export function inbox(sql: Sql): InboxItem[] {
+  const approvals = waitingApprovals(sql).map((a): InboxItem => ({
+    id: a.id,
+    kind: "approval",
+    title: a.title,
+    text: "",
+    at: a.created_at,
+    areas: [],
+    run_id: a.source.run_id ?? null,
+    approval: approvalView(sql, a),
+  }));
+  const questions = Object.entries(trustTable(sql))
+    .filter(([, t]) => t.offered && t.trusted_at == null)
+    .map(([key, t]): InboxItem => ({
+      id: key,
+      kind: "question",
+      title: `Call ${t.name} without asking?`,
+      text: `You've OK'd ${t.name} ${TRUST_AFTER} times in a row as it was. Atlas can call it from now on without asking, and you can take that back in Settings → Permissions.`,
+      at: Date.now(),
+      areas: [],
+      run_id: null,
+      question: { key, yes: "Yes, stop asking", no: "Keep asking" },
+    }));
+  return [...approvals, ...questions, ...pastItems(sql)];
+}
+
+/** An approval as its card shows it: every step, why, and the checks it already passed. */
+export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
+  const actions = actionsOf(item);
+  const asked = item.source.log_id ? getRow(sql, item.source.log_id) : null;
+  const secrets = secretValues(sql);
+  const secretsOk = actions.every((a) => a.kind !== "webhook" || !a.message || scrub(a.message, secrets) === a.message);
+  const hold = needsHold(actions);
+  return {
+    id: item.id,
+    title: item.title,
+    steps: actions.map((a) => stepView(sql, a)),
+    asked: asked ? String(asked.body.text ?? "").slice(0, 400) : null,
+    why: hold ? ASKS.irreversible.why : ASKS[kindOf(actions[0] ?? { kind: "webhook", webhook: "", name: "" })].why,
+    hold,
+    expires_at: item.due_at,
+    checks: [
+      { name: "Secrets", ok: secretsOk },
+      { name: "Your OK", ok: false },
+    ],
+  };
+}
+
+function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
+  if (a.kind === "delete") {
+    return {
+      kind: "delete",
+      title: `Delete ${a.name} for good`,
+      detail: a.fact || a.name,
+      where: "Library",
+      undo: "Can't be undone: the record, its history and its old values are erased. The message you said it in stays in History.",
+    };
+  }
+  const hook = webhooks(sql).find((w) => w.id === a.webhook);
+  return {
+    kind: "webhook",
+    title: `Call ${a.name}`,
+    detail: hook?.about || "Your webhook.",
+    where: hook ? `${webhookView(hook).method} to ${webhookView(hook).host}` : "Removed since",
+    undo: "Can't be taken back once it's called.",
+    ...(hook?.method === "GET" ? {} : { message: a.message ?? "" }),
+  };
+}
+
+function pastItems(sql: Sql): InboxItem[] {
   const done = JSON.stringify(getState<string[]>(sql, "inbox_done") ?? []);
   const since = Date.now() - 14 * 86_400_000;
   const rows = sql

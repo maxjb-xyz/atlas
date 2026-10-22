@@ -27,6 +27,17 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         kind: `record.${str(b.change)}`,
       };
     case "agenda.change":
+      if (b.kind === "approval") {
+        const what =
+          b.change === "created"
+            ? `Asked for your OK: ${str(b.title)}`
+            : b.change === "done"
+              ? `You OK'd ${str(b.title)}${b.edited ? ", with edits" : ""}`
+              : b.change === "cancelled"
+                ? `You declined ${str(b.title)}`
+                : `Your OK for ${str(b.title)} ran out`;
+        return { who: b.change === "created" || b.change === "failed" ? "Atlas" : "You", what, kind: `approval.${str(b.change)}` };
+      }
       return {
         who: r.actor === "owner" ? "You" : "Atlas",
         what: `${str(b.kind) === "job" ? "Job" : "Reminder"} ${str(b.change)}: ${str(b.title)}`,
@@ -59,13 +70,19 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
       };
     case "delivery": {
       const where =
-        b.channel === "push" ? `Notification${b.to ? ` to ${str(b.to)}` : ""}` : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
+        b.channel === "push"
+          ? `Notification${b.to ? ` to ${str(b.to)}` : ""}`
+          : b.channel === "webhook"
+            ? `Called ${str(b.to)}`
+            : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
       const what =
         b.ok === false
-          ? `${where} didn't go: ${str(b.error)}`
+          ? `${where}, but it didn't work: ${str(b.error)}`
           : b.note
             ? `${where}: ${str(b.note)}`
-            : `${where}${b.text ? `: “${str(b.text)}”` : " sent"}`;
+            : b.answer
+              ? `${where}: ${str(b.answer)}`
+              : `${where}${b.text ? `: “${str(b.text)}”` : ""}`;
       return { who: b.by === "owner" ? "You" : "Atlas", what, kind: `deliver.${str(b.channel)}` };
     }
     case "settings.change": {
@@ -81,7 +98,11 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
                 ? `Passkeys: ${str(b.passkeys)}`
                 : b.push
                   ? `Notifications ${str(b.push)}: ${str(b.name)}`
-                  : "Changed settings";
+                  : b.webhook
+                    ? `Webhook ${str(b.webhook)}: ${str(b.name)}`
+                    : b.trust
+                      ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
+                      : "Changed settings";
       return { who: r.actor === "owner" ? "You" : "Atlas", what, kind: "settings.change" };
     }
     default:

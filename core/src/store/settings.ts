@@ -150,7 +150,9 @@ export type SecretName =
   | "chatgpt_tokens"
   | "chatgpt_login"
   /** This deployment's VAPID key pair, which signs its push notifications. */
-  | "push_vapid";
+  | "push_vapid"
+  /** The owner's webhooks: their addresses are credentials. */
+  | "webhooks";
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];
@@ -177,11 +179,13 @@ export function secretValues(sql: Sql): string[] {
     ["chatgpt_tokens", ["id_token"]],
     ["push_vapid", ["private_jwk", "d"]],
   ];
+  const hooks = getSecret<Array<{ url?: unknown }>>(sql, "webhooks") ?? [];
   const out: string[] = [];
   for (const [name, path] of wanted) {
     const v = pick(getSecret<unknown>(sql, name), path);
     if (typeof v === "string" && v.length >= 8) out.push(v);
   }
+  for (const h of hooks) if (typeof h.url === "string" && h.url.length >= 8) out.push(h.url);
   // The last ID token is kept as a sign-in hint, outside the secrets; it still never leaves.
   const hint = getState<{ id_token?: unknown }>(sql, "chatgpt_client")?.id_token;
   if (typeof hint === "string" && hint.length >= 8 && !out.includes(hint)) out.push(hint);

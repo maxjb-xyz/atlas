@@ -526,6 +526,17 @@ export function Receipt({ row, atlas, undone, onOpen }: { row: LogRow; atlas: At
         <span>{receipt.text}</span>
       )}
       {undone && <span className="lab">Undone</span>}
+      {(receipt as { approval?: string }).approval &&
+        atlas.state.inbox?.some((i) => i.id === (receipt as { approval?: string }).approval) &&
+        (onOpen ? (
+          <button className="link" onClick={onOpen}>
+            Review
+          </button>
+        ) : (
+          <a className="link" href="#/inbox">
+            Review
+          </a>
+        ))}
       {receipt.undo != null && !undone && (
         <button className="link" onClick={() => atlas.send({ type: "atlas.undo", log_id: row.id })}>
           Undo

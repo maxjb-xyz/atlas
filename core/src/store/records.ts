@@ -381,3 +381,66 @@ export function standingFacts(sql: Sql, limit = STANDING_FACTS): AtlasRecord[] {
 
 /** The newest this many standing facts are in view; older ones are still found by recall. */
 export const STANDING_FACTS = 100;
+
+// --- deleting for good (§12.1: can't be undone) ----------------------------------
+
+/**
+ * Erases a record for good, at the owner's word: the record, its history,
+ * its links and its place in recall, and its values in the log's record
+ * changes and the tool calls that saved it. The log keeps that something was
+ * deleted, not what it said. The owner's own message it came from stays: that
+ * is the conversation, which only the owner deletes (§4.2, §23.4).
+ */
+export function deleteRecord(sql: Sql, id: string, source: RecordSource): string[] | null {
+  const r = getRecord(sql, id);
+  if (!r) return null;
+  // The log rows rewritten below, so open apps can be sent the blanked versions.
+  const touched = sql
+    .exec<{ id: string }>(
+      `SELECT id FROM log WHERE (kind = 'record.change' AND json_extract(body, '$.record_id') = ?) OR (kind = 'tool.result' AND json_extract(body, '$.receipt.undo.id') = ?)`,
+      id,
+      id,
+    )
+    .toArray()
+    .map((x) => x.id);
+  sql.exec(`DELETE FROM records WHERE id = ?`, id);
+  sql.exec(`DELETE FROM record_history WHERE record_id = ?`, id);
+  sql.exec(`DELETE FROM links WHERE from_id = ? OR to_id = ?`, id, id);
+  dropMemory(sql, `rec:${id}`);
+  sql.exec(
+    `UPDATE log SET body = json_object('record_id', ?, 'type', json_extract(body, '$.type'), 'change', json_extract(body, '$.change'), 'name', '[deleted]', 'deleted', 1)
+     WHERE kind = 'record.change' AND json_extract(body, '$.record_id') = ?`,
+    id,
+    id,
+  );
+  // The calls that saved or changed it: their receipts point at it by id.
+  const calls = sql
+    .exec<{ run_id: string | null; call_id: string }>(
+      `SELECT run_id, json_extract(body, '$.call_id') AS call_id FROM log WHERE kind = 'tool.result' AND json_extract(body, '$.receipt.undo.id') = ?`,
+      id,
+    )
+    .toArray();
+  for (const c of calls) {
+    sql.exec(
+      `UPDATE log SET body = json_object('call_id', ?, 'name', json_extract(body, '$.name'), 'ok', json_extract(body, '$.ok'), 'output', '[deleted]', 'receipt', json_object('text', 'Deleted for good'))
+       WHERE kind = 'tool.result' AND run_id IS ? AND json_extract(body, '$.call_id') = ?`,
+      c.call_id,
+      c.run_id,
+      c.call_id,
+    );
+    sql.exec(
+      `UPDATE log SET body = json_object('call_id', ?, 'name', json_extract(body, '$.name'), 'input', json_object())
+       WHERE kind = 'tool.call' AND run_id IS ? AND json_extract(body, '$.call_id') = ?`,
+      c.call_id,
+      c.run_id,
+      c.call_id,
+    );
+  }
+  append(sql, {
+    actor: "owner",
+    kind: "record.change",
+    run_id: source.run_id ?? null,
+    body: { record_id: id, type: r.type, change: "deleted", name: "[deleted]", deleted: true },
+  });
+  return touched;
+}

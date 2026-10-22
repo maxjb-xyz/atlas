@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
-import { type Channels, Outbox, type PushDevice, pushDevices } from "../src/outbox";
+import { type Channels, type Note, Outbox, type PushDevice, pushDevices } from "../src/outbox";
 import { b64url, encryptPayload, fromB64url, type PushSubscriptionJSON, vapidAuth, vapidKeys } from "../src/push";
 import { createItem } from "../src/store/agenda";
 import { migrate, type Sql } from "../src/store/db";
@@ -76,7 +76,7 @@ function fakeNet(answer: (url: string, init: RequestInit) => Response = () => ne
 }
 
 function outbox(sql: Sql, f: typeof fetch, opts: { looking?: boolean; inCall?: boolean } = {}) {
-  const held: Array<{ at: Date; row: LogRow }> = [];
+  const held: Array<{ at: Date; row: Note }> = [];
   const shown: LogRow[] = [];
   const channels: Channels = {
     broadcast: (rows) => shown.push(...rows),

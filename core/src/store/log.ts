@@ -34,6 +34,8 @@ export interface Receipt {
   undo?: Undo;
   /** The stage view this receipt opens (§21.6), when Atlas showed one. */
   view?: StageView;
+  /** The approval this receipt waits on (§12), which Review opens. */
+  approval?: string;
 }
 
 /** What Undo on a receipt does. `history` names the correction to roll back. */
@@ -154,6 +156,9 @@ export function isThreadRow(row: LogRow): boolean {
   // Atlas's own upkeep (compaction, area discovery) failing isn't news for the thread; the run and the
   // Worker log say why. A helper's failure reaches the thread as Atlas's report of it.
   if (row.kind === "run.end") return row.body.state === "failed" && !quietTrigger(String(row.body.trigger ?? ""));
+  // An approval's answer (yes, no, or ran out) is said in the thread, so the owner hears what did and didn't happen (§12.2).
+  if (row.kind === "agenda.change" && row.body.kind === "approval")
+    return ["done", "cancelled", "failed"].includes(String(row.body.change));
   // An undo from a receipt shows as its own line, so the thread tells the truth.
   if (row.kind === "agenda.change" || row.kind === "record.change") return row.body.undo_of != null;
   // Atlas starting an area is said once, in the thread (§6.3).

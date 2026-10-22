@@ -16,6 +16,7 @@ interface OwnerApi {
   apiRunsSince(seq: number): Promise<unknown[]>;
   apiLastSeq(): Promise<number>;
   apiCharacterCheck(): Promise<unknown>;
+  apiApprove(id: string): Promise<{ ok: boolean; text: string }>;
 }
 
 /** Passkeys, challenges and sessions live in the owner's agent. */
@@ -39,6 +40,14 @@ export default {
         const body = (await request.json().catch(() => ({}))) as { text?: unknown };
         if (typeof body.text !== "string" || !body.text.trim()) return json({ error: 'Send {"text": "..."}.' }, 400);
         return json(await agent.apiTurn(body.text.slice(0, 20_000)));
+      }
+      // Approve from a push notification's button: the service worker posts here with the session cookie.
+      if (path === "/api/approve" && request.method === "POST") {
+        if (!sameOrigin(request)) return json({ error: "Wrong origin." }, 403);
+        const body = (await request.json().catch(() => ({}))) as { id?: unknown };
+        if (typeof body.id !== "string" || body.id.length > 64) return json({ error: 'Send {"id": "..."}.' }, 400);
+        const out = await agent.apiApprove(body.id);
+        return json(out, out.ok ? 200 : 409);
       }
       if (path === "/api/character-check" && request.method === "POST") {
         return json(await agent.apiCharacterCheck());

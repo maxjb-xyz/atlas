@@ -7,10 +7,14 @@ import type { StageView } from "../../../core/src/stage";
 import type { Atlas } from "../connection";
 import { Console, VoiceStrip } from "../Shell";
 import { type Shown, shownFrom, StageSheet, titleOf } from "../StageViews";
+import { ApprovalCard } from "../Approval";
 import { addDays, AsciiDiamond, clock, dayName, Empty, Sheet, shortDay, Stage, startOfDay, useNow } from "../ui";
 import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
-type HomeTab = "now" | "week" | "jobs" | "receipt" | `view:${string}`;
+type HomeTab = "now" | "week" | "jobs" | "receipt" | "approval" | `view:${string}`;
+
+/** The approval a receipt waits on, if it does. */
+const approvalOf = (r: LogRow) => (r.body.receipt as { approval?: string } | undefined)?.approval ?? null;
 
 /** The most views the stage keeps open as tabs; the oldest closes first. */
 const MAX_VIEWS = 4;
@@ -31,6 +35,11 @@ export function Home({
   const [job, setJob] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<LogRow | null>(null);
   const [views, setViews] = useState<Shown[]>([]);
+  const [approval, setApproval] = useState<string | null>(null);
+  const openApproval = (id: string) => {
+    setApproval(id);
+    setTab("approval");
+  };
 
   const openView = (v: Shown) => {
     setViews((list) => [...list.filter((x) => x.id !== v.id), v].slice(-MAX_VIEWS));
@@ -63,10 +72,19 @@ export function Home({
       seen.current = last;
       return;
     }
-    const fresh = s.rows.filter((r) => r.seq > seen.current! && r.kind === "tool.result").map(shownFrom);
+    const fresh = s.rows.filter((r) => r.seq > seen.current! && r.kind === "tool.result");
     seen.current = Math.max(seen.current, last);
-    const newest = fresh.filter((v): v is Shown => v != null).at(-1);
+    const newest = fresh
+      .map(shownFrom)
+      .filter((v): v is Shown => v != null)
+      .at(-1);
     if (newest) openView(newest);
+    // A card waiting for your OK comes onto the stage too (§12.2).
+    const asking = fresh
+      .map(approvalOf)
+      .filter((a): a is string => a != null)
+      .at(-1);
+    if (asking) openApproval(asking);
   }, [s.rows, s.loaded]);
 
   const running = s.jobs.filter((j) => j.state === "running").length;
@@ -91,6 +109,7 @@ export function Home({
         { id: "week", label: "Week" },
         { id: "jobs", label: "Jobs", badge: running || null },
         ...views.map((v) => ({ id: `view:${v.id}` as const, label: titleOf(atlas, v) })),
+        ...(approval ? [{ id: "approval" as const, label: "Your OK" }] : []),
         ...(receipt ? [{ id: "receipt" as const, label: "Receipt" }] : []),
       ]}
       tab={tab}
@@ -108,6 +127,8 @@ export function Home({
             onReceipt={(r) => {
               const shown = shownFrom(r);
               if (shown) return openView(shown);
+              const asking = approvalOf(r);
+              if (asking) return openApproval(asking);
               setReceipt(r);
               setTab("receipt");
             }}
@@ -119,6 +140,7 @@ export function Home({
       {tab === "week" && <WeekTab atlas={atlas} />}
       {tab === "jobs" && <Jobs atlas={atlas} selected={job} onSelect={setJob} />}
       {tab === "receipt" && receipt && <ReceiptView atlas={atlas} row={receipt} />}
+      {tab === "approval" && approval && <ApprovalTab atlas={atlas} id={approval} />}
       {views
         .filter((v) => tab === `view:${v.id}`)
         .map((v) => (
@@ -437,4 +459,34 @@ function ReceiptView({ atlas, row }: { atlas: Atlas; row: LogRow }) {
       </div>
     </Sheet>
   );
+}
+
+/** An approval card on the stage. Once it's answered, the stage says how it went. */
+function ApprovalTab({ atlas, id }: { atlas: Atlas; id: string }) {
+  const item = atlas.state.inbox?.find((i) => i.id === id && i.approval);
+  const settled = [...atlas.state.rows].reverse().find((r) => r.kind === "agenda.change" && r.body.item_id === id);
+  return (
+    <Sheet className="pick">
+      <div className="sheet-in">
+        <div className="sheet-title">
+          <h1 className="disp">{item?.title ?? String(settled?.body.title ?? "Approval")}</h1>
+          <span className={`tag ${item ? "ac" : ""}`}>{item ? "Waiting for your OK" : settledText(settled)}</span>
+        </div>
+        {item?.approval ? (
+          <ApprovalCard atlas={atlas} a={item.approval} />
+        ) : (
+          <p className="muted">{settled ? settledDetail(settled) : "It isn't waiting any more."}</p>
+        )}
+      </div>
+    </Sheet>
+  );
+}
+
+const settledText = (r: LogRow | undefined) =>
+  !r ? "Settled" : r.body.change === "done" ? "Approved" : r.body.change === "cancelled" ? "Declined" : "Ran out";
+
+function settledDetail(r: LogRow): string {
+  if (r.body.change === "done") return (Array.isArray(r.body.results) ? r.body.results.map(String) : []).join(" ") || "Done.";
+  if (r.body.change === "cancelled") return "You declined, so nothing was done.";
+  return "Nobody answered in time, so nothing was done.";
 }

@@ -43,7 +43,21 @@ import { delegate } from "./tools/delegate";
 import { memoryTools, recall } from "./tools/memory";
 import { reminderTools } from "./tools/reminders";
 import { show } from "./tools/show";
-import type { Tool, ToolContext, ToolResult } from "./tools/types";
+import { approve, deleteForGood, webhookCall } from "./tools/exits";
+import {
+  type Action,
+  actionsOf,
+  ASKS,
+  countApproval,
+  countDecline,
+  isTrusted,
+  kindOf,
+  needsHold,
+  requestApproval,
+  setTrust,
+} from "./approvals";
+import { removeWebhook, saveWebhook, webhooks } from "./webhooks";
+import type { ExitApi, Tool, ToolContext, ToolResult } from "./tools/types";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
@@ -63,7 +77,7 @@ const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
  * and nobody is looking at the stage when they run, so they can't `show`.
  */
 const TOOLS: Record<Actor, Tool[]> = {
-  owner: [calendarRead, ...reminderTools, ...memoryTools, delegate, show],
+  owner: [calendarRead, ...reminderTools, ...memoryTools, delegate, show, webhookCall, deleteForGood, approve],
   atlas: [calendarRead, ...reminderTools, recall],
   system: [],
 };
@@ -122,7 +136,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       makeBrain: (c) => this.#makeBrain(c),
       toolContext: (runId) => {
         const settings = readSettings(this.#sql);
-        return { ...this.#toolContext(settings, new Date(), "helper", null), helpers: null, run_id: runId };
+        return { ...this.#toolContext(settings, new Date(), "helper", null), helpers: null, exit: null, run_id: runId };
       },
       launch: async (job) => {
         const child = await this.dynamicAgents.get(HelperAgent, job.id);
@@ -156,13 +170,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         await Promise.all(calls.map((c) => this.speak(c, text)));
         return true;
       },
-      looking: () => [...this.getConnections()].some((c) => (c.state as SocketState | null)?.visible === true),
-      hold: async (at, row) => {
+      looking: () => this.#looking(),
+      hold: async (at, note) => {
         const item = createItem(this.#sql, {
           kind: "notify",
-          title: String(row.body.text ?? "").slice(0, 80),
+          title: note.text.slice(0, 300),
           due_at: at.getTime(),
-          source: { log_id: row.id, run_id: row.run_id ?? undefined, via: "outbox" },
+          source: { log_id: note.id, run_id: note.run_id ?? undefined, via: "outbox" },
         });
         await this.#clock.schedule(item);
       },
@@ -458,6 +472,38 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       }
+      case "atlas.approval.decide": {
+        const out = await this.#decide(msg.id, { yes: msg.yes, by: msg.hold ? "hold" : "app", edits: msg.edits });
+        if (!out.ok) this.#send(connection, { type: "atlas.error", message: out.text });
+        return;
+      }
+      case "atlas.trust.set": {
+        const t = setTrust(this.#sql, msg.key, msg.trusted);
+        if (t)
+          append(this.#sql, {
+            actor: "owner",
+            kind: "settings.change",
+            body: { trust: msg.trusted ? "given" : "taken back", name: t.name },
+          });
+        this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.webhook.save":
+      case "atlas.webhook.remove":
+        try {
+          if (msg.type === "atlas.webhook.save") {
+            const w = saveWebhook(this.#sql, msg);
+            append(this.#sql, { actor: "owner", kind: "settings.change", body: { webhook: msg.id ? "changed" : "added", name: w.name } });
+          } else {
+            const gone = removeWebhook(this.#sql, msg.id);
+            if (gone) append(this.#sql, { actor: "owner", kind: "settings.change", body: { webhook: "removed", name: gone.name } });
+          }
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
       case "atlas.stage":
         this.#send(connection, { type: "atlas.stage.page", ref: msg.ref, page: stagePage(this.#sql, msg.view) });
         return;
@@ -627,6 +673,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       await this.keepAliveWhile(() => this.#helpers.lost(payload.id));
       return;
     }
+    // An approval nobody answered runs out, and the owner hears what didn't happen (§12.2).
+    if (getItem(this.#sql, payload.id)?.kind === "approval") {
+      await this.keepAliveWhile(() => this.#expire(payload.id));
+      return;
+    }
     // Quiet hours are over: every held notification goes out together, as one push.
     if (getItem(this.#sql, payload.id)?.kind === "notify") {
       const held = due(this.#sql, Date.now())
@@ -634,8 +685,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         .map((i) => lease(this.#sql, i.id))
         .filter((i): i is AgendaItem => i != null);
       for (const i of held) finish(this.#sql, i.id, "done", null);
-      const rows = held.map((i) => (i.source.log_id ? getRow(this.#sql, i.source.log_id) : null)).filter((r): r is LogRow => r != null);
-      await this.keepAliveWhile(() => this.#outbox.release(rows));
+      const notes = held.map((i) => ({ id: i.source.log_id ?? i.id, run_id: i.source.run_id ?? null, text: i.title }));
+      await this.keepAliveWhile(() => this.#outbox.release(notes));
       return;
     }
     const item = lease(this.#sql, payload.id);
@@ -817,6 +868,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       embed: this.#embedder(),
       source_log_id: sourceLogId,
       via,
+      exit: this.#exit,
       helpers: {
         start: async (o) => {
           const job = await this.#helpers.start({
@@ -1378,11 +1430,18 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           if (this.#inCall.has(connection.id)) await this.speak(connection, sample);
           return { ok: true, message: `${(this.tts as { label?: string }).label ?? "voice"} spoke in ${Date.now() - t0} ms.` };
         },
+        webhook: async (id) => {
+          const hook = webhooks(this.#sql).find((w) => w.id === id);
+          if (!hook) return { ok: false, message: "That webhook isn't there any more." };
+          // The owner's own button: their word is the OK.
+          const out = await this.#outbox.perform({ kind: "webhook", webhook: hook.id, name: hook.name }, { run_id: null, by: "owner" });
+          return { ok: out.ok, message: out.text };
+        },
         push: async (device) => {
           const out = await this.#outbox.push(
-            [{ id: `test-${Date.now()}`, run_id: null, body: { text: "This is how Atlas's notifications look." } } as unknown as LogRow],
+            [{ id: `test-${Date.now()}`, run_id: null, text: "This is how Atlas's notifications look." }],
             "now",
-            device,
+            { device },
           );
           return out.ok
             ? { ok: true, message: "Sent. It should show on this device in a moment." }
@@ -1398,6 +1457,141 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     );
     this.#send(connection, { type: "atlas.test.result", what: msg.what, ref: msg.ref, ...out });
     if (msg.what === "brain") this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  // --- approvals (§12) -----------------------------------------------------------
+
+  /** The way out for tools: does an action now when its kind and earned trust allow, or puts it on this run's card. */
+  #exit: ExitApi = {
+    request: async (action, c) => {
+      if (ASKS[kindOf(action)].asks === "never" || isTrusted(this.#sql, action)) {
+        const out = await this.#outbox.perform(action, { run_id: c.run_id, by: "trusted" });
+        return {
+          ok: out.ok,
+          output: out.ok ? { done: out.text } : { error: out.text },
+          receipt: { text: `${out.ok ? "Done" : "Didn't work"} · ${action.name}` },
+        };
+      }
+      const { item, created } = requestApproval(this.#sql, { run_id: c.run_id, log_id: c.source_log_id, action });
+      const hold = needsHold(actionsOf(item));
+      if (created) {
+        await this.#clock.schedule(item);
+        // Nobody looking: the card reaches the owner as a push, with Approve when it doesn't need a hold.
+        if (!this.#looking()) {
+          void this.#outbox
+            .notify({ id: item.id, run_id: c.run_id, text: `Waiting for your OK: ${item.title}` }, "normal", {
+              approval: item.id,
+              hold,
+              url: "/#/inbox",
+            })
+            .catch(() => {});
+        }
+      }
+      this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+      return {
+        ok: true,
+        output: {
+          waiting_for_ok: item.id,
+          note: hold
+            ? "Not done yet. It can't be undone, so the owner has to hold to confirm on the card in the app. Tell them it's waiting in Inbox."
+            : "Not done yet. The owner sees a card and decides. Tell them in a few words it's waiting for their OK.",
+        },
+        receipt: { text: `Waiting for your OK · ${action.kind === "delete" ? `Delete ${action.name}` : action.name}`, approval: item.id },
+      };
+    },
+    decide: (id, yes, by) => this.#decide(id, { yes, by }),
+  };
+
+  #looking(): boolean {
+    return [...this.getConnections()].some((c) => (c.state as SocketState | null)?.visible === true);
+  }
+
+  /**
+   * The owner's yes or no. Yes does every step in order through the outbox,
+   * and counts toward earned trust when nothing was changed. Something that
+   * can't be undone only takes a hold in the app.
+   */
+  async #decide(
+    id: string,
+    o: { yes: boolean; by: "app" | "hold" | "push" | "voice" | "chat"; edits?: Array<{ index: number; message: string }> },
+  ): Promise<{ ok: boolean; text: string }> {
+    const item = getItem(this.#sql, id);
+    if (!item || item.kind !== "approval") return { ok: false, text: "That approval isn't there." };
+    if (item.state !== "scheduled") {
+      const was =
+        item.state === "done"
+          ? "approved"
+          : item.state === "cancelled"
+            ? "declined"
+            : item.state === "running"
+              ? "being done"
+              : "closed: it ran out";
+      return { ok: false, text: `That one was already ${was}.` };
+    }
+    let actions = actionsOf(item);
+    if (o.yes && needsHold(actions) && o.by !== "hold") {
+      return { ok: false, text: "That can't be undone, so it needs a hold to confirm on the card in the app. It's waiting in Inbox." };
+    }
+    if (item.schedule_id) await this.cancelSchedule(item.schedule_id);
+    if (!o.yes) {
+      finish(this.#sql, id, "cancelled", null, { by: "owner", via: o.by });
+      countDecline(this.#sql, actions);
+      this.#approvalSettled(id);
+      return { ok: true, text: "Declined. Nothing was done." };
+    }
+    // An edit made in the card is what goes out (§12.2), and it doesn't count as approved as-is.
+    let edited = false;
+    for (const e of o.edits ?? []) {
+      const a = actions[e.index];
+      if (a?.kind === "webhook" && (a.message ?? "") !== e.message) {
+        actions = actions.map((x, i) => (i === e.index ? ({ ...a, message: e.message } as Action) : x));
+        edited = true;
+      }
+    }
+    this.#sql.exec(`UPDATE agenda SET state = 'running', updated_at = ? WHERE id = ?`, Date.now(), id);
+    const results: Array<{ ok: boolean; text: string }> = [];
+    for (const a of actions) results.push(await this.#outbox.perform(a, { run_id: item.source.run_id ?? null, by: "approved" }));
+    const ok = results.every((r) => r.ok);
+    finish(this.#sql, id, "done", null, { by: "owner", via: o.by, edited, ok, results: results.map((r) => r.text) });
+    const offers = countApproval(this.#sql, actions, !edited && ok);
+    if (offers.length) append(this.#sql, { actor: "atlas", kind: "settings.change", body: { trust: "offered", keys: offers } });
+    if (actions.some((a) => a.kind === "delete")) this.#broadcast({ type: "atlas.records.changed" });
+    this.#approvalSettled(id);
+    return { ok, text: results.map((r) => r.text).join(" ") };
+  }
+
+  /** No answer in time: the card closes, and the owner hears what didn't happen. */
+  async #expire(id: string): Promise<void> {
+    const item = getItem(this.#sql, id);
+    if (!item || item.kind !== "approval" || item.state !== "scheduled" || item.due_at > Date.now()) return;
+    finish(this.#sql, id, "failed", null, { expired: true });
+    const row = this.#approvalSettled(id);
+    if (row && !this.#looking()) {
+      await this.#outbox.notify(
+        { id: row.id, run_id: item.source.run_id ?? null, text: `Your OK for ${item.title} ran out, so it didn't happen.` },
+        "normal",
+      );
+    }
+  }
+
+  /** Tells every app an approval was settled: its line in the thread, Inbox and the agenda. */
+  #approvalSettled(id: string): LogRow | null {
+    const r = this.#sql
+      .exec<{ id: string }>(
+        `SELECT id FROM log WHERE kind = 'agenda.change' AND json_extract(body, '$.item_id') = ? ORDER BY seq DESC LIMIT 1`,
+        id,
+      )
+      .toArray()[0];
+    const row = r ? getRow(this.#sql, r.id) : null;
+    if (row) this.#broadcast({ type: "atlas.rows", rows: [row] });
+    this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+    this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+    return row;
+  }
+
+  /** Approve from a push notification's button (the service worker calls /api/approve). */
+  async apiApprove(id: string): Promise<{ ok: boolean; text: string }> {
+    return this.keepAliveWhile(() => this.#decide(id, { yes: true, by: "push" }));
   }
 
   // --- sending ----------------------------------------------------------------
