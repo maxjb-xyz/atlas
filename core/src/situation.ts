@@ -345,7 +345,9 @@ export function situationLines(sql: Sql, settings: Settings, now = Date.now()): 
 
   // Weather.
   if (c.weather && now - c.weather.at < 3 * WEATHER_MS) {
-    lines.push(`Weather near them (Open-Meteo, ${shortLocal(new Date(c.weather.at), tz)}): ${weatherLine(c.weather, tz, units, now)}.`);
+    lines.push(
+      `Weather near them (Open-Meteo, ${shortLocal(new Date(c.weather.at), tz)}): ${weatherLine(c.weather, tz, units, now)}. When they ask about the weather, put up the weather view with show as you answer.`,
+    );
   } else if (c.weather_error) {
     lines.push(`Weather: unknown (${c.weather_error}).`);
   }

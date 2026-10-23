@@ -208,7 +208,7 @@ describe("when automations run", () => {
       const a = saveAutomation(sql, brief, "owner");
       expect(a.state).toBe("on");
       const moved = saveAutomation(sql, { ...brief, when: { kind: "schedule", at: "07:30", days: [1, 2, 3, 4, 5] } }, "atlas", a.id);
-      expect(moved).toMatchObject({ state: "on", report: "worth", when: { at: "07:30" } });
+      expect(moved).toMatchObject({ state: "on", report: "worth", when: { at: "07:30" }, changed_by: "owner" });
       const changed = saveAutomation(sql, { ...brief, do: [{ kind: "atlas", instructions: "Look at the week." }] }, "atlas", a.id);
       expect(changed.state).toBe("paused");
     }));

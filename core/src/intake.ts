@@ -307,6 +307,13 @@ export function landed(sql: Sql, days = 7, now = Date.now()): import("./stage").
   return out;
 }
 
+/** A source's state, unless it's from before `since` (a webhook added again under an old name starts fresh). */
+function stateSince(s: { ok_at?: number; error?: string; error_at?: number } | undefined, since: number) {
+  const ok_at = s?.ok_at && s.ok_at >= since ? s.ok_at : null;
+  const error_at = s?.error_at && s.error_at >= since ? s.error_at : null;
+  return { ok_at, error: error_at ? (s?.error ?? null) : null, error_at };
+}
+
 /** Every source the intake knows, with its state, for Settings and the Senses view. */
 export function sensesView(sql: Sql): import("./protocol").SensesView {
   const states = sourceStates(sql);
@@ -337,9 +344,7 @@ export function sensesView(sql: Sql): import("./protocol").SensesView {
       source,
       // A webhook added again under an old name starts fresh: what the old one sent isn't its last.
       last: last[source] && last[source].at >= (made.get(source) ?? 0) ? { ...last[source], what: yours(last[source].what) } : null,
-      ok_at: states[source]?.ok_at ?? null,
-      error: states[source]?.error ?? null,
-      error_at: states[source]?.error_at ?? null,
+      ...stateSince(states[source], made.get(source) ?? 0),
     })),
   };
 }

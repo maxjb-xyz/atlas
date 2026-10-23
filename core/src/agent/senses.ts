@@ -810,6 +810,7 @@ function pileList(pile: IntakeItem[], tz: string): string {
 /** What a run woken by a sense is asked to do: think, and speak only if it helps. The judgment is Atlas's own. */
 const AWARE = [
   "This is your chance to be useful without being asked. Think about what it means for the owner right now, given the situation, their calendar, tasks, reminders and people, and what you know of them, and connect the dots they'd want connected.",
+  "Check it can happen now: the time of day (a store at 2 AM is likely closed; say so or wait), where they are, and what they're doing.",
   "Look things up if that would help (a route, a place on their way, the weather, their calendar), and do what's yours to do. If telling them now would help, nudge once, in a sentence or two, the way you'd text a friend.",
   "If it wouldn't (it changes nothing for them, it can wait, you'd be guessing, they're busy), don't nudge: end with a few words for your own log saying why. Silence is often right.",
 ].join(" ");
@@ -869,6 +870,7 @@ export function speakingLine(s: Settings): string {
     s.speaking.tell_about.length ? ` The owner asked you to always bring up: ${s.speaking.tell_about.join("; ")}.` : "",
     s.speaking.quiet_about.length ? ` The owner asked you not to bring up: ${s.speaking.quiet_about.join("; ")}.` : "",
     " When the owner asks why you didn't tell them something, or what you noticed, look it up with noticed before you answer; never guess what you saw or decided.",
+    " These lists are exactly what's set now: one not shown here is empty, whatever earlier in the conversation says was added. Never say you changed how you'll speak up without changing it with speaking_up.",
   ].join("");
 }
 

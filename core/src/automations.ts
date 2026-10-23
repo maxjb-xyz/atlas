@@ -214,7 +214,8 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: Maker, id?:
       input.report,
       state,
       JSON.stringify(allowed),
-      atlas ? "atlas" : "owner",
+      // A move isn't a change to what it does, so who last changed that stays as it was.
+      moved ? old.changed_by : atlas ? "atlas" : "owner",
       now,
       moved ? old.tested_at : null,
       moved ? old.paused_why : null,
