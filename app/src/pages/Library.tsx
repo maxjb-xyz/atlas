@@ -82,7 +82,12 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
         />
       )}
       {!page && tab === "overview" && <Overview atlas={atlas} records={all?.records ?? []} counts={counts} go={go} />}
-      {!page && tab === "people" && <Records atlas={atlas} type="person" title="People" go={go} />}
+      {!page && tab === "people" && (
+        <>
+          <ImportContacts atlas={atlas} />
+          <Records atlas={atlas} type="person" title="People" go={go} />
+        </>
+      )}
       {tab === "places" && <Records atlas={atlas} type="place" title="Places" go={go} />}
       {tab === "memory" && <Records atlas={atlas} title="Everything Atlas knows" focus={detail.split(":")[1]} search go={go} />}
       {!page && tab === "areas" && <Areas atlas={atlas} go={go} />}
@@ -293,6 +298,12 @@ function RecordRow({ atlas, r, go }: { atlas: Atlas; r: RecordView; go: (d: stri
         )}
         <p className="faint small" style={{ marginTop: 2 }}>
           <span className="lab">{r.type}</span> · {sourceText(r)}
+          {r.type === "person" && (r.channels?.length || (r.trust && r.trust !== "unknown")) ? (
+            <span>
+              {" "}
+              · {[...(r.trust && r.trust !== "unknown" ? [r.trust] : []), ...(r.channels ?? []).map((c) => c.value)].join(" · ")}
+            </span>
+          ) : null}
           {(r.type === "place" || r.type === "organization") && (
             <span>
               {" "}
@@ -330,6 +341,15 @@ function RecordRow({ atlas, r, go }: { atlas: Atlas; r: RecordView; go: (d: stri
           >
             Correct
           </button>
+          {r.type !== "person" && (
+            <button
+              className="link"
+              title="Faces covering its areas may share it with the people they talk to"
+              onClick={() => atlas.send({ type: "atlas.record.share", id: r.id, shared: !r.shared })}
+            >
+              {r.shared ? "Shareable ✓" : "Shareable"}
+            </button>
+          )}
           <button className="link" onClick={() => atlas.send({ type: "atlas.record.forget", id: r.id })}>
             Forget
           </button>
@@ -444,17 +464,57 @@ function Areas({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
             </div>
           </>
         )}
-        <p className="faint small" style={{ marginTop: 18 }}>
-          What leaves Atlas from each area (which account it sends from, who it's shared with, what Atlas does alone) is set here once those
-          arrive.
-        </p>
+        <SharedAreas atlas={atlas} />
       </div>
     </Sheet>
   );
 }
 
+/**
+ * Shared areas (§6, §7.1): an area the owner shares with members. Its
+ * records live in the owner's Atlas; everyone who shares it sees them here,
+ * and what Atlas keeps there shows for all of them.
+ */
+function SharedAreas({ atlas }: { atlas: Atlas }) {
+  const shared = atlas.state.shared;
+  useEffect(() => {
+    if (atlas.voice.connected) atlas.send({ type: "atlas.shared" });
+  }, [atlas.voice.connected]);
+  if (!shared?.length) return null;
+  return (
+    <>
+      <div className="section-rule">
+        <span className="lab">Shared</span>
+      </div>
+      {shared.map((a) => (
+        <div key={a.id} style={{ marginBottom: 14 }}>
+          <p>
+            <b>{a.name}</b> <span className="muted small">with {a.with.join(", ")}</span>
+          </p>
+          <div className="rows">
+            {a.records.map((r) => (
+              <div className="r" key={r.id}>
+                <span className="grow">
+                  {r.name}
+                  {r.fact && <span className="muted"> · {r.fact}</span>}
+                </span>
+                <span className="faint small">
+                  {r.by} · {shortDay(r.updated_at)}
+                </span>
+              </div>
+            ))}
+            {!a.records.length && <p className="muted small">Nothing kept here yet.</p>}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; others: AreaView[]; go: (d: string) => void }) {
   const [open, setOpen] = useState(false);
+  // Only the owner shares areas, with members who've joined (§7.1).
+  const members = atlas.state.view?.me ? [] : (atlas.state.view?.members ?? []).filter((m) => m.joined_at);
   const saved = { name: area.name, about: area.about, tone: area.settings.tone };
   const [draft, setDraft] = useState(saved);
   // Typing marks the draft as the owner's; until then it follows the saved area as it changes.
@@ -505,6 +565,23 @@ function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; ot
               placeholder="Formal with clients"
             />
           </label>
+          {members.length > 0 && (
+            <div className="field">
+              <span>Shared with (they see and add to what's in it)</span>
+              <div className="row small" style={{ gap: 12 }}>
+                {members.map((m) => (
+                  <label key={m.id} className="row">
+                    <input
+                      type="checkbox"
+                      checked={area.settings.shared_with.includes(m.id)}
+                      onChange={(e) => atlas.send({ type: "atlas.area.share", area: area.id, member: m.id, shared: e.target.checked })}
+                    />{" "}
+                    {m.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="row">
             <button className="btn sm" onClick={() => go(`area:${area.id}`)}>
               Open
@@ -657,5 +734,38 @@ function Pages({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
         )}
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * Library → People → Bring in contacts (§7.1): from a contacts extension
+ * (iCloud), or a vCard file. People Atlas knows are merged by an address,
+ * a number or a handle, not made twice.
+ */
+function ImportContacts({ atlas }: { atlas: Atlas }) {
+  const r = atlas.state.tests.contacts;
+  const from = (atlas.state.view?.extensions ?? []).filter((e) => e.state === "on" && e.provides.includes("contacts"));
+  return (
+    <div className="row" style={{ flexWrap: "wrap", gap: 10, margin: "0 0 12px" }}>
+      {from.map((e) => (
+        <button key={e.id} className="btn" onClick={() => atlas.send({ type: "atlas.contacts.import", from: e.id })}>
+          Bring in contacts from {e.name}
+        </button>
+      ))}
+      <label className="btn">
+        Bring in a vCard file
+        <input
+          type="file"
+          accept=".vcf,text/vcard,text/x-vcard"
+          style={{ display: "none" }}
+          onChange={async (ev) => {
+            const f = ev.target.files?.[0];
+            if (f) atlas.send({ type: "atlas.contacts.import", vcards: await f.text() });
+            ev.target.value = "";
+          }}
+        />
+      </label>
+      {r && <span className={`small ${r.ok ? "ok" : "err"}`}>{r.message}</span>}
+    </div>
   );
 }

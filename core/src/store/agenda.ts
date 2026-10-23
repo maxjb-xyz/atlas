@@ -21,7 +21,15 @@ export type AgendaKind =
   /** The situation's refresh (§10.2): the weather and travel time, kept current while they're needed. */
   | "situation"
   /** A call to a paired device that was offline (§16.3), run when it's back. */
-  | "device";
+  | "device"
+  /** An open loop (§10.4): something Atlas waits to hear by a time ("no reply from the landlord by Friday"), raised then if it's still open. */
+  | "loop"
+  /** The extensions' look (§17): each installed extension that can't post to Atlas is asked what's new since its cursor, while any is on. */
+  | "looks"
+  /** A time a face held for someone (§7.2), for the owner to confirm; busy to every face until then. */
+  | "hold"
+  /** The faces' digest (§7.2): what their conversations were, once a day, to Inbox. */
+  | "digest";
 export type AgendaState = "scheduled" | "running" | "done" | "cancelled" | "failed";
 
 export interface AgendaSource {

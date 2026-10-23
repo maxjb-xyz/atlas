@@ -206,6 +206,20 @@ export interface Channels {
   mcp(): McpClient | null;
   /** Sends a call to a paired device (§16.3) and waits for its answer; `offline` when it isn't connected. */
   node?(c: { node: string; tool: string; input: Record<string, unknown> }): Promise<{ ok: boolean; text: string; offline?: boolean }>;
+  /**
+   * Sends a mail (§16.2): as the owner through the extension that holds
+   * their mail, or as Atlas from its own address. The provider's own words
+   * come back when it fails.
+   */
+  mail?(
+    a: Extract<Action, { kind: "email" }>,
+  ): Promise<
+    { ok: true; id: string; thread?: string; link?: string; message_id?: string; via: string } | { ok: false; error: string; via: string }
+  >;
+  /** Sends a message to the owner on the chat channel they picked to be reached on; false when it can't. */
+  chat?(text: string): Promise<boolean>;
+  /** Sends a face's answer in the owner's name, once they've OK'd it (§7.2). */
+  faceReply?(a: Extract<Action, { kind: "face_reply" }>): Promise<{ ok: boolean; text: string }>;
   /** Puts a call to an offline device on the clock, to run when it's back. */
   later?(c: {
     node: string;
@@ -257,14 +271,16 @@ export class Outbox {
     });
     this.channels.broadcast([row]);
     // One channel (§14): heard in a call, or seen in an app in view, needs no push as well.
-    if (channel !== "voice" && channel !== "api" && !this.channels.looking()) await this.notify(noteOf(row), d.urgency ?? "normal");
+    if (channel !== "voice" && channel !== "api" && channel !== "chat" && !this.channels.looking())
+      await this.notify(noteOf(row), d.urgency ?? "normal");
     return row;
   }
 
   /** Tells the owner, on one device, about something they haven't seen. `extra` goes to the service worker with it. */
   async notify(row: Note, urgency: Urgency, extra?: Record<string, unknown>): Promise<void> {
     const settings = readSettings(this.sql);
-    if (!settings.notifications.push || !pushDevices(this.sql).length) return;
+    const chat = settings.notifications.reach !== "push";
+    if (!chat && (!settings.notifications.push || !pushDevices(this.sql).length)) return;
     const tz = zoneOf(settings);
     const quiet = urgency === "now" ? null : quietUntil(new Date(), tz, settings.notifications.quiet);
     const focus = urgency === "now" ? null : focusNow(this.sql);
@@ -282,6 +298,11 @@ export class Outbox {
       return;
     }
     if (urgency === "normal" && this.#overBudget([row])) return;
+    // Reached on a chat (§16.1): the message goes there instead of a push, when it can.
+    if (settings.notifications.reach !== "push" && this.channels.chat && (await this.channels.chat(row.text).catch(() => false))) {
+      this.receipt(row.run_id, { of: [row.id], channel: "chat", to: settings.notifications.reach, ok: true, urgency });
+      return;
+    }
     await this.push([row], urgency, { extra });
   }
 
@@ -431,6 +452,23 @@ export class Outbox {
       };
     }
     if (a.kind === "mcp_add") return this.#connect(a, o);
+    if (a.kind === "email") return this.#mail(a, o);
+    if (a.kind === "face_reply") {
+      if (!this.channels.faceReply) return { ok: false, text: "A face's answer can't be sent from here." };
+      if (scrub(a.text, this.secrets()) !== a.text) return { ok: false, text: "The answer held one of your secrets, so it wasn't sent." };
+      const out = await this.channels
+        .faceReply(a)
+        .catch((err: unknown) => ({ ok: false, text: err instanceof Error ? err.message : String(err) }));
+      this.receipt(o.run_id, {
+        channel: "face",
+        to: a.name,
+        text: a.text.slice(0, 300),
+        by: o.by,
+        ok: out.ok,
+        ...(out.ok ? {} : { error: out.text }),
+      });
+      return out;
+    }
     if (a.kind === "node") return this.device({ node: a.node, device: a.device, tool: a.tool, input: a.input }, o);
     if (a.kind === "vault") return this.#fill(a, o);
     if (a.kind === "site") {
@@ -678,6 +716,57 @@ export class Outbox {
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /**
+   * A mail out (§16.2). Nothing with one of the owner's secrets in it
+   * leaves; the receipt names who it went to, as whom, and links to the
+   * sent mail, and keeps the person and thread so replies and "last in
+   * touch" find it.
+   */
+  async #mail(a: Extract<Action, { kind: "email" }>, o: { run_id: string | null; by: string }): Promise<{ ok: boolean; text: string }> {
+    const base = {
+      channel: "email",
+      as: a.as,
+      from: a.from,
+      to: [...a.to, ...(a.cc ?? [])].join(", "),
+      text: a.subject,
+      by: o.by,
+      ...(a.person ? { person: a.person } : {}),
+    };
+    if ([a.subject, a.text, ...a.to, ...(a.cc ?? [])].some((x) => scrub(x, this.secrets()) !== x)) {
+      const text = `The mail to ${base.to} wasn't sent: it held one of your secrets.`;
+      this.receipt(o.run_id, { ...base, text: scrub(a.subject, this.secrets()), ok: false, error: text, checks: { secrets: "failed" } });
+      return { ok: false, text };
+    }
+    if (!this.channels.mail) {
+      const text = "Mail can't be sent from here.";
+      this.receipt(o.run_id, { ...base, ok: false, error: text });
+      return { ok: false, text };
+    }
+    const out = await this.channels.mail(a).catch((err: unknown) => ({
+      ok: false as const,
+      error: err instanceof Error ? err.message : String(err),
+      via: a.via,
+    }));
+    if (!out.ok) {
+      this.receipt(o.run_id, { ...base, via: out.via, ok: false, error: out.error, checks: { secrets: "passed", ok: o.by } });
+      console.error(JSON.stringify({ at: "mail.send", via: out.via, to: base.to, error: out.error }));
+      return { ok: false, text: `The mail to ${base.to} didn't go: ${out.error}` };
+    }
+    this.receipt(o.run_id, {
+      ...base,
+      via: out.via,
+      ok: true,
+      ...(out.thread ? { thread: out.thread } : {}),
+      ...(out.link ? { link: out.link } : {}),
+      ...(out.message_id ? { message_id: out.message_id } : {}),
+      checks: { secrets: "passed", ok: o.by },
+    });
+    return {
+      ok: true,
+      text: `Sent "${a.subject}" to ${base.to}${a.as === "atlas" ? ` from ${a.from}` : ""}.${out.link ? ` ${out.link}` : ""}`,
+    };
   }
 
   /** A delivery receipt in the log (§4.2), shown in History. */

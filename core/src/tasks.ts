@@ -7,6 +7,7 @@
 // Errands were their own kind on the clock until 2026-10-23; they're tasks
 // that fit at a place, and `fromErrands` moves the old ones over once.
 
+import { channelsOf, normal } from "./contacts";
 import { kindWords } from "./maps";
 import { createItem, finish, type AgendaItem, upcoming } from "./store/agenda";
 import type { Json, Sql } from "./store/db";
@@ -137,8 +138,14 @@ export function personKeys(sql: Sql, person: string): { names: string[][]; email
     const own = words(r.name);
     if (r.fields.is_owner || !asked.every((w) => own.includes(w))) continue;
     names.push(own);
-    // Its details: an email anywhere, and other names it goes by.
+    // Its channels (§7.1): every address, and every handle as the words it's made of.
+    for (const c of channelsOf(r)) {
+      if (c.kind === "email") emails.add(normal("email", c.value));
+      else if (c.kind !== "phone") names.push(words(c.value));
+    }
+    // Its other details: an email anywhere, and other names it goes by.
     for (const [k, v] of Object.entries(r.fields)) {
+      if (k === "channels") continue;
       for (const x of Array.isArray(v) ? v : [v]) {
         if (typeof x !== "string") continue;
         for (const e of x.match(EMAIL) ?? []) emails.add(e.toLowerCase());

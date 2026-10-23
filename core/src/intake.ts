@@ -10,12 +10,13 @@
 // The sources here are the ones code reads: where you are (location.ts),
 // the devices (nodes.ts), the calendar's changes (below), the situation's
 // trip and weather (situation.ts), and webhooks from any service (below).
-// A new source only has to make `SenseItem`s.
+// Extensions (§17) add the rest, each making `SenseItem`s.
 
 import { z } from "zod";
 import { personText, type Calendar, type CalendarEvent } from "./calendar/types";
 import { minutes } from "./maps";
-import { ownTracksLogin } from "./location";
+import { personFrom } from "./contacts";
+import { providing } from "./extensions";
 import { nodes } from "./nodes";
 import { cache } from "./situation";
 import { newId, parse, type Sql } from "./store/db";
@@ -85,6 +86,8 @@ const sourceOf = (item: SenseItem) => {
 
 /** The key an item counts once by: its own, within its source, or one from the older shapes. Moves have none: each real move is news. */
 function keyOf(item: SenseItem): string | null {
+  // What it's about across sources (a webhook and a look both saying a review was requested) counts once.
+  if (typeof item.topic === "string" && item.topic) return `topic:${item.topic}`;
   if (item.key) return `${sourceOf(item)}:${item.key}`;
   const place = (item.place as { id?: string } | undefined)?.id;
   if (item.source === "location") return item.event === "moved" || !place ? null : `location:${item.event}:${place}`;
@@ -107,6 +110,11 @@ export function take(
   const fresh: LogRow[] = [];
   for (const it of items) {
     const item = { ...it, what: it.what || describe({ body: it as Record<string, unknown> }) } as SenseItem;
+    // Who it's from, as a person Atlas knows (§7.1): kept on the row, so "the last time we were in touch" is a lookup.
+    if (!item.person && typeof item.from === "string" && item.from) {
+      const p = personFrom(sql, item.from);
+      if (p && !p.fields.is_owner) item.person = p.id;
+    }
     const key = keyOf(item);
     const dup =
       key != null &&
@@ -323,7 +331,8 @@ export function sensesView(sql: Sql): import("./protocol").SensesView {
   const hooks = new Set(made.keys());
   // Sources that are set up show before they've sent anything: the phone, the calendar, devices, the trip and weather, each webhook.
   const ready = [
-    ownTracksLogin(sql) ? "location" : "",
+    providing(sql, "location").length ? "location" : "",
+    ...[...providing(sql, "sense"), ...providing(sql, "mail"), ...providing(sql, "channel")].map((e) => e.id),
     getState(sql, "calendar_seen") ? "calendar" : "",
     nodes(sql).length ? "device" : "",
     cache(sql).weather ? "situation" : "",
@@ -354,14 +363,19 @@ export const yours = (what: string) => what.replace(/^The owner /, "You ");
 
 /** The Senses view (§10.4). */
 export function sensesPage(sql: Sql, settings: Settings): import("./stage").SensesPage {
-  const recent = sql.exec<RawItem>(`${SELECT} ORDER BY i.at DESC LIMIT 25`).toArray().map(toItem);
+  const rows = sql.exec<RawItem>(`${SELECT} ORDER BY i.at DESC LIMIT 25`).toArray();
+  const factsOf = (r: RawItem) => (parse(r.body, {}) as { facts?: Record<string, string | number | string[]> }).facts;
   return {
     kind: "senses",
     funnel: funnel(sql, settings),
     landed: landed(sql),
     sources: sensesView(sql).sources,
     later: laterPile(sql, 20).map((i) => ({ id: i.id, at: i.at, source: i.source, what: yours(i.what) })),
-    recent: recent.map((i) => ({ id: i.id, at: i.at, source: i.source, what: yours(i.what), outcome: i.outcome, why: i.why })),
+    recent: rows.map((r) => {
+      const i = toItem(r);
+      const facts = factsOf(r);
+      return { id: i.id, at: i.at, source: i.source, what: yours(i.what), outcome: i.outcome, why: i.why, ...(facts ? { facts } : {}) };
+    }),
   };
 }
 
@@ -505,8 +519,9 @@ const same = (a: string, b: string) => {
 
 /**
  * Whether a post is from the service the hook was made for: its key in the
- * address (`?key=`), or the body signed with the key the way GitHub
- * (X-Hub-Signature-256) and Linear (Linear-Signature) sign theirs.
+ * address (`?key=`), or the body signed with the key as an HMAC-SHA256 in
+ * hex, the way GitHub (X-Hub-Signature-256) and Linear (Linear-Signature)
+ * sign theirs, so a service's own webhook settings work as they are.
  */
 export async function hookAllowed(sql: Sql, id: string, key: string | null, headers: Headers, body: string): Promise<boolean> {
   const mine = hookKeys(sql)[id];
@@ -536,48 +551,15 @@ const pick = (o: Record<string, unknown> | undefined, ...keys: string[]) => {
 };
 
 /**
- * A webhook's post as an item. GitHub's and Linear's posts get a line from
- * their own fields; anything else from the usual ones (title, subject,
- * text). The whole post is kept as raw content, which is someone else's
- * words: Atlas reads it as information, never as instructions.
+ * A webhook's post as an item, with a line from the usual fields (title,
+ * subject, text). A service with an extension that claims its posts (GitHub,
+ * Linear) is read by that extension instead (§17). The whole post is kept as
+ * raw content, which is someone else's words: Atlas reads it as information,
+ * never as instructions.
  */
-export function hookItem(hook: SenseHook, headers: Headers, payload: unknown): SenseItem {
+export function hookItem(hook: SenseHook, payload: unknown): SenseItem {
   const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
-  const obj = (k: string) => (p[k] && typeof p[k] === "object" ? (p[k] as Record<string, unknown>) : undefined);
-  const gh = headers.get("x-github-event");
-  if (gh) {
-    const thing = obj("pull_request") ?? obj("issue") ?? obj("discussion") ?? obj("release") ?? obj("comment") ?? obj("check_run");
-    const repo = pick(obj("repository"), "full_name");
-    const who = pick(obj("sender"), "login");
-    const action = str(p.action);
-    const title = pick(thing, "title", "name") || pick(obj("head_commit"), "message");
-    return {
-      source: "webhook",
-      event: `${gh}${action ? `.${action}` : ""}`,
-      hook: { id: hook.id, name: hook.name },
-      what: `GitHub: ${gh.replace(/_/g, " ")}${action ? ` ${action.replace(/_/g, " ")}` : ""}${title ? `, "${title}"` : ""}${repo ? ` in ${repo}` : ""}${who ? ` by ${who}` : ""}`,
-      key: headers.get("x-github-delivery") ?? undefined,
-      thread: thing ? `${repo}#${String(thing.number ?? thing.id ?? "")}` : repo || undefined,
-      ...(who ? { from: who } : {}),
-      signals: [gh, action, ...(p.requested_reviewer ? ["review_requested"] : []), ...(p.assignee ? ["assigned"] : [])].filter(Boolean),
-      link: pick(thing, "html_url") || pick(obj("repository"), "html_url") || undefined,
-    };
-  }
-  const data = obj("data");
-  if (headers.get("linear-delivery") || (typeof p.type === "string" && data && typeof p.action === "string" && "organizationId" in p)) {
-    const title = pick(data, "title", "name", "body");
-    const id = pick(data, "identifier");
-    return {
-      source: "webhook",
-      event: `${str(p.type)}.${str(p.action)}`,
-      hook: { id: hook.id, name: hook.name },
-      what: `Linear: ${str(p.type)} ${str(p.action)}${id ? ` ${id}` : ""}${title ? `, "${title}"` : ""}`,
-      key: headers.get("linear-delivery") ?? undefined,
-      thread: id || pick(data, "id") || undefined,
-      signals: [str(p.type), str(p.action)].filter(Boolean),
-      link: str(p.url, 400) || pick(data, "url") || undefined,
-    };
-  }
+  const data = p.data && typeof p.data === "object" ? (p.data as Record<string, unknown>) : undefined;
   const line =
     pick(p, "title", "subject", "summary", "message", "text", "name", "event", "status") || pick(data, "title", "message", "text");
   return {

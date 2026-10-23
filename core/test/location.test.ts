@@ -1,11 +1,13 @@
 import { runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { seams } from "../src/agent";
-import { here, metres, observe, ownTracksAnswer, ownTracksConfig, ownTracksLink, readOwnTracks, type Observation } from "../src/location";
+import { here, metres, observe, observations, pins, type Observation } from "../src/location";
+import owntracks, { readPost } from "../../extensions/owntracks";
+import type { Received } from "../../extensions/sdk";
+import { getExt, install, uninstall } from "../src/extensions";
 import { migrate, type Sql } from "../src/store/db";
 import { createRecord, forgetRecord } from "../src/store/records";
-import { secretValues } from "../src/store/settings";
-import { env, fakeCalendar, fakeEmbedder } from "./helpers";
+import { env, fakeCalendar, fakeEmbedder, runExt } from "./helpers";
 import { connect, inOwner } from "./owner";
 
 const GYM = { lat: 28.6024, lon: -81.2001 };
@@ -23,6 +25,9 @@ async function inFresh<T>(name: string, fn: (sql: Sql) => T): Promise<T> {
     return fn(state.storage.sql);
   });
 }
+
+/** One OwnTracks post, read by its extension into what the core observes. */
+const readOwnTracks = (body: unknown): Observation[] => observations(readPost(body));
 
 describe("what OwnTracks sends", () => {
   it("reads a location, with battery, connection, speed and motion, and a region event by its id", () => {
@@ -125,36 +130,66 @@ describe("arriving and leaving", () => {
 });
 
 describe("regions and setup for the phone", () => {
+  const nothing = (async () => new Response("no network", { status: 500 })) as unknown as typeof fetch;
+  const LOGIN = { user: "atlas", password: "pw-123456789", made_at: 0, regions: "" };
+  const auth = { authorization: `Basic ${btoa("atlas:pw-123456789")}` };
+  const receive = (state: unknown, places: unknown) =>
+    runExt<Received>(owntracks, "receive", [{ method: "POST", headers: auth, body: JSON.stringify({ _type: "status" }), query: {} }], {
+      fetch: nothing,
+      state,
+      data: { places },
+    });
+
   it("sends saved places as regions once, again when they change, and removes deleted ones", async () => {
-    await inFresh("loc-regions", (sql) => {
-      expect(ownTracksAnswer(sql)).toEqual([]);
+    await inFresh("loc-regions", async (sql) => {
+      let state: unknown = LOGIN;
+      const answer = async () => {
+        const r = await receive(state, pins(sql));
+        if (r.state) state = r.state;
+        return r.reply!.json as Array<{ action: string; waypoints: { waypoints: Array<Record<string, unknown>> } }>;
+      };
+      expect(await answer()).toEqual([]);
       const gym = createRecord(sql, { type: "place", name: "Gym", fields: GYM, source: { via: "chat" } });
       createRecord(sql, { type: "place", name: "No pin yet", fields: { address: "1 Main St" }, source: { via: "chat" } });
-      const [cmd] = ownTracksAnswer(sql) as Array<{ action: string; waypoints: { waypoints: Array<Record<string, unknown>> } }>;
+      const [cmd] = await answer();
       expect(cmd!.action).toBe("setWaypoints");
       expect(cmd!.waypoints.waypoints).toEqual([
         expect.objectContaining({ _type: "waypoint", desc: "Gym", rid: gym.id, rad: 120, ...GYM }),
       ]);
-      expect(ownTracksAnswer(sql)).toEqual([]);
+      expect(await answer()).toEqual([]);
       const store = createRecord(sql, { type: "organization", name: "Publix: Oviedo", fields: STORE, source: { via: "chat" } });
-      const [again] = ownTracksAnswer(sql) as Array<{ waypoints: { waypoints: Array<{ rid: string; desc: string }> } }>;
+      const [again] = (await answer()) as unknown as Array<{ waypoints: { waypoints: Array<{ rid: string; desc: string }> } }>;
       expect(again!.waypoints.waypoints.map((w) => w.rid).sort()).toEqual([gym.id, store.id].sort());
       expect(again!.waypoints.waypoints.find((w) => w.rid === store.id)!.desc).toBe("Publix  Oviedo");
       forgetRecord(sql, gym.id, { via: "owner" });
-      const [gone] = ownTracksAnswer(sql) as Array<{ waypoints: { waypoints: Array<{ rid: string; lat: number }> } }>;
+      const [gone] = (await answer()) as unknown as Array<{ waypoints: { waypoints: Array<{ rid: string; lat: number }> } }>;
       expect(gone!.waypoints.waypoints.find((w) => w.rid === gym.id)!.lat).toBe(91);
     });
   });
 
-  it("makes a setup link OwnTracks reads: HTTP mode to this Atlas, its own login, remote commands on", async () => {
-    await inFresh("loc-config", (sql) => {
-      const config = ownTracksConfig(sql, "https://atlas.example", { user: "atlas", password: "pw-123456789", made_at: 0 });
-      expect(config).toMatchObject({ _type: "configuration", mode: 3, url: "https://atlas.example/owntracks", auth: true, cmd: true });
-      const link = ownTracksLink(config);
-      expect(link.startsWith("owntracks:///config?inline=")).toBe(true);
-      const back = JSON.parse(atob(decodeURIComponent(link.split("inline=")[1]!)));
-      expect(back).toEqual(config);
+  it("makes a setup link OwnTracks reads: HTTP mode to its address, its own login, remote commands on", async () => {
+    const out = await runExt<{ link: string; fields: Array<{ label: string; value: string }>; state: { password: string } }>(
+      owntracks,
+      "setup",
+      [],
+      {
+        fetch: nothing,
+        address: "https://atlas.example/x/owntracks/abc",
+        data: { places: [] },
+      },
+    );
+    expect(out.link.startsWith("owntracks:///config?inline=")).toBe(true);
+    const back = JSON.parse(atob(decodeURIComponent(out.link.split("inline=")[1]!)));
+    expect(back).toMatchObject({
+      _type: "configuration",
+      mode: 3,
+      url: "https://atlas.example/x/owntracks/abc",
+      auth: true,
+      cmd: true,
+      username: "atlas",
     });
+    expect(back.password).toBe(out.state.password);
+    expect(out.fields.find((f) => f.label === "Password")!.value).toBe(out.state.password);
   });
 
   it("measures distances on the earth", () => {
@@ -179,12 +214,22 @@ const location = (p: { lat: number; lon: number }, at: number) => ({
   tid: "me",
 });
 
+/** Settings → Extensions → OwnTracks → Set up: what it shows once. */
+async function setUp(s: Awaited<ReturnType<typeof connect>>) {
+  s.send({ type: "atlas.ext.setup", id: "owntracks" });
+  const out = await s.next("atlas.ext.setup");
+  const field = (label: string) => out.fields!.find((f) => f.label === label)!.value;
+  return { url: field("Address"), user: field("User"), password: field("Password"), link: out.link! };
+}
+
 describe("OwnTracks through the Worker", () => {
   beforeEach(async () => {
     seams.calendar = fakeCalendar([]);
     seams.embed = fakeEmbedder();
     await inOwner((_a, sql) => {
-      sql.exec(`DELETE FROM secrets WHERE name = 'owntracks'`);
+      // OwnTracks is an extension (§17): installed fresh, not yet set up.
+      uninstall(sql, "owntracks");
+      install(sql, { id: "owntracks", source: "bundled", state: "on" });
       sql.exec(`DELETE FROM state WHERE key = 'location'`);
       sql.exec(`DELETE FROM settings WHERE key = 'location'`);
       sql.exec(`DELETE FROM records WHERE type = 'place'`);
@@ -200,13 +245,14 @@ describe("OwnTracks through the Worker", () => {
     const s = await connect();
     // Before setup, nothing gets in.
     expect((await post(location(GYM, T0))).status).toBe(401);
-    s.send({ type: "atlas.location.setup" });
-    const setup = await s.next("atlas.location.setup");
-    expect(setup.url).toBe("https://atlas.test/owntracks");
+    const setup = await setUp(s);
+    expect(setup.url).toBe(`https://atlas.test/x/owntracks/${await inOwner((_a, sql) => getExt(sql, "owntracks")!.key)}`);
     expect(setup.link).toMatch(/^owntracks:\/\/\/config\?inline=/);
     const auth = basic(setup.user, setup.password);
-    // OwnTracks' password never leaves in a message.
-    expect(await inOwner((_a, sql) => secretValues(sql))).toContain(setup.password);
+    // Its own address works as the old one does.
+    expect(
+      (await SELF.fetch(setup.url, { method: "POST", headers: { authorization: auth }, body: JSON.stringify({ _type: "status" }) })).status,
+    ).toBe(200);
 
     const wrong = await post(location(GYM, T0), basic(setup.user, "nope"));
     expect(wrong.status).toBe(401);
@@ -232,8 +278,7 @@ describe("OwnTracks through the Worker", () => {
     expect(seen.view.location).toMatchObject({ place: { name: "Gym" }, fix: { acc: 10 }, pins: 1 });
 
     // Setting it up again makes a new password; the old one stops working.
-    s.send({ type: "atlas.location.setup" });
-    const again = await s.next("atlas.location.setup");
+    const again = await setUp(s);
     expect(again.password).not.toBe(setup.password);
     expect((await post(location(GYM, T0 + 120_000), auth)).status).toBe(401);
   });
@@ -241,8 +286,7 @@ describe("OwnTracks through the Worker", () => {
   it("drops what OwnTracks sends while location is off, and says so in the log", async () => {
     const s = await connect();
     const from = await inOwner((_a, sql) => sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) AS seq FROM log`).one().seq);
-    s.send({ type: "atlas.location.setup" });
-    const setup = await s.next("atlas.location.setup");
+    const setup = await setUp(s);
     const auth = basic(setup.user, setup.password);
     await inOwner((_a, sql) => createRecord(sql, { type: "place", name: "Gym", fields: GYM, source: { via: "chat" } }));
     await post(location(GYM, T0), auth);
@@ -265,8 +309,7 @@ describe("OwnTracks through the Worker", () => {
 
   it("refuses what isn't JSON, and posts that are too big", async () => {
     const s = await connect();
-    s.send({ type: "atlas.location.setup" });
-    const setup = await s.next("atlas.location.setup");
+    const setup = await setUp(s);
     const auth = basic(setup.user, setup.password);
     const bad = await SELF.fetch("https://atlas.test/owntracks", { method: "POST", headers: { authorization: auth }, body: "{nope" });
     expect(bad.status).toBe(400);

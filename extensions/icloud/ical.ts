@@ -3,7 +3,7 @@
 // there is no RRULE logic here; a master event that still carries an RRULE
 // only yields its first occurrence.
 
-import { isValidZone, zonedToUtc as wallToUtc } from "../time";
+import { isValidZone, zonedToUtc as wallToUtc } from "../lib/time";
 import type { CalendarEvent, EventPerson } from "./types";
 
 interface Prop {
@@ -218,4 +218,87 @@ function peopleOf(props: Prop[]): EventPerson[] {
     if (out.length >= 30) break;
   }
   return out;
+}
+
+// --- changing an event -----------------------------------------------------
+
+/** One content line folded at 75 octets, as RFC 5545 asks (counted in characters here, which only folds earlier). */
+function fold(line: string): string {
+  if (line.length <= 75) return line;
+  const parts = [line.slice(0, 75)];
+  for (let i = 75; i < line.length; i += 74) parts.push(` ${line.slice(i, i + 74)}`);
+  return parts.join("\r\n");
+}
+
+/** A start or end as an iCalendar property: a date for an all-day event, else a UTC time. */
+function whenLine(name: "DTSTART" | "DTEND", v: string, allDay: boolean): string {
+  if (allDay) return `${name};VALUE=DATE:${v.slice(0, 10).replace(/-/g, "")}`;
+  return `${name}:${token({ kind: "time", ms: Date.parse(v) })}`;
+}
+
+/**
+ * The calendar object `ics` with the event `uid` at a new time: its start
+ * and end replaced (a DURATION gives way to an end), its SEQUENCE one more
+ * and its DTSTAMP now, as a calendar app does when you drag an event.
+ * "repeats" when it's a repeating event, which Atlas doesn't move one
+ * occurrence of; null when the object doesn't hold that event.
+ */
+export function moveIn(
+  ics: string,
+  uid: string,
+  to: { start: string; end: string; all_day: boolean },
+  now = Date.now(),
+): string | "repeats" | null {
+  const out: string[] = [];
+  const stack: string[] = [];
+  /** The VEVENT being read: its lines, and which of them are its own properties (not a nested alarm's). */
+  let block: Array<{ line: string; own: boolean }> | null = null;
+  let found = false;
+  for (const line of unfold(ics)) {
+    const p = parseLine(line);
+    if (p?.name === "BEGIN") {
+      stack.push(p.value.toUpperCase());
+      if (stack.length === 2 && stack[1] === "VEVENT") block = [];
+    }
+    if (!block) {
+      if (p?.name === "END") stack.pop();
+      out.push(line);
+      continue;
+    }
+    const own = stack.length === 2 && p?.name !== "BEGIN" && p?.name !== "END";
+    block.push({ line, own });
+    if (p?.name !== "END") continue;
+    stack.pop();
+    if (stack.length !== 1) continue;
+    // The VEVENT ended: keep it as it was, or move it.
+    const props = block.map((b) => (b.own ? parseLine(b.line) : null));
+    if (!props.some((q) => q?.name === "UID" && q.value.trim() === uid)) {
+      out.push(...block.map((b) => b.line));
+      block = null;
+      continue;
+    }
+    if (props.some((q) => q?.name === "RRULE" || q?.name === "RDATE" || q?.name === "RECURRENCE-ID")) return "repeats";
+    found = true;
+    let seq = 0;
+    const kept: string[] = [];
+    for (const [i, b] of block.entries()) {
+      const q = props[i];
+      if (q?.name === "SEQUENCE") seq = Number(q.value) || 0;
+      if (q && ["DTSTART", "DTEND", "DURATION", "DTSTAMP", "SEQUENCE"].includes(q.name)) continue;
+      kept.push(b.line);
+      if (q?.name === "UID")
+        kept.push(
+          `DTSTAMP:${token({ kind: "time", ms: now })}`,
+          whenLine("DTSTART", to.start, to.all_day),
+          whenLine("DTEND", to.end, to.all_day),
+          `SEQUENCE:${seq + 1}`,
+        );
+    }
+    // SEQUENCE may come after UID: put the new one where the old count is known.
+    const at = kept.findIndex((l) => l.startsWith("SEQUENCE:"));
+    if (at >= 0) kept[at] = `SEQUENCE:${seq + 1}`;
+    out.push(...kept);
+    block = null;
+  }
+  return found ? `${out.map(fold).join("\r\n")}\r\n` : null;
 }

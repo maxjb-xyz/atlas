@@ -23,8 +23,26 @@ import type { Weather } from "../weather";
 /** What kind of action a tool takes decides when Atlas asks first (§12.1). */
 export type { ToolKind } from "../approvals";
 
+/** A face's run (§7.2): which face, the conversation, and how it reaches the owner. */
+export interface FaceRun {
+  face: import("../faces").Face;
+  conv: string;
+  /** Who's writing, as they gave themselves ("Jordan <jordan@x.com>", "@jordan"), and the person Atlas knows them as. */
+  from: string;
+  person: string | null;
+  /** Hands something to the owner: a message, or a pull-in that may push now. */
+  pull(o: { kind: "message" | "handoff"; text: string; urgent: boolean; details?: Record<string, string> }): Promise<void>;
+}
+
 export interface ToolContext {
   sql: Sql;
+  /** Set only in a face's run: the face and its conversation. */
+  face?: FaceRun;
+  /** The areas shared between the owner and members (§7.1), kept in the owner's Atlas. */
+  shared?: {
+    list(): Promise<import("../protocol").SharedArea[]>;
+    save(o: { area: string; name: string; fact: string; type: string }): Promise<{ ok: boolean; text: string }>;
+  } | null;
   run_id: string;
   settings: Settings;
   tz: string;
@@ -67,6 +85,8 @@ export interface ToolContext {
   devices?: DevicesApi | null;
   /** Automations, for owner runs; null elsewhere. */
   automations: AutomationsApi | null;
+  /** Extensions (§17): keeps one Atlas wrote as a draft, for the owner to install. Owner runs only. */
+  extensions?: { draft(code: string): Promise<{ id: string; name: string; hosts: string[] }> } | null;
   /** Speaking up changed (`speaking_up`): the moments are put on the clock again. */
   speaking?: () => Promise<void>;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
@@ -223,11 +243,26 @@ export function toSpec(tool: Tool): ToolSpec {
   return { name: tool.name, description: tool.description, parameters: withoutPropertyNames(schema) as Record<string, unknown> };
 }
 
+/**
+ * A schema every provider takes: no `propertyNames`, and no tuples. Draft 7 writes a tuple as `items: [a, b]`,
+ * which Workers AI's models refuse for the whole tool list ("is not of type 'object', 'boolean'"); it becomes a
+ * list of the first item's kind with a fixed length.
+ */
 function withoutPropertyNames(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(withoutPropertyNames);
   if (!v || typeof v !== "object") return v;
   const out: Record<string, unknown> = {};
-  for (const [k, x] of Object.entries(v)) if (k !== "propertyNames") out[k] = withoutPropertyNames(x);
+  for (const [k, x] of Object.entries(v)) {
+    if (k === "propertyNames") continue;
+    if (k === "items" && Array.isArray(x)) {
+      out.items = withoutPropertyNames(x[0] ?? {});
+      out.minItems = x.length;
+      out.maxItems = x.length;
+      continue;
+    }
+    if (k === "additionalItems") continue;
+    out[k] = withoutPropertyNames(x);
+  }
   return out;
 }
 

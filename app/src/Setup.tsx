@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { PRESETS, type Preset } from "../../core/src/character";
 import type { Atlas } from "./connection";
-import { AddPasskey, ChatGPT, ICloud, SecretField, TestRow } from "./Settings";
+import { AddPasskey, ChatGPT, ExtensionCard, SecretField, TestRow } from "./Settings";
 import { AsciiDiamond, Diamond, Icon } from "./ui";
 import type { AutomationView } from "../../core/src/protocol";
 import { Switch, useAutomations } from "./pages/Automations";
@@ -242,23 +242,21 @@ function BrainStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
 function ConnectStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
   const view = atlas.state.view!;
   const tested = atlas.state.tests.calendar;
-  const connected = Boolean(view.secrets.icloud);
-  // Connecting checks at once, so the owner sees what Atlas found (or why it couldn't) without pressing Test.
-  useEffect(() => {
-    if (connected) atlas.test("calendar", { type: "atlas.test", what: "calendar" });
-  }, [connected]);
+  const connected = Boolean(view.calendar.provider);
+  // A calendar is an extension (§17); iCloud ships with Atlas, so it's offered here.
+  const icloud = view.extensions.find((e) => e.id === "icloud");
   return (
     <>
       <h1 className="disp">Your calendar</h1>
-      <p className="muted">So I can see your week. Google and Microsoft calendars, and your mail, come in a later version.</p>
-      <ICloud view={view} atlas={atlas} />
+      <p className="muted">So I can see your week. iCloud ships with Atlas; others are extensions you can add any time in Settings.</p>
+      {icloud && <ExtensionCard atlas={atlas} e={icloud} open />}
       <TestRow
         label="Test calendar"
         k="calendar"
         atlas={atlas}
         run={() => atlas.test("calendar", { type: "atlas.test", what: "calendar" })}
       />
-      <Footer step="connect" onNext={onNext} ready={Boolean(view.secrets.icloud) && tested?.ok !== false} />
+      <Footer step="connect" onNext={onNext} ready={connected && tested?.ok !== false} />
     </>
   );
 }

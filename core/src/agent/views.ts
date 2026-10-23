@@ -10,7 +10,7 @@ import type { AgendaItem } from "../store/agenda";
 import { scrub } from "../outbox";
 import { readSettings, secretValues } from "../store/settings";
 import { here, pinOf } from "../location";
-import { MAPS } from "../maps";
+import { mapsCredit } from "../providers";
 import { situationPage, weatherPage } from "../situation";
 import { sensesPage } from "../intake";
 import { webhooks, webhookView } from "../webhooks";
@@ -22,11 +22,16 @@ import { get as getRow, type LogKind, type LogRow } from "../store/log";
 import { indexNewMessages, keywordSearch } from "../store/memory";
 import { type AtlasRecord, getRecord, linked, RECORD_TYPES, type RecordType, recordHistory } from "../store/records";
 import { getState, setState } from "../store/state";
+import { channelsOf, lastTouch, trustOf } from "../contacts";
+import { personInfo } from "../tools/people";
+import { openTasks } from "../tasks";
+import { openLoops } from "../loops";
+import { zoneOf } from "../time";
 
 // --- Library -----------------------------------------------------------------------------
 
 export function recordView(sql: Sql, r: AtlasRecord): RecordView {
-  const { fact, is_owner: _o, ...details } = r.fields;
+  const { fact, is_owner: _o, channels: _c, trust: _t, ...details } = r.fields;
   const from = r.source.log_id ? getRow(sql, r.source.log_id) : null;
   const history = recordHistory(sql, r.id);
   const last = history[history.length - 1];
@@ -45,6 +50,10 @@ export function recordView(sql: Sql, r: AtlasRecord): RecordView {
       : { via: r.source.via },
     corrections: history.length,
     was: last ? { name: last.name ?? r.name, fact: typeof last.fields.fact === "string" ? last.fields.fact : "", at: last.at } : null,
+    shared: r.visibility === "shared",
+    ...(r.type === "person"
+      ? { channels: channelsOf(r).map((c) => ({ kind: c.kind, value: c.value, via: c.via })), trust: trustOf(r) }
+      : {}),
   };
 }
 
@@ -133,7 +142,7 @@ export function placePage(sql: Sql, id: string): PlacePage | { kind: "missing"; 
     pin: pin ? { lat: pin.lat, lon: pin.lon, radius_m: pin.radius_m } : null,
     visits: visits.slice(0, 50),
     here: here(sql).place?.id === r.id,
-    credit: MAPS[readSettings(sql).maps.provider].credit,
+    credit: mapsCredit(sql, readSettings(sql).maps.provider),
   };
 }
 
@@ -269,9 +278,19 @@ export function personPage(sql: Sql, id: string): StagePage {
     .sort((x, y) => y.seq - x.seq)
     .slice(0, 6)
     .map(stageMessage);
+  const info = personInfo(sql, r, zoneOf(readSettings(sql)));
   const page: PersonPage = {
     kind: "person",
     person: recordView(sql, r),
+    open: [
+      ...openTasks(sql)
+        .filter((t) => info.open.some((o) => o.id === t.id))
+        .map((t) => ({ kind: "task" as const, title: t.name, by: typeof t.fields.by === "number" ? t.fields.by : null })),
+      ...openLoops(sql)
+        .filter((l) => info.open.some((o) => o.id === l.id))
+        .map((l) => ({ kind: "loop" as const, title: l.title, by: l.due_at })),
+    ],
+    last: lastTouch(sql, r),
     links: linked(sql, r.id).map((l) => ({ kind: l.kind, record: recordView(sql, l.record) })),
     mentions,
     history: recordHistory(sql, r.id).map((h) => ({
@@ -308,6 +327,7 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
     "brain.fallback",
     "context.summary",
     "settings.change",
+    "calendar.change",
     "delivery",
     "automation.run",
     "automation.change",
@@ -319,6 +339,7 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
   ],
   actions: [
     "tool.result",
+    "calendar.change",
     "record.change",
     "agenda.change",
     "area.change",
@@ -330,6 +351,7 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
   ],
   conversations: ["message.in", "message.out"],
   jobs: ["job.result", "agenda.change", "automation.run"],
+  faces: ["face.in", "face.out", "face.handoff", "face.digest"],
 };
 
 /** Whether a row belongs on History's list for a filter: the things that happened, not the plumbing. */
@@ -436,8 +458,8 @@ export function inbox(sql: Sql): InboxItem[] {
     .map(([key, t]): InboxItem => ({
       id: key,
       kind: "question",
-      title: `Call ${t.name} without asking?`,
-      text: `You've OK'd ${t.name} ${TRUST_AFTER} times in a row as it was. Atlas can call it from now on without asking, and you can take that back in Settings → Permissions.`,
+      title: key.startsWith("email:") || key.startsWith("face:") ? `${t.name}: send without asking?` : `Call ${t.name} without asking?`,
+      text: `You've OK'd ${t.name} ${TRUST_AFTER} times in a row as it was. Atlas can ${key.startsWith("email:") || key.startsWith("face:") ? "send these" : "call it"} from now on without asking, and you can take that back in Settings → Permissions.`,
       at: Date.now(),
       areas: [],
       run_id: null,
@@ -459,7 +481,11 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
         ? clean(JSON.stringify(a.arguments))
         : a.kind === "node"
           ? clean(JSON.stringify(a.input))
-          : true,
+          : a.kind === "email"
+            ? clean(`${a.subject}\n${a.text}`)
+            : a.kind === "face_reply"
+              ? clean(a.text)
+              : true,
   );
   const hold = needsHold(actions);
   return {
@@ -482,6 +508,30 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
 }
 
 function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
+  if (a.kind === "face_reply") {
+    return {
+      kind: "face_reply",
+      title: a.name,
+      detail: "Your face's answer, which goes out in your name.",
+      where: String((a.where as { kind?: string }).kind === "mail" ? "Atlas's email" : ((a.where as { ext?: string }).ext ?? "a chat")),
+      undo: "It can't be taken back once it's sent.",
+      message: a.text,
+    };
+  }
+  if (a.kind === "email") {
+    return {
+      kind: "email",
+      title: a.name,
+      detail:
+        a.as === "owner"
+          ? `From your own mail, so it reads as you wrote it${a.thread ? ", in the conversation it answers" : ""}.`
+          : `From Atlas's own address, saying it's Atlas, an AI assistant writing for you${a.thread ? ", in the conversation it answers" : ""}.`,
+      where: a.via === "atlas" ? "Atlas's address" : a.via,
+      undo: "Mail can't be taken back once it's sent.",
+      message: a.text,
+      mail: { from: a.from, to: a.to.join(", "), ...(a.cc?.length ? { cc: a.cc.join(", ") } : {}), subject: a.subject },
+    };
+  }
   if (a.kind === "node") {
     return {
       kind: "node",
@@ -569,6 +619,7 @@ function pastItems(sql: Sql): InboxItem[] {
   const rows = sql
     .exec<{ id: string }>(
       `SELECT id FROM log WHERE at > ? AND (kind = 'job.result'
+         OR kind = 'face.handoff' OR kind = 'face.digest'
          OR (kind = 'automation.run' AND json_extract(body, '$.report') = 'inbox' AND json_extract(body, '$.test') = 0 AND json_extract(body, '$.quiet') IS NULL)
          OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.interrupted') IS NULL AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%' AND json_extract(body, '$.trigger') NOT LIKE 'automation%'))
          AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 100`,
@@ -578,6 +629,48 @@ function pastItems(sql: Sql): InboxItem[] {
     .toArray()
     .map((r) => getRow(sql, r.id)!);
   return rows.map((r): InboxItem => {
+    // What a face handed the owner (§7.2), with the conversation, answerable from here; and the faces' digest.
+    if (r.kind === "face.handoff" || r.kind === "face.digest") {
+      const b = r.body as Record<string, unknown>;
+      const conv = typeof b.conv === "string" ? b.conv : "";
+      const talk = conv
+        ? sql
+            .exec<{ kind: string; body: string }>(
+              `SELECT kind, body FROM log WHERE kind IN ('face.in', 'face.out') AND json_extract(body, '$.conv') = ? ORDER BY seq DESC LIMIT 12`,
+              conv,
+            )
+            .toArray()
+            .reverse()
+            .map((x) => {
+              const t = JSON.parse(x.body) as { text?: string; by?: string };
+              return {
+                who: (x.kind === "face.in" ? "them" : t.by === "owner" ? "you" : "face") as "them" | "face" | "you",
+                text: String(t.text ?? "").slice(0, 1_000),
+              };
+            })
+        : [];
+      return {
+        id: r.id,
+        kind: "face",
+        title:
+          r.kind === "face.digest"
+            ? `${String(b.face_name ?? "A face")}'s day`
+            : `${String(b.face_name ?? "A face")}: ${b.kind === "handoff" ? "wants you" : "a message"} from ${String(b.from ?? "someone")}`,
+        text: String(b.text ?? "").slice(0, 2_000),
+        at: r.at,
+        areas: r.areas,
+        run_id: r.run_id,
+        face: {
+          name: String(b.face_name ?? ""),
+          from: String(b.from ?? ""),
+          urgent: b.urgent === true,
+          reach: Array.isArray(b.reach) ? (b.reach as string[]) : [],
+          details: (b.details && typeof b.details === "object" ? b.details : {}) as Record<string, string>,
+          conversation: talk,
+          can_answer: r.kind === "face.handoff" && !conv.startsWith("test:"),
+        },
+      };
+    }
     // An automation that reports to Inbox (§13.1: report here).
     if (r.kind === "automation.run") {
       const ok = r.body.ok !== false;

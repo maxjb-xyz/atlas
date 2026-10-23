@@ -5,12 +5,15 @@ import { getAgentByName, routeAgentRequest } from "agents";
 import { SESSION_HEADER } from "./auth";
 import { NODE_HEADER, OWNER } from "./agent";
 import { NODE_KINDS } from "./nodes";
-import { type AuthStore, handleAuth, owner, sameOrigin } from "./auth";
+import { type AuthStore, handleAuth, memberOf, owner, sameOrigin } from "./auth";
+import { agentNameOf } from "./members";
 
 export { PersonAgent } from "./agent";
 // Helpers are sub-agents of the person agent; the class must be exported by this name.
 export { HelperAgent } from "./helper";
 export { Workspace, WorkspaceEgress } from "./workspace";
+// Extensions' only way out of their sandbox (§17).
+export { ExtensionGate } from "./extensions";
 
 /** The agent's HTTP-facing methods, typed narrowly (RPC stubs can't infer the log's recursive JSON type). */
 interface OwnerApi {
@@ -25,7 +28,14 @@ interface OwnerApi {
 }
 
 interface SenseApi {
-  apiOwnTracks(authorization: string | null, text: string): Promise<{ status: number; body: unknown }>;
+  apiOwnTracks(authorization: string | null, text: string): Promise<{ status: number; body: string; headers: Record<string, string> }>;
+  apiExtPost(
+    id: string,
+    key: string,
+    req: { method: string; headers: Record<string, string>; body: string; query: Record<string, string> },
+  ): Promise<{ status: number; body: string; headers: Record<string, string> }>;
+  apiExtSignin(state: string, code: string | null, error: string | null): Promise<{ ok: boolean; text: string }>;
+  apiMailIn(time: string | null, signature: string | null, body: Uint8Array): Promise<{ status: number; text: string }>;
   apiPairStart(o: {
     name: string;
     kind: (typeof NODE_KINDS)[number];
@@ -62,16 +72,53 @@ export default {
       return (await getAgentByName(env.PersonAgent, OWNER)).fetch(new Request(request, { headers }));
     }
 
-    // OwnTracks on the owner's phone (§10.1). It signs in with its own user and password, which the agent checks;
-    // they open nothing else.
+    // The location app's address from before it was an extension (§10.1): its post goes to the location extension,
+    // which checks OwnTracks' own user and password. They open nothing else.
     if (path === "/owntracks" && request.method === "POST") {
       const agent = (await getAgentByName(env.PersonAgent, OWNER)) as unknown as SenseApi;
       const text = await request.text();
       if (text.length > 64_000) return json({ error: "That's too big for one OwnTracks post." }, 413);
       const out = await agent.apiOwnTracks(request.headers.get("authorization"), text);
-      const res = json(out.body, out.status);
-      if (out.status === 401) res.headers.set("www-authenticate", 'Basic realm="Atlas"');
-      return res;
+      return new Response(out.body, { status: out.status, headers: out.headers });
+    }
+
+    // A sign-in an extension asked for comes back here (§17). It's a link from the service, so no sign-in cookie comes
+    // with it; the agent accepts only a sign-in it started, by its state.
+    if (path === "/x/signin" && request.method === "GET") {
+      const agent = (await getAgentByName(env.PersonAgent, OWNER)) as unknown as SenseApi;
+      const out = await agent.apiExtSignin(
+        url.searchParams.get("state") ?? "",
+        url.searchParams.get("code"),
+        url.searchParams.get("error"),
+      );
+      const back = `${url.origin}/#/settings/extensions?signin=${out.ok ? "ok" : "failed"}&note=${encodeURIComponent(out.text)}`;
+      return Response.redirect(back, 302);
+    }
+
+    // Atlas's own address (§16.2): its relay Worker, in the domain's account, posts each mail here, signed.
+    if (path === "/mail/in" && request.method === "POST") {
+      const agent = (await getAgentByName(env.PersonAgent, OWNER)) as unknown as SenseApi;
+      const body = new Uint8Array(await request.arrayBuffer());
+      if (body.length > 30_000_000) return json({ error: "That mail is too big: 30 MB at most." }, 413);
+      const out = await agent.apiMailIn(request.headers.get("x-atlas-time"), request.headers.get("x-atlas-signature"), body);
+      return new Response(out.text, { status: out.status });
+    }
+
+    // An extension's own address (§17): a service posts here, checked by the address's key and the service's signature.
+    const ext = /^\/x\/([a-z][a-z0-9-]{1,39})\/([0-9a-f]{36})$/.exec(path);
+    if (ext) {
+      const agent = (await getAgentByName(env.PersonAgent, OWNER)) as unknown as SenseApi;
+      const text = request.method === "GET" || request.method === "HEAD" ? "" : await request.text();
+      if (text.length > 1_000_000) return json({ error: "That's too big for one post: 1 MB at most." }, 413);
+      const headers: Record<string, string> = {};
+      for (const [k, v] of request.headers) if (!/^(cookie|cf-|x-forwarded|x-real-ip)/i.test(k)) headers[k.toLowerCase()] = v;
+      const out = await agent.apiExtPost(ext[1]!, ext[2]!, {
+        method: request.method,
+        headers,
+        body: text,
+        query: Object.fromEntries(url.searchParams),
+      });
+      return new Response(out.body, { status: out.status, headers: out.headers });
     }
 
     // Webhook sources (§10.4): any service posts to its own address, checked by its key or its signature.
@@ -128,8 +175,14 @@ export default {
     if (path.startsWith("/api/")) {
       const auth = await handleAuth(request, env, path, () => authStore(env));
       if (auth) return auth;
-      if (!(await owner(request, env, () => authStore(env)))) return json({ error: "Sign in first." }, 401);
-      const agent = (await getAgentByName(env.PersonAgent, OWNER)) as unknown as OwnerApi;
+      const who = await owner(request, env, () => authStore(env));
+      if (!who) return json({ error: "Sign in first." }, 401);
+      // A member's requests go to their own Atlas (§7.1); the workspace and the log API are the owner's.
+      const member = memberOf(who);
+      if (member && !(await (await authStore(env)).memberInfo(member))) return json({ error: "Sign in first." }, 401);
+      if (member && (path.startsWith("/api/workspace/") || path === "/api/log" || path === "/api/character-check"))
+        return json({ error: "That's only for the owner." }, 403);
+      const agent = (await getAgentByName(env.PersonAgent, agentNameOf(member))) as unknown as OwnerApi;
 
       if (path === "/api/turn" && request.method === "POST") {
         const body = (await request.json().catch(() => ({}))) as { text?: unknown };
@@ -198,10 +251,13 @@ export default {
     if (path.startsWith("/agents/")) {
       const res = await routeAgentRequest(request, env, {
         onBeforeConnect: async (req, route) => {
-          if (route.name !== OWNER) return new Response("Not found", { status: 404 });
           if (!sameOrigin(req)) return new Response("Wrong origin", { status: 403 });
           const who = await owner(req, env, () => authStore(env));
           if (!who) return new Response("Sign in first", { status: 401 });
+          // Each person's socket goes to their own Atlas only: the owner's, or a member's (§7.1).
+          const member = memberOf(who);
+          if (route.name !== agentNameOf(member)) return new Response("Not found", { status: 404 });
+          if (member && !(await (await authStore(env)).memberInfo(member))) return new Response("Sign in first", { status: 401 });
           // The agent learns which sign-in opened this socket, so ending that sign-in can close it.
           const headers = new Headers(req.headers);
           headers.set(SESSION_HEADER, who.via === "session" ? who.id : "");

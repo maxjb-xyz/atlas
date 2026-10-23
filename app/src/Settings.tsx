@@ -10,13 +10,25 @@ import { deviceId, type PushState, pushState, subscribe, unsubscribe } from "./n
 import { addPasskey, deviceName, passkeysSupported } from "./passkey";
 import { Composer } from "./Shell";
 import { useLook } from "./theme";
-import { clock, dayTime, Icon, QrCode, Sheet, shortDay, Stage } from "./ui";
-import { MAPS, type MapsProvider } from "../../core/src/maps";
+import { clock, dayTime, Icon, QrCode, Sheet, shortDay, Stage, useNow } from "./ui";
 import { Markdown } from "./Markdown";
-import { PROVIDERS, type SearchProvider } from "../../core/src/web";
+import { CLOUDFLARE_SEARCH } from "../../core/src/web";
 import { FIELDS, type VaultKind } from "../../core/src/vault-fields";
 
-type Section = "character" | "look" | "brains" | "connections" | "devices" | "vault" | "skills" | "permissions" | "notifications" | "data";
+type Section =
+  | "people"
+  | "faces"
+  | "character"
+  | "look"
+  | "brains"
+  | "connections"
+  | "extensions"
+  | "devices"
+  | "vault"
+  | "skills"
+  | "permissions"
+  | "notifications"
+  | "data";
 
 const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
   {
@@ -24,6 +36,8 @@ const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
     items: [
       ["character", "Character & voice"],
       ["look", "Look & themes"],
+      ["faces", "Faces"],
+      ["people", "People"],
     ],
   },
   { group: "Brains", items: [["brains", "Brains"]] },
@@ -31,6 +45,7 @@ const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
     group: "Connected",
     items: [
       ["connections", "Connections"],
+      ["extensions", "Extensions"],
       ["devices", "Devices"],
       ["vault", "Vault"],
     ],
@@ -65,7 +80,10 @@ export function SettingsPage({
   onSetup: () => void;
 }) {
   const view = atlas.state.view;
-  const section = (SECTIONS.flatMap((g) => g.items.map(([id]) => id)).includes(detail as Section) ? detail : "character") as Section;
+  // A sign-in sends the owner back here with how it went: "extensions?signin=ok&note=...".
+  const [base = "", query = ""] = detail.split("?");
+  const section = (SECTIONS.flatMap((g) => g.items.map(([id]) => id)).includes(base as Section) ? base : "character") as Section;
+  const signin = new URLSearchParams(query);
   const [draft, setDraft] = useState<SettingsT | null>(view?.settings ?? null);
   const [dirty, setDirty] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -98,7 +116,7 @@ export function SettingsPage({
       label="Settings"
       tabs={[{ id: section, label }]}
       tab={section}
-      meta="Atlas · M4"
+      meta="Atlas · M5"
       dock={
         <div className="dock slim">
           {dirty && (
@@ -128,11 +146,14 @@ export function SettingsPage({
             {SECTIONS.map((g) => (
               <div key={g.group} style={{ display: "contents" }}>
                 <span className="lab">{g.group}</span>
-                {g.items.map(([id, name]) => (
-                  <button key={id} className={id === section ? "on" : ""} onClick={() => go(id)}>
-                    {name}
-                  </button>
-                ))}
+                {/* A member's own Atlas has no extensions or faces in M5: those are set up in the owner's (§7.1). */}
+                {g.items
+                  .filter(([id]) => !(view?.me && (id === "extensions" || id === "faces")))
+                  .map(([id, name]) => (
+                    <button key={id} className={id === section ? "on" : ""} onClick={() => go(id)}>
+                      {name}
+                    </button>
+                  ))}
               </div>
             ))}
           </nav>
@@ -143,8 +164,17 @@ export function SettingsPage({
               <>
                 {section === "character" && <Character atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "look" && <Look draft={draft} edit={edit} />}
+                {section === "faces" && <Faces atlas={atlas} view={view} />}
+                {section === "people" && <People atlas={atlas} view={view} />}
                 {section === "brains" && <Brains atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "connections" && <Connections atlas={atlas} draft={draft} edit={edit} view={view} />}
+                {section === "extensions" && (
+                  <Extensions
+                    atlas={atlas}
+                    view={view}
+                    note={signin.get("note") ? { ok: signin.get("signin") === "ok", text: signin.get("note")! } : null}
+                  />
+                )}
                 {section === "devices" && <Devices atlas={atlas} view={view} />}
                 {section === "vault" && <Vault atlas={atlas} view={view} />}
                 {section === "skills" && <Skills atlas={atlas} />}
@@ -482,18 +512,25 @@ function Brains({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; 
 // --- Connections -------------------------------------------------------------------------------
 
 function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
-  const icloud = view.secrets.icloud;
+  const cal = view.calendar;
   return (
     <>
       <Head title="Connections" sub="What Atlas can see, and where it can speak. Each one has its own live test." />
-      <Row label="iCloud Calendar">
+      <Row label="Calendar">
         <State
-          on={!!icloud && !icloud.refused}
-          bad={!!icloud?.refused}
-          text={icloud ? (icloud.refused ? "Refused by Apple" : `Connected as ${icloud.username}`) : "Not connected"}
+          on={!!cal.provider && !cal.refused}
+          bad={!!cal.refused}
+          text={cal.provider ? (cal.refused ? `${cal.provider.name} refused the sign-in` : `From ${cal.provider.name}`) : "Not connected"}
           what="Reads your calendars."
         />
-        <ICloud view={view} atlas={atlas} />
+        {!cal.provider && (
+          <p className="muted small">
+            Install a calendar extension (iCloud ships with Atlas) in <a href="#/settings/extensions">Extensions</a>.
+          </p>
+        )}
+        {cal.refused && (
+          <p className="err small">{cal.refused.note} Until then, Atlas answers from its copy of your calendar. Test tries once now.</p>
+        )}
         <label className="field">
           <span>Calendars to leave out</span>
           <input
@@ -538,45 +575,599 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
       <Row label="MCP servers">
         <McpServers atlas={atlas} />
       </Row>
-      <Row label="Google, Microsoft, email">
-        <p className="muted small">Not yet. Atlas connects to Google and Microsoft calendars, and reads mail, in a later version.</p>
+      {!view.me && (
+        <>
+          <Row label="Mail">
+            <ProvidedBy atlas={atlas} view={view} what="mail" none="Atlas doesn't read your mail yet." />
+          </Row>
+          <Row label="Atlas's email">
+            <AtlasEmail atlas={atlas} view={view} />
+          </Row>
+          <Row label="Chat">
+            <ProvidedBy atlas={atlas} view={view} what="channel" none="No chat channel yet." />
+            <ChatLinks atlas={atlas} view={view} />
+          </Row>
+        </>
+      )}
+      <Row label="And more">
+        <p className="muted small">
+          The other services you want to hear from (GitHub, Linear, your own) are <a href="#/settings/extensions">extensions</a>.
+        </p>
       </Row>
     </>
   );
 }
 
 /**
- * Which search Atlas uses (§9.1). Cloudflare's is built in and paid from AI
- * Gateway credits; the others have free allowances and take a key.
+ * Who you are on each chat channel (§16.1): message the bot from your own
+ * account, then send it the code shown here. After that, those messages are
+ * you talking to Atlas.
  */
-function WebSearch({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
-  const provider = draft.web.search;
-  const p = PROVIDERS[provider];
-  const keyName = `${provider}_api_key` as "tavily_api_key" | "brave_api_key" | "exa_api_key";
-  const ready = !p.key || view.secrets[keyName];
+function ChatLinks({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const code = atlas.state.channelCode;
+  const now = useNow(30_000);
   return (
     <>
-      <State on={ready} text={ready ? p.name : `${p.name}: no key yet`} what="Searches the web when Atlas needs to know something." />
+      {view.channels.map((c) => (
+        <div key={c.ext} className="row small">
+          <span className="grow">
+            {c.linked ? `${c.name}: you're ${c.linked.name || "linked"} there.` : `${c.name}: not linked to you yet.`}
+          </span>
+          {c.linked ? (
+            <button className="btn" onClick={() => atlas.send({ type: "atlas.channel.unlink", ext: c.ext })}>
+              Unlink
+            </button>
+          ) : (
+            <button className="btn" onClick={() => atlas.send({ type: "atlas.channel.code", ext: c.ext })}>
+              Link my account
+            </button>
+          )}
+        </div>
+      ))}
+      {code && code.expires > now && !view.channels.find((c) => c.ext === code.ext)?.linked && (
+        <p className="small">
+          Send <b className="mono">{code.code}</b> to the bot from your own account, within 15 minutes.
+        </p>
+      )}
+    </>
+  );
+}
+
+/** The extensions that give `what` (mail, a chat), installed or shipped with Atlas, each with its card. */
+function ProvidedBy({ atlas, view, what, none }: { atlas: Atlas; view: SettingsView; what: string; none: string }) {
+  const all = view.extensions.filter((e) => e.provides.includes(what));
+  const on = all.filter((e) => e.state === "on");
+  return (
+    <>
+      {!on.length && <p className="muted small">{none}</p>}
+      <div className="rows">
+        {all.map((e) => (
+          <ExtensionCard key={e.id} atlas={atlas} e={e} />
+        ))}
+      </div>
+    </>
+  );
+}
+
+/**
+ * Atlas's own address (§16.2): atlas@ your domain, which can be in another
+ * Cloudflare account. Atlas takes a token for that account and puts a relay
+ * Worker and a routing rule there; sending is Cloudflare Email Service or
+ * an extension (Resend).
+ */
+function AtlasEmail({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const m = view.mail;
+  const [domain, setDomain] = useState(m.domain ?? "");
+  const [token, setToken] = useState("");
+  const [sending, setSending] = useState(m.sending ?? "cloudflare");
+  const [busy, setBusy] = useState(false);
+  const note = atlas.state.tests.mail;
+  useEffect(() => setBusy(false), [note]);
+  const go = (msg: Parameters<Atlas["send"]>[0]) => {
+    setBusy(true);
+    atlas.send(msg);
+  };
+  return (
+    <>
+      <State
+        on={!!m.address && m.sending_ok}
+        bad={!!m.address && !m.sending_ok}
+        text={m.address ? `${m.address}${m.sending_ok ? "" : ": can't send yet"}` : "Not set up"}
+        what="An address of Atlas's own, on your domain, for mail it sends and receives as itself."
+      />
+      {m.on_subdomain && <p className="muted small">It's on a subdomain, since your domain's own mail goes to another provider.</p>}
+      {m.sending_note && <p className="err small">{m.sending_note}</p>}
       <label className="field">
-        <span>Search with</span>
-        <select value={provider} onChange={(e) => edit({ web: { search: e.target.value as SearchProvider } })}>
-          {(Object.keys(PROVIDERS) as SearchProvider[]).map((k) => (
-            <option key={k} value={k}>
-              {PROVIDERS[k].name}
+        <span>Your domain, on Cloudflare (in this account or another)</span>
+        <input value={domain} placeholder="example.com" onChange={(e) => setDomain(e.target.value)} />
+      </label>
+      <label className="field">
+        <span>
+          {m.address
+            ? "A new API token for the domain's account (leave empty to keep the one Atlas has)"
+            : "An API token for the domain's account"}
+        </span>
+        <input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} />
+      </label>
+      <details className="small">
+        <summary>What the token needs</summary>
+        <p className="muted small">
+          At dash.cloudflare.com, in the account your domain is in: My Profile → API Tokens → Create Token → Custom token, with:
+        </p>
+        <ul className="small">
+          {m.permissions.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+        <p className="muted small">Atlas adds its relay Worker and one routing rule there, and nothing else.</p>
+      </details>
+      <label className="field">
+        <span>Send with</span>
+        <select value={sending} onChange={(e) => setSending(e.target.value)}>
+          <option value="cloudflare">Cloudflare Email Service (Workers Paid on the domain's account)</option>
+          {m.senders.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name}
             </option>
           ))}
         </select>
       </label>
-      <p className="muted small">
-        {p.about} Private details (secrets, emails, phone numbers, saved addresses, where you are) never go into a search.
-      </p>
-      {p.key && (
-        <SecretField
-          label={`${p.name} key`}
-          set={view.secrets[keyName]}
-          onSave={(value) => atlas.send({ type: "atlas.secret.set", secret: { name: keyName, value: value?.trim() ?? null } })}
-        />
+      {!m.senders.length && (
+        <p className="muted small">
+          Resend sends for free (3,000 mails a month): install it in <a href="#/settings/extensions">Extensions</a> and add its key.
+        </p>
       )}
+      <div className="row">
+        <button
+          className="btn primary"
+          disabled={busy || domain.trim().length < 3 || (!m.address && !token.trim())}
+          onClick={() => go({ type: "atlas.mail.setup", domain: domain.trim(), sending, ...(token.trim() ? { token: token.trim() } : {}) })}
+        >
+          {m.address ? "Set up again" : "Set up"}
+        </button>
+        {m.address && (
+          <>
+            <button className="btn" disabled={busy} onClick={() => go({ type: "atlas.mail.test" })}>
+              Send a test
+            </button>
+            <button className="btn" disabled={busy} onClick={() => go({ type: "atlas.mail.remove" })}>
+              Take it down
+            </button>
+          </>
+        )}
+      </div>
+      {note && <p className={`small ${note.ok ? "ok" : "err"}`}>{note.message}</p>}
+    </>
+  );
+}
+
+/**
+ * People (§7.1): who shares this Atlas. Each member gets an Atlas of their
+ * own, signed in with their own passkey; nobody reads anyone else's,
+ * the owner included. What they share is an area, in Library → Areas.
+ */
+function People({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const [name, setName] = useState("");
+  const [role, setRole] = useState<"admin" | "member">("member");
+  const invited = atlas.state.invited;
+  const me = view.me;
+  const canInvite = !me || me.role === "admin";
+  return (
+    <>
+      <Head
+        title="People"
+        sub="Share Atlas with the people you live or work with. Each gets their own Atlas, private to them; areas you share show for both of you."
+      />
+      {me && (
+        <p className="small">
+          You share {me.owner}'s Atlas as {me.role === "admin" ? "an admin" : "a member"}. Your conversations and what you tell Atlas are
+          yours alone; areas shared with you are in Library.
+        </p>
+      )}
+      {!me && (
+        <Row label="Members">
+          <div className="rows">
+            {view.members.map((m) => (
+              <div className="r" key={m.id}>
+                <span className="grow">
+                  <b>{m.name}</b>{" "}
+                  <span className="muted small">
+                    {m.joined_at ? `joined ${shortDay(m.joined_at)}` : m.invite_open ? "invited, hasn't joined yet" : "the invite ran out"}
+                  </span>
+                </span>
+                <select
+                  value={m.role}
+                  onChange={(e) => atlas.send({ type: "atlas.member.role", id: m.id, role: e.target.value as "admin" | "member" })}
+                >
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+                {!m.joined_at && (
+                  <button className="btn" onClick={() => atlas.send({ type: "atlas.member.invite", name: m.name, role: m.role, id: m.id })}>
+                    New link
+                  </button>
+                )}
+                <button className="btn" onClick={() => atlas.send({ type: "atlas.member.remove", id: m.id })}>
+                  Remove
+                </button>
+              </div>
+            ))}
+            {!view.members.length && <p className="muted small">Just you so far.</p>}
+          </div>
+        </Row>
+      )}
+      {canInvite && (
+        <Row label="Invite">
+          <label className="field">
+            <span>Their name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className="field">
+            <span>Role</span>
+            <select value={role} onChange={(e) => setRole(e.target.value as "admin" | "member")}>
+              <option value="member">Member: their own Atlas, and the areas shared with them</option>
+              <option value="admin">Admin: that, and they can invite people too</option>
+            </select>
+          </label>
+          <button
+            className="btn primary"
+            disabled={!name.trim()}
+            onClick={() => {
+              atlas.send({ type: "atlas.member.invite", name: name.trim(), role });
+              setName("");
+            }}
+          >
+            Make an invite link
+          </button>
+          {invited && (
+            <p className="small">
+              Send this to {invited.name}; it works once, for a week: <span className="mono">{invited.link}</span>
+            </p>
+          )}
+        </Row>
+      )}
+    </>
+  );
+}
+
+type FaceV = SettingsView["faces"][number];
+
+const SHARE_LABELS: Record<string, string> = {
+  free_busy: "Whether you're free or busy",
+  public: "What you marked shareable",
+  status: "How open work is going",
+};
+const CAN_LABELS: Record<string, string> = {
+  messages: "Take messages",
+  hold_time: "Hold time for you to confirm",
+  answer: "Answer questions",
+  collect: "Note people's details",
+};
+const PULL_LABELS: Record<string, string> = {
+  urgent: "Something's urgent",
+  money: "Money is involved",
+  cant_answer: "It can't answer",
+  people: "These people write",
+};
+
+/**
+ * Faces (§7.2): Atlas as other people reach it. Each has a name and an
+ * introduction, the addresses it answers on, who it's for, the areas it
+ * covers and what it shares, what it can do, when it pulls you in, and
+ * whether it speaks as Atlas or as you. "Talk to it as a stranger" tries it.
+ */
+function Faces({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const [editing, setEditing] = useState<FaceV | "new" | null>(null);
+  const addresses = [
+    ...(view.mail.address ? [{ id: "email", name: `Atlas's email (${view.mail.address})` }] : []),
+    ...view.channels.map((c) => ({ id: c.ext, name: c.name })),
+  ];
+  return (
+    <>
+      <Head
+        title="Faces"
+        sub="Atlas as other people reach it: on your Telegram bot or Atlas's own email, answering only from what you share, and handing you what matters."
+        right={
+          <button className="btn primary" onClick={() => setEditing("new")}>
+            New face
+          </button>
+        }
+      />
+      {!addresses.length && (
+        <p className="muted small">
+          A face needs somewhere to answer: set up Atlas's email or a chat channel in <a href="#/settings/connections">Connections</a>.
+        </p>
+      )}
+      {editing ? (
+        <FaceEditor
+          atlas={atlas}
+          view={view}
+          face={editing === "new" ? null : editing}
+          addresses={addresses}
+          done={() => setEditing(null)}
+        />
+      ) : (
+        <div className="rows">
+          {view.faces.map((f) => (
+            <div className="r" key={f.id}>
+              <span className="grow">
+                <b>{f.name}</b>{" "}
+                <span className="muted small">
+                  {f.on ? "" : "Off · "}
+                  {f.addresses.map((a) => addresses.find((x) => x.id === a)?.name ?? a).join(", ") || "No addresses"} ·{" "}
+                  {f.audience === "anyone" ? "anyone" : f.audience === "known" ? "people you know" : f.people_names.join(", ")} · speaks as{" "}
+                  {f.speaks_as === "atlas" ? "Atlas" : "you"}
+                </span>
+              </span>
+              <button className="btn" onClick={() => setEditing(f)}>
+                Edit
+              </button>
+            </div>
+          ))}
+          {!view.faces.length && (
+            <p className="muted small">No faces yet. Without one, Atlas tells people whose assistant it is and nothing more.</p>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+function FaceEditor({
+  atlas,
+  view,
+  face,
+  addresses,
+  done,
+}: {
+  atlas: Atlas;
+  view: SettingsView;
+  face: FaceV | null;
+  addresses: Array<{ id: string; name: string }>;
+  done: () => void;
+}) {
+  const areas = atlas.state.areas.filter((a) => a.state !== "archived");
+  const [f, setF] = useState(() => ({
+    name: face?.name ?? "",
+    intro: face?.intro ?? "",
+    addresses: face?.addresses ?? addresses.map((a) => a.id).slice(0, 1),
+    audience: face?.audience ?? ("anyone" as FaceV["audience"]),
+    people: face?.people_names.join(", ") ?? "",
+    areas: face?.areas ?? [],
+    shares: face?.shares ?? ({} as FaceV["shares"]),
+    can: face?.can ?? (["messages", "answer"] as FaceV["can"]),
+    pulls: face?.pulls ?? (["urgent", "money", "cant_answer"] as FaceV["pulls"]),
+    pull_people: face?.pull_names.join(", ") ?? "",
+    speaks_as: face?.speaks_as ?? ("atlas" as FaceV["speaks_as"]),
+    digest: face?.digest ?? ("daily" as FaceV["digest"]),
+    on: face?.on ?? true,
+  }));
+  const toggle = <T extends string>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+  const names = (t: string) =>
+    t
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+  const save = () => {
+    atlas.send({
+      type: "atlas.face.save",
+      face: { ...(face ? { id: face.id } : {}), ...f, people: names(f.people), pull_people: names(f.pull_people) },
+    });
+    done();
+  };
+  return (
+    <div className="rows" style={{ gap: 10 }}>
+      <label className="field">
+        <span>Name</span>
+        <input value={f.name} placeholder="Front desk" onChange={(e) => setF({ ...f, name: e.target.value })} />
+      </label>
+      <label className="field">
+        <span>How it introduces itself (it always says it's an AI)</span>
+        <textarea rows={2} value={f.intro} onChange={(e) => setF({ ...f, intro: e.target.value })} />
+      </label>
+      <div className="field">
+        <span>Where it answers</span>
+        {addresses.map((a) => (
+          <label key={a.id} className="row small">
+            <input
+              type="checkbox"
+              checked={f.addresses.includes(a.id)}
+              onChange={() => setF({ ...f, addresses: toggle(f.addresses, a.id) })}
+            />{" "}
+            {a.name}
+          </label>
+        ))}
+      </div>
+      <label className="field">
+        <span>Who it's for</span>
+        <select value={f.audience} onChange={(e) => setF({ ...f, audience: e.target.value as FaceV["audience"] })}>
+          <option value="anyone">Anyone</option>
+          <option value="known">People you know</option>
+          <option value="people">Only these people</option>
+        </select>
+      </label>
+      {f.audience === "people" && (
+        <label className="field">
+          <span>Their names, as Atlas knows them</span>
+          <input value={f.people} placeholder="Jordan Kim, Dana Whitfield" onChange={(e) => setF({ ...f, people: e.target.value })} />
+        </label>
+      )}
+      <div className="field">
+        <span>The areas it covers, and what it shares from each</span>
+        {areas.map((a) => (
+          <div key={a.id} className="rows" style={{ gap: 2 }}>
+            <label className="row small">
+              <input type="checkbox" checked={f.areas.includes(a.id)} onChange={() => setF({ ...f, areas: toggle(f.areas, a.id) })} />{" "}
+              <b>{a.name}</b>
+            </label>
+            {f.areas.includes(a.id) && (
+              <div className="row small" style={{ paddingLeft: 22, gap: 12 }}>
+                {Object.entries(SHARE_LABELS).map(([k, label]) => (
+                  <label key={k} className="row">
+                    <input
+                      type="checkbox"
+                      checked={(f.shares[a.id] ?? []).includes(k as never)}
+                      onChange={() => setF({ ...f, shares: { ...f.shares, [a.id]: toggle(f.shares[a.id] ?? [], k as never) } })}
+                    />{" "}
+                    {label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        {!areas.length && <p className="muted small">No areas yet: it can take messages and nothing more.</p>}
+      </div>
+      <div className="field">
+        <span>What it can do</span>
+        <div className="row small" style={{ gap: 12 }}>
+          {Object.entries(CAN_LABELS).map(([k, label]) => (
+            <label key={k} className="row">
+              <input type="checkbox" checked={f.can.includes(k as never)} onChange={() => setF({ ...f, can: toggle(f.can, k as never) })} />{" "}
+              {label}
+            </label>
+          ))}
+        </div>
+      </div>
+      <div className="field">
+        <span>When it pulls you in</span>
+        <div className="row small" style={{ gap: 12 }}>
+          {Object.entries(PULL_LABELS).map(([k, label]) => (
+            <label key={k} className="row">
+              <input
+                type="checkbox"
+                checked={f.pulls.includes(k as never)}
+                onChange={() => setF({ ...f, pulls: toggle(f.pulls, k as never) })}
+              />{" "}
+              {label}
+            </label>
+          ))}
+        </div>
+        {f.pulls.includes("people") && (
+          <input value={f.pull_people} placeholder="Names, comma separated" onChange={(e) => setF({ ...f, pull_people: e.target.value })} />
+        )}
+      </div>
+      <label className="field">
+        <span>It speaks as</span>
+        <select value={f.speaks_as} onChange={(e) => setF({ ...f, speaks_as: e.target.value as FaceV["speaks_as"] })}>
+          <option value="atlas">Atlas (it answers on its own)</option>
+          <option value="owner">You (each answer waits for your OK, until you trust it)</option>
+        </select>
+      </label>
+      <label className="field">
+        <span>Digest of its conversations</span>
+        <select value={f.digest} onChange={(e) => setF({ ...f, digest: e.target.value as FaceV["digest"] })}>
+          <option value="daily">Daily, in Inbox (anything urgent comes right away)</option>
+          <option value="off">None</option>
+        </select>
+      </label>
+      <label className="row small">
+        <input type="checkbox" checked={f.on} onChange={() => setF({ ...f, on: !f.on })} /> On
+      </label>
+      <div className="row">
+        <button className="btn primary" disabled={!f.name.trim()} onClick={save}>
+          Save
+        </button>
+        <button className="btn" onClick={done}>
+          Cancel
+        </button>
+        {face && (
+          <button
+            className="btn"
+            onClick={() => {
+              atlas.send({ type: "atlas.face.remove", id: face.id });
+              done();
+            }}
+          >
+            Remove
+          </button>
+        )}
+      </div>
+      {face && <StrangerChat atlas={atlas} face={face} />}
+    </div>
+  );
+}
+
+/** "Talk to it as a stranger" (§7.2): a test chat that sees only what the face would. Nothing in it goes anywhere. */
+function StrangerChat({ atlas, face }: { atlas: Atlas; face: FaceV }) {
+  const [conv] = useState(() => `${face.id}-${Date.now().toString(36)}`);
+  const [mine, setMine] = useState<string[]>([]);
+  const [text, setText] = useState("");
+  const theirs = atlas.state.faceSaid[conv] ?? [];
+  const lines = mine.flatMap((m, i) => [
+    { who: "you", text: m, ok: true },
+    ...(theirs[i] ? [{ who: face.name, text: theirs[i]!.text, ok: theirs[i]!.ok }] : []),
+  ]);
+  const waiting = mine.length > theirs.length;
+  return (
+    <div className="field" style={{ marginTop: 16 }}>
+      <span>Talk to it as a stranger</span>
+      <div className="rows" style={{ gap: 4 }}>
+        {lines.map((l, i) => (
+          <p key={i} className={`small ${l.ok ? "" : "err"}`}>
+            <b>{l.who === "you" ? "You" : l.who}:</b> {l.text}
+          </p>
+        ))}
+        {waiting && <p className="muted small">{face.name} is writing.</p>}
+      </div>
+      <form
+        className="row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!text.trim() || waiting) return;
+          setMine([...mine, text.trim()]);
+          atlas.send({ type: "atlas.face.test", id: face.id, conv, text: text.trim() });
+          setText("");
+        }}
+      >
+        <input
+          className="grow"
+          value={text}
+          placeholder="Write as someone who doesn't know you"
+          onChange={(e) => setText(e.target.value)}
+        />
+        <button className="btn" disabled={!text.trim() || waiting}>
+          Send
+        </button>
+      </form>
+    </div>
+  );
+}
+
+/** The installed extensions that are on and give `what`. */
+const giving = (view: SettingsView, what: string) => view.extensions.filter((e) => e.state === "on" && e.provides.includes(what));
+
+/**
+ * Which search Atlas uses (§9.1). Cloudflare's is built in and paid from AI
+ * Gateway credits; a search extension (Tavily, Brave, Exa) has a free
+ * allowance and takes its key in Extensions.
+ */
+function WebSearch({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
+  const provider = draft.web.search;
+  const exts = giving(view, "search");
+  const chosen = exts.find((e) => e.id === provider);
+  const ready = provider === "cloudflare" || (chosen && chosen.secrets.every((x) => x.optional || x.set));
+  const name = provider === "cloudflare" ? CLOUDFLARE_SEARCH.name : (chosen?.name ?? provider);
+  return (
+    <>
+      <State on={!!ready} text={ready ? name : `${name}: not set up`} what="Searches the web when Atlas needs to know something." />
+      <label className="field">
+        <span>Search with</span>
+        <select value={provider} onChange={(e) => edit({ web: { search: e.target.value } })}>
+          <option value="cloudflare">{CLOUDFLARE_SEARCH.name}</option>
+          {exts.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.name}
+            </option>
+          ))}
+          {!chosen && provider !== "cloudflare" && <option value={provider}>{provider} (not installed)</option>}
+        </select>
+      </label>
+      <p className="muted small">
+        {provider === "cloudflare" ? CLOUDFLARE_SEARCH.about : chosen?.about} Others, with free allowances, are in{" "}
+        <a href="#/settings/extensions">Extensions</a>. Private details (secrets, emails, phone numbers, saved addresses, where you are)
+        never go into a search.
+      </p>
       {view.settings.web.search === provider ? (
         <TestRow label="Test search" k="search" atlas={atlas} run={() => atlas.test("search", { type: "atlas.test", what: "search" })} />
       ) : (
@@ -1342,6 +1933,27 @@ function Notifications({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
         </div>
         {error && <p className="err small">{error}</p>}
       </Row>
+      <Row label="Reach me on">
+        <label className="field">
+          <span>When Atlas isn't open in front of you, messages reach you</span>
+          <select
+            value={draft.notifications.reach}
+            onChange={(e) => edit({ notifications: { ...draft.notifications, reach: e.target.value } })}
+          >
+            <option value="push">As a notification on your device</option>
+            {view.channels
+              .filter((c) => c.linked)
+              .map((c) => (
+                <option key={c.ext} value={c.ext}>
+                  In {c.name}
+                </option>
+              ))}
+          </select>
+        </label>
+        <p className="muted small">
+          Quiet hours and the daily budget apply either way. A chat you haven't linked yet is in Connections → Chat.
+        </p>
+      </Row>
       <Row label="Devices">
         <div className="rows">
           {view.push.devices.map((d) => (
@@ -1905,7 +2517,8 @@ function Senses({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
 function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
   const l = view.location;
   const on = view.settings.location.on;
-  const setup = atlas.state.ownTracks;
+  const app = view.extensions.find((e) => e.state === "on" && e.provides.includes("location"));
+  const setup = app ? atlas.state.extSetup[app.id] : undefined;
   const [asking, setAsking] = useState(false);
   const fix = l.fix;
   const where = l.place
@@ -1950,7 +2563,11 @@ function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
           A post with the wrong password came {dayTime(l.refused.at)}. If that was your phone, set OwnTracks up again.
         </p>
       )}
-      {setup ? (
+      {!app ? (
+        <p className="muted small">
+          Install OwnTracks (it ships with Atlas) in <a href="#/settings/extensions">Extensions</a> to tell Atlas where you are.
+        </p>
+      ) : setup?.link ? (
         <div className="row" style={{ alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
           <QrCode text={setup.link} size={240} />
           <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, maxWidth: 420 }}>
@@ -1962,8 +2579,7 @@ function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
               Open in OwnTracks
             </a>
             <p className="faint small mono" style={{ wordBreak: "break-all" }}>
-              {setup.url} · user <span style={{ whiteSpace: "nowrap" }}>{setup.user}</span> · password{" "}
-              <span style={{ wordBreak: "break-all" }}>{setup.password}</span>
+              {(setup.fields ?? []).map((f) => `${f.label.toLowerCase()} ${f.value}`).join(" · ")}
             </p>
             <p className="muted small">
               This is the only time the password is shown. Setting up again makes a new one, and the old one stops working.
@@ -1979,7 +2595,7 @@ function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
             className="btn primary"
             onClick={() => {
               setAsking(false);
-              atlas.send({ type: "atlas.location.setup" });
+              atlas.send({ type: "atlas.ext.setup", id: app.id });
             }}
           >
             Set up
@@ -1999,37 +2615,36 @@ function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
   );
 }
 
-/** Maps and weather (§19.1): OpenStreetMap's free services, or Mapbox by key; units; a live test. */
+/** Maps and weather (§19.1): which maps extension answers (OpenStreetMap's by default, Mapbox's for traffic); units; a live test. */
 function Maps({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
   const provider = draft.maps.provider;
-  const ready = provider === "osm" || view.secrets.mapbox_token;
+  const exts = giving(view, "maps");
+  const chosen = exts.find((e) => e.id === provider);
+  const ready = chosen && chosen.secrets.every((x) => x.optional || x.set);
+  const weather = giving(view, "weather")[0];
   return (
     <>
       <State
-        on={ready}
-        text={ready ? MAPS[provider].name : "Mapbox: no token yet"}
+        on={!!ready}
+        text={ready ? chosen!.name : `${chosen?.name ?? provider}: not set up`}
         what="Routes, travel times, and places near you or on your way."
       />
       <label className="field">
         <span>Maps from</span>
-        <select value={provider} onChange={(e) => edit({ maps: { provider: e.target.value as MapsProvider } })}>
-          <option value="osm">OpenStreetMap (free, nothing to set up)</option>
-          <option value="mapbox">Mapbox (free tier, needs a token)</option>
+        <select value={provider} onChange={(e) => edit({ maps: { provider: e.target.value } })}>
+          {exts.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.name}
+            </option>
+          ))}
+          {!chosen && <option value={provider}>{provider} (not installed)</option>}
         </select>
       </label>
       <p className="muted small">
-        {provider === "osm"
-          ? "OpenStreetMap's free, volunteer-run services: travel times are typical, without live traffic, and opening hours are often missing. Atlas asks them little and caches what it can."
-          : "Mapbox adds live traffic to travel times and better store search. Pins for your places still come from OpenStreetMap, since Mapbox's free answers can't be kept."}{" "}
-        Where you are and your saved addresses go only to the maps service; the weather (Open-Meteo, free) gets a rough area.
+        {chosen?.about ?? "Install a maps extension in Extensions."} Where you are and your saved addresses go only to the maps service; the
+        weather ({weather?.name ?? "no weather extension"}) gets a rough area. Mapbox, for live traffic, is in{" "}
+        <a href="#/settings/extensions">Extensions</a>.
       </p>
-      {provider === "mapbox" && (
-        <SecretField
-          label="Mapbox token"
-          set={view.secrets.mapbox_token}
-          onSave={(value) => atlas.send({ type: "atlas.secret.set", secret: { name: "mapbox_token", value: value?.trim() ?? null } })}
-        />
-      )}
       <label className="field">
         <span>Units</span>
         <select value={draft.units} onChange={(e) => edit({ units: e.target.value as SettingsT["units"] })}>
@@ -2193,64 +2808,6 @@ export function SecretField({ label, set, onSave }: { label: string; set: boolea
   );
 }
 
-export function ICloud({ view, atlas }: { view: SettingsView; atlas: Atlas }) {
-  const [username, setUsername] = useState(view.secrets.icloud?.username ?? "");
-  const [password, setPassword] = useState("");
-  const connected = view.secrets.icloud;
-  return (
-    <>
-      <p className="muted small">
-        Atlas reads iCloud Calendar with an app-specific password. Make one at{" "}
-        <a href="https://account.apple.com" target="_blank" rel="noreferrer">
-          account.apple.com
-        </a>{" "}
-        under Sign-In and Security.
-      </p>
-      <label className="field">
-        <span>Apple ID</span>
-        <input value={username} type="email" autoComplete="off" spellCheck={false} onChange={(e) => setUsername(e.target.value)} />
-      </label>
-      <label className="field">
-        <span>App-specific password</span>
-        <div className="row">
-          <input
-            type="password"
-            className="mono"
-            autoComplete="new-password"
-            spellCheck={false}
-            value={password}
-            placeholder={connected ? "Set. Paste a new one to replace it." : "xxxx-xxxx-xxxx-xxxx"}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <button
-            type="button"
-            className="btn"
-            disabled={username.length < 3 || password.length < 4}
-            onClick={() => {
-              atlas.send({ type: "atlas.secret.set", secret: { name: "icloud", value: { username, app_password: password } } });
-              setPassword("");
-            }}
-          >
-            Connect
-          </button>
-          {connected && (
-            <button
-              type="button"
-              className="btn"
-              onClick={() => atlas.send({ type: "atlas.secret.set", secret: { name: "icloud", value: null } })}
-            >
-              Disconnect
-            </button>
-          )}
-        </div>
-      </label>
-      {connected?.refused && (
-        <p className="err small">{connected.refused.note} Until then, Atlas answers from its copy of your calendar. Test tries once now.</p>
-      )}
-    </>
-  );
-}
-
 export function ChatGPT({ chatgpt, atlas }: { chatgpt: ChatGPTView; atlas: Atlas }) {
   const [landed, setLanded] = useState("");
   const [now, setNow] = useState(Date.now());
@@ -2411,6 +2968,282 @@ export function Chain({
         <button className="link" onClick={() => onChange([...chain, { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" }])}>
           Add a fallback
         </button>
+      )}
+    </div>
+  );
+}
+
+// --- Extensions (§17) --------------------------------------------------------------------------------
+
+const PROVIDES: Record<string, string> = {
+  sense: "things to notice",
+  channel: "a chat channel",
+  mail: "your mail",
+  sending: "sending from Atlas's address",
+  calendar: "your calendar",
+  contacts: "your contacts",
+  location: "where you are",
+  maps: "maps and routes",
+  weather: "the weather",
+  search: "web search",
+};
+
+/**
+ * Extensions (§17): everything that ties Atlas to one service. Each one says
+ * what it gives, the only hosts it may reach, and what it needs from you,
+ * before it's installed. Ones Atlas wrote wait here as drafts, with their code,
+ * until you install them.
+ */
+function Extensions({ atlas, view, note }: { atlas: Atlas; view: SettingsView; note: { ok: boolean; text: string } | null }) {
+  const mine = view.extensions.filter((e) => e.state !== "available");
+  const more = view.extensions.filter((e) => e.state === "available");
+  return (
+    <>
+      <Head
+        title="Extensions"
+        sub="Atlas's core is the same for everyone; extensions connect it to your services. Each runs sandboxed: it reaches only the hosts it names, never sees its keys, and can't act on its own."
+      />
+      {note && <p className={`small ${note.ok ? "ok" : "err"}`}>{note.text}</p>}
+      <Row label="Installed">
+        {mine.length ? (
+          <div className="rows">
+            {mine.map((e) => (
+              <ExtensionCard key={e.id} atlas={atlas} e={e} />
+            ))}
+          </div>
+        ) : (
+          <p className="muted small">None yet.</p>
+        )}
+      </Row>
+      <Row label="Ships with Atlas">
+        <div className="rows">
+          {more.map((e) => (
+            <ExtensionCard key={e.id} atlas={atlas} e={e} />
+          ))}
+        </div>
+        <p className="muted small">For anything else, ask Atlas to write one: it shows up above as a draft for you to read and install.</p>
+      </Row>
+    </>
+  );
+}
+
+type ExtView = SettingsView["extensions"][number];
+
+/** One extension: what it gives and can reach, its settings, keys and sign-in, its setup, a live test, and its state. */
+export function ExtensionCard({ atlas, e, open: startOpen = false }: { atlas: Atlas; e: ExtView; open?: boolean }) {
+  const [open, setOpen] = useState(startOpen || e.state === "draft");
+  const [settings, setSettings] = useState<Record<string, string>>(() => Object.fromEntries(e.settings.map((x) => [x.name, x.value])));
+  const [showCode, setShowCode] = useState(false);
+  const setup = atlas.state.extSetup[e.id];
+  const installed = e.state !== "available";
+  const needs = e.secrets.filter((x) => !x.optional && !x.set).length + (e.signin && !e.signin.signed_in ? 1 : 0);
+  const status =
+    e.state === "available"
+      ? null
+      : e.state === "draft"
+        ? { cls: "ac", text: "Draft: not installed" }
+        : e.state === "off"
+          ? { cls: "", text: "Off" }
+          : e.error
+            ? { cls: "ac", text: "Failing" }
+            : needs
+              ? { cls: "", text: "Needs setting up" }
+              : { cls: "ok", text: "On" };
+  return (
+    <div className="r" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+      <div className="row" style={{ flexWrap: "wrap" }}>
+        <button className="link" style={{ fontWeight: 500 }} onClick={() => setOpen(!open)}>
+          {e.name}
+        </button>
+        {status && <span className={`tag ${status.cls}`}>{status.text}</span>}
+        {e.source !== "bundled" && <span className="tag">{e.source === "atlas" ? "Written by Atlas" : "Yours"}</span>}
+        <span className="grow" />
+        {e.state === "available" || e.state === "draft" ? (
+          <button className="btn primary" onClick={() => atlas.send({ type: "atlas.ext.install", id: e.id })}>
+            Install
+          </button>
+        ) : (
+          <label className="check small">
+            <input
+              type="checkbox"
+              checked={e.state === "on"}
+              onChange={(x) => atlas.send({ type: "atlas.ext.state", id: e.id, on: x.target.checked })}
+            />
+            On
+          </label>
+        )}
+      </div>
+      <span className="muted small">{e.about}</span>
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
+          <p className="small">
+            Gives Atlas {e.provides.map((p) => PROVIDES[p] ?? p).join(", ")}.{" "}
+            {e.hosts.length ? (
+              <>
+                It can reach only <span className="mono">{e.hosts.join(", ")}</span>.
+              </>
+            ) : (
+              "It reaches nothing outside Atlas."
+            )}
+            {e.every ? ` It looks for what's new every ${e.every} minute${e.every === 1 ? "" : "s"} while it's on.` : ""}
+            {e.costs ? ` ${e.costs}` : ""}
+          </p>
+          {e.credit && <p className="faint small">{e.credit}</p>}
+          {e.error && (
+            <p className="err small">
+              {e.error_at ? `${dayTime(e.error_at)}: ` : ""}
+              {e.error}
+            </p>
+          )}
+          {!e.error && e.ok_at && <p className="ok small">Worked {dayTime(e.ok_at)}.</p>}
+          {e.code != null && (
+            <>
+              <button className="link small" style={{ alignSelf: "flex-start" }} onClick={() => setShowCode(!showCode)}>
+                {showCode ? "Hide its code" : "Read its code"}
+              </button>
+              {showCode && (
+                <pre className="mono small" style={{ maxHeight: 360, overflow: "auto", whiteSpace: "pre-wrap" }}>
+                  {e.code}
+                </pre>
+              )}
+            </>
+          )}
+          {installed && e.state !== "draft" && (
+            <>
+              {e.settings.map((x) => (
+                <label className="field" key={x.name}>
+                  <span>{x.label}</span>
+                  <div className="row">
+                    <input
+                      value={settings[x.name] ?? ""}
+                      spellCheck={false}
+                      autoComplete="off"
+                      onChange={(ev) => setSettings({ ...settings, [x.name]: ev.target.value })}
+                    />
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={(settings[x.name] ?? "") === x.value}
+                      onClick={() => atlas.send({ type: "atlas.ext.settings", id: e.id, settings: { [x.name]: settings[x.name] ?? "" } })}
+                    >
+                      Save
+                    </button>
+                  </div>
+                  {x.help && <span className="faint small">{x.help}</span>}
+                </label>
+              ))}
+              {e.secrets.map((x) => (
+                <div key={x.name}>
+                  <SecretField
+                    label={`${x.label}${x.optional ? " (optional)" : ""}`}
+                    set={x.set}
+                    onSave={(value) => atlas.send({ type: "atlas.ext.secrets", id: e.id, secrets: { [x.name]: value?.trim() ?? null } })}
+                  />
+                  {x.help && <span className="faint small">{x.help}</span>}
+                </div>
+              ))}
+              {e.signin && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <p className="small">{e.signin.help}</p>
+                  {e.signin.redirect && (
+                    <p className="small">
+                      Its redirect address: <span className="mono">{e.signin.redirect}</span>
+                    </p>
+                  )}
+                  <SecretField
+                    label="Client secret"
+                    set={e.signin.secret_set}
+                    onSave={(value) =>
+                      atlas.send({ type: "atlas.ext.secrets", id: e.id, secrets: { client_secret: value?.trim() ?? null } })
+                    }
+                  />
+                  <div className="row">
+                    <button className="btn primary" onClick={() => atlas.send({ type: "atlas.ext.signin", id: e.id })}>
+                      {e.signin.signed_in ? "Sign in again" : "Sign in"}
+                    </button>
+                    {e.signin.signed_in && (
+                      <>
+                        <span className="ok small">Signed in</span>
+                        <button
+                          className="btn"
+                          onClick={() =>
+                            atlas.send({
+                              type: "atlas.ext.secrets",
+                              id: e.id,
+                              secrets: { access_token: null, refresh_token: null, expires_at: null },
+                            })
+                          }
+                        >
+                          Disconnect
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+              {e.address && (
+                <p className="small">
+                  Its address, for the service to post to:{" "}
+                  <span className="mono" style={{ wordBreak: "break-all" }}>
+                    {e.address}
+                  </span>
+                </p>
+              )}
+              {setup ? (
+                <div className="row" style={{ alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
+                  {setup.link && <QrCode text={setup.link} size={220} />}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, maxWidth: 440 }}>
+                    <p className={`small ${setup.ok ? "" : "err"}`}>{setup.text}</p>
+                    {setup.link && (
+                      <a className="btn primary" href={setup.link} style={{ textDecoration: "none", alignSelf: "flex-start" }}>
+                        Open it
+                      </a>
+                    )}
+                    {(setup.fields ?? []).map((f) => (
+                      <span className="faint small" key={f.label}>
+                        {f.label}:{" "}
+                        <span className="mono" style={{ wordBreak: "break-all" }}>
+                          {f.value}
+                        </span>
+                      </span>
+                    ))}
+                    {setup.fields?.length ? <p className="muted small">This is the only time these are shown.</p> : null}
+                  </div>
+                </div>
+              ) : null}
+              <div className="row" style={{ flexWrap: "wrap" }}>
+                {e.methods.includes("setup") && (
+                  <button className="btn" onClick={() => atlas.send({ type: "atlas.ext.setup", id: e.id })}>
+                    {setup ? "Set up again" : "Set up"}
+                  </button>
+                )}
+                {e.methods.includes("test") && (
+                  <TestRow label="Test" k={`ext:${e.id}`} atlas={atlas} run={() => atlas.send({ type: "atlas.ext.test", id: e.id })} />
+                )}
+                {e.methods.includes("contacts") && (
+                  <TestRow
+                    label="Bring in contacts"
+                    k="contacts"
+                    atlas={atlas}
+                    run={() => atlas.send({ type: "atlas.contacts.import", from: e.id })}
+                  />
+                )}
+                <span className="grow" />
+                <button className="link" onClick={() => atlas.send({ type: "atlas.ext.remove", id: e.id })}>
+                  Remove
+                </button>
+              </div>
+            </>
+          )}
+          {e.state === "draft" && (
+            <div className="row">
+              <span className="muted small grow">Read it first: installing it is your OK for it to run, with the hosts above.</span>
+              <button className="link" onClick={() => atlas.send({ type: "atlas.ext.remove", id: e.id })}>
+                Throw it away
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

@@ -23,6 +23,7 @@ import type { Settings } from "./store/settings";
 import { isoLocal, longLocal, shortLocal } from "./time";
 import { situationLines } from "./situation";
 import { openTasks, taskView } from "./tasks";
+import { loopsLine } from "./loops";
 import { pileLine, speakingLine } from "./agent/senses";
 import { nodesLine } from "./nodes";
 
@@ -99,6 +100,7 @@ export function systemPrompt(opts: {
     serversLine(opts.mcp ?? []),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     tasksLine(sql, tz),
+    loopsLine(sql, tz),
     speakingLine(settings),
     // What could wait, for the owner's own turns; Atlas's own runs get it in their notes.
     surface === "none" ? "" : pileLine(sql, settings),

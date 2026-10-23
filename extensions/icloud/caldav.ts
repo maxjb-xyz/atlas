@@ -1,11 +1,11 @@
-// iCloud Calendar over CalDAV (RFC 4791), read only. Discovery goes
+// iCloud Calendar over CalDAV (RFC 4791), in the iCloud extension: read, and an event moved when Atlas is asked. Discovery goes
 // principal -> calendar home -> calendars. iCloud lists everything from
 // caldav.icloud.com but serves the home from a pNN-caldav.icloud.com host,
 // so every href is resolved against the URL that returned it. The server
 // expands recurring events, so each instance arrives as its own VEVENT
 // (identified by UID plus RECURRENCE-ID).
 
-import { parseEvents } from "./ical";
+import { moveIn, parseEvents } from "./ical";
 import {
   CalendarError,
   type CalendarCheck,
@@ -24,6 +24,11 @@ const DAY_MS = 86_400_000;
 
 export interface CalDavOptions {
   fetch?: typeof fetch;
+  /**
+   * The Authorization header to send, when it isn't built from the password:
+   * in the sandbox it's the gate's placeholder, so the password never reaches this code.
+   */
+  auth?: string;
   /** Calendar display names to leave out (case and surrounding spaces ignored). */
   hidden?: string[];
   baseUrl?: string;
@@ -106,6 +111,16 @@ export function calendarQuery(range: CalendarRange): string {
 </c:calendar-query>`;
 }
 
+/** The calendar object holding the event `uid`, unexpanded, with its etag. */
+export function uidQuery(uid: string): string {
+  const esc = uid.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `<?xml version="1.0" encoding="utf-8"?>
+<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop><d:getetag/><c:calendar-data/></d:prop>
+  <c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:prop-filter name="UID"><c:text-match collation="i;octet">${esc}</c:text-match></c:prop-filter></c:comp-filter></c:comp-filter></c:filter>
+</c:calendar-query>`;
+}
+
 /**
  * The credentials as iCloud expects them. An app-specific password is 16
  * letters that Apple shows as xxxx-xxxx-xxxx-xxxx; however it was pasted or
@@ -138,11 +153,11 @@ class CalDavClient {
   /** Where discovery starts, so a refusal can say whether it came at the first server or a later one. */
   #start: string;
 
-  constructor(creds: ICloudCredentials, fetchFn: typeof fetch, start: string) {
+  constructor(creds: ICloudCredentials, fetchFn: typeof fetch, start: string, auth?: string) {
     this.#start = start;
     // Called as a plain function: the Workers runtime's fetch throws "Illegal invocation" if called as a method of another object.
     this.#fetch = (input, init) => fetchFn(input, init);
-    this.#auth = basicAuth(creds);
+    this.#auth = auth ?? basicAuth(creds);
   }
 
   /** One WebDAV request, following redirects by hand so the auth header survives a host change. */
@@ -225,6 +240,46 @@ class CalDavClient {
     throw new CalendarError("iCloud Calendar redirected too many times.", "protocol");
   }
 
+  /**
+   * Writes a calendar object back, only if it's still the version read
+   * (If-Match its etag), so a change made meanwhile in another app is never
+   * overwritten.
+   */
+  async put(url: string, ics: string, etag: string | null): Promise<void> {
+    let res: Response;
+    try {
+      res = await this.#fetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: this.#auth,
+          "Content-Type": "text/calendar; charset=utf-8",
+          "User-Agent": USER_AGENT,
+          ...(etag ? { "If-Match": etag } : {}),
+        },
+        body: ics,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err) {
+      throw new CalendarError(
+        `Couldn't reach iCloud Calendar at ${new URL(url).host} (${err instanceof Error ? err.message : String(err)}).`,
+        "network",
+      );
+    }
+    if (res.ok) return;
+    const said = (await res.text().catch(() => ""))
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 160);
+    if (res.status === 412)
+      throw new CalendarError("The event changed in iCloud since Atlas read it, so it wasn't moved. Read the calendar again.", "protocol");
+    if (res.status === 401) throw new CalendarError(`${AUTH_REASON} (HTTP 401 at ${new URL(url).host})`, "auth");
+    throw new CalendarError(
+      `iCloud Calendar didn't take the change (HTTP ${res.status}${said ? `: ${said}` : ""}).`,
+      res.status >= 500 ? "network" : "protocol",
+    );
+  }
+
   async multistatus(method: string, url: string, body: string, depth: "0" | "1"): Promise<{ url: string; responses: DavResponse[] }> {
     const res = await this.request(method, url, body, depth);
     try {
@@ -283,7 +338,7 @@ function overlaps(ev: CalendarEvent, range: CalendarRange): boolean {
 
 export function icloudCalendar(creds: ICloudCredentials, opts: CalDavOptions = {}): CalendarSource {
   const base = opts.baseUrl ?? ICLOUD_CALDAV;
-  const client = new CalDavClient(creds, opts.fetch ?? fetch, base);
+  const client = new CalDavClient(creds, opts.fetch ?? ((i, init) => fetch(i, init)), base, opts.auth);
   const hidden = new Set((opts.hidden ?? []).map((n) => n.trim().toLowerCase()));
   const tz = opts.timezone ?? "UTC";
   let copy = usable(opts.store?.load() ?? null);
@@ -411,7 +466,53 @@ export function icloudCalendar(creds: ICloudCredentials, opts: CalDavOptions = {
     return { calendars: c.calendars.filter((cal) => visible(cal.name)).map((cal) => cal.name), events_next_30_days: events.length };
   }
 
-  return { list, held, check };
+  /**
+   * Moves an event to a new time: finds its calendar object by UID, changes
+   * its start and end, and writes it back only if it hasn't changed since.
+   * A repeating event isn't moved (one occurrence of it would need an
+   * exception Atlas doesn't write yet). Returns the event before and after.
+   */
+  async function move(id: string, to: { start: string; end: string }): Promise<{ before: CalendarEvent; event: CalendarEvent }> {
+    let c = copy;
+    if (!c || Date.now() - c.synced_at > FRESH_MS) c = await syncOnce();
+    const [uid, occurrence] = id.split("::");
+    const cal = c.calendars.find((x) => x.events.some((e) => e.id === id));
+    const before = cal?.events.find((e) => e.id === id);
+    if (!cal || !before)
+      throw new CalendarError(
+        "That event isn't on the calendar any more, or it's more than ten weeks out. Read the calendar again.",
+        "protocol",
+      );
+    if (occurrence)
+      throw new CalendarError(
+        `"${before.title}" repeats; Atlas doesn't move one occurrence of a repeating event yet. The owner can move it in their calendar app.`,
+        "protocol",
+      );
+    const found = await client.multistatus("REPORT", cal.url, uidQuery(uid!), "1");
+    const r = found.responses.find((x) => textOf(x.props, "calendar-data"));
+    if (!r) throw new CalendarError(`iCloud didn't find "${before.title}" in ${cal.name} any more.`, "protocol");
+    const ics = textOf(r.props, "calendar-data")!;
+    const etag = textOf(r.props, "getetag")?.trim() || null;
+    const moved = moveIn(ics, uid!, { ...to, all_day: before.all_day });
+    if (moved === "repeats")
+      throw new CalendarError(
+        `"${before.title}" repeats; Atlas doesn't move one occurrence of a repeating event yet. The owner can move it in their calendar app.`,
+        "protocol",
+      );
+    if (!moved) throw new CalendarError(`iCloud's copy of "${before.title}" didn't hold the event Atlas expected.`, "protocol");
+    await client.put(new URL(r.href, found.url).toString(), moved, etag);
+    const event = parseEvents(moved, cal.name, tz).find((e) => e.id === uid) ?? { ...before, ...to };
+    // The copy has the new time now; the calendar's tag changed, so the next sync reads it again anyway.
+    const next: CalendarCopy = {
+      ...c,
+      calendars: c.calendars.map((x) => (x === cal ? { ...x, tag: null, events: x.events.map((e) => (e.id === id ? event : e)) } : x)),
+    };
+    copy = next;
+    opts.store?.save(next);
+    return { before, event };
+  }
+
+  return { list, held, check, move };
 }
 
 /** Runs `fn` over `items`, at most `n` at a time, keeping the order of results. */

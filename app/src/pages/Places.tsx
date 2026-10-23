@@ -1,7 +1,7 @@
 // Inbox and Agenda (§21.2). Automations has its own page.
 
 import { useEffect, useState } from "react";
-import type { CalendarEventView } from "../../../core/src/protocol";
+import type { CalendarEventView, InboxItem } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { ApprovalCard } from "../Approval";
 import { Markdown } from "../Markdown";
@@ -96,7 +96,11 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                             : "Needs your OK"
                           : i.kind === "question"
                             ? "Question"
-                            : "Ready for review"}
+                            : i.kind === "face"
+                              ? i.face?.urgent
+                                ? "Urgent, from a face"
+                                : "From a face"
+                              : "Ready for review"}
                     </span>
                     <span style={{ fontWeight: 500 }} className="grow">
                       {i.title}
@@ -132,7 +136,8 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                       </div>
                     </div>
                   )}
-                  {on && !i.approval && !i.question && (
+                  {on && i.face && <FaceHandoff atlas={atlas} item={i} />}
+                  {on && !i.approval && !i.question && !i.face && (
                     <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       <div className="panel">{i.text ? <Markdown text={i.text} /> : "No details."}</div>
                       <div className="chain">
@@ -167,7 +172,7 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
 interface AgendaEntry {
   at: Date;
   allDay: boolean;
-  kind: "Event" | "Reminder" | "Promise" | "Job" | "Automation";
+  kind: "Event" | "Reminder" | "Promise" | "Job" | "Automation" | "Waiting";
   title: string;
   source: string;
   id: string;
@@ -175,6 +180,8 @@ interface AgendaEntry {
   said?: { text: string; at: number };
   /** Can be cancelled from here. */
   cancel?: boolean;
+  /** An open loop (§10.4), closed from here. */
+  close?: boolean;
 }
 
 export function Agenda({ atlas }: { atlas: Atlas }) {
@@ -195,19 +202,29 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
       .filter(
         (a) =>
           (a.state === "scheduled" || a.state === "running") &&
-          !["notify", "approval", "skills", "situation", "rhythm", "errand"].includes(a.kind),
+          !["notify", "approval", "skills", "situation", "rhythm", "errand", "looks", "device"].includes(a.kind),
       )
       .map((a): AgendaEntry => {
         const d = a.source.detail ?? {};
         return {
           at: new Date(a.due_at),
           allDay: false,
-          kind: a.kind === "job" ? "Job" : a.kind === "promise" ? "Promise" : a.kind === "automation" ? "Automation" : "Reminder",
+          kind:
+            a.kind === "job"
+              ? "Job"
+              : a.kind === "promise"
+                ? "Promise"
+                : a.kind === "automation"
+                  ? "Automation"
+                  : a.kind === "loop"
+                    ? "Waiting"
+                    : "Reminder",
           title: a.title,
           source: a.kind === "job" ? "Helper" : a.kind === "automation" ? "Automations" : "Atlas",
           id: a.id,
           ...(typeof d.said === "string" ? { said: { text: d.said, at: typeof d.said_at === "number" ? d.said_at : a.created_at } } : {}),
           cancel: (a.kind === "reminder" || a.kind === "promise") && a.state === "scheduled",
+          close: a.kind === "loop" && a.state === "scheduled",
         };
       }),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
@@ -227,7 +244,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
       ]}
       tab={tab}
       onTab={setTab}
-      meta={s.view?.secrets.icloud ? "Calendar · iCloud" : "Calendar not connected"}
+      meta={s.view?.calendar.provider ? `Calendar · ${s.view.calendar.provider.name}` : "Calendar not connected"}
       dock={
         <div className="dock slim">
           <Composer atlas={atlas} placeholder="Move it, add a reminder, or ask what's coming" />
@@ -310,7 +327,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                   </div>
                   <div className="rows">
                     {list.map((e) => {
-                      const atlasOwn = e.kind === "Reminder" || e.kind === "Promise";
+                      const atlasOwn = e.kind === "Reminder" || e.kind === "Promise" || e.kind === "Waiting";
                       return (
                         <div key={`${e.kind}:${e.id}`} className="r" style={{ alignItems: "flex-start", flexWrap: "wrap", rowGap: 4 }}>
                           <span className="mono faint small" style={{ width: 70, flex: "none", paddingTop: 2 }}>
@@ -334,6 +351,11 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                               Cancel
                             </button>
                           )}
+                          {e.close && (
+                            <button className="link small" onClick={() => atlas.send({ type: "atlas.loop.close", id: e.id })}>
+                              Close
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -345,5 +367,59 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
         </div>
       </Sheet>
     </Stage>
+  );
+}
+
+/** What a face handed you (§7.2): the conversation, what it noted, and an answer that goes back through the face. */
+function FaceHandoff({ atlas, item }: { atlas: Atlas; item: InboxItem }) {
+  const f = item.face!;
+  const [text, setText] = useState("");
+  return (
+    <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }} onClick={(e) => e.stopPropagation()}>
+      <p>{item.text}</p>
+      {Object.keys(f.details).length > 0 && (
+        <p className="small">
+          {Object.entries(f.details)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(" · ")}
+        </p>
+      )}
+      {f.reach.length > 0 && <p className="muted small">How to reach them: {f.reach.join(", ")}</p>}
+      {f.conversation.length > 0 && (
+        <div className="panel rows" style={{ gap: 4 }}>
+          {f.conversation.map((c, n) => (
+            <p key={n} className="small">
+              <b>{c.who === "them" ? f.from : c.who === "you" ? "You" : f.name}:</b> {c.text}
+            </p>
+          ))}
+        </div>
+      )}
+      {f.can_answer && (
+        <form
+          className="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!text.trim()) return;
+            atlas.send({ type: "atlas.face.answer", id: item.id, text: text.trim() });
+            setText("");
+          }}
+        >
+          <input
+            className="grow"
+            value={text}
+            placeholder={`Answer ${f.from}, through ${f.name}`}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <button className="btn primary" disabled={!text.trim()}>
+            Send
+          </button>
+        </form>
+      )}
+      <div className="row">
+        <button className="btn" onClick={() => atlas.send({ type: "atlas.inbox.done", id: item.id })}>
+          Done
+        </button>
+      </div>
+    </div>
   );
 }

@@ -1,119 +1,15 @@
-// Weather (VISION §10.1, §10.2): Open-Meteo, which needs no key and is free
-// for non-commercial use. It only ever gets a rough area (coordinates
+// Weather (VISION §10.1, §10.2): which service answers is an extension
+// (§17), Open-Meteo by default. It only ever gets a rough area (coordinates
 // rounded to a tenth of a degree, about 10 km), never where you are (§4.4).
 // Values are kept metric and said in the owner's units.
 
-import type { LookOut } from "./web";
-import { USER_AGENT } from "./maps";
 import { clockLocal, zonedParts } from "./time";
 
-export interface Hour {
-  t: number;
-  temp_c: number;
-  /** Chance of rain, percent. */
-  pop: number;
-  precip_mm: number;
-  code: number;
-  wind_kmh: number;
-}
-
-export interface Day {
-  /** Local date, YYYY-MM-DD. */
-  date: string;
-  max_c: number;
-  min_c: number;
-  pop: number;
-  code: number;
-  uv: number;
-}
-
-export interface Weather {
-  /** When it was fetched. */
-  at: number;
-  area: { lat: number; lon: number };
-  now: { temp_c: number; feels_c: number; code: number; wind_kmh: number };
-  /** The next 24 hours. */
-  hours: Hour[];
-  /** Today and the next six days. */
-  days: Day[];
-}
+export type { Day, Hour, Weather } from "../../extensions/sdk";
+import type { Weather } from "../../extensions/sdk";
 
 /** A rough area around a point: a tenth of a degree, about 10 km. */
 export const roughArea = (p: { lat: number; lon: number }) => ({ lat: Math.round(p.lat * 10) / 10, lon: Math.round(p.lon * 10) / 10 });
-
-export async function fetchWeather(f: typeof fetch, area: { lat: number; lon: number }): Promise<LookOut<Weather>> {
-  const u = new URL("https://api.open-meteo.com/v1/forecast");
-  u.searchParams.set("latitude", String(area.lat));
-  u.searchParams.set("longitude", String(area.lon));
-  u.searchParams.set("current", "temperature_2m,apparent_temperature,weather_code,wind_speed_10m");
-  u.searchParams.set("hourly", "temperature_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m");
-  u.searchParams.set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,uv_index_max");
-  u.searchParams.set("timezone", "auto");
-  u.searchParams.set("forecast_days", "7");
-  u.searchParams.set("timeformat", "unixtime");
-  let res: Response;
-  try {
-    res = await f(u.toString(), { headers: { "user-agent": USER_AGENT, accept: "application/json" } });
-  } catch (err) {
-    return {
-      ok: false,
-      status: 0,
-      error: `Couldn't reach Open-Meteo (api.open-meteo.com): ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-  const text = await res.text().catch(() => "");
-  let body: Record<string, unknown> = {};
-  try {
-    body = JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    // Said below with the status.
-  }
-  if (!res.ok || body.error) {
-    const why = typeof body.reason === "string" ? body.reason : text.slice(0, 200);
-    return { ok: false, status: res.status, error: `Open-Meteo (api.open-meteo.com) answered ${res.status}${why ? `: ${why}` : ""}` };
-  }
-  const cur = (body.current ?? {}) as Record<string, number>;
-  const h = (body.hourly ?? {}) as Record<string, number[]>;
-  const d = (body.daily ?? {}) as Record<string, number[] | string[]>;
-  const now = Date.now();
-  const hours: Hour[] = (h.time ?? [])
-    .map((t, i) => ({
-      t: t * 1000,
-      temp_c: h.temperature_2m?.[i] ?? NaN,
-      pop: h.precipitation_probability?.[i] ?? 0,
-      precip_mm: h.precipitation?.[i] ?? 0,
-      code: h.weather_code?.[i] ?? 0,
-      wind_kmh: h.wind_speed_10m?.[i] ?? 0,
-    }))
-    .filter((x) => x.t > now - 3_600_000)
-    .slice(0, 24);
-  const days: Day[] = ((d.time ?? []) as number[]).map((t, i) => ({
-    date: new Date(t * 1000 + Number(body.utc_offset_seconds ?? 0) * 1000).toISOString().slice(0, 10),
-    max_c: (d.temperature_2m_max as number[] | undefined)?.[i] ?? NaN,
-    min_c: (d.temperature_2m_min as number[] | undefined)?.[i] ?? NaN,
-    pop: (d.precipitation_probability_max as number[] | undefined)?.[i] ?? 0,
-    code: (d.weather_code as number[] | undefined)?.[i] ?? 0,
-    uv: (d.uv_index_max as number[] | undefined)?.[i] ?? 0,
-  }));
-  if (!hours.length || cur.temperature_2m == null)
-    return { ok: false, status: res.status, error: "Open-Meteo answered without a forecast." };
-  return {
-    ok: true,
-    status: res.status,
-    value: {
-      at: now,
-      area,
-      now: {
-        temp_c: cur.temperature_2m,
-        feels_c: cur.apparent_temperature ?? cur.temperature_2m,
-        code: cur.weather_code ?? 0,
-        wind_kmh: cur.wind_speed_10m ?? 0,
-      },
-      hours,
-      days,
-    },
-  };
-}
 
 /** WMO weather codes, in words. */
 export function sky(code: number): string {

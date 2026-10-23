@@ -334,6 +334,9 @@ export interface AreaPage {
 export interface PersonPage {
   kind: "person";
   person: RecordView;
+  /** What's open with them (tasks for them, loops waiting on them), and the last time the owner was in touch (§7.1). */
+  open: Array<{ kind: "task" | "loop"; title: string; by: number | null }>;
+  last: { at: number; what: string } | null;
   links: Array<{ kind: string; record: RecordView }>;
   mentions: StageMessage[];
   history: Array<{ at: number; name: string | null; fact: string; reason: string }>;
@@ -520,7 +523,16 @@ export interface SensesPage {
   funnel: { in: number; duplicate: number; never: number; later: number; now: number; failed: number; nudged: number };
   sources: import("./protocol").SensesView["sources"];
   later: Array<{ id: string; at: number; source: string; what: string }>;
-  recent: Array<{ id: string; at: number; source: string; what: string; outcome: string | null; why: string | null }>;
+  recent: Array<{
+    id: string;
+    at: number;
+    source: string;
+    what: string;
+    outcome: string | null;
+    why: string | null;
+    /** What the quarantined reader pulled from someone else's words in it, when it read any. */
+    facts?: Record<string, string | number | string[]>;
+  }>;
   /** How the last week's nudges landed (§10.4, measured): each nudge's latest reaction, and the misses the owner pointed out. */
   landed: Landed;
 }

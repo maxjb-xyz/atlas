@@ -17,6 +17,7 @@ export interface PageSummary {
   views: string[];
 }
 import { z } from "zod";
+import { FaceInput } from "./face-shape";
 import type { LogRow } from "./store/log";
 import type { AgendaItem } from "./store/agenda";
 import { BrainChoice, Settings, SettingsPatch } from "./store/settings";
@@ -42,9 +43,14 @@ export interface RecordView {
   corrections: number;
   /** The value before the latest correction. */
   was: { name: string; fact: string; at: number } | null;
+  /** For a person (§7.1): how to reach them, each with where it came from, and how much the owner trusts them. */
+  channels?: Array<{ kind: string; value: string; via: string }>;
+  trust?: string;
+  /** Whether faces may share it, from its areas (§7.2). */
+  shared: boolean;
 }
 
-export type HistoryFilter = "everything" | "actions" | "conversations" | "jobs";
+export type HistoryFilter = "everything" | "actions" | "conversations" | "jobs" | "faces";
 
 export interface HistoryStats {
   actions: number;
@@ -67,7 +73,7 @@ export interface CalendarEventView {
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "node";
+  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "node" | "email" | "face_reply";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -75,8 +81,10 @@ export interface ApprovalStep {
   where: string;
   /** Whether and how it can be undone. */
   undo: string;
-  /** The text a webhook gets, which the owner can edit in the card. */
+  /** The text a webhook gets, or a mail's words, which the owner can edit in the card. */
   message?: string;
+  /** A mail's envelope: who it's from (fixed), and who it's to and its subject (editable). */
+  mail?: { from: string; to: string; cc?: string; subject: string };
 }
 
 /** An approval card: every step of the plan, why it needs the OK, and the checks it passed. */
@@ -95,7 +103,7 @@ export interface ApprovalView {
 export interface InboxItem {
   /** The log row it comes from; for an approval, its id; for a question, its key. */
   id: string;
-  kind: "review" | "failed" | "approval" | "question";
+  kind: "review" | "failed" | "approval" | "question" | "face";
   title: string;
   text: string;
   at: number;
@@ -104,6 +112,16 @@ export interface InboxItem {
   approval?: ApprovalView;
   /** Atlas asking the owner something it can't decide alone, such as whether to stop asking for an action. */
   question?: { key: string; yes: string; no: string };
+  /** What a face handed the owner (§7.2): who it's from, the conversation, and whether it can be answered from here. */
+  face?: {
+    name: string;
+    from: string;
+    urgent: boolean;
+    reach: string[];
+    details: Record<string, string>;
+    conversation: Array<{ who: "them" | "face" | "you"; text: string }>;
+    can_answer: boolean;
+  };
 }
 
 /** An area as the app shows it, in Library → Areas and on chips (§6, §21.3). */
@@ -113,7 +131,7 @@ export interface AreaView {
   about: string;
   state: "active" | "dormant" | "archived";
   color: number;
-  settings: { tone: string };
+  settings: { tone: string; shared_with: string[] };
   messages: number;
   records: number;
   last_seen: number | null;
@@ -151,14 +169,6 @@ export const ClientMessage = z.discriminatedUnion("type", [
     type: z.literal("atlas.secret.set"),
     secret: z.discriminatedUnion("name", [
       z.object({ name: z.literal("elevenlabs_api_key"), value: z.string().min(8).max(200).nullable() }),
-      z.object({ name: z.literal("tavily_api_key"), value: z.string().min(8).max(200).nullable() }),
-      z.object({ name: z.literal("brave_api_key"), value: z.string().min(8).max(200).nullable() }),
-      z.object({ name: z.literal("exa_api_key"), value: z.string().min(8).max(200).nullable() }),
-      z.object({ name: z.literal("mapbox_token"), value: z.string().min(20).max(400).nullable() }),
-      z.object({
-        name: z.literal("icloud"),
-        value: z.object({ username: z.string().min(3).max(200), app_password: z.string().min(4).max(64) }).nullable(),
-      }),
     ]),
   }),
   /** Whether this device has Atlas in view, sent on connect and whenever it changes, so a message goes to one channel (§14). */
@@ -181,7 +191,15 @@ export const ClientMessage = z.discriminatedUnion("type", [
     yes: z.boolean(),
     hold: z.boolean().optional(),
     edits: z
-      .array(z.object({ index: z.number().int().min(0).max(20), message: z.string().max(4_000) }))
+      .array(
+        z.object({
+          index: z.number().int().min(0).max(20),
+          message: z.string().max(20_000),
+          /** A mail's subject and who it's to, as the owner changed them in the card. */
+          subject: z.string().max(300).optional(),
+          to: z.string().max(1_000).optional(),
+        }),
+      )
       .max(20)
       .optional(),
   }),
@@ -239,10 +257,59 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.node.allow"), id: z.string().max(64), capability: z.string().max(40), on: z.boolean() }),
   /** Unpairs a device at once. */
   z.object({ type: z.literal("atlas.node.remove"), id: z.string().max(64) }),
+  /** Agenda's Close on an open loop (§10.4). */
+  z.object({ type: z.literal("atlas.loop.close"), id: z.string().max(64) }),
   /** Agenda's Done or Drop on a task (§5.1). */
   z.object({ type: z.literal("atlas.task.done"), id: z.string().max(64), done: z.boolean() }),
-  /** Settings → Devices → Set up OwnTracks: makes OwnTracks' own user and password (replacing any before) and its setup link. */
-  z.object({ type: z.literal("atlas.location.setup") }),
+  /** Settings → Extensions (§17): install a bundled one or a draft, remove one, or turn one on or off. */
+  z.object({ type: z.literal("atlas.ext.install"), id: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.ext.remove"), id: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.ext.state"), id: z.string().max(40), on: z.boolean() }),
+  /** An extension's secrets (an empty or null value removes one) and settings, as its manifest names them. */
+  z.object({
+    type: z.literal("atlas.ext.secrets"),
+    id: z.string().max(40),
+    secrets: z.record(z.string().max(40), z.string().max(4_000).nullable()),
+  }),
+  z.object({ type: z.literal("atlas.ext.settings"), id: z.string().max(40), settings: z.record(z.string().max(40), z.string().max(400)) }),
+  /** Run its setup (shown once), its live test, or start its sign-in. */
+  z.object({ type: z.literal("atlas.ext.setup"), id: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.ext.test"), id: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.ext.signin"), id: z.string().max(40) }),
+  /** Atlas's own address (§16.2): set it up on a domain with a token for the domain's account, take it down, or test it. */
+  z.object({
+    type: z.literal("atlas.mail.setup"),
+    domain: z.string().trim().min(3).max(200),
+    token: z.string().trim().max(200).optional(),
+    sending: z.string().max(40),
+  }),
+  z.object({ type: z.literal("atlas.mail.remove") }),
+  /** Faces (§7.2): make or change one, remove it, talk to it as a stranger, or answer what one handed you. */
+  z.object({ type: z.literal("atlas.face.save"), face: FaceInput }),
+  z.object({ type: z.literal("atlas.face.remove"), id: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.face.test"), id: z.string().max(40), conv: z.string().max(40), text: z.string().min(1).max(4_000) }),
+  z.object({ type: z.literal("atlas.face.answer"), id: z.string().max(64), text: z.string().min(1).max(4_000) }),
+  /** A chat channel (§16.1): a code for the owner to send from their own account, or forgetting who they are there. */
+  z.object({ type: z.literal("atlas.channel.code"), ext: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.channel.unlink"), ext: z.string().max(40) }),
+  /** Members (§7.1): invite one (again, for one who hasn't joined), change a role, remove one. */
+  z.object({
+    type: z.literal("atlas.member.invite"),
+    name: z.string().trim().min(1).max(60),
+    role: z.enum(["admin", "member"]),
+    id: z.string().max(40).optional(),
+  }),
+  z.object({ type: z.literal("atlas.member.role"), id: z.string().max(40), role: z.enum(["admin", "member"]) }),
+  z.object({ type: z.literal("atlas.member.remove"), id: z.string().max(40) }),
+  /** Shares an area with a member, or stops (§6, §7.1). */
+  z.object({ type: z.literal("atlas.area.share"), area: z.string().max(64), member: z.string().max(40), shared: z.boolean() }),
+  /** The areas shared with this person, with what's in them. */
+  z.object({ type: z.literal("atlas.shared") }),
+  /** Whether faces may share a record from its areas (§7.2). */
+  z.object({ type: z.literal("atlas.record.share"), id: z.string().max(64), shared: z.boolean() }),
+  z.object({ type: z.literal("atlas.mail.test") }),
+  /** Library → People → Import: from an extension that provides contacts, or a vCard file's text. */
+  z.object({ type: z.literal("atlas.contacts.import"), from: z.string().max(40).optional(), vcards: z.string().max(5_000_000).optional() }),
   /** Settings → Connections → Senses: a webhook source with its own address and key, or removing one. */
   z.object({ type: z.literal("atlas.sense.hook.add"), name: z.string().min(1).max(60) }),
   z.object({ type: z.literal("atlas.sense.hook.remove"), id: z.string().max(64) }),
@@ -308,7 +375,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** History: the log, newest first. */
   z.object({
     type: z.literal("atlas.history"),
-    filter: z.enum(["everything", "actions", "conversations", "jobs"]),
+    filter: z.enum(["everything", "actions", "conversations", "jobs", "faces"]),
     before_seq: z.number().int().optional(),
     area: z.string().max(64).nullable().optional(),
     /** Local midnight, for today's totals. */
@@ -448,19 +515,35 @@ export interface SettingsView {
   settings: import("./store/settings").Settings;
   secrets: {
     elevenlabs_api_key: boolean;
-    tavily_api_key: boolean;
-    brave_api_key: boolean;
-    exa_api_key: boolean;
-    mapbox_token: boolean;
-    /**
-     * `refused` says when and why iCloud last refused the sign-in, how many times in a row, and when Atlas tries
-     * again by itself; `note` says all that in a sentence. Meanwhile Atlas answers from its copy of the calendar.
-     */
-    icloud: {
-      username: string;
-      refused: { at: number; message: string; tries: number; next_try: number; note: string } | null;
-    } | null;
   };
+  /**
+   * The calendar (§10.1): which extension provides it, and `refused` when it last refused the sign-in, how many
+   * times in a row, and when Atlas tries again by itself; `note` says all that in a sentence. Meanwhile Atlas
+   * answers from its copy of the calendar.
+   */
+  calendar: {
+    provider: { id: string; name: string } | null;
+    refused: { at: number; message: string; tries: number; next_try: number; note: string } | null;
+  };
+  /** Extensions (§17): the installed ones, drafts, and the bundled ones not installed. */
+  extensions: ExtensionView[];
+  /** Atlas's own address (§16.2). */
+  mail: MailView;
+  /** Members (§7.1): who shares this Atlas. Only the owner's agent has them. */
+  members: Array<{
+    id: string;
+    name: string;
+    role: "admin" | "member";
+    joined_at: number | null;
+    invited_at: number;
+    invite_open: boolean;
+  }>;
+  /** In a member's own Atlas: who they are, and whose Atlas they share. Null in the owner's. */
+  me: { id: string; name: string; role: "admin" | "member"; owner: string } | null;
+  /** Faces (§7.2). */
+  faces: FaceView[];
+  /** Chat channels (§16.1), and who the owner is on each. */
+  channels: Array<{ ext: string; name: string; linked: { name: string; at: number } | null }>;
   chatgpt: ChatGPTView;
   /** Provider health, by "provider:model". */
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
@@ -505,6 +588,62 @@ export interface SensesView {
     error: string | null;
     error_at: number | null;
   }>;
+}
+
+/** One extension as Settings shows it (§17). */
+/** A face as Settings shows it: its settings (§7.2). */
+export type FaceView = import("./face-shape").Face & { people_names: string[]; pull_names: string[] };
+
+/** A shared area as a member's app shows it (§6): what's in it, kept in the owner's Atlas. */
+export interface SharedArea {
+  id: string;
+  name: string;
+  about: string;
+  /** Who it's shared with, by name, the owner first. */
+  with: string[];
+  records: Array<{ id: string; type: string; name: string; fact: string; updated_at: number; by: string }>;
+}
+
+/** Atlas's own address as Settings shows it (§16.2). */
+export interface MailView {
+  address: string | null;
+  domain: string | null;
+  on_subdomain: boolean;
+  sending: string | null;
+  sending_ok: boolean;
+  sending_note: string | null;
+  /** What the domain's account token needs. */
+  permissions: string[];
+  /** Extensions that can send from Atlas's address. */
+  senders: Array<{ id: string; name: string }>;
+}
+
+export interface ExtensionView {
+  id: string;
+  name: string;
+  version: string;
+  about: string;
+  provides: string[];
+  hosts: string[];
+  credit: string | null;
+  costs: string | null;
+  source: "bundled" | "atlas" | "owner";
+  /** "available" is a bundled one that isn't installed. */
+  state: "on" | "off" | "draft" | "available";
+  secrets: Array<{ name: string; label: string; help: string; optional: boolean; set: boolean }>;
+  settings: Array<{ name: string; label: string; help: string; optional: boolean; value: string }>;
+  signin: { help: string; redirect: string | null; signed_in: boolean; secret_set: boolean } | null;
+  /** Minutes between looks, when it looks on the clock. */
+  every: number | null;
+  /** Its address for posts, when it takes them and is installed. */
+  address: string | null;
+  ok_at: number | null;
+  error: string | null;
+  error_at: number | null;
+  last_look: number | null;
+  methods: string[];
+  /** The code, for one Atlas or the owner wrote, so it can be read before it's installed. */
+  code: string | null;
 }
 
 export interface LocationView {
@@ -594,8 +733,21 @@ export type ServerMessage =
     }
   /** The answer to Pair: the device's name, or null when it didn't pair. */
   | { type: "atlas.node.paired"; code: string; name: string | null }
-  /** OwnTracks' setup, shown once: where it posts, its user and password, and the link that fills them in. */
-  | { type: "atlas.location.setup"; url: string; user: string; password: string; link: string }
+  /** An extension's setup, shown once: what to do, a link (shown as a QR code too), and values like a password. */
+  | { type: "atlas.ext.setup"; id: string; ok: boolean; text: string; link?: string; fields?: Array<{ label: string; value: string }> }
+  | { type: "atlas.ext.test"; id: string; ok: boolean; message: string }
+  /** Where to sign in for an extension, or why it can't start. */
+  | { type: "atlas.ext.signin"; id: string; url?: string; error?: string }
+  /** How setting up, taking down or testing Atlas's address went, in the provider's words when it didn't. */
+  | { type: "atlas.mail"; ok: boolean; text: string }
+  /** A face's answer in a test conversation. */
+  | { type: "atlas.face.said"; id: string; conv: string; ok: boolean; text: string }
+  | { type: "atlas.channel.code"; ext: string; code: string; expires: number }
+  /** An invite link, shown once. */
+  | { type: "atlas.member.invited"; id: string; name: string; link: string }
+  /** The areas shared with this person (§6), with their records. */
+  | { type: "atlas.shared"; areas: SharedArea[] }
+  | { type: "atlas.contacts.imported"; ok: boolean; text: string }
   /** A new webhook source's address, with its key in it, shown once. */
   | { type: "atlas.sense.hook"; id: string; name: string; url: string }
   | { type: "atlas.test.result"; what: string; ref?: string; ok: boolean; message: string; detail?: unknown }

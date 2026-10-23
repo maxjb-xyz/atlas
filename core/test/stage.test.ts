@@ -73,6 +73,18 @@ describe("show", () => {
     const spec = toSpec(show);
     expect(spec.parameters).toMatchObject({ type: "object", required: ["view"] });
     expect(JSON.stringify(spec.parameters)).toContain('"area"');
+    // No tuples anywhere: Workers AI's models refuse a whole tool list for one (a route's points were one).
+    const tuples: string[] = [];
+    const walk = (v: unknown, path: string) => {
+      if (!v || typeof v !== "object") return;
+      for (const [k, x] of Object.entries(v)) {
+        if (k === "items" && Array.isArray(x)) tuples.push(path);
+        walk(x, `${path}.${k}`);
+      }
+    };
+    walk(spec.parameters, "show");
+    expect(tuples).toEqual([]);
+    expect(JSON.stringify(spec.parameters)).toContain('"minItems":2,"maxItems":2');
   });
 
   it("puts an area on the stage by name, saves its id on the receipt, and tells the model what's there", () =>

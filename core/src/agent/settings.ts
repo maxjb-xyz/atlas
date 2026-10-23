@@ -6,7 +6,6 @@ import { openTasks, taskView } from "../tasks";
 import { zoneOf } from "../time";
 import type { BrainRouter } from "../brains/router";
 import { type Brain, brainKey } from "../brains/types";
-import { CalendarError, type ICloudCredentials } from "../calendar/types";
 import type { ClientMessage, SettingsView } from "../protocol";
 import type { Sql } from "../store/db";
 import { runCharacterCheck, summary } from "../character-check";
@@ -21,31 +20,69 @@ import { webhooks, webhookView } from "../webhooks";
 import { vault, vaultView } from "../vault";
 import type { VapidKeys } from "../push";
 import type { ChatGPTSignIn } from "./chatgpt";
-import { here, nearest, ownTracksLogin, pins } from "../location";
+import { here, nearest, pins } from "../location";
+import { installed, providing } from "../extensions";
+import type { ExtensionDesk } from "./extensions";
+import type { MailDesk } from "./mail";
+import { faces } from "../faces";
+import { members } from "../members";
+import { getRecord } from "../store/records";
+import { links } from "./channels";
 import { nodes, nodeView } from "../nodes";
 import type { LocationView } from "../protocol";
 
-export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar: CalendarSense; router: BrainRouter }): SettingsView {
-  const passkeys = (getState<StoredPasskey[]>(sql, "passkeys") ?? []).map((p) => ({
-    id: p.id,
-    name: p.name,
-    created_at: p.created_at,
-    last_used: p.last_used,
-  }));
-  const icloud = getSecret<ICloudCredentials>(sql, "icloud");
+export function settingsView(
+  sql: Sql,
+  parts: { chatgpt: ChatGPTSignIn; calendar: CalendarSense; router: BrainRouter; extensions: ExtensionDesk; mail?: MailDesk },
+): SettingsView {
+  const passkeys = (getState<StoredPasskey[]>(sql, "passkeys") ?? [])
+    .filter((p) => !p.member)
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      created_at: p.created_at,
+      last_used: p.last_used,
+    }));
   const refusal = parts.calendar.refusal();
+  const provider = parts.calendar.provider();
   const settings = readSettings(sql);
   return {
     settings,
     secrets: {
       elevenlabs_api_key: Boolean(getSecret(sql, "elevenlabs_api_key")),
-      tavily_api_key: Boolean(getSecret(sql, "tavily_api_key")),
-      brave_api_key: Boolean(getSecret(sql, "brave_api_key")),
-      exa_api_key: Boolean(getSecret(sql, "exa_api_key")),
-      mapbox_token: Boolean(getSecret(sql, "mapbox_token")),
-      icloud: icloud
-        ? { username: icloud.username, refused: refusal ? { ...refusal, note: parts.calendar.note(refusal, settings) } : null }
-        : null,
+    },
+    calendar: {
+      provider: provider ? { id: provider.id, name: provider.name } : null,
+      refused: refusal ? { ...refusal, note: parts.calendar.note(refusal, settings) } : null,
+    },
+    extensions: parts.extensions?.views() ?? [],
+    members: members(sql).map((m) => ({
+      id: m.id,
+      name: m.name,
+      role: m.role,
+      joined_at: m.joined_at,
+      invited_at: m.invited_at,
+      invite_open: !m.joined_at && m.invite_expires > Date.now(),
+    })),
+    me: getState<{ id: string; name: string; role: "admin" | "member"; owner: string }>(sql, "member_of"),
+    faces: faces(sql).map((f) => ({
+      ...f,
+      people_names: f.people.map((id) => getRecord(sql, id)?.name ?? "someone forgotten"),
+      pull_names: f.pull_people.map((id) => getRecord(sql, id)?.name ?? "someone forgotten"),
+    })),
+    channels: providing(sql, "channel").map((e) => {
+      const l = links(sql)[e.id];
+      return { ext: e.id, name: e.name, linked: l ? { name: l.name, at: l.at } : null };
+    }),
+    mail: parts.mail?.view() ?? {
+      address: null,
+      domain: null,
+      on_subdomain: false,
+      sending: null,
+      sending_ok: false,
+      sending_note: null,
+      permissions: [],
+      senders: [],
     },
     webhooks: webhooks(sql).map(webhookView),
     vault: vault(sql).map(vaultView),
@@ -74,13 +111,14 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
 
 function locationView(sql: Sql): LocationView {
   const h = here(sql);
-  const login = ownTracksLogin(sql);
+  // Set up when a location extension is on and its setup ran (it keeps its login as its state).
+  const app = installed(sql).find((e) => e.state === "on" && e.manifest.provides.includes("location"));
   const all = pins(sql);
   const f = h.fix;
   const n = f && !h.place ? nearest(all, f) : null;
   return {
-    set_up: login != null,
-    made_at: login?.made_at ?? null,
+    set_up: app?.data != null,
+    made_at: app?.data != null ? app.updated_at : null,
     fix: f
       ? {
           at: f.at,
@@ -133,15 +171,11 @@ export async function liveTest(deps: TestDeps, msg: Extract<ClientMessage, { typ
   try {
     if (msg.what === "calendar") {
       const source = deps.calendar.source(settings);
-      if (!source) return { ok: false, message: "Add your Apple ID and an app-specific password first." };
-      const c = await source.check().catch((err: unknown) => {
-        throw err instanceof CalendarError && err.code === "auth"
-          ? new CalendarError(`${err.message} ${deps.calendar.shape()}`, "auth")
-          : err;
-      });
+      if (!source) return { ok: false, message: "Install a calendar extension (iCloud) in Settings → Extensions first." };
+      const c = await source.check();
       return {
         ok: true,
-        message: `Found ${c.calendars.length} calendars and ${c.events_next_30_days} events in the next 30 days.`,
+        message: c.text ?? `Found ${c.calendars?.length ?? 0} calendars and ${c.events_next_30_days ?? 0} events in the next 30 days.`,
         detail: c,
       };
     }

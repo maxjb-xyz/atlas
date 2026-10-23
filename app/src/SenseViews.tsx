@@ -405,6 +405,14 @@ export function SensesView({ page: p, onClose }: { page: SensesPage; onClose?: (
                 <li key={i.id} title={i.why ?? undefined}>
                   <span className="faint small">{clock(i.at)}</span> {i.what}{" "}
                   <span className={`chip small ${i.outcome === "now" ? "ac" : ""}`}>{i.outcome ? OUTCOME[i.outcome] : "Weighing"}</span>
+                  {i.facts ? (
+                    <span className="faint small" style={{ display: "block" }}>
+                      Read:{" "}
+                      {Object.entries(i.facts)
+                        .map(([k, v]) => `${k.replace(/_/g, " ")} ${Array.isArray(v) ? v.join(", ") : v}`)
+                        .join(" · ")}
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>

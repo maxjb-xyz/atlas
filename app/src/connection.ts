@@ -92,7 +92,16 @@ export interface State {
   /** Bumped when the situation changes, so Now and the situation, weather and place views ask again. */
   situationVersion: number;
   /** OwnTracks' setup, shown once in Settings → Devices. */
-  ownTracks: { url: string; user: string; password: string; link: string } | null;
+  /** An extension's setup, shown once (a link and its QR code, a password), by the extension's id. */
+  extSetup: Record<string, { ok: boolean; text: string; link?: string; fields?: Array<{ label: string; value: string }> }>;
+  /** A face's answers in "talk to it as a stranger", by test conversation (§7.2). */
+  faceSaid: Record<string, Array<{ ok: boolean; text: string }>>;
+  /** The invite link just made, shown once (§7.1). */
+  invited: { id: string; name: string; link: string } | null;
+  /** The areas shared between the owner and members, with what's in them (§6). */
+  shared: import("../../core/src/protocol").SharedArea[] | null;
+  /** The code to link a chat channel, shown until it's sent from the owner's account (§16.1). */
+  channelCode: { ext: string; code: string; expires: number } | null;
   /** A webhook source just added: its address with its key, shown once. */
   senseHook: { id: string; name: string; url: string } | null;
   /** Pairing codes looked up (null: not waiting), and the answer to Pair (the device's name, or null), by code. */
@@ -132,7 +141,11 @@ const initial: State = {
   mcpServers: null,
   kept: null,
   situationVersion: 0,
-  ownTracks: null,
+  extSetup: {},
+  faceSaid: {},
+  channelCode: null,
+  invited: null,
+  shared: null,
   senseHook: null,
   pairing: {},
   paired: {},
@@ -298,8 +311,32 @@ function reduce(s: State, a: Action): State {
       return { ...s, paired: { ...s.paired, [m.code]: m.name } };
     case "atlas.situation":
       return { ...s, situationVersion: s.situationVersion + 1 };
-    case "atlas.location.setup":
-      return { ...s, ownTracks: { url: m.url, user: m.user, password: m.password, link: m.link } };
+    case "atlas.ext.setup":
+      return {
+        ...s,
+        extSetup: {
+          ...s.extSetup,
+          [m.id]: { ok: m.ok, text: m.text, ...(m.link ? { link: m.link } : {}), ...(m.fields ? { fields: m.fields } : {}) },
+        },
+      };
+    case "atlas.ext.test":
+      return { ...s, tests: { ...s.tests, [`ext:${m.id}`]: { ok: m.ok, message: m.message } } };
+    case "atlas.ext.signin":
+      // The sign-in page, in this tab: it sends the owner back to Settings when it's done.
+      if (m.url) window.location.assign(m.url);
+      return m.error ? { ...s, tests: { ...s.tests, [`ext:${m.id}`]: { ok: false, message: m.error } } } : s;
+    case "atlas.face.said":
+      return { ...s, faceSaid: { ...s.faceSaid, [m.conv]: [...(s.faceSaid[m.conv] ?? []), { ok: m.ok, text: m.text }] } };
+    case "atlas.member.invited":
+      return { ...s, invited: { id: m.id, name: m.name, link: m.link } };
+    case "atlas.shared":
+      return { ...s, shared: m.areas };
+    case "atlas.channel.code":
+      return { ...s, channelCode: { ext: m.ext, code: m.code, expires: m.expires } };
+    case "atlas.mail":
+      return { ...s, tests: { ...s.tests, mail: { ok: m.ok, message: m.text } } };
+    case "atlas.contacts.imported":
+      return { ...s, tests: { ...s.tests, contacts: { ok: m.ok, message: m.text } } };
     case "atlas.sense.hook":
       return { ...s, senseHook: { id: m.id, name: m.name, url: m.url } };
   }
@@ -315,7 +352,8 @@ export interface VoiceState {
   error: string | null;
 }
 
-export function useAtlas() {
+/** The connection to one person's Atlas: the owner's, or a member's own (§7.1). */
+export function useAtlas(agent = "owner") {
   const [state, dispatch] = useReducer(reduce, initial);
   const [voice, setVoice] = useState<VoiceState>({
     connected: false,
@@ -329,7 +367,7 @@ export function useAtlas() {
   const [inCall, setInCall] = useState(false);
 
   useEffect(() => {
-    const c = new VoiceClient({ agent: "PersonAgent", name: "owner", host: location.host });
+    const c = new VoiceClient({ agent: "PersonAgent", name: agent, host: location.host });
     client.current = c;
     const patch = (p: Partial<VoiceState>) => setVoice((v) => ({ ...v, ...p }));
     c.addEventListener("connectionchange", (connected) => {

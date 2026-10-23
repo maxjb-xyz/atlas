@@ -1,34 +1,19 @@
-// Location as a sense (VISION §10.1): OwnTracks on the owner's phone posts
-// fixes and region events to the Worker, and the agent keeps the latest fix
-// in its state. The log gets a `sense` row only when something happened:
-// arriving at a saved place, leaving it, a real move away from saved places,
-// or location turned off or on. Arrivals and departures come from one state
-// machine here, fed by both the phone's own region events and plain fixes,
-// so each one is logged once whichever comes first. Saved places with a pin
-// go back to the phone as OwnTracks regions, in the answer to a post.
+// Location as a sense (VISION §10.1): a location extension (§17), OwnTracks
+// on the owner's phone by default, posts fixes and region events, and the
+// agent keeps the latest fix in its state. The log gets a `sense` row only
+// when something happened: arriving at a saved place, leaving it, a real
+// move away from saved places, or location turned off or on. Arrivals and
+// departures come from one state machine here, fed by both the phone's own
+// region events and plain fixes, so each one is logged once whichever comes
+// first. The saved places are what the extension gives the phone as regions.
 
 import type { Sql } from "./store/db";
 import { append, type LogRow } from "./store/log";
 import { type AtlasRecord, findRecords, getRecord } from "./store/records";
-import { getSecret, setSecret } from "./store/settings";
 import { getState, setState } from "./store/state";
 
-/** One position from the phone. */
-export interface Fix {
-  lat: number;
-  lon: number;
-  /** Accuracy in metres. */
-  acc: number;
-  at: number;
-  /** Battery, 0 to 100. */
-  batt?: number;
-  charging?: boolean;
-  conn?: "wifi" | "mobile" | "offline";
-  /** Speed in km/h. */
-  speed?: number;
-  /** What the phone thinks you're doing: walking, automotive, stationary. */
-  motion?: string[];
-}
+export type { Fix } from "../../extensions/sdk";
+import type { Fix, Transition } from "../../extensions/sdk";
 
 /** A saved place Atlas can notice you at: a place or organization record with a pin. */
 export interface Pin {
@@ -48,13 +33,13 @@ export interface Here {
   left: { id: string; name: string; at: number } | null;
   /** Where the last logged move was, so the next is logged only after a real move. */
   anchor: { lat: number; lon: number; at: number } | null;
-  /** A hash of the regions the phone was last sent, so they go again only when they change. */
-  regions: string;
+  /** Kept by deployments from before location was an extension; the extension keeps what the phone was sent now. */
+  regions?: string;
   /** The last post with the wrong password, and how many in a row. */
   refused: { at: number; n: number } | null;
 }
 
-const EMPTY: Here = { fix: null, place: null, left: null, anchor: null, regions: "", refused: null };
+const EMPTY: Here = { fix: null, place: null, left: null, anchor: null, refused: null };
 
 export const here = (sql: Sql): Here => ({ ...EMPTY, ...(getState<Partial<Here>>(sql, "location") ?? {}) });
 const save = (sql: Sql, h: Here) => setState(sql, "location", h);
@@ -137,48 +122,19 @@ export function nearest(all: Pin[], at: { lat: number; lon: number }): { pin: Pi
   return best;
 }
 
-// --- what OwnTracks sends ------------------------------------------------------------------------
+// --- what the phone sends ---------------------------------------------------------------------------------
 
 export type Observation =
   | { kind: "fix"; fix: Fix }
   /** The phone's own region event: it knows the region by the place's id (rid). */
   | { kind: "region"; event: "enter" | "leave"; rid: string; fix: Fix };
 
-/**
- * Reads one OwnTracks post (its JSON payload) as observations. Anything
- * else it sends (waypoint lists, cards, status) is left alone.
- */
-export function readOwnTracks(body: unknown): Observation[] {
-  if (!body || typeof body !== "object") return [];
-  const b = body as Record<string, unknown>;
-  const lat = num(b.lat);
-  const lon = num(b.lon);
-  const tst = num(b.tst);
-  if (lat == null || lon == null || tst == null) return [];
-  const motion = Array.isArray(b.motionactivities) ? b.motionactivities.filter((m): m is string => typeof m === "string") : [];
-  const fix: Fix = {
-    lat,
-    lon,
-    acc: Math.max(0, num(b.acc) ?? 0),
-    at: tst * 1000,
-    ...(num(b.batt) != null ? { batt: num(b.batt)! } : {}),
-    ...(num(b.bs) != null ? { charging: b.bs === 2 || b.bs === 3 } : {}),
-    ...(b.conn === "w"
-      ? { conn: "wifi" as const }
-      : b.conn === "m"
-        ? { conn: "mobile" as const }
-        : b.conn === "o"
-          ? { conn: "offline" as const }
-          : {}),
-    ...(num(b.vel) != null ? { speed: num(b.vel)! } : {}),
-    ...(motion.length ? { motion } : {}),
-  };
-  if (b._type === "location") return [{ kind: "fix", fix }];
-  if (b._type === "transition" && (b.event === "enter" || b.event === "leave") && typeof b.rid === "string") {
-    return [{ kind: "region", event: b.event, rid: b.rid, fix }];
-  }
-  return [];
-}
+/** What a location extension read from a post, as observations, oldest first. */
+export const observations = (r: { fixes?: Fix[]; transitions?: Transition[] }): Observation[] =>
+  [
+    ...(r.fixes ?? []).map((fix): Observation => ({ kind: "fix", fix })),
+    ...(r.transitions ?? []).map((t): Observation => ({ kind: "region", event: t.event, rid: t.place, fix: t.fix })),
+  ].sort((a, b) => a.fix.at - b.fix.at);
 
 // --- the state machine -----------------------------------------------------------------------------
 
@@ -288,45 +244,7 @@ export function locationOn(sql: Sql): LogRow[] {
   return logSense(sql, [{ source: "location", event: "on" }]);
 }
 
-// --- OwnTracks' sign-in and answer -------------------------------------------------------------------
-
-export interface OwnTracksLogin {
-  user: string;
-  password: string;
-  made_at: number;
-}
-
-export const ownTracksLogin = (sql: Sql): OwnTracksLogin | null => getSecret<OwnTracksLogin>(sql, "owntracks");
-
-/** Makes OwnTracks' own user and password, replacing any before (so an old phone setup stops working). */
-export function newOwnTracksLogin(sql: Sql): OwnTracksLogin {
-  const bytes = crypto.getRandomValues(new Uint8Array(24));
-  const password = btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-  const login = { user: "atlas", password, made_at: Date.now() };
-  setSecret(sql, "owntracks", login);
-  // A refused post from before is about the old password; the new one starts clean.
-  save(sql, { ...here(sql), refused: null });
-  return login;
-}
-
-/** Whether an Authorization header carries OwnTracks' user and password. Compared in constant time. */
-export function ownTracksAllowed(sql: Sql, authorization: string | null): boolean {
-  const login = ownTracksLogin(sql);
-  const m = /^Basic\s+([A-Za-z0-9+/=]+)$/i.exec(authorization?.trim() ?? "");
-  if (!login || !m) return false;
-  let given = "";
-  try {
-    given = atob(m[1]!);
-  } catch {
-    return false;
-  }
-  const a = new TextEncoder().encode(given);
-  const b = new TextEncoder().encode(`${login.user}:${login.password}`);
-  return a.byteLength === b.byteLength && crypto.subtle.timingSafeEqual(a, b);
-}
+// --- the phone's sign-in -----------------------------------------------------------------------------------
 
 /** A post with the right password came: an earlier refused one isn't news any more. */
 export function allowedPost(sql: Sql): void {
@@ -338,81 +256,4 @@ export function allowedPost(sql: Sql): void {
 export function refused(sql: Sql): void {
   const h = here(sql);
   save(sql, { ...h, refused: { at: Date.now(), n: (h.refused?.n ?? 0) + 1 } });
-}
-
-/** One OwnTracks waypoint. An impossible latitude removes the region on the phone. */
-const waypoint = (p: { id: string; name: string; lat: number; lon: number; radius_m: number }, tst: number) => ({
-  _type: "waypoint",
-  desc: p.name.replace(/:/g, " "),
-  rid: p.id,
-  lat: p.lat,
-  lon: p.lon,
-  rad: Math.round(p.radius_m),
-  tst,
-});
-
-const hashOf = (all: Pin[]) => all.map((p) => `${p.id}|${p.name}|${p.lat.toFixed(5)}|${p.lon.toFixed(5)}|${p.radius_m}`).join(";");
-
-/**
- * What to answer OwnTracks: nothing usually, or the saved places as
- * regions when they changed since the phone was last sent them (removed
- * ones with an impossible latitude, which OwnTracks takes as delete).
- */
-export function ownTracksAnswer(sql: Sql): unknown[] {
-  const h = here(sql);
-  const all = pins(sql);
-  const hash = hashOf(all);
-  if (hash === h.regions) return [];
-  const sent = new Set(all.map((p) => p.id));
-  const gone = h.regions
-    .split(";")
-    .filter(Boolean)
-    .map((s) => s.split("|"))
-    .filter(([id]) => id && !sent.has(id))
-    .map(([id, name]) => ({ id: id!, name: name ?? "", lat: 91, lon: 0, radius_m: 0 }));
-  save(sql, { ...h, regions: hash });
-  const tst = Math.floor(Date.now() / 1000);
-  return [
-    {
-      _type: "cmd",
-      action: "setWaypoints",
-      waypoints: { _type: "waypoints", waypoints: [...all.map((p) => waypoint(p, tst)), ...gone.map((p) => waypoint(p, tst))] },
-    },
-  ];
-}
-
-/**
- * The OwnTracks configuration for a one-tap setup: HTTP mode to this
- * deployment, its own user and password, significant-changes monitoring
- * (light on the battery, with regions for arrivals), remote commands on so
- * Atlas can send the regions, and the regions themselves.
- */
-export function ownTracksConfig(sql: Sql, origin: string, login: OwnTracksLogin) {
-  const tst = Math.floor(Date.now() / 1000);
-  return {
-    _type: "configuration",
-    mode: 3,
-    url: `${origin}/owntracks`,
-    auth: true,
-    username: login.user,
-    password: login.password,
-    deviceId: "phone",
-    tid: "me",
-    monitoring: 1,
-    locatorDisplacement: 200,
-    locatorInterval: 300,
-    extendedData: true,
-    cmd: true,
-    remoteConfiguration: true,
-    allowRemoteLocation: true,
-    waypoints: pins(sql).map((p) => waypoint(p, tst)),
-  };
-}
-
-/** The link that opens OwnTracks with the configuration filled in. */
-export function ownTracksLink(config: object): string {
-  const bytes = new TextEncoder().encode(JSON.stringify(config));
-  let s = "";
-  for (const b of bytes) s += String.fromCharCode(b);
-  return `owntracks:///config?inline=${encodeURIComponent(btoa(s))}`;
 }

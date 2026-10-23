@@ -4,8 +4,6 @@
 // checks first and leaves a receipt. What comes back is someone else's
 // words: information for Atlas, never instructions (§20).
 
-import { paced } from "./pace";
-
 /** A page's words: scripts, styles and tags gone, one line per block, entities decoded. Watches compare pages by this text. */
 export function pageText(html: string): string {
   return html
@@ -200,23 +198,18 @@ export async function fetchPage(f: typeof fetch, url: string, o: { start?: numbe
   };
 }
 
-/** One search result: where it is, what it's called, and the search's own snippet of it. */
-export interface SearchResult {
-  title: string;
-  url: string;
-  snippet: string;
-  /** How old it is, or when it was published, when the search says. */
-  age?: string;
-}
+export type { SearchResult } from "../../extensions/sdk";
+import type { SearchResult } from "../../extensions/sdk";
 
-// --- search providers ---------------------------------------------------------------------
-// One interface, four services. Cloudflare's runs on the AI binding every
-// deployment has, paid from AI Gateway credits; the others take a key the
-// owner pastes in Settings → Connections → Web search (decided with the
-// owner, 2026-10-22: the default needn't be the only way, since others have
-// free allowances).
+// --- search ------------------------------------------------------------------------------------
+// Cloudflare's web search runs on the AI binding every deployment has, paid
+// from AI Gateway credits: it's the platform, so it's the core's (§17).
+// Other searches (Tavily, Brave, Exa) are extensions, picked in Settings →
+// Connections → Web search (decided with the owner, 2026-10-22: the default
+// needn't be the only way, since others have free allowances).
 
-export type SearchProvider = "cloudflare" | "tavily" | "brave" | "exa";
+/** The search the owner picked: "cloudflare", or a search extension's id. */
+export type SearchProvider = string;
 export type Freshness = "day" | "week" | "month" | "year";
 
 export interface SearchQuery {
@@ -225,22 +218,9 @@ export interface SearchQuery {
   fresh?: Freshness;
 }
 
-/** What each provider is called, where its queries go, and how to start with it. */
-export const PROVIDERS: Record<SearchProvider, { name: string; host: string; key: boolean; about: string }> = {
-  cloudflare: {
-    name: "Cloudflare Web Search",
-    host: "Cloudflare AI Gateway",
-    key: false,
-    about: "Built in, through AI Gateway. Paid from AI Gateway credits, about $0.25 per 1,000 searches.",
-  },
-  tavily: { name: "Tavily", host: "api.tavily.com", key: true, about: "1,000 free searches a month, no card. A key from app.tavily.com." },
-  brave: {
-    name: "Brave Search",
-    host: "api.search.brave.com",
-    key: true,
-    about: "$5 of free searches a month (about 1,000), card needed. A key from api-dashboard.search.brave.com.",
-  },
-  exa: { name: "Exa", host: "api.exa.ai", key: true, about: "$10 of free searches a month. A key from dashboard.exa.ai." },
+export const CLOUDFLARE_SEARCH = {
+  name: "Cloudflare Web Search",
+  about: "Built in, through AI Gateway. Paid from AI Gateway credits, about $0.25 per 1,000 searches.",
 };
 
 /** What the Workers AI binding's web search takes (§19.1). */
@@ -253,8 +233,6 @@ const tidy = (s: unknown, n = 400) =>
         .slice(0, n)
     : "";
 
-const DAYS: Record<Freshness, number> = { day: 1, week: 7, month: 31, year: 366 };
-
 /** Turns an answer that isn't results into the service's own words, with the status and where it came from. */
 async function refused(res: Response, who: string, hint = ""): Promise<LookOut<never>> {
   const text = (await res.text().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 300);
@@ -262,129 +240,33 @@ async function refused(res: Response, who: string, hint = ""): Promise<LookOut<n
 }
 
 /**
- * Searches with the chosen provider. Never throws: a failure comes back
- * with the status, the host and the service's own words, and for
- * Cloudflare's credits or a missing key, what to do about it.
+ * Searches with Cloudflare's web search. Never throws: a failure comes back
+ * with the status and the service's own words, and for credits, what to do.
  */
-export async function search(
-  provider: SearchProvider,
-  q: SearchQuery,
-  o: { fetch: typeof fetch; key: string | null; binding: WebSearchBinding | null },
-): Promise<LookOut<SearchResult[]>> {
-  const p = PROVIDERS[provider];
-  if (p.key && !o.key)
-    return { ok: false, status: 0, error: `${p.name} needs its key. The owner adds it in Settings → Connections → Web search.` };
+export async function cloudflareSearch(binding: WebSearchBinding | null, q: SearchQuery): Promise<LookOut<SearchResult[]>> {
+  const name = CLOUDFLARE_SEARCH.name;
+  if (!binding) return { ok: false, status: 0, error: "This deployment has no Workers AI binding, so Cloudflare Web Search can't run." };
   const count = Math.min(Math.max(q.count, 1), 20);
-  const signal = AbortSignal.timeout(15_000);
-  let res: Response;
   try {
-    switch (provider) {
-      case "cloudflare": {
-        if (!o.binding)
-          return { ok: false, status: 0, error: "This deployment has no Workers AI binding, so Cloudflare Web Search can't run." };
-        res = await o.binding({ gatewayId: "default", query: q.query, limit: count });
-        if (!res.ok)
-          return refused(
-            res,
-            p.name,
-            res.status === 402 || res.status === 401 || res.status === 403
-              ? ". It's paid from AI Gateway credits (Cloudflare dashboard → AI → AI Gateway → Credits). Or pick another search in Settings → Connections → Web search: Tavily has 1,000 free searches a month."
-              : "",
-          );
-        const body = (await res.json()) as { items?: Array<{ url?: string; title?: string; description?: string }> };
-        if (!Array.isArray(body.items))
-          return { ok: false, status: res.status, error: `${p.name} sent no results: ${JSON.stringify(body).slice(0, 200)}` };
-        return {
-          ok: true,
-          status: res.status,
-          value: body.items.filter((i) => i.url).map((i) => ({ title: tidy(i.title, 200), url: i.url!, snippet: tidy(i.description) })),
-          ...(q.fresh ? { note: "Cloudflare Web Search can't filter by date, so results may be older." } : {}),
-        };
-      }
-      case "tavily": {
-        res = await o.fetch("https://api.tavily.com/search", {
-          method: "POST",
-          headers: { authorization: `Bearer ${o.key}`, "content-type": "application/json" },
-          body: JSON.stringify({ query: q.query, max_results: count, search_depth: "basic", ...(q.fresh ? { time_range: q.fresh } : {}) }),
-          signal,
-        });
-        if (!res.ok) return refused(res, p.host);
-        const body = (await res.json()) as { results?: Array<{ url?: string; title?: string; content?: string; published_date?: string }> };
-        return {
-          ok: true,
-          status: res.status,
-          value: (body.results ?? [])
-            .filter((r) => r.url)
-            .map((r) => ({
-              title: tidy(r.title, 200),
-              url: r.url!,
-              snippet: tidy(r.content),
-              ...(r.published_date ? { age: r.published_date } : {}),
-            })),
-        };
-      }
-      case "brave": {
-        const fresh = q.fresh ? `&freshness=${{ day: "pd", week: "pw", month: "pm", year: "py" }[q.fresh]}` : "";
-        // Brave's free plan takes one search a second, and a run often asks several at once: they're spaced out, and a 429 waits once.
-        const ask = () =>
-          paced(p.host, 1_100, () =>
-            o.fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q.query)}&count=${count}${fresh}`, {
-              headers: { "x-subscription-token": o.key!, accept: "application/json" },
-              // Its own timeout, from when it's sent, so waiting its turn doesn't use it up.
-              signal: AbortSignal.timeout(15_000),
-            }),
-          );
-        res = await ask();
-        if (res.status === 429) {
-          const wait = Math.min(5, Number(res.headers.get("retry-after") ?? res.headers.get("x-ratelimit-reset")?.split(",")[0] ?? 1) || 1);
-          await new Promise((r) => setTimeout(r, wait * 1000));
-          res = await ask();
-        }
-        if (!res.ok) return refused(res, p.host);
-        const body = (await res.json()) as {
-          web?: { results?: Array<{ url?: string; title?: string; description?: string; age?: string }> };
-        };
-        return {
-          ok: true,
-          status: res.status,
-          value: (body.web?.results ?? [])
-            .filter((r) => r.url)
-            .map((r) => ({ title: tidy(r.title, 200), url: r.url!, snippet: tidy(r.description), ...(r.age ? { age: r.age } : {}) })),
-        };
-      }
-      case "exa": {
-        const since = q.fresh ? new Date(Date.now() - DAYS[q.fresh] * 86_400_000).toISOString() : null;
-        res = await o.fetch("https://api.exa.ai/search", {
-          method: "POST",
-          headers: { "x-api-key": o.key!, "content-type": "application/json" },
-          body: JSON.stringify({
-            query: q.query,
-            type: "auto",
-            numResults: count,
-            contents: { highlights: true },
-            ...(since ? { startPublishedDate: since } : {}),
-          }),
-          signal,
-        });
-        if (!res.ok) return refused(res, p.host);
-        const body = (await res.json()) as {
-          results?: Array<{ url?: string; title?: string; highlights?: string[]; text?: string; publishedDate?: string }>;
-        };
-        return {
-          ok: true,
-          status: res.status,
-          value: (body.results ?? [])
-            .filter((r) => r.url)
-            .map((r) => ({
-              title: tidy(r.title, 200),
-              url: r.url!,
-              snippet: tidy(r.highlights?.join(" … ") ?? r.text),
-              ...(r.publishedDate ? { age: r.publishedDate.slice(0, 10) } : {}),
-            })),
-        };
-      }
-    }
+    const res = await binding({ gatewayId: "default", query: q.query, limit: count });
+    if (!res.ok)
+      return refused(
+        res,
+        name,
+        res.status === 402 || res.status === 401 || res.status === 403
+          ? ". It's paid from AI Gateway credits (Cloudflare dashboard → AI → AI Gateway → Credits). Or pick another search in Settings → Connections → Web search: the Tavily extension has 1,000 free searches a month."
+          : "",
+      );
+    const body = (await res.json()) as { items?: Array<{ url?: string; title?: string; description?: string }> };
+    if (!Array.isArray(body.items))
+      return { ok: false, status: res.status, error: `${name} sent no results: ${JSON.stringify(body).slice(0, 200)}` };
+    return {
+      ok: true,
+      status: res.status,
+      value: body.items.filter((i) => i.url).map((i) => ({ title: tidy(i.title, 200), url: i.url!, snippet: tidy(i.description) })),
+      ...(q.fresh ? { note: "Cloudflare Web Search can't filter by date, so results may be older." } : {}),
+    };
   } catch (err) {
-    return { ok: false, status: 0, error: `Couldn't reach ${p.host}: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, status: 0, error: `Couldn't reach ${name}: ${err instanceof Error ? err.message : String(err)}` };
   }
 }

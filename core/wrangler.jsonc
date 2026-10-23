@@ -20,7 +20,7 @@
     "directory": "../app/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/agents/*", "/preview/*", "/mcp/*", "/owntracks", "/nodes/*", "/senses/*"]
+    "run_worker_first": ["/api/*", "/agents/*", "/preview/*", "/mcp/*", "/owntracks", "/nodes/*", "/senses/*", "/x/*", "/mail/in"]
   },
   // The workspace (§9.1): a container per person, started by its Durable Object from Cloudflare's
   // managed Debian image, so deploying needs no Docker.

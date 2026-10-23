@@ -6,8 +6,12 @@ import { privateIn } from "../src/outbox";
 import { migrate } from "../src/store/db";
 import { createRecord } from "../src/store/records";
 import { setSecret, writeSettings } from "../src/store/settings";
-import { fetchPage, pageLinks, pageTitle, readable, search, type WebSearchBinding } from "../src/web";
-import { call, env, fakeCalendar, fakeEmbedder, say } from "./helpers";
+import { cloudflareSearch, fetchPage, pageLinks, pageTitle, readable, type WebSearchBinding } from "../src/web";
+import { install, setExtSecrets } from "../src/extensions";
+import brave from "../../extensions/brave";
+import exa from "../../extensions/exa";
+import tavily from "../../extensions/tavily";
+import { call, env, fakeCalendar, fakeEmbedder, runExt, say } from "./helpers";
 import { brain, connect, inOwner, turn } from "./owner";
 
 const PAGE = `<!doctype html><html><head><title>Pho Lan &amp; Co · Menu</title><script>var x = "ignore me";</script></head>
@@ -67,7 +71,7 @@ describe("reading a page", () => {
 
 // --- search providers ---------------------------------------------------------------------
 
-describe("search providers", () => {
+describe("search providers, as extensions", () => {
   const seen: Array<{ url: string; init: RequestInit }> = [];
   const answer = (body: object, status = 200) =>
     (async (url: string, init: RequestInit = {}) => {
@@ -75,46 +79,31 @@ describe("search providers", () => {
       return Response.json(body, { status });
     }) as unknown as typeof fetch;
   beforeEach(() => (seen.length = 0));
+  const header = (i: number, name: string) => new Headers(seen[i]!.init.headers).get(name);
 
   it("Tavily: a bearer key, the date range, and results with their dates", async () => {
-    const out = await search(
-      "tavily",
-      { query: "pho near UCF", count: 5, fresh: "week" },
-      {
-        fetch: answer({
-          results: [{ title: "Pho <b>Lan</b>", url: "https://pho.example", content: "Good pho", published_date: "2026-10-20" }],
-        }),
-        key: "tvly-key-123",
-        binding: null,
-      },
-    );
-    expect(out).toEqual({
-      ok: true,
-      status: 200,
-      value: [{ title: "Pho Lan", url: "https://pho.example", snippet: "Good pho", age: "2026-10-20" }],
+    const out = await runExt(tavily, "search", [{ query: "pho near UCF", count: 5, fresh: "week" }], {
+      fetch: answer({
+        results: [{ title: "Pho <b>Lan</b>", url: "https://pho.example", content: "Good pho", published_date: "2026-10-20" }],
+      }),
+      secrets: { key: "tvly-key-123" },
     });
+    expect(out).toEqual([{ title: "Pho Lan", url: "https://pho.example", snippet: "Good pho", age: "2026-10-20" }]);
     expect(seen[0]!.url).toBe("https://api.tavily.com/search");
-    expect((seen[0]!.init.headers as Record<string, string>).authorization).toBe("Bearer tvly-key-123");
+    expect(header(0, "authorization")).toBe("Bearer tvly-key-123");
     expect(JSON.parse(String(seen[0]!.init.body))).toMatchObject({ query: "pho near UCF", max_results: 5, time_range: "week" });
   });
 
-  it("Brave: the key header and freshness in the address", async () => {
-    const out = await search(
-      "brave",
-      { query: "pho", count: 3, fresh: "day" },
-      {
-        fetch: answer({
-          web: { results: [{ title: "Pho", url: "https://pho.example", description: "<strong>Pho</strong> house", age: "2 days ago" }] },
-        }),
-        key: "brave-key-1",
-        binding: null,
-      },
-    );
-    expect(out.ok && out.value).toEqual([{ title: "Pho", url: "https://pho.example", snippet: "Pho house", age: "2 days ago" }]);
+  it("Brave: the key header and freshness in the address, and a 429 waits and tries once more", async () => {
+    const out = await runExt(brave, "search", [{ query: "pho", count: 3, fresh: "day" }], {
+      fetch: answer({
+        web: { results: [{ title: "Pho", url: "https://pho.example", description: "<strong>Pho</strong> house", age: "2 days ago" }] },
+      }),
+      secrets: { key: "brave-key-1" },
+    });
+    expect(out).toEqual([{ title: "Pho", url: "https://pho.example", snippet: "Pho house", age: "2 days ago" }]);
     expect(seen[0]!.url).toBe("https://api.search.brave.com/res/v1/web/search?q=pho&count=3&freshness=pd");
-  });
-
-  it("Brave: searches asked at once are spaced a second apart, and a 429 waits and tries once more", async () => {
+    expect(header(0, "x-subscription-token")).toBe("brave-key-1");
     const at: number[] = [];
     let first = true;
     const f = (async () => {
@@ -128,57 +117,41 @@ describe("search providers", () => {
       }
       return Response.json({ web: { results: [{ title: "Pho", url: "https://pho.example", description: "Pho" }] } });
     }) as unknown as typeof fetch;
-    const outs = await Promise.all(
-      ["a", "b"].map((query) => search("brave", { query, count: 1 }, { fetch: f, key: "brave-key-1", binding: null })),
-    );
-    expect(outs.every((o) => o.ok)).toBe(true);
-    expect(at).toHaveLength(3);
-    for (let i = 1; i < at.length; i++) expect(at[i]! - at[i - 1]!).toBeGreaterThanOrEqual(900);
+    expect(await runExt(brave, "search", [{ query: "a", count: 1 }], { fetch: f, secrets: { key: "brave-key-1" } })).toHaveLength(1);
+    expect(at).toHaveLength(2);
+    expect(at[1]! - at[0]!).toBeGreaterThanOrEqual(900);
+    // Its free plan takes a search a second: the core spaces calls to it out.
+    expect(brave.manifest.pace_ms).toBeGreaterThanOrEqual(1_000);
   });
 
   it("Exa: the key header, a start date, and highlights as the snippet", async () => {
-    const out = await search(
-      "exa",
-      { query: "pho", count: 2, fresh: "month" },
-      {
-        fetch: answer({
-          results: [
-            { title: "Pho", url: "https://pho.example", highlights: ["Best pho", "in town"], publishedDate: "2026-10-01T00:00:00Z" },
-          ],
-        }),
-        key: "exa-key-12",
-        binding: null,
-      },
-    );
-    expect(out.ok && out.value).toEqual([{ title: "Pho", url: "https://pho.example", snippet: "Best pho … in town", age: "2026-10-01" }]);
+    const out = await runExt(exa, "search", [{ query: "pho", count: 2, fresh: "month" }], {
+      fetch: answer({
+        results: [{ title: "Pho", url: "https://pho.example", highlights: ["Best pho", "in town"], publishedDate: "2026-10-01T00:00:00Z" }],
+      }),
+      secrets: { key: "exa-key-12" },
+    });
+    expect(out).toEqual([{ title: "Pho", url: "https://pho.example", snippet: "Best pho … in town", age: "2026-10-01" }]);
+    expect(header(0, "x-api-key")).toBe("exa-key-12");
     expect(JSON.parse(String(seen[0]!.init.body))).toMatchObject({ numResults: 2, startPublishedDate: expect.any(String) });
   });
 
-  it("a provider's refusal keeps its status, host and words; a missing key says where to add it", async () => {
-    expect(
-      await search(
-        "tavily",
-        { query: "x", count: 1 },
-        { fetch: answer({ detail: "Invalid API key" }, 401), key: "bad-key-123", binding: null },
-      ),
-    ).toEqual({
-      ok: false,
-      status: 401,
-      error: 'api.tavily.com answered 401: {"detail":"Invalid API key"}',
-    });
-    expect(await search("exa", { query: "x", count: 1 }, { fetch: answer({}), key: null, binding: null })).toMatchObject({
-      ok: false,
-      error: "Exa needs its key. The owner adds it in Settings → Connections → Web search.",
-    });
+  it("a provider's refusal keeps its status, host and words", async () => {
+    await expect(
+      runExt(tavily, "search", [{ query: "x", count: 1 }], {
+        fetch: answer({ detail: "Invalid API key" }, 401),
+        secrets: { key: "bad-key-123" },
+      }),
+    ).rejects.toMatchObject({ message: 'Tavily (api.tavily.com) answered 401: {"detail":"Invalid API key"}', code: "auth", status: 401 });
   });
 
-  it("Cloudflare: the AI binding's web search, and without credits, what to do about it", async () => {
+  it("Cloudflare: the AI binding's web search, built in, and without credits, what to do about it", async () => {
     const asked: unknown[] = [];
     const binding: WebSearchBinding = async (req) => {
       asked.push(req);
       return Response.json({ items: [{ url: "https://pho.example", title: "Pho", description: "Pho house" }, { title: "no url" }] });
     };
-    const out = await search("cloudflare", { query: "pho", count: 4, fresh: "week" }, { fetch: answer({}), key: null, binding });
+    const out = await cloudflareSearch(binding, { query: "pho", count: 4, fresh: "week" });
     expect(out).toMatchObject({
       ok: true,
       value: [{ title: "Pho", url: "https://pho.example", snippet: "Pho house" }],
@@ -186,10 +159,10 @@ describe("search providers", () => {
     });
     expect(asked).toEqual([{ gatewayId: "default", query: "pho", limit: 4 }]);
     const broke: WebSearchBinding = async () => Response.json({ ok: false, error: { code: "insufficient_credits" } }, { status: 402 });
-    const no = await search("cloudflare", { query: "pho", count: 4 }, { fetch: answer({}), key: null, binding: broke });
+    const no = await cloudflareSearch(broke, { query: "pho", count: 4 });
     expect(no).toMatchObject({ ok: false, status: 402 });
     expect(!no.ok && no.error).toContain("insufficient_credits");
-    expect(!no.ok && no.error).toContain("Tavily has 1,000 free searches a month");
+    expect(!no.ok && no.error).toContain("1,000 free searches a month");
   });
 });
 
@@ -322,15 +295,18 @@ describe("the web through the agent", () => {
     expect(deliveries[0]!.body).toMatchObject({ channel: "web", ok: false, checks: { public_query: "failed" } });
   });
 
-  it("uses the chosen provider's key, and says when it has none", async () => {
+  it("searches with the chosen search extension and its key, and says when none is installed", async () => {
     const s = await connect();
     await inOwner((_a, sql) => writeSettings(sql, { web: { search: "tavily" } }));
     brain([call("web_search", { query: "pho" }), say("No key.")]);
     const first = await turn(s, "search pho");
-    expect(JSON.stringify(first.results[0]!.body.output)).toContain("Tavily needs its key");
-    await inOwner((_a, sql) => setSecret(sql, "tavily_api_key", "tvly-test-key"));
+    expect(JSON.stringify(first.results[0]!.body.output)).toContain("No extension gives web search");
+    await inOwner((_a, sql) => {
+      install(sql, { id: "tavily", source: "bundled" });
+      setExtSecrets(sql, "tavily", { key: "tvly-test-key" });
+    });
     seams.fetch = (async (url: string, init: RequestInit = {}) => {
-      fetched.push(`${String(url)} ${(init.headers as Record<string, string>).authorization}`);
+      fetched.push(`${String(url)} ${new Headers(init.headers).get("authorization")}`);
       return Response.json({ results: [{ title: "Pho", url: "https://pho.example", content: "Pho" }] });
     }) as unknown as typeof fetch;
     brain([call("web_search", { query: "pho" }), say("Found it.")]);

@@ -88,6 +88,20 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         what: `${{ made: "Made", changed: "Changed", on: "Turned on", paused: "Paused", deleted: "Deleted" }[str(b.change)] ?? "Changed"} the automation ${str(b.name)}${b.why ? `: ${str(b.why)}` : ""}`,
         kind: `automation.${str(b.change)}`,
       };
+    case "face.in":
+      return { who: `${str(b.from) || "Someone"}${b.test ? " (test)" : ""}`, what: str(b.text), kind: "face.in" };
+    case "face.out":
+      return { who: b.by === "owner" ? "You, through a face" : `Face${b.test ? " (test)" : ""}`, what: str(b.text), kind: "face.out" };
+    case "face.handoff":
+      return {
+        who: `${str(b.face_name)}`,
+        what: `${b.kind === "handoff" ? "Pulled you in" : "Took a message"} from ${str(b.from)}: ${str(b.text)}`,
+        kind: `face.${str(b.kind)}`,
+      };
+    case "face.digest":
+      return { who: str(b.face_name), what: str(b.text).split("\n")[0] ?? "", kind: "face.digest" };
+    case "calendar.change":
+      return { who: "You", what: `Moved ${str(b.title)} back`, kind: "calendar.moved" };
     case "page.change":
       return {
         who: r.actor === "owner" ? "You" : "Atlas",
@@ -117,14 +131,32 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         kind: `file.${str(b.change)}`,
       };
     case "sense": {
-      if (b.source === "situation" || b.source === "calendar" || b.source === "webhook") {
+      if (b.source !== "location" && b.source !== "node" && b.source !== "device") {
+        // The calendar, the situation, a webhook, an open loop's time, or an extension's item (§17).
         const who =
           b.source === "calendar"
             ? "Calendar"
             : b.source === "webhook"
               ? str((b.hook as { name?: string } | undefined)?.name) || "Webhook"
-              : ({ travel: "Traffic", weather: "Weather" }[str(b.event)] ?? "Situation");
-        return { who, what: `${str(b.what)}${b.repeat ? " (a repeat, set aside)" : ""}`, kind: `sense.${str(b.source)}` };
+              : b.source === "situation"
+                ? ({ travel: "Traffic", weather: "Weather" }[str(b.event)] ?? "Situation")
+                : b.source === "loop"
+                  ? "Waiting"
+                  : b.source === "email"
+                    ? "Atlas's email"
+                    : str(b.ext_name) || str(b.source);
+        // What the quarantined reader pulled from someone else's words (§10.4 step 2).
+        const facts =
+          b.facts && typeof b.facts === "object"
+            ? Object.entries(b.facts as Record<string, unknown>)
+                .map(([k, v]) => `${k.replace(/_/g, " ")} ${Array.isArray(v) ? v.join(", ") : String(v)}`)
+                .join(" · ")
+            : "";
+        return {
+          who,
+          what: `${str(b.what)}${b.repeat ? " (a repeat, set aside)" : ""}${facts ? `. Read: ${facts}` : ""}${b.read_error ? `. Its words couldn't be read: ${str(b.read_error)}` : ""}`,
+          kind: `sense.${str(b.source)}`,
+        };
       }
       if (b.source === "node" || b.source === "device") {
         const device = str((b.node as { name?: string } | undefined)?.name);
@@ -185,37 +217,39 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
       const where =
         b.channel === "push"
           ? `Notification${b.to ? ` to ${str(b.to)}` : ""}`
-          : b.channel === "webhook"
-            ? `Called ${str(b.to)}`
-            : b.channel === "web"
-              ? b.what === "search"
-                ? `Searched ${str(b.to)} for “${str(b.text)}”`
-                : b.what === "browse"
-                  ? `Opened ${str(b.text)} in the browser`
-                  : b.what === "type"
-                    ? `Typed “${str(b.text)}” on ${str(b.to)}`
-                    : `Read ${str(b.text)}`
-              : b.channel === "browser"
-                ? `Sent a form on ${str(b.to)}: ${str(b.text)}`
-                : b.channel === "vault"
-                  ? `Filled in ${str(b.text)} on ${str(b.to)}${b.pressed ? `, then pressed “${str(b.pressed)}”` : ""}`
-                  : b.channel === "mcp"
-                    ? b.what === "connect"
-                      ? `${b.ok === false ? "Tried to connect" : "Connected"} ${str(b.to)} (${str(b.text)})`
-                      : `Used ${str(b.text)} on ${str(b.to)}`
-                    : b.channel === "maps"
-                      ? b.what === "geocode"
-                        ? `Looked up “${str(b.text)}” on ${str(b.to)}`
-                        : b.what === "route"
-                          ? `Routed ${str(b.text)} with ${str(b.to)}`
-                          : b.what === "reverse"
-                            ? `Looked up the address of where you are on ${str(b.to)}`
-                            : `Looked for ${str(b.text)} on ${str(b.to)}`
-                      : b.channel === "node"
-                        ? `Used ${str(b.text).replace(/_/g, " ")} on ${str(b.to)}`
-                        : b.channel === "weather"
-                          ? `Looked at ${str(b.text)} on ${str(b.to)}`
-                          : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
+          : b.channel === "email"
+            ? `${b.ok === false ? "Didn't mail" : "Mailed"} “${str(b.text)}” to ${str(b.to)}${b.as === "atlas" ? ` from ${str(b.from)}` : " as you"}`
+            : b.channel === "webhook"
+              ? `Called ${str(b.to)}`
+              : b.channel === "web"
+                ? b.what === "search"
+                  ? `Searched ${str(b.to)} for “${str(b.text)}”`
+                  : b.what === "browse"
+                    ? `Opened ${str(b.text)} in the browser`
+                    : b.what === "type"
+                      ? `Typed “${str(b.text)}” on ${str(b.to)}`
+                      : `Read ${str(b.text)}`
+                : b.channel === "browser"
+                  ? `Sent a form on ${str(b.to)}: ${str(b.text)}`
+                  : b.channel === "vault"
+                    ? `Filled in ${str(b.text)} on ${str(b.to)}${b.pressed ? `, then pressed “${str(b.pressed)}”` : ""}`
+                    : b.channel === "mcp"
+                      ? b.what === "connect"
+                        ? `${b.ok === false ? "Tried to connect" : "Connected"} ${str(b.to)} (${str(b.text)})`
+                        : `Used ${str(b.text)} on ${str(b.to)}`
+                      : b.channel === "maps"
+                        ? b.what === "geocode"
+                          ? `Looked up “${str(b.text)}” on ${str(b.to)}`
+                          : b.what === "route"
+                            ? `Routed ${str(b.text)} with ${str(b.to)}`
+                            : b.what === "reverse"
+                              ? `Looked up the address of where you are on ${str(b.to)}`
+                              : `Looked for ${str(b.text)} on ${str(b.to)}`
+                        : b.channel === "node"
+                          ? `Used ${str(b.text).replace(/_/g, " ")} on ${str(b.to)}`
+                          : b.channel === "weather"
+                            ? `Looked at ${str(b.text)} on ${str(b.to)}`
+                            : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
       const what =
         b.ok === false
           ? `${where}, but it didn't work: ${str(b.error)}`
@@ -223,7 +257,7 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
             ? `${where}: ${str(b.note)}`
             : b.answer
               ? `${where}: ${str(b.answer)}`
-              : ["web", "browser", "vault", "mcp", "maps", "weather", "node"].includes(str(b.channel))
+              : ["web", "browser", "vault", "mcp", "maps", "weather", "node", "email"].includes(str(b.channel))
                 ? where
                 : `${where}${b.text ? `: “${str(b.text)}”` : ""}`;
       return { who: b.by === "owner" ? "You" : "Atlas", what, kind: `deliver.${str(b.channel)}` };
@@ -302,6 +336,7 @@ export function History({ atlas }: { atlas: Atlas }) {
         { id: "actions", label: "Actions" },
         { id: "conversations", label: "Conversations" },
         { id: "jobs", label: "Jobs" },
+        { id: "faces", label: "Faces" },
       ]}
       tab={filter}
       onTab={(f) => {

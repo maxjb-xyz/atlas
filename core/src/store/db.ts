@@ -267,6 +267,30 @@ const MIGRATIONS: string[] = [
   CREATE INDEX intake_key ON intake(key, at);
   CREATE INDEX intake_later ON intake(outcome, seen_at, at);
   `,
+  // 12. M5: extensions (§17). Each installed one: its manifest, its code when it isn't bundled, whether it's on,
+  // its settings, cursor and state, the key in its address, and how its last call went. Its secrets are secrets.
+  `
+  CREATE TABLE extensions (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    version TEXT NOT NULL,
+    source TEXT NOT NULL,
+    code TEXT,
+    manifest TEXT NOT NULL,
+    methods TEXT NOT NULL DEFAULT '[]',
+    state TEXT NOT NULL DEFAULT 'on',
+    settings TEXT NOT NULL DEFAULT '{}',
+    cursor TEXT,
+    data TEXT,
+    key TEXT NOT NULL,
+    installed_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    last_look INTEGER,
+    ok_at INTEGER,
+    error TEXT,
+    error_at INTEGER
+  );
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

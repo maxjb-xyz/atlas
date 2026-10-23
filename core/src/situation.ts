@@ -15,7 +15,8 @@ import { focusNow } from "./outbox";
 import type { SituationPage, WeatherPage } from "./stage";
 import { nodes } from "./nodes";
 import { here, homePin, metres, nearest, pins } from "./location";
-import { type Found, MAPS, minutes, type Point, type Route, type Travel } from "./maps";
+import { type Found, minutes, type Point, type Route, type Travel } from "./maps";
+import { mapsCredit } from "./providers";
 import type { Sql } from "./store/db";
 import type { Settings } from "./store/settings";
 import { getState, setState } from "./store/state";
@@ -464,7 +465,7 @@ export function situationPage(sql: Sql, settings: Settings, now = Date.now(), de
       .filter((t) => t.fits)
       .map((t) => ({ id: t.id, title: t.title, fits: t.fits! })),
     units,
-    credit: MAPS[settings.maps.provider].credit,
+    credit: mapsCredit(sql, settings.maps.provider),
   };
 }
 

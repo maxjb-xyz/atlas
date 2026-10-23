@@ -3,7 +3,7 @@
 // one socket and one loop, so voice is the same mind (§11).
 
 import { DurableObjectOAuthClientProvider } from "agents/mcp/do-oauth-client-provider";
-import { Agent, type Connection, type ConnectionContext, type WSMessage } from "agents";
+import { Agent, type Connection, type ConnectionContext, getAgentByName, type WSMessage } from "agents";
 import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } from "agents/voice";
 import { CalendarSense } from "./agent/calendar";
 import { correctAreas, discoveryPrompt, readyToDiscover, startDiscovered, tagPending, triedDiscovery, unfiled } from "./agent/areas";
@@ -12,16 +12,31 @@ import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup"
 import { history as logHistory, historyStats, inbox, inboxDone, listRecords, runDetail, stagePage } from "./agent/views";
 import { correctRecord, createRecord, findRecords, forgetRecord, getRecord } from "./store/records";
 import { type Decider, workersAIDecider } from "./brains/decide";
-import { createArea, getScope, listAreas, mergeAreas, setScope, type Tagged, updateArea } from "./store/areas";
+import { type Extractor, workersAIExtractor } from "./brains/extract";
+import { createArea, getArea, getScope, listAreas, mergeAreas, setScope, type Tagged, updateArea } from "./store/areas";
 import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
 import { seams } from "./agent/seams";
 import { liveTest, settingsView } from "./agent/settings";
 import { undoReceipt } from "./agent/undo";
+import { MailDesk } from "./agent/mail";
+import { type ChatVia, ChannelDesk, links } from "./agent/channels";
+import { FaceDesk, type Where } from "./agent/faces";
+import { conversation, type Face, faceFor, facePrompt, faces, getFace, removeFace, saveFace } from "./faces";
+import { faceTools } from "./tools/faces";
+import { sharedTools } from "./tools/shared";
+import { areaLook } from "./tools/digest";
+import { sharedAreas, sharedLine, sharedSave } from "./shared";
+import { agentNameOf, byInvite, getMember, invite, joined, memberOfAgent, removeMember, setRole } from "./members";
+import type { SharedArea } from "./protocol";
+import { whoIs } from "./tools/people";
+import type { Message as BrainMessage } from "./brains/types";
+import { base64, type Out } from "../../extensions/sdk";
+import { makeNotes, type Notes } from "./voice/providers";
+import { addressesIn, ownerAddresses } from "./contacts";
 import { type Embedder, embedPending, workersAIEmbedder } from "./brains/embed";
 import { BrainRouter } from "./brains/router";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
-import { cleanCredentials } from "./calendar/caldav";
 import { runCharacterCheck, summary as characterSummary } from "./character-check";
 import { newSessionId, type Session, SESSION_DAYS, SESSION_HEADER } from "./auth";
 import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
@@ -47,8 +62,9 @@ import { indexNewMessages } from "./store/memory";
 import { getState, setState } from "./store/state";
 import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
 import { type BrainChoice, getSecret, readSettings, type Settings, setSecret, writeSettings } from "./store/settings";
-import { isoLocal, isValidZone, longLocal, parseWhen, shortLocal, zoneOf } from "./time";
-import { calendarRead } from "./tools/calendar";
+import { addLocalDays, isoLocal, isValidZone, longLocal, parseWhen, shortLocal, startOfLocalDay, zoneOf } from "./time";
+import { calendarMove, calendarRead } from "./tools/calendar";
+import { emailSend } from "./tools/mail";
 import { delegate } from "./tools/delegate";
 import { memoryTools, recall } from "./tools/memory";
 import { agendaList, agendaTools } from "./tools/agenda";
@@ -116,14 +132,18 @@ import { type BrowserDriver, type BrowserPage, BrowserRunDriver } from "./browse
 import { fillsOn, findEntry, hiddenValues, removeEntry, saveEntry, siteFor, touchEntry, vault } from "./vault";
 import { scrub } from "./outbox";
 import type { BrowserStagePage, StageView, WorkspaceStagePage } from "./stage";
-import { fetchPage, hostOf, PROVIDERS, search, type WebSearchBinding } from "./web";
+import { cloudflareSearch, CLOUDFLARE_SEARCH, fetchPage, hostOf, type WebSearchBinding } from "./web";
 import { deletePage, getPage, listPages, pageSummaries, pageVersion, savePage, viewBlock } from "./pages";
 import { noticeAsk, openSuggestions, settleSuggestion } from "./suggestions";
 import { deleteAutomation, getAutomation, listAutomations, matchPhrase, saveAutomation, setAutomationState } from "./automations";
 import { automationView } from "./agent/views";
 import type { BrowserApi, ExitApi, MapsApi, McpApi, RunResult, Tool, ToolContext, ToolResult, WebApi, WorkspaceApi } from "./tools/types";
-import { geocode, MAPS, nearby, reverse, route } from "./maps";
-import { fetchWeather, roughArea, temp, unitsFor } from "./weather";
+import { roughArea, temp, unitsFor, type Weather } from "./weather";
+import { placeKind, type Found, type Route } from "./maps";
+import type { SearchResult } from "../../extensions/sdk";
+import { ExtensionHost, type GateProps, getExt, setExtSecrets, setExtSettings, setExtState, uninstall } from "./extensions";
+import { ExtensionDesk } from "./agent/extensions";
+import { nameFor, provide } from "./providers";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HelperAgent, type HelperHost, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
@@ -150,19 +170,10 @@ import {
   updateNode,
 } from "./nodes";
 import { deviceCall } from "./tools/nodes";
-import {
-  locationOff,
-  locationOn,
-  newOwnTracksLogin,
-  observe,
-  ownTracksAllowed,
-  ownTracksAnswer,
-  ownTracksConfig,
-  ownTracksLink,
-  readOwnTracks,
-  refused as ownTracksRefused,
-  allowedPost,
-} from "./location";
+import { extensionDraft } from "./tools/extensions";
+import { loopClose, loopOpen, person, peopleTools } from "./tools/people";
+import { closeLoop, detailOf, openLoops } from "./loops";
+import { locationOff, locationOn, observe } from "./location";
 import { forgetWhere } from "./situation";
 
 export { seams };
@@ -208,6 +219,7 @@ const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
 const TOOLS: Record<Actor, Tool[]> = {
   owner: [
     calendarRead,
+    calendarMove,
     ...agendaTools,
     ...memoryTools,
     delegate,
@@ -231,9 +243,15 @@ const TOOLS: Record<Actor, Tool[]> = {
     deviceCall,
     speakingUp,
     noticedTool,
+    extensionDraft,
+    ...peopleTools,
+    emailSend,
+    ...sharedTools,
+    areaLook,
   ],
   atlas: [
     calendarRead,
+    calendarMove,
     ...agendaTools,
     recall,
     ...webTools,
@@ -245,6 +263,10 @@ const TOOLS: Record<Actor, Tool[]> = {
     taskDone,
     deviceCall,
     noticedTool,
+    person,
+    loopOpen,
+    loopClose,
+    areaLook,
   ],
   system: [],
 };
@@ -252,6 +274,7 @@ const TOOLS: Record<Actor, Tool[]> = {
 /** What an automation's Atlas step can reach: what the clock's runs can, and the owner's webhooks (§13.1). */
 const AUTOMATION_TOOLS: Tool[] = [
   calendarRead,
+  areaLook,
   ...agendaTools,
   recall,
   webhookCall,
@@ -271,6 +294,7 @@ const AUTOMATION_TOOLS: Tool[] = [
 /** A test run only looks: it changes nothing, and webhooks and other services' tools only say what they'd do (§13.4). */
 const TEST_TOOLS: Tool[] = [
   calendarRead,
+  areaLook,
   agendaList,
   recall,
   webhookCall,
@@ -292,6 +316,32 @@ const VOICE_HISTORY_TOKENS = 12_000;
 
 /** How long a brain gets to start answering before the next one is tried. */
 const FIRST_EVENT_MS = { main: 25_000, voice: 6_000 };
+/** Messages only the owner's Atlas takes in M5 (members get their own Atlas without these). */
+const OWNER_ONLY = new Set<string>([
+  "atlas.ext.install",
+  "atlas.ext.remove",
+  "atlas.ext.state",
+  "atlas.ext.secrets",
+  "atlas.ext.settings",
+  "atlas.ext.setup",
+  "atlas.ext.test",
+  "atlas.ext.signin",
+  "atlas.mail.setup",
+  "atlas.mail.remove",
+  "atlas.mail.test",
+  "atlas.face.save",
+  "atlas.face.remove",
+  "atlas.face.test",
+  "atlas.face.answer",
+  "atlas.channel.code",
+  "atlas.channel.unlink",
+  "atlas.workspace.keep",
+  "atlas.workspace.restart",
+  "atlas.workspace.site.remove",
+]);
+
+/** A chat run that takes longer than this sends a short note saying what it's doing (§16.1). */
+const CHAT_NOTE_MS = 6_000;
 
 const VoiceAgent = withVoice(Agent<Env>, { audioFormat: AUDIO.format, sampleRate: AUDIO.sampleRate });
 
@@ -335,6 +385,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #helpers!: HelperDesk;
   #automations!: AutomationDesk;
   #senses!: SenseDesk;
+  /** Extensions (§17): the host that runs them sandboxed, and the desk that hands what they bring to the core. */
+  #ext!: ExtensionHost;
+  #extensions!: ExtensionDesk;
+  #mail!: MailDesk;
+  #channels!: ChannelDesk;
+  #faces!: FaceDesk;
   /** Runs go one at a time, so each one sees the last one's answer. */
   #line: Promise<unknown> = Promise.resolve();
 
@@ -348,7 +404,16 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     migrate(this.#sql);
     sweepStaleRuns(this.#sql, 0);
     const changed = () => this.#broadcast({ type: "atlas.view", view: this.#view() });
-    this.#calendar = new CalendarSense(this.#sql, changed);
+    this.#ext = new ExtensionHost({
+      sql: this.#sql,
+      loader: () => (this.env as { LOADER?: WorkerLoader }).LOADER ?? null,
+      gate: (props) => (this.ctx.exports as unknown as { ExtensionGate(o: { props: GateProps }): Fetcher }).ExtensionGate({ props }),
+      agent: this.name,
+      fetch: (...args) => (seams.fetch ?? fetch)(...args),
+      origin: () => getState<string>(this.#sql, "origin"),
+      tz: () => zoneOf(readSettings(this.#sql)),
+    });
+    this.#calendar = new CalendarSense(this.#sql, changed, this.#ext);
     this.#helpers = new HelperDesk({
       sql: this.#sql,
       router: this.#router,
@@ -363,6 +428,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           browser: null,
           workspace: null,
           mcp: null,
+          extensions: null,
           run_id: runId,
         };
       },
@@ -412,6 +478,21 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       browser: () => this.#driver(),
       mcp: () => this.#mcpClient(),
       node: (c) => this.#nodeCall(c),
+      mail: (a) => this.#sendMail(a),
+      chat: async (text) => {
+        const ext = readSettings(this.#sql).notifications.reach;
+        const l = links(this.#sql)[ext];
+        if (!l) return false;
+        await this.#channels.send(ext, { chat: l.chat, text });
+        return true;
+      },
+      faceReply: async (a) => {
+        const face = getFace(this.#sql, a.face);
+        if (!face) return { ok: false, text: "That face isn't there any more." };
+        append(this.#sql, { actor: "atlas", kind: "face.out", body: { face: face.id, conv: a.conv, text: a.text, approved: true } });
+        await this.#faceSend({ conv: a.conv, where: a.where as unknown as Where, text: a.text, face, approved: true });
+        return { ok: true, text: `Sent ${face.name}'s answer.` };
+      },
       later: async (c) => {
         // A device removed since (a card approved after it was unpaired) gets nothing queued.
         if (!nodes(this.#sql).some((n) => n.id === c.node)) return false;
@@ -475,6 +556,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       calendar: () => this.#calendar.source(readSettings(this.#sql)),
       clock: this.#clock,
       decider: () => this.#decider(),
+      extractor: () => this.#extractor(),
       wake: (o) => this.#wake(o),
       rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
       automations: (rows) => this.#automations.sensed(rows),
@@ -482,6 +564,56 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       changed: () => this.#broadcast({ type: "atlas.situation" }),
     });
     void this.#senses.armTick().catch(() => {});
+    this.#extensions = new ExtensionDesk({
+      sql: this.#sql,
+      host: this.#ext,
+      clock: this.#clock,
+      take: (items, o) => void this.#senses.take(items, o ?? {}),
+      location: (obs) =>
+        void this.#senses.take(
+          obs.flatMap((o) => observe(this.#sql, o)),
+          { refresh: true },
+        ),
+      messages: async (e, msgs) => this.#channelIn(e, msgs),
+      changed,
+      origin: () => getState<string>(this.#sql, "origin"),
+    });
+    this.#faces = new FaceDesk({
+      sql: this.#sql,
+      run: (o) => this.#faceRun(o),
+      send: (o) => this.#faceSend(o),
+      push: (text, row) => this.#outbox.notify({ id: row.id, run_id: null, text }, "now", { url: "/#/inbox" }),
+      changed: () => this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) }),
+    });
+    this.#channels = new ChannelDesk({
+      sql: this.#sql,
+      host: this.#ext,
+      notes: () => this.#notes(),
+      owner: ({ text, note, via }) => this.#textTurn(text, `chat-${via.message}`, note ?? undefined, via),
+      decide: (id, yes) => this.#decide(id, { yes, by: "button" }),
+      face: async (o) => this.#faces.take(o),
+      hasFace: (ext, msg) => faceFor(this.#sql, ext.id, { kind: "telegram", value: msg.from.handle ?? msg.from.id }) != null,
+      changed,
+    });
+    this.#mail = new MailDesk({
+      sql: this.#sql,
+      host: this.#ext,
+      fetch:
+        () =>
+        (...args) =>
+          (seams.fetch ?? fetch)(...args),
+      origin: () => getState<string>(this.#sql, "origin"),
+      owner: (text, note) => this.keepAliveWhile(() => this.#textTurn(text, `mail-${Date.now()}`, note ?? undefined)),
+      take: (items, o) => void this.#senses.take(items, o),
+      face: (o) => this.#faces.mail(o),
+      changed,
+    });
+    // What M4 kept in the core moves to bundled extensions once; then the extensions' looks are on the clock.
+    void this.keepAliveWhile(() => this.#extensions.upgrade().then(() => this.#extensions.arm())).catch((err: unknown) =>
+      console.error(JSON.stringify({ at: "extensions.upgrade", error: err instanceof Error ? err.message : String(err) })),
+    );
+    // The faces' digest stays on the clock while a face has one.
+    void this.keepAliveWhile(() => this.#armDigest()).catch(() => {});
     // Items a restart left half way are weighed again.
     void this.keepAliveWhile(() => this.#senses.resume()).catch(() => {});
     // The default routines are made once; then every automation that's on has its next run on the clock (a missing one is put back).
@@ -537,6 +669,140 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const origin = ctx.request.headers.get("origin");
     if (origin && /^https?:\/\/[^/]+$/.test(origin) && getState<string>(this.#sql, "origin") !== origin)
       setState(this.#sql, "origin", origin);
+    // A member's own Atlas (§7.1) learns who they are, and whose Atlas they share, from the owner's.
+    if (this.#member) void this.keepAliveWhile(() => this.#refreshMember()).catch(() => {});
+  }
+
+  // --- members and shared areas (§7.1, §6) --------------------------------------------
+
+  /** The member this agent is, when it's a member's own Atlas; null in the owner's. */
+  get #member(): string | null {
+    return memberOfAgent(this.name);
+  }
+
+  /** The owner's agent, for a member's Atlas: shared areas live there. */
+  #ownerAgent() {
+    return getAgentByName(this.env.PersonAgent as never, OWNER) as unknown as Promise<{
+      memberInfo(id: string): Promise<{ id: string; name: string; role: "admin" | "member" } | null>;
+      ownerName(): Promise<string>;
+      apiShared(member: string): Promise<SharedArea[]>;
+      apiSharedSave(member: string, o: { area: string; name: string; fact: string; type: string }): Promise<{ ok: boolean; text: string }>;
+      apiInvite(
+        member: string,
+        o: { name: string; role: "admin" | "member" },
+      ): Promise<{ ok: boolean; text: string; link?: string; id?: string }>;
+      apiMemberSignOut(member: string): Promise<void>;
+    }>;
+  }
+
+  async #refreshMember(): Promise<void> {
+    const id = this.#member!;
+    const owner = await this.#ownerAgent();
+    const info = await owner.memberInfo(id);
+    if (!info) {
+      setState(this.#sql, "member_of", null);
+      this.#signOutSockets();
+      return;
+    }
+    const was = getState<{ name: string; role: string }>(this.#sql, "member_of");
+    setState(this.#sql, "member_of", { ...info, owner: (await owner.ownerName()) || "the owner" });
+    // Their own name is theirs from the start; the rest of setup is theirs to do.
+    const s = readSettings(this.#sql);
+    if (!s.owner_name || s.owner_name === "Owner") writeSettings(this.#sql, { owner_name: info.name });
+    if (!was || was.name !== info.name || was.role !== info.role) this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  /** The prompt's line about shared areas, and for a member, whose Atlas this is. */
+  async #sharedNote(): Promise<string> {
+    const me = getState<{ name: string; owner: string }>(this.#sql, "member_of");
+    if (!this.#member && !listAreas(this.#sql).some((a) => a.settings.shared_with.length)) return "";
+    const areas = await this.#shared()
+      .list()
+      .catch(() => [] as SharedArea[]);
+    return sharedLine(areas, this.#member && me ? me : null);
+  }
+
+  /** The shared areas, from wherever they live: here for the owner, the owner's Atlas for a member. */
+  #shared(): NonNullable<ToolContext["shared"]> {
+    const member = this.#member;
+    return {
+      list: async () => (member ? (await this.#ownerAgent()).apiShared(member) : sharedAreas(this.#sql, null)),
+      save: async (o) => (member ? (await this.#ownerAgent()).apiSharedSave(member, o) : sharedSave(this.#sql, null, o)),
+    };
+  }
+
+  /** For a member's Atlas: the areas shared with them, with what's in them. */
+  async apiShared(member: string): Promise<SharedArea[]> {
+    return getMember(this.#sql, member) ? sharedAreas(this.#sql, member) : [];
+  }
+
+  /** For a member's Atlas: keeps something in an area shared with them, for both. */
+  async apiSharedSave(
+    member: string,
+    o: { area: string; name: string; fact: string; type: string },
+  ): Promise<{ ok: boolean; text: string }> {
+    if (!getMember(this.#sql, member)) return { ok: false, text: "You aren't a member of this Atlas any more." };
+    const out = sharedSave(this.#sql, member, o);
+    if (out.ok) this.#broadcast({ type: "atlas.records.changed" });
+    return out;
+  }
+
+  /** An admin member invites someone, from their own Atlas. */
+  async apiInvite(
+    member: string,
+    o: { name: string; role: "admin" | "member" },
+  ): Promise<{ ok: boolean; text: string; link?: string; id?: string }> {
+    if (getMember(this.#sql, member)?.role !== "admin") return { ok: false, text: "Only an admin can invite people." };
+    return this.#invite(o);
+  }
+
+  async #invite(o: {
+    name: string;
+    role: "admin" | "member";
+    id?: string;
+  }): Promise<{ ok: boolean; text: string; link?: string; id?: string }> {
+    const origin = getState<string>(this.#sql, "origin");
+    if (!origin) return { ok: false, text: "Open Atlas once from its web address first, so the link points at it." };
+    const { member, token } = await invite(this.#sql, o);
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+    return { ok: true, text: `Invited ${member.name}.`, link: `${origin}/#/join/${token}`, id: member.id };
+  }
+
+  /** Signs a member out of their own Atlas: every socket closes. Called by the owner's agent when they're removed. */
+  async apiSignOut(): Promise<void> {
+    setState(this.#sql, "member_of", null);
+    this.#signOutSockets();
+  }
+
+  async inviteFor(token: string): Promise<{ id: string; name: string } | null> {
+    const m = await byInvite(this.#sql, token);
+    return m ? { id: m.id, name: m.name } : null;
+  }
+
+  async memberJoined(id: string): Promise<void> {
+    joined(this.#sql, id);
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  async memberInfo(id: string): Promise<{ id: string; name: string; role: "admin" | "member" } | null> {
+    const m = getMember(this.#sql, id);
+    return m && m.joined_at ? { id: m.id, name: m.name, role: m.role } : null;
+  }
+
+  /** Removes a member: their passkeys and sign-ins end, and their Atlas closes its sockets. Their own Atlas's data stays theirs, unreachable. */
+  async #removeMember(id: string): Promise<void> {
+    const m = removeMember(this.#sql, id);
+    if (!m) return;
+    const keys = (getState<StoredPasskey[]>(this.#sql, "passkeys") ?? []).filter((p) => p.member !== id);
+    setState(this.#sql, "passkeys", keys);
+    const sessions = Object.fromEntries(Object.entries(this.#sessions()).filter(([, x]) => x.member !== id));
+    setState(this.#sql, "sessions", sessions);
+    for (const a of listAreas(this.#sql))
+      if (a.settings.shared_with.includes(id))
+        updateArea(this.#sql, a.id, { settings: { ...a.settings, shared_with: a.settings.shared_with.filter((x) => x !== id) } }, "owner");
+    await (getAgentByName(this.env.PersonAgent as never, agentNameOf(id)) as unknown as Promise<{ apiSignOut(): Promise<void> }>)
+      .then((x) => x.apiSignOut())
+      .catch(() => {});
   }
 
   /** Closes the sockets opened by sessions that just ended; with no list, every socket. */
@@ -565,6 +831,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       return;
     }
     const msg = parsed.data;
+    // What connects Atlas to the outside (extensions, Atlas's email, chats, faces) and the workspace run in the
+    // owner's Atlas in M5: their addresses and sign-ins come back there (§7.1).
+    if (this.#member && OWNER_ONLY.has(msg.type)) {
+      this.#send(connection, {
+        type: "atlas.error",
+        message: "That's set up in the owner's Atlas for now: extensions, Atlas's email, chats, faces and the workspace.",
+      });
+      return;
+    }
     switch (msg.type) {
       case "atlas.hello": {
         const s = readSettings(this.#sql);
@@ -605,13 +880,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#updateSettings(msg.patch);
         return;
       case "atlas.secret.set":
-        setSecret(
-          this.#sql,
-          msg.secret.name,
-          msg.secret.name === "icloud" && msg.secret.value ? cleanCredentials(msg.secret.value) : msg.secret.value,
-        );
+        setSecret(this.#sql, msg.secret.name, msg.secret.value);
         append(this.#sql, { actor: "owner", kind: "settings.change", body: { secret: msg.secret.name, set: msg.secret.value !== null } });
-        if (msg.secret.name === "icloud") this.#calendar.reconnect();
         this.#refreshVoice();
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
@@ -664,19 +934,140 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       }
-      case "atlas.location.setup": {
-        const origin = getState<string>(this.#sql, "origin") ?? new URL(connection.uri ?? "https://atlas.invalid").origin;
-        const login = newOwnTracksLogin(this.#sql);
-        append(this.#sql, { actor: "owner", kind: "settings.change", body: { owntracks: "set up" } });
-        const config = ownTracksConfig(this.#sql, origin, login);
-        this.#send(connection, {
-          type: "atlas.location.setup",
-          url: config.url,
-          user: login.user,
-          password: login.password,
-          link: ownTracksLink(config),
-        });
+      case "atlas.ext.install":
+      case "atlas.ext.remove":
+      case "atlas.ext.state":
+      case "atlas.ext.secrets":
+      case "atlas.ext.settings": {
+        try {
+          if (msg.type === "atlas.ext.install") await this.#extensions.install(msg.id);
+          else if (msg.type === "atlas.ext.remove") uninstall(this.#sql, msg.id);
+          else if (msg.type === "atlas.ext.state") setExtState(this.#sql, msg.id, msg.on ? "on" : "off");
+          else if (msg.type === "atlas.ext.secrets") setExtSecrets(this.#sql, msg.id, msg.secrets);
+          else setExtSettings(this.#sql, msg.id, msg.settings);
+          // A provider whose sign-in changed is asked fresh, without waiting out an earlier refusal.
+          if (msg.type !== "atlas.ext.install" && this.#calendar.provider()?.id === msg.id) this.#calendar.reconnect();
+          if (msg.type === "atlas.ext.remove" || msg.type === "atlas.ext.state") this.#calendar.reset();
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
+        await this.#extensions.afterChange();
+        return;
+      }
+      case "atlas.ext.setup": {
+        const out = await this.#extensions.setup(msg.id);
+        this.#send(connection, { type: "atlas.ext.setup", id: msg.id, ...out });
+        return;
+      }
+      case "atlas.ext.test": {
+        const out = await this.#extensions.test(msg.id);
+        if (this.#calendar.provider()?.id === msg.id && out.ok) this.#calendar.reconnect();
+        this.#send(connection, { type: "atlas.ext.test", id: msg.id, ...out });
+        return;
+      }
+      case "atlas.ext.signin": {
+        try {
+          this.#send(connection, { type: "atlas.ext.signin", id: msg.id, url: this.#ext.signinUrl(msg.id) });
+        } catch (err) {
+          this.#send(connection, { type: "atlas.ext.signin", id: msg.id, error: err instanceof Error ? err.message : String(err) });
+        }
+        return;
+      }
+      case "atlas.mail.setup":
+      case "atlas.mail.remove":
+      case "atlas.mail.test": {
+        const out =
+          msg.type === "atlas.mail.setup"
+            ? await this.#mail.setup({ domain: msg.domain, sending: msg.sending, ...(msg.token ? { token: msg.token } : {}) })
+            : msg.type === "atlas.mail.remove"
+              ? await this.#mail.remove()
+              : await this.#mailTest();
+        this.#send(connection, { type: "atlas.mail", ...out });
         this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.face.save":
+      case "atlas.face.remove": {
+        // People are picked by name in the app: each becomes the person Atlas knows by that name.
+        const ids = (list: string[]) => [
+          ...new Set(
+            list.map((x) => (getRecord(this.#sql, x)?.type === "person" ? x : (whoIs(this.#sql, x)[0]?.id ?? ""))).filter(Boolean),
+          ),
+        ];
+        if (msg.type === "atlas.face.save")
+          saveFace(this.#sql, { ...msg.face, people: ids(msg.face.people), pull_people: ids(msg.face.pull_people) });
+        else removeFace(this.#sql, msg.id);
+        await this.#armDigest();
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.face.test": {
+        const out = await this.keepAliveWhile(() => this.#faces.test(msg.id, msg.conv, msg.text));
+        this.#send(connection, { type: "atlas.face.said", id: msg.id, conv: msg.conv, ...out });
+        return;
+      }
+      case "atlas.face.answer": {
+        const out = await this.#faces.answer(msg.id, msg.text);
+        if (!out.ok) this.#send(connection, { type: "atlas.error", message: out.text });
+        else inboxDone(this.#sql, msg.id);
+        this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+        return;
+      }
+      case "atlas.member.invite": {
+        const out = this.#member
+          ? await (await this.#ownerAgent()).apiInvite(this.#member, { name: msg.name, role: msg.role })
+          : await this.#invite({ name: msg.name, role: msg.role, ...(msg.id ? { id: msg.id } : {}) });
+        if (!out.ok || !out.link) this.#send(connection, { type: "atlas.error", message: out.text });
+        else this.#send(connection, { type: "atlas.member.invited", id: out.id!, name: msg.name, link: out.link });
+        return;
+      }
+      case "atlas.member.role":
+      case "atlas.member.remove": {
+        if (this.#member) {
+          this.#send(connection, { type: "atlas.error", message: "Only the owner changes who shares this Atlas." });
+          return;
+        }
+        if (msg.type === "atlas.member.role") setRole(this.#sql, msg.id, msg.role);
+        else await this.#removeMember(msg.id);
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.area.share": {
+        const a = getArea(this.#sql, msg.area);
+        if (this.#member || !a || !getMember(this.#sql, msg.member)) return;
+        const list = new Set(a.settings.shared_with);
+        if (msg.shared) list.add(msg.member);
+        else list.delete(msg.member);
+        updateArea(this.#sql, a.id, { settings: { ...a.settings, shared_with: [...list] } }, "owner");
+        this.#broadcast({ type: "atlas.areas", areas: this.#areasView(), scope: getScope(this.#sql) });
+        this.#send(connection, { type: "atlas.shared", areas: sharedAreas(this.#sql, null) });
+        return;
+      }
+      case "atlas.shared": {
+        const areas = await this.#shared()
+          .list()
+          .catch(() => []);
+        this.#send(connection, { type: "atlas.shared", areas });
+        return;
+      }
+      case "atlas.channel.code": {
+        this.#send(connection, { type: "atlas.channel.code", ext: msg.ext, ...this.#channels.code(msg.ext) });
+        return;
+      }
+      case "atlas.channel.unlink": {
+        this.#channels.unlink(msg.ext);
+        return;
+      }
+      case "atlas.record.share": {
+        this.#sql.exec(`UPDATE records SET visibility = ? WHERE id = ?`, msg.shared ? "shared" : "owner", msg.id);
+        append(this.#sql, { actor: "owner", kind: "settings.change", body: { record: msg.shared ? "shareable" : "private", id: msg.id } });
+        this.#broadcast({ type: "atlas.records.changed" });
+        return;
+      }
+      case "atlas.contacts.import": {
+        const out = await this.#extensions.importContacts(msg.vcards != null ? { vcards: msg.vcards } : { from: msg.from ?? "" });
+        this.#send(connection, { type: "atlas.contacts.imported", ...out });
+        void this.#tendMemory();
         return;
       }
       case "atlas.sense.hook.add": {
@@ -766,9 +1157,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#removePasskey(msg.id);
         return;
       case "atlas.sessions.end":
-        // Signs out everywhere: every browser has to sign in again.
-        setState(this.#sql, "sessions", {});
-        append(this.#sql, { actor: "owner", kind: "settings.change", body: { sessions: "ended" } });
+        // Signs out everywhere: every browser has to sign in again. A member's sign-ins are kept with the owner's
+        // Atlas, so a member's Atlas asks it to end theirs; the owner's end only the owner's.
+        if (this.#member) await (await this.#ownerAgent()).apiMemberSignOut(this.#member).catch(() => {});
+        else {
+          setState(this.#sql, "sessions", Object.fromEntries(Object.entries(this.#sessions()).filter(([, x]) => x.member)));
+          append(this.#sql, { actor: "owner", kind: "settings.change", body: { sessions: "ended" } });
+        }
         this.#signOutSockets();
         return;
       case "atlas.records.list": {
@@ -988,6 +1383,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         );
         return;
       }
+      case "atlas.loop.close": {
+        const closed = closeLoop(this.#sql, msg.id, "Closed by the owner.", { by: "owner" });
+        if (closed) await this.#clock.unschedule(closed);
+        else this.#send(connection, { type: "atlas.error", message: "That loop isn't open any more." });
+        this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+        return;
+      }
       case "atlas.agenda.cancel": {
         const item = getItem(this.#sql, msg.id);
         if (!item || !["reminder", "promise"].includes(item.kind) || item.state !== "scheduled") {
@@ -1157,31 +1559,154 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** The owner's text runs that can still be stopped, waiting in line or under way. */
   #stops = new Map<string, AbortController>();
 
-  async #textTurn(text: string, clientId: string, note?: string): Promise<void> {
-    const runId = startRun(this.#sql, { actor: "owner", trigger: "message", surface: "app", role: "main" });
+  async #textTurn(text: string, clientId: string, note?: string, via?: ChatVia): Promise<void> {
+    const surface: Surface = via ? "chat" : "app";
+    const runId = startRun(this.#sql, { actor: "owner", trigger: "message", surface, role: "main" });
     const stop = new AbortController();
     this.#stops.set(runId, stop);
+    if (via) this.#chatRuns.set(runId, via);
     try {
-      await this.#textRun(runId, text, clientId, stop.signal, note);
+      await this.#textRun(runId, text, clientId, stop.signal, note, via);
     } finally {
       this.#stops.delete(runId);
+      this.#chatRuns.delete(runId);
     }
   }
 
-  async #textRun(runId: string, text: string, clientId: string, signal: AbortSignal, note?: string): Promise<void> {
+  // --- faces (§7.2) --------------------------------------------------------------
+
+  /**
+   * A face's turn in a conversation: its own character, only its tools, and
+   * the conversation so far. It sees nothing of the owner's thread.
+   */
+  async #faceRun(o: {
+    face: Face;
+    conv: string;
+    from: string;
+    person: string | null;
+    note: string | null;
+    test?: boolean;
+  }): Promise<string> {
+    const settings = readSettings(this.#sql);
+    const tz = zoneOf(settings);
+    const now = new Date();
+    const runId = startRun(this.#sql, { actor: "atlas", trigger: `face:${o.face.id}`, surface: "none", role: "main" });
+    const system = [facePrompt(this.#sql, o.face, { tz, now, person: o.person, test: o.test }), o.note ?? ""].filter(Boolean).join("\n\n");
+    const messages: BrainMessage[] = conversation(this.#sql, o.conv);
+    while (messages[0]?.role === "assistant") messages.shift();
+    const res = await runLoop(
+      {
+        log: logTo(this.#sql),
+        router: this.#router,
+        chain: settings.brains.main,
+        toolContext: {
+          ...this.#toolContext(settings, now, "face", null),
+          helpers: null,
+          exit: null,
+          web: null,
+          face: {
+            face: o.face,
+            conv: o.conv,
+            from: o.from,
+            person: o.person,
+            pull: (p) => this.#faces.pull(o.face, { conv: o.conv, from: o.from, person: o.person, ...p }),
+          },
+        },
+      },
+      {
+        runId,
+        role: "main",
+        surface: "none",
+        system,
+        messages: messages.length ? messages : [{ role: "user", content: "(nothing yet)" }],
+        tools: faceTools(o.face),
+        budget: { steps: 8, ms: 90_000 },
+        joiner: "\n\n",
+        effort: "low",
+        firstEventMs: FIRST_EVENT_MS.main,
+      },
+      () => {},
+    );
+    endRun(this.#sql, runId, res.state, res.steps, { ...(res.error ? { error: res.error } : {}), usage: res.usage as never });
+    if (res.state === "failed") throw new Error(res.error ?? "The face's run failed.");
+    return scrub(res.text, this.#outbox.secrets());
+  }
+
+  /**
+   * A face's words out, where the conversation is. In the owner's name, each
+   * answer waits for their OK on a card, until they trust that face (§7.2).
+   */
+  async #faceSend(o: { conv: string; where: Where; text: string; face: Face; approved?: boolean }): Promise<void> {
+    if (o.face.speaks_as === "owner" && !o.approved && !o.conv.startsWith("test:")) {
+      const runId = startRun(this.#sql, { actor: "atlas", trigger: `face:${o.face.id}`, surface: "none", role: "main" });
+      await this.#exit.request(
+        {
+          kind: "face_reply",
+          name: `${o.face.name}'s answer as you`,
+          face: o.face.id,
+          conv: o.conv,
+          where: o.where as never,
+          text: o.text,
+        },
+        { run_id: runId, source_log_id: null },
+      );
+      endRun(this.#sql, runId, "replied", 0, {});
+      return;
+    }
+    if (o.where.kind === "chat") {
+      await this.#channels.send(o.where.ext, { chat: o.where.chat, text: o.text });
+      return;
+    }
+    await this.#mail.send({
+      from: "",
+      to: [o.where.to],
+      subject: o.where.subject,
+      text: o.text,
+      thread: o.conv,
+      ...(o.where.message_id ? { in_reply_to: o.where.message_id } : {}),
+      ...(o.where.references?.length ? { references: o.where.references } : {}),
+    });
+  }
+
+  /** The faces' digest on the clock: daily at 6 in the evening while a face has one, off otherwise. */
+  async #armDigest(): Promise<void> {
+    const want = faces(this.#sql).some((f) => f.on && f.digest === "daily");
+    const had = upcoming(this.#sql, 300).find((i) => i.kind === "digest" && i.state === "scheduled");
+    if (!want) {
+      if (had) {
+        await this.#clock.unschedule(had);
+        finish(this.#sql, had.id, "cancelled", null, {});
+      }
+      return;
+    }
+    if (had) return;
+    const tz = zoneOf(readSettings(this.#sql));
+    let at = addLocalDays(startOfLocalDay(new Date(), tz), 0, tz).getTime() + 18 * 3_600_000;
+    if (at <= Date.now() + 60_000) at = addLocalDays(startOfLocalDay(new Date(), tz), 1, tz).getTime() + 18 * 3_600_000;
+    const item = createItem(this.#sql, { kind: "digest", title: "Faces' digest", due_at: at, source: { via: "faces" } });
+    await this.#clock.schedule(item);
+  }
+
+  /** Runs asked on a chat channel, and where they answer (§16.1). */
+  #chatRuns = new Map<string, ChatVia>();
+
+  async #textRun(runId: string, text: string, clientId: string, signal: AbortSignal, note?: string, via?: ChatVia): Promise<void> {
+    const surface: Surface = via ? "chat" : "app";
     const inRow = append(this.#sql, {
       actor: "owner",
       kind: "message.in",
       run_id: runId,
-      surface: "app",
-      body: { text, client_id: clientId },
+      surface,
+      body: { text, client_id: clientId, ...(via ? { channel: via.ext, ...(via.voice ? { voice_note: true } : {}) } : {}) },
     });
     this.#broadcast({ type: "atlas.rows", rows: [inRow] });
-    this.#broadcast({ type: "atlas.run", run_id: runId, state: "running", surface: "app", client_id: clientId });
+    this.#broadcast({ type: "atlas.run", run_id: runId, state: "running", surface, client_id: clientId });
+    const chat = via ? this.#chatPresence(runId, via) : null;
 
     const hit = matchPhrase(this.#sql, text);
     if (hit) {
-      await this.#inLine(() => this.#phraseRun(hit, runId, "app"), { id: runId, surface: "app" }).catch(() => {});
+      await this.#inLine(() => this.#phraseRun(hit, runId, surface), { id: runId, surface }).catch(() => {});
+      chat?.stop();
       return;
     }
     if (noticeAsk(this.#sql, text)) this.#automationsChanged();
@@ -1195,22 +1720,92 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           runId,
           actor: "owner",
           sourceLogId: inRow.id,
-          surface: "app",
+          surface,
           role: "main",
           input: text,
           beforeSeq: inRow.seq,
           budget: BUDGETS.chat,
           signal,
           extra,
-          emit: (e) => this.#relay(runId, e, scrubber),
+          emit: (e) => {
+            if (e.type === "status" && e.text) chat?.status(e.text);
+            this.#relay(runId, e, scrubber);
+          },
         });
         const tail = scrubber.flush();
         if (tail) this.#broadcast({ type: "atlas.delta", run_id: runId, text: tail });
-        await this.#finishRun(runId, "app", res, true);
+        chat?.stop();
+        await this.#finishRun(runId, surface, res, true);
+        if (via && res.text.trim()) await this.#chatAnswer(via, scrub(res.text, this.#outbox.secrets()));
         if (res.state === "replied") this.#senses.seenBy(inRow.at);
       },
-      { id: runId, surface: "app" },
-    ).catch(() => {});
+      { id: runId, surface },
+    )
+      .catch(() => {})
+      .finally(() => chat?.stop());
+  }
+
+  /**
+   * While a chat run works (§16.1): typing in the chat, kept up, and a short
+   * note when it takes more than a moment, saying what it's doing.
+   */
+  #chatPresence(runId: string, via: ChatVia) {
+    let last: string | null = null;
+    let noted = false;
+    const send = (out: Omit<Out, "chat">) => this.#channels.send(via.ext, { chat: via.chat, ...out }).catch(() => {});
+    void send({ typing: true, ...(via.voice ? { voice: { base64: "", type: "" } } : {}) });
+    const typing = setInterval(() => void send({ typing: true }), 4_500);
+    const note = setTimeout(() => {
+      if (noted || !this.#chatRuns.has(runId)) return;
+      noted = true;
+      void send({ text: last ?? "On it." });
+    }, CHAT_NOTE_MS);
+    return {
+      status: (t: string) => {
+        last = t;
+      },
+      stop: () => {
+        clearInterval(typing);
+        clearTimeout(note);
+      },
+    };
+  }
+
+  /**
+   * A chat run's answer, on its channel: as a voice note in Atlas's voice
+   * when the owner spoke, else text. An answer that's a single emoji is a
+   * reaction to the owner's message, where the channel has them.
+   */
+  async #chatAnswer(via: ChatVia, text: string): Promise<void> {
+    const t = text.trim();
+    try {
+      if (/^\p{Extended_Pictographic}\uFE0F?$/u.test(t)) {
+        // A channel takes only some emoji as reactions; any other goes as the message itself, so it's never lost.
+        const reacted = await this.#channels
+          .send(via.ext, { chat: via.chat, react: { message: via.message, emoji: t.replace(/\uFE0F/g, "") } })
+          .then(() => true)
+          .catch(() => false);
+        if (reacted) return;
+        await this.#channels.send(via.ext, { chat: via.chat, text: t });
+        return;
+      }
+      if (via.voice) {
+        const audio = await this.#notes()
+          .speak(t)
+          .catch(() => null);
+        if (audio) {
+          await this.#channels.send(via.ext, { chat: via.chat, voice: { base64: base64(audio.bytes), type: audio.type } });
+          return;
+        }
+      }
+      await this.#channels.send(via.ext, { chat: via.chat, text: t });
+    } catch (err) {
+      console.error(JSON.stringify({ at: `channel.${via.ext}.answer`, error: err instanceof Error ? err.message : String(err) }));
+    }
+  }
+
+  #notes(): Notes {
+    return seams.notes ?? makeNotes(this.env.AI, readSettings(this.#sql), getSecret<string>(this.#sql, "elevenlabs_api_key"));
   }
 
   /** Called by the voice pipeline when the owner finishes a spoken thought. */
@@ -1339,6 +1934,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       });
       this.#broadcast({ type: "atlas.rows", rows: [row] });
     });
+  }
+
+  // --- channels (§16.1) -----------------------------------------------------------
+
+  /** Messages that came in on a channel extension. */
+  async #channelIn(e: import("./extensions").Installed, msgs: import("../../extensions/sdk").Message[]): Promise<void> {
+    this.#channels.take(e, msgs, (fn) => void this.keepAliveWhile(fn).catch(() => {}));
   }
 
   // --- paired devices (§16.3) ---------------------------------------------------
@@ -1563,6 +2165,25 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
     if (item.kind === "situation") {
       await this.keepAliveWhile(() => this.#senses.tick(item));
+      return;
+    }
+    if (item.kind === "looks") {
+      await this.keepAliveWhile(() => this.#extensions.looks(item));
+      return;
+    }
+    if (item.kind === "loop") {
+      await this.keepAliveWhile(() => this.#senses.loopDue(item));
+      return;
+    }
+    if (item.kind === "hold") {
+      // A held time passing unconfirmed lets it go.
+      finish(this.#sql, item.id, "done", null, { lapsed: true });
+      return;
+    }
+    if (item.kind === "digest") {
+      finish(this.#sql, item.id, "done", null, {});
+      this.#faces.digest();
+      await this.#armDigest();
       return;
     }
     if (item.kind === "rhythm") {
@@ -1838,7 +2459,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const now = new Date();
     const tools = o.tools ?? TOOLS[o.actor];
     const mcp = tools.includes(mcpCall) ? await this.#mcpServers(3_000) : [];
-    const system = systemPrompt({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq, mcp, extra: o.extra });
+    // What's shared, and for a member's Atlas whose it is (§7.1). The owner's Atlas being unreachable doesn't stop a run.
+    const shared = await this.#sharedNote();
+    const extra = [o.extra ?? "", shared].filter(Boolean).join("\n\n") || undefined;
+    const system = systemPrompt({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq, mcp, extra });
     // Compaction keeps this well inside the window; the budget only matters if it hasn't caught up.
     // Voice reads less, so a spoken reply starts fast; recall still has the rest.
     const room = o.role === "voice" ? VOICE_HISTORY_TOKENS : Math.floor(this.#window * 0.85) - tokens(system);
@@ -1904,6 +2528,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       embed: this.#embedder(),
       source_log_id: sourceLogId,
       via,
+      shared: this.#shared(),
       exit: this.#exit,
       web: this.#web,
       maps: this.#maps,
@@ -1918,6 +2543,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       },
       speaking: async () => {
         this.#broadcast({ type: "atlas.view", view: this.#view() });
+      },
+      extensions: {
+        draft: async (code) => {
+          const e = await this.#extensions.draft(code, "atlas");
+          this.#broadcast({ type: "atlas.view", view: this.#view() });
+          return { id: e.id, name: e.name, hosts: e.manifest.hosts };
+        },
       },
       helpers: {
         start: async (o) => {
@@ -2027,14 +2659,26 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return Object.fromEntries(Object.entries(all).filter(([, s]) => s.expires > now));
   }
 
-  async openSession(s: { kind: Session["kind"]; passkey_id?: string }): Promise<string> {
+  async openSession(s: { kind: Session["kind"]; passkey_id?: string; member?: string }): Promise<string> {
     const id = newSessionId();
     const now = Date.now();
-    const all = Object.entries(this.#sessions())
-      .sort(([, a], [, b]) => a.at - b.at)
-      .slice(-99);
-    setState(this.#sql, "sessions", Object.fromEntries([...all, [id, { ...s, at: now, expires: now + SESSION_DAYS * 86_400_000 }]]));
+    // Each person keeps their newest 100 sign-ins, so one signing in often never signs another out.
+    const who = s.member ?? "";
+    const all = Object.entries(this.#sessions()).sort(([, a], [, b]) => a.at - b.at);
+    const mine = all.filter(([, x]) => (x.member ?? "") === who).slice(-99);
+    const others = all.filter(([, x]) => (x.member ?? "") !== who);
+    setState(
+      this.#sql,
+      "sessions",
+      Object.fromEntries([...others, ...mine, [id, { ...s, at: now, expires: now + SESSION_DAYS * 86_400_000 }]]),
+    );
     return id;
+  }
+
+  /** A member ends their own sign-ins everywhere, from their own Atlas. */
+  async apiMemberSignOut(member: string): Promise<void> {
+    setState(this.#sql, "sessions", Object.fromEntries(Object.entries(this.#sessions()).filter(([, x]) => x.member !== member)));
+    append(this.#sql, { actor: "owner", kind: "settings.change", body: { sessions: "ended", member } });
   }
 
   async session(id: string): Promise<Session | null> {
@@ -2277,6 +2921,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
   }
 
+  /** The `extract` role (§5.4): Clairic on Workers AI, or a fake in tests (never the real one). */
+  #extractor(): Extractor | null {
+    if (seams.extract !== undefined) return seams.extract;
+    if (this.env.ATLAS_TEST) return null;
+    return workersAIExtractor(this.env.AI as never);
+  }
+
   #decider(): Decider | null {
     if (seams.decide !== undefined) return seams.decide;
     // Tests never reach a real provider (CLAUDE.md): without a fake, there's no decide role.
@@ -2403,42 +3054,87 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   }
 
   /**
-   * A post from OwnTracks (§10.1), passed on by the Worker with its
-   * Authorization header. Only OwnTracks' own user and password are let in.
-   * With location off, what it sends is dropped. The answer is what OwnTracks
-   * should do next: usually nothing, or the saved places as regions.
+   * A post to the location app's address from before it was an extension
+   * (/owntracks), passed on by the Worker with its Authorization header: the
+   * location extension reads it as it reads posts to its own address.
    */
-  async apiOwnTracks(authorization: string | null, text: string): Promise<{ status: number; body: unknown }> {
-    if (!ownTracksAllowed(this.#sql, authorization)) {
-      ownTracksRefused(this.#sql);
-      console.error(JSON.stringify({ at: "owntracks", error: authorization ? "wrong user or password" : "no user and password" }));
-      this.#broadcast({ type: "atlas.view", view: this.#view() });
+  async apiOwnTracks(
+    authorization: string | null,
+    text: string,
+  ): Promise<{ status: number; body: string; headers: Record<string, string> }> {
+    return this.#extensions.legacyLocation({ method: "POST", headers: authorization ? { authorization } : {}, body: text, query: {} });
+  }
+
+  /** A post to an extension's own address (/x/<id>/<key>), checked by its key and the service's signature (§17). */
+  async apiExtPost(
+    id: string,
+    key: string,
+    req: { method: string; headers: Record<string, string>; body: string; query: Record<string, string> },
+  ): Promise<{ status: number; body: string; headers: Record<string, string> }> {
+    return this.keepAliveWhile(() => this.#extensions.post(id, key, req));
+  }
+
+  /** Settings' test of Atlas's address: a mail from it to the owner, whose reply comes back as the owner speaking. */
+  async #mailTest(): Promise<{ ok: boolean; text: string }> {
+    const to = [...ownerAddresses(this.#sql)][0];
+    if (!to)
       return {
-        status: 401,
-        body: { error: "That isn't OwnTracks' user and password for this Atlas. Set it up again in Settings → Devices." },
+        ok: false,
+        text: "Atlas doesn't know your own email address yet. Add it to your record in Library → People, or connect Gmail.",
       };
-    }
-    allowedPost(this.#sql);
-    if (!readSettings(this.#sql).location.on) return { status: 200, body: [] };
-    let data: unknown;
     try {
-      data = JSON.parse(text);
-    } catch {
-      return { status: 400, body: { error: "OwnTracks sent something that isn't JSON." } };
+      const out = await this.#mail.send({
+        from: "",
+        to: [to],
+        subject: "Atlas's address works",
+        text: "This is a test from Settings. Reply to it, and your reply comes back to Atlas as you.",
+      });
+      return { ok: true, text: `Sent a test to ${to} with ${out.via}. Reply to it, and your reply shows in your thread.` };
+    } catch (err) {
+      return { ok: false, text: err instanceof Error ? err.message : String(err) };
     }
-    // Into the intake; it's weighed after the answer, so OwnTracks isn't kept waiting: the situation first, then each item.
-    this.#senses.take(
-      readOwnTracks(data).flatMap((o) => observe(this.#sql, o)),
-      { refresh: true },
-    );
-    this.#broadcast({ type: "atlas.view", view: this.#view() });
-    return { status: 200, body: ownTracksAnswer(this.#sql) };
+  }
+
+  /** A mail to Atlas's own address, posted by its relay (/mail/in), checked by the relay's signature (§16.2). */
+  async apiMailIn(time: string | null, signature: string | null, body: Uint8Array): Promise<{ status: number; text: string }> {
+    return this.keepAliveWhile(() => this.#mail.receive(time, signature, body));
+  }
+
+  /** A sign-in page sent the owner back (/x/signin): the code is exchanged, and the app's Settings opens again. */
+  async apiExtSignin(state: string, code: string | null, error: string | null): Promise<{ ok: boolean; text: string }> {
+    if (error || !code) return { ok: false, text: `The sign-in didn't finish: ${error ?? "no code came back"}.` };
+    try {
+      const e = await this.#ext.signedIn(state, code);
+      const tested = await this.#extensions.test(e.id);
+      await this.#extensions.afterChange();
+      return { ok: true, text: `Signed in to ${e.name}. ${tested.message}` };
+    } catch (err) {
+      return { ok: false, text: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** The gate refused a host an extension tried to reach (§17): a receipt says which, so it shows in History. */
+  async apiGateRefused(ext: string, host: string): Promise<void> {
+    const row = append(this.#sql, {
+      actor: "system",
+      kind: "delivery",
+      body: {
+        channel: "extension",
+        to: host,
+        text: ext,
+        ok: false,
+        error: `The ${ext} extension tried to reach ${host}, which its manifest doesn't name, so the gate refused it.`,
+      },
+    });
+    this.#broadcast({ type: "atlas.rows", rows: [row] });
   }
 
   /**
    * A webhook source's post (§10.4): checked by its key or its signature,
    * then into the intake as one item, with the post kept as raw content.
-   * The answer comes before it's weighed, so the service isn't kept waiting.
+   * A post an extension claims by its headers (GitHub's, Linear's) is read
+   * by that extension. The answer comes before it's weighed, so the service
+   * isn't kept waiting.
    */
   async apiSenseHook(
     id: string,
@@ -2456,17 +3152,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         body: { error: "That isn't this source's key or signature. Settings → Connections → Senses has its address." },
       };
     }
+    hookSeen(this.#sql, id, false);
+    noteSource(this.#sql, `webhook:${hook.name}`);
+    if (await this.#extensions.claimed({ method: "POST", headers, body: text, query: {} }, { id: hook.id, name: hook.name }))
+      return { status: 202, body: { ok: true } };
     let payload: unknown = text;
     try {
       payload = JSON.parse(text);
     } catch {
       // Not JSON: the text itself is the post.
     }
-    hookSeen(this.#sql, id, false);
-    noteSource(this.#sql, `webhook:${hook.name}`);
-    // GitHub's first post only says the hook works.
-    if (h.get("x-github-event") === "ping") return { status: 200, body: { ok: true, note: "Connected." } };
-    this.#senses.take([hookItem(hook, h, typeof payload === "string" ? { text: payload } : payload)], { raw: text });
+    this.#senses.take([hookItem(hook, typeof payload === "string" ? { text: payload } : payload)], { raw: text });
     return { status: 202, body: { ok: true } };
   }
 
@@ -2527,13 +3223,19 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   }
 
   #view(): SettingsView {
-    return settingsView(this.#sql, { chatgpt: this.#chatgpt, calendar: this.#calendar, router: this.#router });
+    return settingsView(this.#sql, {
+      chatgpt: this.#chatgpt,
+      calendar: this.#calendar,
+      router: this.#router,
+      extensions: this.#extensions,
+      mail: this.#mail,
+    });
   }
 
   // --- undo and live checks ---------------------------------------------------
 
   async #undo(logId: string, connection: Connection): Promise<void> {
-    const out = await undoReceipt(this.#sql, logId, this.#clock);
+    const out = await undoReceipt(this.#sql, logId, this.#clock, this.#calendar.source(readSettings(this.#sql)));
     if (!out.ok) {
       this.#send(connection, { type: "atlas.error", message: out.message });
       return;
@@ -2591,7 +3293,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           return { ok: true, message: `${(this.tts as { label?: string }).label ?? "voice"} spoke in ${Date.now() - t0} ms.` };
         },
         search: async () => {
-          const name = PROVIDERS[readSettings(this.#sql).web.search].name;
+          const chosen = readSettings(this.#sql).web.search;
+          const name = chosen === "cloudflare" ? CLOUDFLARE_SEARCH.name : nameFor(this.#sql, "search", "search", chosen);
           const out = await this.#web.search("Cloudflare Workers", { run_id: null, count: 3 });
           return out.ok
             ? { ok: true, message: `${name} works: ${out.value.length} results, the first ${out.value[0]?.title ?? "untitled"}.` }
@@ -2627,7 +3330,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           if (!w.ok) return { ok: false, message: w.error };
           return {
             ok: true,
-            message: `${MAPS[provider].name} works: a test route took ${Math.max(1, Math.round(r.value.s / 60))} min${r.value.traffic ? " with traffic" : ""}. Open-Meteo works: ${temp(w.value.now.temp_c, unitsFor(readSettings(this.#sql).units, zoneOf(readSettings(this.#sql))))} there now.`,
+            message: `${nameFor(this.#sql, "maps", "route", provider)} works: a test route took ${Math.max(1, Math.round(r.value.s / 60))} min${r.value.traffic ? " with traffic" : ""}. ${nameFor(this.#sql, "weather", "weather")} works: ${temp(w.value.now.temp_c, unitsFor(readSettings(this.#sql).units, zoneOf(readSettings(this.#sql))))} there now.`,
           };
         },
         systemFor: (character) => {
@@ -2646,19 +3349,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** Searching and reading the web, each through the outbox's checks with a receipt (§4.4). */
   #web: WebApi = {
-    search: (query, o) => {
-      const provider = readSettings(this.#sql).web.search;
-      const p = PROVIDERS[provider];
-      return this.#outbox.look({ what: "search", text: query, to: p.name, run_id: o.run_id }, (f) =>
-        search(
-          provider,
-          { query, count: o.count, ...(o.fresh ? { fresh: o.fresh } : {}) },
-          {
-            fetch: f,
-            key: p.key ? getSecret<string>(this.#sql, `${provider as "tavily" | "brave" | "exa"}_api_key`) : null,
-            binding: this.#websearch(),
-          },
-        ),
+    search: async (query, o) => {
+      const chosen = readSettings(this.#sql).web.search;
+      const q = { query, count: Math.min(Math.max(o.count, 1), 20), ...(o.fresh ? { fresh: o.fresh } : {}) };
+      // Cloudflare's search is the platform's (§17); any other is a search extension.
+      if (chosen === "cloudflare") {
+        return this.#outbox.look({ what: "search", text: query, to: CLOUDFLARE_SEARCH.name, run_id: o.run_id }, () =>
+          cloudflareSearch(this.#websearch(), q),
+        );
+      }
+      return this.#outbox.look({ what: "search", text: query, to: nameFor(this.#sql, "search", "search", chosen), run_id: o.run_id }, () =>
+        provide<SearchResult[]>(this.#ext, this.#sql, { kind: "search", method: "search", args: [q], chosen, what: "web search" }),
       );
     },
     fetch: async (url, o) => {
@@ -2673,27 +3374,59 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    */
   #maps: MapsApi = {
     provider: () => readSettings(this.#sql).maps.provider,
+    // Pins come from a maps extension whose answers may be kept (OpenStreetMap's), whichever one routes.
     geocode: (q, o) =>
-      this.#outbox.look({ what: "geocode", text: q, to: MAPS.osm.name, run_id: o.run_id, channel: "maps" }, (f) => geocode(f, q, o.near)),
+      this.#outbox.look(
+        { what: "geocode", text: q, to: nameFor(this.#sql, "maps", "geocode", "osm"), run_id: o.run_id, channel: "maps" },
+        () =>
+          provide<Found[]>(this.#ext, this.#sql, {
+            kind: "maps",
+            method: "geocode",
+            args: [{ q, ...(o.near ? { near: o.near } : {}) }],
+            chosen: "osm",
+            what: "address search",
+          }),
+      ),
     reverse: (p, o) =>
-      this.#outbox.look({ what: "reverse", text: "where you are", to: MAPS.osm.name, run_id: o.run_id, channel: "maps" }, (f) =>
-        reverse(f, p),
+      this.#outbox.look(
+        { what: "reverse", text: "where you are", to: nameFor(this.#sql, "maps", "reverse", "osm"), run_id: o.run_id, channel: "maps" },
+        () => provide<Found>(this.#ext, this.#sql, { kind: "maps", method: "reverse", args: [p], chosen: "osm", what: "address search" }),
       ),
     route: (via, travel, o) => {
-      const provider = readSettings(this.#sql).maps.provider;
-      return this.#outbox.look({ what: "route", text: o.label, to: MAPS[provider].name, run_id: o.run_id, channel: "maps" }, (f) =>
-        route(f, { provider, key: getSecret<string>(this.#sql, "mapbox_token"), via, travel }),
+      const chosen = readSettings(this.#sql).maps.provider;
+      return this.#outbox.look(
+        { what: "route", text: o.label, to: nameFor(this.#sql, "maps", "route", chosen), run_id: o.run_id, channel: "maps" },
+        () => provide<Route>(this.#ext, this.#sql, { kind: "maps", method: "route", args: [{ via, travel }], chosen, what: "routes" }),
       );
     },
     nearby: (q, o) => {
-      const provider = readSettings(this.#sql).maps.provider;
-      return this.#outbox.look({ what: "nearby", text: o.label, to: MAPS[provider].name, run_id: o.run_id, channel: "maps" }, (f) =>
-        nearby(f, { provider, key: getSecret<string>(this.#sql, "mapbox_token"), ...q }),
+      const chosen = readSettings(this.#sql).maps.provider;
+      const { kind, ...rest } = q;
+      const k = kind ? placeKind(kind) : null;
+      if (kind && !k)
+        return Promise.resolve({
+          ok: false as const,
+          status: 0,
+          error: `"${kind}" isn't a kind of place a map can look for; try a word like "florist" or a tag like "leisure=park".`,
+        });
+      // A search by name goes to a provider that searches by name.
+      const pickFrom = k ? chosen : "osm";
+      return this.#outbox.look(
+        { what: "nearby", text: o.label, to: nameFor(this.#sql, "maps", "nearby", pickFrom), run_id: o.run_id, channel: "maps" },
+        () =>
+          provide<Found[]>(this.#ext, this.#sql, {
+            kind: "maps",
+            method: "nearby",
+            args: [{ ...rest, ...(k ? { kind: k } : {}) }],
+            chosen: pickFrom,
+            what: "place search",
+          }),
       );
     },
     weather: (p, o) =>
-      this.#outbox.look({ what: "weather", text: o.label, to: "Open-Meteo", run_id: o.run_id, channel: "weather" }, (f) =>
-        fetchWeather(f, roughArea(p)),
+      this.#outbox.look(
+        { what: "weather", text: o.label, to: nameFor(this.#sql, "weather", "weather"), run_id: o.run_id, channel: "weather" },
+        () => provide<Weather>(this.#ext, this.#sql, { kind: "weather", method: "weather", args: [roughArea(p)], what: "the weather" }),
       ),
   };
 
@@ -2937,6 +3670,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** The owner's workspace: its Durable Object, or a fake in tests (never a real container). */
   #ws(): WorkspaceStub | null {
+    // The workspace is the owner's container; a member's Atlas has none in M5 (§7.1: nobody reaches another's things).
+    if (this.#member) return null;
     if (seams.workspace !== undefined) return seams.workspace;
     const ns = (this.env as { WORKSPACE?: Env["WORKSPACE"] }).WORKSPACE;
     return this.env.ATLAS_TEST || !ns ? null : (ns.getByName(OWNER) as unknown as WorkspaceStub);
@@ -3325,6 +4060,34 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         }
       }
       this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+      // Asked on a chat (§16.1): the card is a message with buttons. What needs a hold, or touches the vault, is a link to the app.
+      const chat = created ? this.#chatRuns.get(c.run_id) : undefined;
+      if (chat) {
+        // The card remembers the chat it was asked in, so the work carries on there once it's approved.
+        this.#sql.exec(
+          `UPDATE agenda SET source = json_set(source, '$.detail.chat', json(?)) WHERE id = ?`,
+          JSON.stringify({ ext: chat.ext, chat: chat.chat, message: chat.message }),
+          item.id,
+        );
+        const origin = getState<string>(this.#sql, "origin");
+        const viaApp = hold || actionsOf(item).some((a) => a.kind === "vault");
+        void this.#channels
+          .send(chat.ext, {
+            chat: chat.chat,
+            text: viaApp
+              ? `This one needs you in the app: ${item.title}.`
+              : `OK to do this? ${item.title}${action.kind === "email" ? `\n\nTo: ${action.to.join(", ")}\nSubject: ${action.subject}\n\n${action.text}` : ""}`,
+            buttons: viaApp
+              ? origin
+                ? [{ label: "Open in Atlas", url: `${origin}/#/inbox` }]
+                : []
+              : [
+                  { label: "Approve", data: `ok:${item.id}` },
+                  { label: "Decline", data: `no:${item.id}` },
+                ],
+          })
+          .catch(() => {});
+      }
       return {
         ok: true,
         output: {
@@ -3385,7 +4148,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    */
   async #decide(
     id: string,
-    o: { yes: boolean; by: "app" | "hold" | "push" | "voice" | "chat"; edits?: Array<{ index: number; message: string }> },
+    o: {
+      yes: boolean;
+      by: "app" | "hold" | "push" | "voice" | "chat" | "button";
+      edits?: Array<{ index: number; message: string; subject?: string; to?: string }>;
+    },
   ): Promise<{ ok: boolean; text: string }> {
     const item = getItem(this.#sql, id);
     if (!item || item.kind !== "approval") return { ok: false, text: "That approval isn't there." };
@@ -3415,9 +4182,32 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     let edited = false;
     for (const e of o.edits ?? []) {
       const a = actions[e.index];
+      if (a?.kind === "face_reply" && a.text !== e.message && e.message.trim()) {
+        actions = actions.map((x, i) => (i === e.index ? ({ ...a, text: e.message.slice(0, 8_000) } as Action) : x));
+        edited = true;
+      }
       if (a?.kind === "webhook" && (a.message ?? "") !== e.message) {
         actions = actions.map((x, i) => (i === e.index ? ({ ...a, message: e.message.slice(0, 1_000) } as Action) : x));
         edited = true;
+      }
+      // A mail: its words, subject and who it's to, as the owner left them. An address that doesn't read as one is kept as it was.
+      if (a?.kind === "email") {
+        // What the card says is what goes: a To that isn't an address, or no words, is refused, not quietly replaced.
+        const to = e.to != null ? addressesIn(e.to) : a.to;
+        if (!to.length) return { ok: false, text: `"${e.to}" isn't an email address. Put the address in To, then approve.` };
+        if (!e.message.trim()) return { ok: false, text: "The mail has no words. Write them, or decline it." };
+        const changedTo = to.join(",") !== a.to.join(",");
+        const { person: _p, ...rest } = a;
+        const next = {
+          ...(changedTo ? rest : a),
+          text: e.message.slice(0, 20_000),
+          ...(e.subject != null && e.subject.trim() ? { subject: e.subject.trim().slice(0, 300) } : {}),
+          to,
+        };
+        if (next.text !== a.text || next.subject !== a.subject || next.to.join(",") !== a.to.join(",")) {
+          actions = actions.map((x, i) => (i === e.index ? (next as Action) : x));
+          edited = true;
+        }
       }
       // A tool's arguments, edited as JSON in the card; what doesn't read as an object is left as it was.
       if (a?.kind === "mcp") {
@@ -3437,10 +4227,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (offers.length) append(this.#sql, { actor: "atlas", kind: "settings.change", body: { trust: "offered", keys: offers } });
     if (actions.some((a) => a.kind === "delete")) this.#broadcast({ type: "atlas.records.changed" });
     this.#approvalSettled(id);
-    // A yes in the app lets the task that asked carry on from there: after a site for the workspace, a login,
-    // a form, a service's tool or a webhook, Atlas finishes what it was doing, or says it's done.
-    // Said by voice or in text, the yes is already part of a run that carries on by itself.
-    if (o.by === "app" || o.by === "hold" || o.by === "push") {
+    // A yes on the card, wherever the card is (the app, a notification, any chat channel's button), lets the task
+    // that asked carry on from there: after a site for the workspace, a login, a form, a service's tool or a webhook,
+    // Atlas finishes what it was doing, or says it's done. Only a yes said by voice or in text needs nothing more:
+    // it's already part of a run that carries on by itself. A task asked on a chat carries on in that chat.
+    const inRun = o.by === "voice" || o.by === "chat";
+    if (!inRun) {
+      const chat = item.source.detail?.chat as unknown as ChatVia | undefined;
       // What it did and gave back goes with the yes, so the run reports it instead of asking again for what's done.
       const note = [
         `[Atlas, not the owner] The owner said yes on the card, and it's done (don't ask for it or do it again):`,
@@ -3450,7 +4243,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         ),
         "Carry on from there with what it gave back: finish what you were doing, or tell the owner how it went.",
       ].join("\n");
-      void this.keepAliveWhile(() => this.#textTurn(`Yes to ${item.title}. Carry on.`, `approval-${id}`, note));
+      void this.keepAliveWhile(() =>
+        this.#textTurn(
+          `Yes to ${item.title}. Carry on.`,
+          `approval-${id}`,
+          note,
+          chat?.ext && chat.chat ? { ...chat, voice: false } : undefined,
+        ),
+      );
     }
     return { ok, text: results.map((r) => r.text).join(" ") };
   }
@@ -3467,6 +4267,53 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         "normal",
       );
     }
+  }
+
+  /**
+   * A mail out, once its OK is given (§16.2): as the owner through the
+   * extension that holds their mail, or as Atlas from its own address.
+   * Sending in a thread settles what someone was waiting on the owner for there.
+   */
+  async #sendMail(
+    a: Extract<Action, { kind: "email" }>,
+  ): Promise<
+    { ok: true; id: string; thread?: string; link?: string; message_id?: string; via: string } | { ok: false; error: string; via: string }
+  > {
+    const mail = {
+      to: a.to,
+      ...(a.cc?.length ? { cc: a.cc } : {}),
+      subject: a.subject,
+      text: a.text,
+      ...(a.thread ? { thread: a.thread } : {}),
+      ...(a.in_reply_to ? { in_reply_to: a.in_reply_to } : {}),
+      ...(a.references?.length ? { references: a.references } : {}),
+    };
+    let out: { id: string; thread?: string; link?: string; message_id?: string };
+    let via = a.via;
+    try {
+      if (a.as === "atlas") {
+        const sent = await this.#mail.send({ ...mail, from: a.from });
+        via = sent.via;
+        out = sent;
+      } else {
+        const e = getExt(this.#sql, a.via);
+        if (!e || e.state !== "on") return { ok: false, error: `${e?.name ?? a.via} isn't on, so it can't send as you.`, via };
+        via = e.name;
+        out = await this.#ext.call<{ id: string; thread?: string; link?: string; message_id?: string }>(a.via, "mail", [mail]);
+      }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err), via };
+    }
+    const thread = out.thread ?? a.thread;
+    if (thread)
+      for (const loop of openLoops(this.#sql)) {
+        const d = detailOf(loop);
+        if (d.waiting_on === "owner" && d.thread === thread) {
+          const closed = closeLoop(this.#sql, loop.id, `Answered: "${a.subject}"`, { by: "owner" });
+          if (closed) await this.#clock.unschedule(closed);
+        }
+      }
+    return { ok: true, ...out, ...(thread ? { thread } : {}), via };
   }
 
   /** Tells every app an approval was settled: its line in the thread, Inbox and the agenda. */

@@ -637,11 +637,13 @@ In the app, Atlas settings → Notifications shows channels per urgency, quiet h
 ### 16.1 Channels
 
 Channels are the text surfaces where people reach Atlas or a face:
-- SMS and calls (Telnyx or Twilio);
+- SMS and calls (later, §26);
 - email;
 - Telegram, Discord, WhatsApp, Signal and Slack;
 - iMessage, through a Mac node;
 - the website widget.
+
+**Telegram comes first** (decided 2026-10-23, for M5): it has an official bot API, needs no phone number, and Telegram calls Atlas only when a message arrives, so it costs nothing while idle and nothing runs until the owner adds a bot token (§19.3). Its voice notes, in and out, beside the app's voice call, stand in for a phone. Discord needs a connection held open all month to receive messages, so it waits. Signal has no official bot API that we've found; signal-cli, the unofficial client, needs a process that's always on and a number of its own, so Signal would come through a node (§16.3), like iMessage through a Mac, unless Signal opens one.
 
 Each channel is an adapter (§17). In a messaging thread Atlas texts like a person who has things to show you, the way messaging-native agents such as Instinct do: it sends what the channel can carry, not a link to everything.
 - **Rich where the channel allows.** An adapter says what its channel carries (images, files, reactions, effects, buttons, voice notes, formatting, length), and each stage view goes out in the richest form that fits:
@@ -658,7 +660,9 @@ Each channel is an adapter (§17). In a messaging thread Atlas texts like a pers
 
 ### 16.2 Atlas's own email
 
-Atlas can have its own addresses through Cloudflare Email Service. This needs a domain on Cloudflare.
+Atlas can have its own addresses on a domain on Cloudflare, in any Cloudflare account, not only Atlas's own (decided 2026-10-23, for M5). Setup in Settings is the same for everyone:
+- **Receiving.** The owner gives Atlas an API token for the domain's account. Atlas puts a small relay Worker and a routing rule there (Email Routing, free on any plan), which pass mail for its address on to Atlas, signed. When the domain's mail goes to another provider, Atlas's address is on a subdomain instead, so the owner's own mail isn't touched.
+- **Sending,** picked in Settings: Cloudflare Email Service, through its API with the same token, which needs Workers Paid on the domain's account to send to anyone; or Resend by key, whose free tier covers a personal Atlas (Atlas adds Resend's DNS records with the token).
 
 What Atlas's own address is for:
 - CC Atlas to find a meeting time;
@@ -694,13 +698,31 @@ The node protocol is public, so anyone can build a node.
 
 ## 17. Extensibility
 
+Atlas is a core and its extensions (decided 2026-10-23, for M5). The core is the foundation every Atlas has, whatever services its owner uses, and it changes only by release, never at run time and never by Atlas itself (§23.2). Everything that ties Atlas to one company's service, or to one app's way of talking, is an extension, even when it ships with Atlas and is on by default.
+
+**The core** is:
+- Atlas's own mechanisms: the loop, the log, the clock, the outbox, the intake, records, approvals, the vault, areas, automations, faces, members, and the app;
+- the platform it runs on (§19): Workers AI (Clef, Clairic, embeddings, Aura and Flux, Kimi), Browser Run, Containers, R2, and Cloudflare's Email Service and Email Routing for Atlas's own address;
+- the open standards it's built from: MCP, Web Push, passkeys, and the node protocol (§16.3).
+
+**Extensions** are everything else: the owner's calendar and contacts (iCloud over CalDAV and CardDAV, Google, Outlook), their mail (Gmail), chat channels (Telegram, Discord, Signal), the services they want to hear from (GitHub, Linear), location apps (OwnTracks), maps, weather and search providers (OpenStreetMap, Mapbox, Open-Meteo, Tavily), sending providers (Resend), and model providers (ChatGPT, ElevenLabs).
+
 | Layer | What it's for | Standard |
 |---|---|---|
 | Skills | Know-how and procedures | SKILL.md (Agent Skills) |
-| MCP | Tools and connections | MCP, plus MCP Apps for views on the stage |
-| Extensions | New senses (adapters into the intake, §10.4), channels, stage views, model providers and node types | Small, typed TypeScript modules that run sandboxed in Dynamic Workers, so Atlas can write one itself, with your OK |
+| MCP | Tools Atlas can call | MCP, plus MCP Apps for views on the stage |
+| Extensions | New senses (adapters into the intake, §10.4), channels, providers (calendar, contacts, mail, maps, weather, search, models, voice), stage views and node types | A small TypeScript module with a manifest, sandboxed in a Dynamic Worker, so Atlas can write one itself, with your OK |
 | API | Every surface | One public API: a live event stream plus HTTP. Atlas's own app, desktop, voice and command line all use it. Atlas is also an MCP server, so Claude, ChatGPT or an editor can talk to it. |
 | Nodes | Devices | The public node protocol (§16.3) |
+
+**How an extension works.**
+- **A manifest says what it is and what it can touch:** what it provides (a sense, a channel, a calendar, a model), the only hosts it may reach, the secrets it needs (a token you paste) or a sign-in for the core to run for it (OAuth), how often it looks, and whether it takes posts at an address of its own.
+- **It runs sandboxed.** Each call runs it in a Dynamic Worker whose only way out is the core's gate, which lets it reach the hosts its manifest names and nothing else, and adds its secrets to its requests there. The extension never sees a secret's value, and it never sees the log, the records or the owner's other connections: the core hands it what a call needs and takes back typed results.
+- **It speaks through the core.** What it notices goes into the intake as items, like any sense (§10.4); a message it receives goes to the owner's thread or to a face; what it sends leaves through the outbox, with a receipt and the owner's OK where §12 says so. It can't act on its own.
+- **A source it can't hear from gets a look on the clock.** A service that can't post to Atlas is asked "what's new since last time?" by an item on the agenda (§4.3), at the interval its manifest asks for, while it's installed and on. Its cursor (Gmail's history id, GitHub's last time) is where it left off, kept by the core, so a restart neither misses nor repeats anything.
+- **It installs from the app:** browse the ones that ship with Atlas, see what each can touch before installing, turn it off, remove it. Atlas can write one for a service it has no extension for, as a draft you review and install, never on its own.
+
+**Bundled extensions** live in the repo beside the core (`extensions/`), are reviewed like the core, and are the defaults: iCloud for the calendar and contacts, OpenStreetMap and Open-Meteo, and the rest. They use the same manifest and interface as any other. Model and voice providers are bundled extensions too, but every turn and every spoken word goes through them, so a bundled extension may run inside the core's own Worker instead of a sandbox when measuring shows the sandbox's extra step costs time that matters (voice latency, §11.2). Only bundled extensions may; where one runs is a choice in the code, not in the extension, so moving it back is one line.
 
 Everything installs from the app: browse, preview what it can touch, install, undo.
 
@@ -765,8 +787,8 @@ Everything installs from the app: browse, preview what it can touch, install, un
 | Email | Email Service for sending, Email Routing for receiving |
 | Brains | AI Gateway |
 | Public webhooks | The Worker itself (OwnTracks, SMS, GitHub, email) |
-| Maps, routes and places | Not Cloudflare: OpenStreetMap's free services by default, with no key or account (decided 2026-10-22): OpenFreeMap for the map, Nominatim for addresses, FOSSGIS's OSRM for routes, Overpass for what's nearby. Each is volunteer-run with fair-use rules, so Atlas asks little of them (sparse events, cached answers). Mapbox's free tier by key, picked in Settings, adds traffic to travel times and better store search. Pins always come from OpenStreetMap or the phone, since Mapbox's free answers can't be kept. Each call leaves through the outbox |
-| Weather | Not Cloudflare: Open-Meteo, which needs no key and is free for non-commercial use, as a personal Atlas is (decided 2026-10-22) |
+| Maps, routes and places | Not Cloudflare, so bundled extensions (§17): OpenStreetMap's free services by default, with no key or account (decided 2026-10-22): OpenFreeMap for the map, Nominatim for addresses, FOSSGIS's OSRM for routes, Overpass for what's nearby. Each is volunteer-run with fair-use rules, so Atlas asks little of them (sparse events, cached answers). Mapbox's free tier by key, picked in Settings, adds traffic to travel times and better store search. Pins always come from OpenStreetMap or the phone, since Mapbox's free answers can't be kept. Each call leaves through the outbox |
+| Weather | Not Cloudflare, so a bundled extension (§17): Open-Meteo, which needs no key and is free for non-commercial use, as a personal Atlas is (decided 2026-10-22) |
 
 ### 19.2 Shape (to be validated in M0)
 
@@ -788,6 +810,7 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
   - The core stays plain TypeScript behind small interfaces (storage, scheduler, sandbox, browser, models, speech), so a self-hosted build is possible later.
   - It isn't promised for version 1.
 - **Local things need a node:** anything on your home network or your Mac.
+- **Nothing optional costs until it's used** (decided 2026-10-23). An optional part (a channel, a sense, a provider, a surface) deploys nothing that bills and runs nothing until the owner turns it on, and then costs only while it's in use: answering a webhook rather than holding a connection open, a container that sleeps. Anything that must stay on to work says what it costs in Settings before it's turned on.
 
 ### 19.4 Stack
 
@@ -1158,7 +1181,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 | M2 | **Follow-through:** the stage's `show` tool first (§21.6), then the agenda, automations with all five triggers, approvals with earned trust, the outbox and notifications, and the default routines. | Everything Atlas says it'll do actually happens. |
 | M3 | **Hands:** the sandbox, browser, web, Code Mode, skills and learning, the vault, and finding a way. | It finishes unfamiliar tasks. |
 | M4 | **Senses:** nodes (phone, desktop), the situation, one intake (§10.4) with decide-then-wake awareness, the later pile and the Senses screen, and tasks that come up when they fit, starting with places. | The gym-to-store moment, and others like it. |
-| M5 | **People:** contacts, faces (email, phone, chat), members and shared areas, and digests; the mail, messages, GitHub and Linear senses, with `extract` and open loops. | It deals with people for you. |
+| M5 | **People:** contacts, faces (email and chat; the phone later, §26), members and shared areas, and digests; the mail, messages, GitHub and Linear senses, with `extract` and open loops. | It deals with people for you. |
 | M6 | **Delegation:** coding jobs through ACP, Atlas as the middleman, and long research jobs. | It runs your projects while you're away. |
 | M7 | **Launch:** setup polish (steps 6 and 7), moving in, all themes, ambient mode, docs, the deploy button, and a public release. | Someone else can install it and love it. |
 
@@ -1179,7 +1202,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 2. **Shape (§19.2).** A person agent plus a home agent, to be validated in M0.
 3. **Default assistant name.** The product is Atlas. Proposed: a new user's assistant is called "Atlas" by default, and they can rename it.
 4. **License.** MIT, like Hermes and OpenClaw, or Apache-2.0.
-5. **Default phone provider.** Telnyx (what old Atlas used) or Twilio.
+5. **The phone.** Telnyx and Twilio both gave the owner trouble: hard to set up, and identity checks they'd rather not do. Every carrier with a real number does those checks now, and US texting needs registration on top. So the phone is out of M5 (decided 2026-10-23): the owner talks to Atlas by voice in the app and with Telegram's voice notes, and Atlas calling a business waits for a later milestone. What we found is in [M5.md §7](docs/M5.md#7-the-phone-later).
 6. **Name.** OpenAI ships a browser called "ChatGPT Atlas" (October 2025). Decide before the public launch whether that matters.
 7. **Files (§21.7):** office formats, how polished they need to be, and sharing outside Atlas. Living pages were decided on 2026-10-22.
 

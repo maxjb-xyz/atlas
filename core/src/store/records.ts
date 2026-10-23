@@ -361,6 +361,15 @@ export function ownerRecord(sql: Sql): AtlasRecord {
   return createRecord(sql, { type: "person", name: "Owner", fields: { is_owner: true }, source: { via: "setup" } });
 }
 
+/** What the owner is called: the name in their settings, else their record's, else empty. */
+export function ownerName(sql: Sql): string {
+  const r = sql.exec<{ value: string }>(`SELECT value FROM settings WHERE key = 'owner_name'`).toArray()[0];
+  const set = r ? (JSON.parse(r.value) as unknown) : null;
+  if (typeof set === "string" && set.trim()) return set.trim();
+  const rec = ownerRecord(sql).name;
+  return rec && rec !== "Owner" ? rec : "";
+}
+
 /**
  * Standing facts about the owner (§5.2): their preferences and what's noted
  * on their own record. These sit in the stable, cacheable block of every

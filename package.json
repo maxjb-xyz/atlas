@@ -9,16 +9,20 @@
   ],
   "scripts": {
     "build": "npm run build -w app",
-    "typecheck": "npm run typecheck -ws --if-present",
+    "typecheck": "npm run typecheck -ws --if-present && tsc -p extensions --noEmit",
     "test": "npm test -w core",
-    "check": "npm run typecheck && npm test && npm run build",
-    "dev": "npm run build && npm run dev -w core",
-    "deploy": "npm run build && npm run deploy -w core",
+    "check": "npm run extensions && npm run typecheck && npm test && npm run build",
+    "dev": "npm run extensions && npm run build && npm run dev -w core",
+    "deploy": "npm run extensions && npm run build && npm run deploy -w core",
     "bench": "npm run bench -w bench --",
-    "format": "prettier --write \"core/src/**/*.ts\" \"core/test/**/*.ts\" \"app/src/**/*.{ts,tsx,css}\" \"bench/*.ts\"",
-    "eval:character": "npm run eval:character -w bench --"
+    "format": "prettier --write \"core/src/**/*.ts\" \"core/test/**/*.ts\" \"app/src/**/*.{ts,tsx,css}\" \"bench/*.ts\" \"extensions/**/*.ts\"",
+    "eval:character": "npm run eval:character -w bench --",
+    "extensions": "node scripts/extensions.mjs"
   },
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

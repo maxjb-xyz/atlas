@@ -82,7 +82,31 @@ export type StateName =
   /** Webhook sources the owner added (§10.4): their names; their keys are secrets. */
   | "sense_hooks"
   /** When the errands from before tasks were moved over (once). */
-  | "tasks_from_errands";
+  | "tasks_from_errands"
+  /** Extensions' sign-ins in flight (§17): each one's state, for which extension, and when it started. */
+  | "ext_signins"
+  /** When the M4 providers were moved out of the core into bundled extensions (once, §17). */
+  | "extensions_moved"
+  /** Atlas's own address (§16.2): its domain, the relay and rule in the domain's account, and who sends. */
+  | "atlas_mail"
+  /** Who the owner is on each chat channel (§16.1): their account there, linked once with a code from the app. */
+  | "channel_links"
+  /** The code the app shows for linking a chat channel, and until when it's good. */
+  | "channel_code"
+  /** Chat messages already taken, so one sent again isn't taken twice. */
+  | "channel_seen"
+  /** When a stranger was last told whose assistant this is, so it's said once a day. */
+  | "channel_told"
+  /** Messages each stranger sent today on a chat, so a face's answers have a daily limit. */
+  | "channel_counts"
+  /** The faces (§7.2): each one's settings. */
+  | "faces"
+  /** Members (§7.1): who shares this Atlas, their roles and invites. */
+  | "members"
+  /** In a member's own agent: who they are, and whose Atlas they share. */
+  | "member_of"
+  /** Message-IDs of the owner's mail to Atlas's address already taken, so a mail relayed twice is said once. */
+  | "mail_seen";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

@@ -239,3 +239,79 @@ async function* once(p: Promise<ArrayBuffer | null>): AsyncIterable<ArrayBuffer>
   const audio = await p;
   if (audio) yield audio;
 }
+
+// --- notes: voice and photos on chat channels (§16.1) ---------------------------------------------
+
+/** Workers AI's Whisper, for voice notes: a whole recording, not a live call. */
+export const NOTE_STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
+/** A Workers AI model that reads images, for photos sent on a channel. */
+export const SEE_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
+
+/** What a voice note, a photo and a spoken answer go through: real providers, or a test's fakes. */
+export interface Notes {
+  /** The words in a voice note. */
+  hear(audio: Uint8Array, type: string): Promise<string>;
+  /** What a photo shows, in words, for Atlas to read like any message. */
+  see(image: Uint8Array, type: string, caption?: string): Promise<string>;
+  /** Atlas's answer as a voice note, in its own voice. */
+  speak(text: string): Promise<{ bytes: Uint8Array; type: string } | null>;
+}
+
+const b64 = (bytes: Uint8Array) => {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+
+export function makeNotes(ai: Ai | AiLike, settings: Settings, elevenKey: string | null, f: typeof fetch = (i, x) => fetch(i, x)): Notes {
+  const run = (model: string, inputs: Record<string, unknown>, options?: Record<string, unknown>) =>
+    (ai as AiLike).run(model, inputs, options).catch((err: unknown) => {
+      throw new Error(`Workers AI's ${model} didn't answer: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  return {
+    async hear(audio) {
+      const out = (await run(NOTE_STT_MODEL, { audio: b64(audio) })) as { text?: string };
+      return (out?.text ?? "").trim();
+    },
+    async see(image, type, caption) {
+      const out = (await run(SEE_MODEL, {
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `Describe this photo for an assistant who can't see it: what's in it, any text in it word for word, and anything that looks like what it was sent for${caption ? ` (the caption says: "${caption}")` : ""}. Plain sentences.`,
+              },
+              { type: "image_url", image_url: { url: `data:${type};base64,${b64(image)}` } },
+            ],
+          },
+        ],
+        max_tokens: 600,
+      })) as { response?: string };
+      return (out?.response ?? "").trim();
+    },
+    async speak(text) {
+      if (settings.voice.speech_out === "elevenlabs" && elevenKey) {
+        const res = await f(
+          `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(settings.voice.elevenlabs_voice_id)}?output_format=mp3_44100_64`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json", "xi-api-key": elevenKey },
+            body: JSON.stringify({ text, model_id: settings.voice.elevenlabs_model }),
+          },
+        );
+        if (!res.ok)
+          throw new Error(`ElevenLabs didn't speak it (HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 160)})`);
+        return { bytes: new Uint8Array(await res.arrayBuffer()), type: "audio/mpeg" };
+      }
+      const res = (await run(
+        FALLBACK_TTS_MODEL,
+        { text, speaker: "asteria", encoding: "opus", container: "ogg" },
+        { returnRawResponse: true },
+      )) as Response;
+      if (!res.ok) throw new Error(`Workers AI's ${FALLBACK_TTS_MODEL} didn't speak it (HTTP ${res.status}).`);
+      return { bytes: new Uint8Array(await res.arrayBuffer()), type: "audio/ogg" };
+    },
+  };
+}

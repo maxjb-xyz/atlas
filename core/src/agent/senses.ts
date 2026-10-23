@@ -17,13 +17,16 @@
 // owner: the character and the situation do (rule 1).
 
 import { type Decider } from "../brains/decide";
+import { type Extractor, factsLine, MESSAGE_FIELDS, sure } from "../brains/extract";
 import { personText, type Calendar } from "../calendar/types";
 import { fitsOf, fitsText, openTasks, personIn } from "../tasks";
 import { type AgendaItem, createItem, finish, rearm, upcoming } from "../store/agenda";
 import { parse, type Sql } from "../store/db";
 import { append, type LogRow } from "../store/log";
 import { calendarLook, describe, laterPile, mark, markSeen, take as collect, unfinished, type IntakeItem, type SenseItem } from "../intake";
-import { findRecords } from "../store/records";
+import { answered, dueItem, detailOf } from "../loops";
+import { findRecords, getRecord } from "../store/records";
+import { trustOf } from "../contacts";
 import { readSettings, type Settings, writeSettings } from "../store/settings";
 import { getState, setState } from "../store/state";
 import {
@@ -103,6 +106,8 @@ export interface SenseDeps {
   calendar(): Calendar | null;
   clock: ToolContext["clock"];
   decider(): Decider | null;
+  /** The `extract` role, for words from other people (§10.4 step 2); null where there isn't one. */
+  extractor(): Extractor | null;
   /** A run of Atlas's own, with the note, the nudge tool and looks. Resolves when the run ends. */
   wake(o: { trigger: string; note: string; from: NudgeFrom; ref?: string }): Promise<{ run_id: string; nudged: boolean; error?: string }>;
   rows(rows: LogRow[]): void;
@@ -225,6 +230,9 @@ export class SenseDesk {
   take(items: Array<Omit<SenseItem, "what"> & { what?: string }>, o: { raw?: string; refresh?: boolean } = {}): LogRow[] {
     if (!items.length) return [];
     const { rows, fresh } = collect(this.d.sql, items, o.raw ? { raw: o.raw } : {});
+    // An item from someone a loop waits on, or in its thread, closes it as it comes in (§10.4).
+    const closed = fresh.flatMap((r) => answered(this.d.sql, r.body as SenseItem, r.id, describe(r)));
+    for (const loop of closed) void this.d.clock.unschedule(loop).catch(() => {});
     this.d.rows(rows);
     this.d.background(async () => {
       // A move changes the situation, so it's brought up to date before the move is weighed.
@@ -277,7 +285,9 @@ export class SenseDesk {
   async #consider(row: LogRow): Promise<void> {
     const t0 = Date.now();
     const settings = readSettings(this.d.sql);
-    const event = describe(row);
+    // 2. Read (§10.4): words from other people go to the quarantined reader, which gives back facts, never instructions.
+    const facts = await this.#read(row);
+    const event = [describe(row), this.#who(row), signalsLine(row.body.signals), factsLine(facts)].filter(Boolean).join("\n");
     const settle = (outcome: "later" | "never", step: "rules" | "decide", why: string, scores?: Record<string, number>) => {
       mark(this.d.sql, row.id, { state: outcome === "never" ? "done" : "weighed", outcome, why, scores: scores ?? null });
       this.#log({
@@ -296,8 +306,10 @@ export class SenseDesk {
     // An event coming up (§10.3): with a trip, it's nearly time to leave, which is always a look while that switch is on.
     const soon = b.source === "calendar" && b.event === "soon";
     const leaving = soon && typeof b.leave_by === "number" && isOn(settings, "leave");
+    // An open loop's time came with nothing heard (§10.4): the owner asked to be told, or Atlas promised itself a look.
+    const loop = b.source === "loop";
     const noticing = isOn(settings, "noticing");
-    if (!noticing && !leaving) {
+    if (!noticing && !leaving && !loop) {
       settle("never", "rules", "Speaking up about what Atlas notices is off.");
       return;
     }
@@ -361,6 +373,10 @@ export class SenseDesk {
       now = true;
       why = why ? `${why}; it's nearly time to leave.` : "It's nearly time to leave.";
     }
+    if (loop) {
+      now = true;
+      why = "An open loop's time came, and nothing was heard.";
+    }
     const top = scores
       ? Object.fromEntries(
           Object.entries(scores).map(([k, v]) => [
@@ -387,7 +403,7 @@ export class SenseDesk {
         return;
       }
     }
-    if (!now && soon) {
+    if (!now && soon && !loop) {
       settle(
         "never",
         scores ? "decide" : "rules",
@@ -408,6 +424,9 @@ export class SenseDesk {
     const note = [
       `[Atlas's senses, not the owner] ${event}.`,
       matched.length ? `It may matter to: ${matched.map((m) => m.text).join("; ")}.` : "",
+      loop
+        ? "Nothing came by the time this loop set. If the owner asked to be told, tell them in a sentence, with what they might do (a nudge to the person, a call). If you opened it after asking someone something, decide whether a follow-up would help, and offer it; don't send anything to anyone without the owner."
+        : "",
       leaving
         ? "It's nearly time to leave for it. If they're already there or on their way (see the situation), or it clearly doesn't need them to go, don't nudge about leaving. Otherwise say when to leave and how long it takes, and anything else that would help on the way (traffic, the weather, something to bring or pick up)."
         : "",
@@ -422,6 +441,7 @@ export class SenseDesk {
       trigger: `sense:${row.id}`,
       note,
       from: leaving ? "leave" : "noticing",
+      ...(loop && typeof b.ref === "string" ? { ref: b.ref } : {}),
       ...(ref ? { ref: ref.id } : {}),
     });
     mark(this.d.sql, row.id, { state: out.error ? "failed" : "done", run_id: out.run_id, ...(out.error ? { why: out.error } : {}) });
@@ -439,6 +459,48 @@ export class SenseDesk {
       },
       out.run_id,
     );
+  }
+
+  /** Who an item is from, as Atlas knows them (§7.1): their name and how much the owner trusts them, or that they're new. */
+  #who(row: LogRow): string {
+    const id = row.body.person;
+    if (typeof id !== "string") return "";
+    const r = getRecord(this.d.sql, id);
+    if (!r) return "";
+    const t = trustOf(r);
+    return t === "unknown"
+      ? `From ${r.name}, someone the owner hasn't said how they know${r.source.via?.startsWith("mail") && Date.now() - r.learned_at < 3_600_000 ? " (first seen just now)" : ""}.`
+      : `From ${r.name}, ${t === "family" ? "family" : `a ${t}`} of the owner's.`;
+  }
+
+  /**
+   * What someone else's words in an item say, as facts: the item's raw
+   * content (a mail's body, a post) read by the `extract` role. Kept on the
+   * item's row, so History and the Senses screen show what was read. Read
+   * once: an item weighed again after a restart keeps what it had.
+   */
+  async #read(row: LogRow): Promise<Record<string, string | number | string[]>> {
+    const kept = row.body.facts;
+    if (kept && typeof kept === "object" && !Array.isArray(kept)) return kept as Record<string, string | number | string[]>;
+    const extractor = this.d.extractor();
+    if (!extractor) return {};
+    const raw = this.d.sql.exec<{ raw: string | null }>(`SELECT raw FROM intake WHERE id = ?`, row.id).toArray()[0]?.raw;
+    if (!raw || raw.length < 20) return {};
+    try {
+      const today = new Date().toLocaleDateString("en-CA", { timeZone: zoneOf(readSettings(this.d.sql)) });
+      const facts = sure(await extractor.extract(raw.slice(0, 8_000), MESSAGE_FIELDS, AbortSignal.timeout(15_000), today));
+      if (Object.keys(facts).length) {
+        this.d.sql.exec(`UPDATE log SET body = json_set(body, '$.facts', json(?)) WHERE id = ?`, JSON.stringify(facts), row.id);
+        row.body.facts = facts as never;
+      }
+      return facts;
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      console.error(JSON.stringify({ at: "intake.extract", item: row.id, error }));
+      // Kept on the item, so History and the Senses screen say why nothing was read.
+      this.d.sql.exec(`UPDATE log SET body = json_set(body, '$.read_error', ?) WHERE id = ?`, error.slice(0, 300), row.id);
+      return {};
+    }
   }
 
   /**
@@ -651,6 +713,13 @@ export class SenseDesk {
       },
     ]);
     finish(this.d.sql, item.id, "done", null);
+  }
+
+  /** An open loop came due (the item is leased): if it's still open, it goes to the intake as an item, and the loop is done. */
+  async loopDue(item: AgendaItem): Promise<void> {
+    const tz = zoneOf(readSettings(this.d.sql));
+    this.take([dueItem(item, tz)]);
+    finish(this.d.sql, item.id, "done", null, { why: `Nothing was heard by then: ${detailOf(item).about}.` });
   }
 
   /**
@@ -950,3 +1019,9 @@ export const speakingUp = defineTool({
     };
   },
 });
+
+/** The source's own signals ("newsletter", "reply"), as a line for decide and Atlas. */
+function signalsLine(signals: unknown): string {
+  const list = Array.isArray(signals) ? signals.filter((x): x is string => typeof x === "string").slice(0, 8) : [];
+  return list.length ? `The source marks it: ${list.join(", ").replace(/_/g, " ")}.` : "";
+}

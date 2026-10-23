@@ -79,3 +79,25 @@ export function deviceName(): string {
   if (/Windows/.test(ua)) return "Windows PC";
   return "This device";
 }
+
+/** Joins as a member with an invite link's token (§7.1): a passkey of their own, which signs them in. */
+export async function joinWithPasskey(token: string, name: string): Promise<string | null> {
+  const opts = await post("/api/join/options", { token });
+  if (!opts.ok) return errorOf(opts);
+  const { options } = (await opts.json()) as { options: Parameters<typeof startRegistration>[0]["optionsJSON"] };
+  let response;
+  try {
+    response = await startRegistration({ optionsJSON: options });
+  } catch (err) {
+    return deviceError(err);
+  }
+  const done = await post("/api/join/verify", { token, response, name });
+  return done.ok ? null : errorOf(done);
+}
+
+/** Who an invite link is for, so the join page can say it. */
+export async function inviteName(token: string): Promise<{ name: string } | { error: string }> {
+  const r = await post("/api/join/options", { token });
+  if (!r.ok) return { error: await errorOf(r) };
+  return { name: ((await r.json()) as { name: string }).name };
+}

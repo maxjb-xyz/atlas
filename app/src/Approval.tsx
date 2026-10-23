@@ -19,12 +19,14 @@ const left = (ms: number) => {
 export function ApprovalCard({ atlas, a }: { atlas: Atlas; a: ApprovalView }) {
   const now = useNow(30_000);
   const [messages, setMessages] = useState(a.steps.map((s) => s.message ?? ""));
+  // A mail's subject and who it's to, editable beside its words.
+  const [mails, setMails] = useState(a.steps.map((s) => ({ to: s.mail?.to ?? "", subject: s.mail?.subject ?? "" })));
   const [busy, setBusy] = useState(false);
   useEffect(() => setBusy(false), [a.id]);
   const edits = a.steps
-    .map((s, index) => ({ index, message: messages[index] ?? "", was: s.message }))
-    .filter((e) => e.was != null && e.message !== e.was)
-    .map(({ index, message }) => ({ index, message }));
+    .map((s, index) => ({ index, message: messages[index] ?? "", was: s.message, mail: s.mail, now: mails[index] }))
+    .filter((e) => e.was != null && (e.message !== e.was || (e.mail && (e.now?.to !== e.mail.to || e.now?.subject !== e.mail.subject))))
+    .map(({ index, message, mail, now }) => ({ index, message, ...(mail && now ? { to: now.to, subject: now.subject } : {}) }));
   const decide = (yes: boolean, hold = false) => {
     setBusy(true);
     atlas.send({ type: "atlas.approval.decide", id: a.id, yes, ...(hold ? { hold: true } : {}), ...(edits.length ? { edits } : {}) });
@@ -50,26 +52,54 @@ export function ApprovalCard({ atlas, a }: { atlas: Atlas; a: ApprovalView }) {
                       ? "Uses the vault"
                       : s.kind === "site"
                         ? "Opens a website to the workspace"
-                        : s.kind === "mcp"
-                          ? "Uses a connected service"
-                          : s.kind === "mcp_add"
-                            ? "Connects a service"
-                            : s.kind === "node"
-                              ? "Runs on your device"
-                              : "Reaches outside"}
+                        : s.kind === "email"
+                          ? "Sends a mail"
+                          : s.kind === "mcp"
+                            ? "Uses a connected service"
+                            : s.kind === "mcp_add"
+                              ? "Connects a service"
+                              : s.kind === "node"
+                                ? "Runs on your device"
+                                : "Reaches outside"}
               </span>
             </div>
             <p className="small">{s.detail}</p>
             <p className="lab faint">{s.where}</p>
+            {s.mail && (
+              <>
+                <p className="small">
+                  <span className="lab">From</span> {s.mail.from}
+                </p>
+                <label className="field">
+                  <span>To{mails[i]?.to !== s.mail.to ? " · edited" : ""}</span>
+                  <input
+                    value={mails[i]?.to ?? ""}
+                    onChange={(e) => setMails(mails.map((m, j) => (j === i ? { ...m, to: e.target.value } : m)))}
+                  />
+                </label>
+                {s.mail.cc && (
+                  <p className="small">
+                    <span className="lab">Cc</span> {s.mail.cc}
+                  </p>
+                )}
+                <label className="field">
+                  <span>Subject{mails[i]?.subject !== s.mail.subject ? " · edited" : ""}</span>
+                  <input
+                    value={mails[i]?.subject ?? ""}
+                    onChange={(e) => setMails(mails.map((m, j) => (j === i ? { ...m, subject: e.target.value } : m)))}
+                  />
+                </label>
+              </>
+            )}
             {s.message != null && (
               <label className="field">
                 <span>
-                  {s.kind === "mcp" ? "What it sends" : "Message it sends"}
+                  {s.kind === "mcp" ? "What it sends" : s.kind === "email" ? "The mail" : "Message it sends"}
                   {messages[i] !== s.message ? " · edited" : ""}
                 </span>
                 <textarea
-                  rows={s.kind === "mcp" ? Math.min(10, s.message.split("\n").length + 1) : 2}
-                  maxLength={s.kind === "mcp" ? 4000 : 1000}
+                  rows={s.kind === "mcp" || s.kind === "email" ? Math.min(12, s.message.split("\n").length + 1) : 2}
+                  maxLength={s.kind === "mcp" ? 4000 : s.kind === "email" ? 20000 : 1000}
                   className={s.kind === "mcp" ? "mono" : undefined}
                   value={messages[i]}
                   placeholder="Nothing: it sends its name"
