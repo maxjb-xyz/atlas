@@ -458,8 +458,8 @@ export function inbox(sql: Sql): InboxItem[] {
     .map(([key, t]): InboxItem => ({
       id: key,
       kind: "question",
-      title: `Call ${t.name} without asking?`,
-      text: `You've OK'd ${t.name} ${TRUST_AFTER} times in a row as it was. Atlas can call it from now on without asking, and you can take that back in Settings → Permissions.`,
+      title: key.startsWith("email:") || key.startsWith("face:") ? `${t.name}: send without asking?` : `Call ${t.name} without asking?`,
+      text: `You've OK'd ${t.name} ${TRUST_AFTER} times in a row as it was. Atlas can ${key.startsWith("email:") || key.startsWith("face:") ? "send these" : "call it"} from now on without asking, and you can take that back in Settings → Permissions.`,
       at: Date.now(),
       areas: [],
       run_id: null,
