@@ -655,7 +655,9 @@ export class SenseDesk {
         if ((p.about ?? 1) < 0.4 && (p.stop ?? 0) < 0.6 && (p.thanks ?? 0) < 0.6) return null;
         reaction = (p.stop ?? 0) >= 0.6 ? "stop" : (p.thanks ?? 0) >= 0.6 ? "thanks" : "replied";
       } catch (err) {
+        // Without decide's word, a reply can't be told from one about something else, so it isn't counted.
         console.error(JSON.stringify({ at: "awareness.reaction", error: err instanceof Error ? err.message : String(err) }));
+        return null;
       }
     }
     this.#react(n, reaction);
@@ -800,6 +802,7 @@ export function speakingLine(s: Settings): string {
     `Speaking up on your own (Settings → Notifications → Speaking up; change it with speaking_up): ${on.length ? `on for ${on.join(", ")}` : "off for everything"}${on.length && off.length ? `; off for ${off.join(", ")}` : ""}.`,
     s.speaking.tell_about.length ? ` The owner asked you to always bring up: ${s.speaking.tell_about.join("; ")}.` : "",
     s.speaking.quiet_about.length ? ` The owner asked you not to bring up: ${s.speaking.quiet_about.join("; ")}.` : "",
+    " When the owner asks why you didn't tell them something, or what you noticed, look it up with noticed before you answer; never guess what you saw or decided.",
   ].join("");
 }
 

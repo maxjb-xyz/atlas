@@ -618,6 +618,20 @@ describe("weather and routes, read", () => {
     expect(matters.join(" ")).toMatch(/rain likely .* \(70%\)/);
   });
 
+  it("doesn't call rain likely when the chance is low, whatever the millimetres", () => {
+    const now = Date.now();
+    const w = (pop: number, precip_mm: number) =>
+      ({
+        at: now,
+        area: { lat: 28.6, lon: -81.2 },
+        now: { temp_c: 25, feels_c: 25, code: 2, wind_kmh: 5 },
+        hours: [{ t: now, temp_c: 25, pop, precip_mm, code: 61, wind_kmh: 5 }],
+        days: [{ max_c: 27, min_c: 20, uv: 5 }],
+      }) as never;
+    expect(whatMatters(w(1, 3), "America/New_York", "us", now)).toEqual([]);
+    expect(whatMatters(w(40, 3), "America/New_York", "us", now).join(" ")).toMatch(/rain likely .* \(40%\)/);
+  });
+
   it("encodes polylines the way Google's spec does, and samples a line", () => {
     expect(
       polyline(

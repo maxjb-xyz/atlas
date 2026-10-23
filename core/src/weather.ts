@@ -157,7 +157,8 @@ export function whatMatters(w: Weather, tz: string, u: Units, now = Date.now()):
   const out: string[] = [];
   const today = zonedParts(new Date(now), tz);
   const rest = w.hours.filter((h) => h.t >= now - 1_800_000 && zonedParts(new Date(h.t), tz).day === today.day);
-  const wet = rest.filter((h) => h.pop >= 50 || h.precip_mm >= 0.5);
+  // A model that puts a few millimetres in an hour it gives a 1% chance isn't "rain likely": both have to agree somewhat.
+  const wet = rest.filter((h) => h.pop >= 50 || (h.pop >= 30 && h.precip_mm >= 0.5));
   if (wet.length) {
     const storms = wet.some((h) => h.code >= 95);
     const from = clockLocal(new Date(wet[0]!.t), tz);

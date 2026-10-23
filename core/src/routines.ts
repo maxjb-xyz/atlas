@@ -104,7 +104,8 @@ function upgrade(sql: Sql, kept: { made_at: number; ids: string[] }): void {
     const original = a.do.length === 1 && a.do[0]!.kind === "atlas" && a.report === "thread";
     if (!original) continue;
     const look = looks[a.name as keyof typeof looks];
-    const at = look.at && /^\d\d:\d\d$/.test(look.at) ? look.at : a.when.kind === "schedule" ? a.when.at : "08:00";
+    // A look that was off never had its time chosen, so the routine keeps its own.
+    const at = look.on && look.at && /^\d\d:\d\d$/.test(look.at) ? look.at : a.when.kind === "schedule" ? a.when.at : "08:00";
     saveAutomation(sql, { ...fresh, when: { kind: "schedule", at, days: [] } }, "default", a.id);
     if (look.on && a.state !== "on") setAutomationState(sql, a.id, true, "atlas");
   }

@@ -193,6 +193,25 @@ describe("when automations run", () => {
         ),
       ).toThrow('"Goodnight." already runs Night.');
     }));
+
+  it("keep their state and test when only the schedule moves, and pause for any other change Atlas makes", () =>
+    runInDurableObject(env.PersonAgent.get(env.PersonAgent.idFromName(`a-${crypto.randomUUID()}`)), (_a, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      const brief: AutomationInput = {
+        name: "Brief",
+        about: "",
+        when: { kind: "schedule", at: "08:00", days: [] },
+        do: [{ kind: "atlas", instructions: "Look at the day." }],
+        report: "worth",
+      };
+      const a = saveAutomation(sql, brief, "owner");
+      expect(a.state).toBe("on");
+      const moved = saveAutomation(sql, { ...brief, when: { kind: "schedule", at: "07:30", days: [1, 2, 3, 4, 5] } }, "atlas", a.id);
+      expect(moved).toMatchObject({ state: "on", report: "worth", when: { at: "07:30" } });
+      const changed = saveAutomation(sql, { ...brief, do: [{ kind: "atlas", instructions: "Look at the week." }] }, "atlas", a.id);
+      expect(changed.state).toBe("paused");
+    }));
 });
 
 describe("automations", () => {
@@ -308,6 +327,16 @@ describe("automations", () => {
     );
     expect(again.state).toBe("scheduled");
     expect(again.due_at).toBeGreaterThan(Date.now());
+
+    // Moving it from the thread changes only the time: it stays on, with its steps, report and webhook.
+    brain([call("automation_save", { id: v.id, when: { kind: "schedule", at: "07:30", days: [1, 2, 3, 4, 5] } }), say("Moved to 7:30.")]);
+    const moved = await turn(s, "make the brief 7:30 instead");
+    expect(moved.thread.find((r) => r.kind === "tool.result")!.body.receipt).toMatchObject({
+      text: "Changed automation · Weekday brief · on",
+    });
+    v = await view(s, "Weekday brief", (a) => a.when_text === "At 07:30, weekdays");
+    expect(v).toMatchObject({ state: "on", report: "thread" });
+    expect(v.steps).toHaveLength(2);
     s.close();
   });
 

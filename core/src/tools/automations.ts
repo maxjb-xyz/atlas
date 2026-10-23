@@ -28,11 +28,27 @@ export const automationSave = defineTool({
     "Use it when the owner asks for something to happen on its own or on request: 'every weekday at 8, give me a short brief', 'when I say goodnight, turn off the lights', 'tell me if I haven't logged a workout in 3 days', 'watch this page for a price drop'.",
     "`when`: request (a phrase, with $inputs, or just the Run button), schedule (a local time and days, 0 for Sunday to 6 for Saturday; empty for every day), watch (a page, how often, and what change matters), absence (words that would show something happened, how many days without them, and when to check), or event (after another automation's id, or when the calendar changes, optionally only for events about some words).",
     "`do` is a list of steps: say (fixed words, sent as written), webhook (one of the owner's webhooks by name), or atlas (your own note for that moment, for anything that needs looking up or judgment). Use fixed steps when nothing needs judgment: they run fast, with no model.",
-    "What you make starts paused, and a change you make pauses it, until the owner has seen a test run: offer to run one with automation_test.",
+    "What you make starts paused, and a change you make pauses it, until the owner has seen a test run: offer to run one with automation_test. Moving a schedule to another time or other days keeps it as it was.",
+    "When changing one, pass its id and only what the owner asked to change: what you leave out stays as it is.",
   ].join(" "),
-  input: AutomationInput.extend({ id: z.string().max(64).optional().describe("The automation to change.") }),
-  async run(input, ctx) {
+  input: z.object({
+    ...AutomationInput.partial().shape,
+    report: AutomationInput.shape.report.removeDefault().optional(),
+    id: z.string().max(64).optional().describe("The automation to change. Leave out what stays as it is."),
+  }),
+  async run(given, ctx) {
     if (!ctx.automations) return fail("Automations can't be changed from here.");
+    const old = given.id ? getAutomation(ctx.sql, given.id) : null;
+    if (given.id && !old) return fail(`There's no automation with id ${given.id}.`);
+    const merged = AutomationInput.safeParse({
+      ...(old ? { name: old.name, about: old.about, when: old.when, do: old.do, report: old.report } : {}),
+      ...Object.fromEntries(Object.entries(given).filter(([k, v]) => k !== "id" && v !== undefined)),
+    });
+    if (!merged.success)
+      return fail(
+        `A new automation needs a name, a when and what it does: ${merged.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}.`,
+      );
+    const input = { ...merged.data, id: given.id };
     for (const s of input.do) {
       if (s.kind === "webhook" && !findWebhook(ctx.sql, s.webhook)) {
         const have = webhooks(ctx.sql).map((w) => w.name);
@@ -60,10 +76,10 @@ export const automationSave = defineTool({
         name: saved.name,
         when: whenText(saved.when, names(ctx.sql)),
         do: saved.do.map(stepText),
-        state: "paused until the owner has seen a test run",
+        state: saved.state === "on" ? "on" : "paused until the owner has seen a test run",
       },
       receipt: {
-        text: `${id ? "Changed" : "Made"} automation · ${saved.name} · paused until you've seen a test run`,
+        text: `${id ? "Changed" : "Made"} automation · ${saved.name} · ${saved.state === "on" ? "on" : "paused until you've seen a test run"}`,
         view: { kind: "automation", automation: saved.id },
       },
     };

@@ -464,7 +464,7 @@ function Landed({ l }: { l: SensesPage["landed"] }) {
         <span className="lab">How your nudges landed, the last {l.days} days</span>
         {l.nudges ? (
           <p style={{ fontSize: 15, marginTop: 4 }}>
-            <b>{judged ? `${Math.round((welcome / judged) * 100)}% welcome` : "Too soon to tell"}</b>
+            <b>{judged ? `${Math.round((welcome / judged) * 100)}% welcome, of ${judged} reacted to` : "Too soon to tell"}</b>
             <span className="muted small">
               {" "}
               · {l.nudges} sent: {parts.join(" · ")}

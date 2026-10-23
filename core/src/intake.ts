@@ -312,7 +312,8 @@ export function sensesView(sql: Sql): import("./protocol").SensesView {
   const states = sourceStates(sql);
   const last = lastBySource(sql);
   // A webhook source that was removed isn't a source any more.
-  const hooks = new Set(senseHooks(sql).map((h) => `webhook:${h.name}`));
+  const made = new Map(senseHooks(sql).map((h) => [`webhook:${h.name}`, h.made_at]));
+  const hooks = new Set(made.keys());
   // Sources that are set up show before they've sent anything: the phone, the calendar, devices, the trip and weather, each webhook.
   const ready = [
     ownTracksLogin(sql) ? "location" : "",
@@ -334,7 +335,8 @@ export function sensesView(sql: Sql): import("./protocol").SensesView {
     })),
     sources: names.map((source) => ({
       source,
-      last: last[source] ?? null,
+      // A webhook added again under an old name starts fresh: what the old one sent isn't its last.
+      last: last[source] && last[source].at >= (made.get(source) ?? 0) ? { ...last[source], what: yours(last[source].what) } : null,
       ok_at: states[source]?.ok_at ?? null,
       error: states[source]?.error ?? null,
       error_at: states[source]?.error_at ?? null,

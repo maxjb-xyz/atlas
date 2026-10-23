@@ -194,12 +194,19 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: Maker, id?:
   const now = Date.now();
   const atlas = by === "atlas";
   // The default routines start off: setup offers them, and the owner turns on the ones they want (§13.4, §22).
-  const state = atlas ? "paused" : (old?.state ?? (by === "default" ? "paused" : "on"));
+  // Moving a schedule (its time or days) doesn't change what it does, so it keeps its state, test and grants.
+  const moved =
+    !!old &&
+    old.when.kind === "schedule" &&
+    input.when.kind === "schedule" &&
+    JSON.stringify(old.do) === JSON.stringify(input.do) &&
+    old.report === input.report;
+  const state = moved ? old.state : atlas ? "paused" : (old?.state ?? (by === "default" ? "paused" : "on"));
   // What it may call without asking was granted for the steps the owner saw; a change takes it back until they turn it on again.
-  const allowed = !atlas && state === "on" ? webhookNames(input) : [];
+  const allowed = moved ? old.allowed : !atlas && state === "on" ? webhookNames(input) : [];
   if (old) {
     sql.exec(
-      `UPDATE automations SET name = ?, about = ?, trigger = ?, steps = ?, report = ?, state = ?, allowed = ?, changed_by = ?, updated_at = ?, tested_at = NULL, fails = 0, paused_why = NULL, memo = ? WHERE id = ?`,
+      `UPDATE automations SET name = ?, about = ?, trigger = ?, steps = ?, report = ?, state = ?, allowed = ?, changed_by = ?, updated_at = ?, tested_at = ?, fails = 0, paused_why = ?, memo = ? WHERE id = ?`,
       input.name,
       input.about,
       JSON.stringify(input.when),
@@ -209,6 +216,8 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: Maker, id?:
       JSON.stringify(allowed),
       atlas ? "atlas" : "owner",
       now,
+      moved ? old.tested_at : null,
+      moved ? old.paused_why : null,
       // A new trigger starts looking afresh.
       JSON.stringify(JSON.stringify(old.when) === JSON.stringify(input.when) ? old.memo : {}),
       old.id,
