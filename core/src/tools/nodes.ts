@@ -15,8 +15,9 @@ export const deviceCall = defineTool({
   timeoutMs: 120_000,
   description: [
     "Use a tool on one of the owner's paired devices (their Mac, their phone app), from the paired devices in your context.",
-    "Tools marked off are turned off by the owner: say so, and that Settings → Devices turns them on. Tools that act on the device ask the owner first, on a card.",
-    "When the device is offline, the call waits and runs when it's back; tell the owner that, in words like \"Your Mac's asleep. I'll do it when it wakes.\"",
+    "Tools marked off are turned off by the owner: say so, and that Settings → Devices turns them on. Tools that act on the device ask the owner first, on a card in Atlas (Inbox, and a notification), not on the device itself.",
+    "When the device is offline, the call waits and runs when it's back; tell the owner it isn't connected and that you'll do it when it is, without guessing why (asleep, closed, off the network).",
+    "Give `input` exactly as the tool's schema in your context says: its field names, nothing else.",
   ].join(" "),
   input: z.object({
     device: z.string().min(1).max(80).describe("The device's name, as in your context."),
@@ -43,6 +44,9 @@ export const deviceCall = defineTool({
     }
     if (!allowed(n, cap)) return fail(`${cap.name} is off on ${n.name}. The owner turns it on in Settings → Devices.`);
     const args = input.input as Record<string, Json>;
+    // Checked here, so a wrong input doesn't wait for the device to be back only to fail.
+    const wrong = checkInput(cap.input, args);
+    if (wrong) return fail(`${wrong} ${cap.name}'s input is ${JSON.stringify(cap.input).slice(0, 600)}.`);
     const what = Object.entries(args)
       .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
       .join("; ");
@@ -73,3 +77,26 @@ export const deviceCall = defineTool({
     };
   },
 });
+
+/** What's wrong with an input for a capability's JSON schema, as far as a quick look can tell: missing, unknown or mistyped fields. */
+export function checkInput(schema: Record<string, unknown>, args: Record<string, unknown>): string | null {
+  const props = (schema.properties && typeof schema.properties === "object" ? schema.properties : {}) as Record<string, { type?: string }>;
+  const required = Array.isArray(schema.required) ? (schema.required as string[]) : [];
+  const missing = required.filter((k) => args[k] === undefined || args[k] === null || args[k] === "");
+  if (missing.length) return `It needs ${missing.join(", ")}.`;
+  const names = Object.keys(props);
+  const unknown = names.length ? Object.keys(args).filter((k) => !names.includes(k)) : [];
+  if (unknown.length) return `It has no ${unknown.join(", ")}.`;
+  for (const [k, v] of Object.entries(args)) {
+    const t = props[k]?.type;
+    const ok =
+      !t ||
+      (t === "string" && typeof v === "string") ||
+      ((t === "number" || t === "integer") && typeof v === "number") ||
+      (t === "boolean" && typeof v === "boolean") ||
+      (t === "array" && Array.isArray(v)) ||
+      (t === "object" && typeof v === "object" && v !== null && !Array.isArray(v));
+    if (!ok) return `${k} should be a ${t}.`;
+  }
+  return null;
+}

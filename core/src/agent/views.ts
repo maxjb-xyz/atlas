@@ -488,7 +488,7 @@ function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
       title: a.name,
       detail: a.what,
       where: a.device,
-      undo: "It runs on your device, and only you can undo what it did there. After five yeses as it was, Atlas offers to stop asking.",
+      undo: "It runs on your device, and only you can undo what it did there.",
     };
   }
   if (a.kind === "mcp") {
@@ -499,7 +499,7 @@ function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
       where: a.where,
       undo: a.destructive
         ? "Its server says this can't be undone."
-        : "It reaches one of your connected services, and only that service can undo it. After five yeses as it was, Atlas offers to stop asking.",
+        : "It reaches one of your connected services, and only that service can undo it.",
       message: JSON.stringify(a.arguments, null, 2).slice(0, 4_000),
     };
   }

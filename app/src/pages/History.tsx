@@ -169,7 +169,9 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
               ? `${str(b.event)}: the look didn't finish: ${str(b.why)}`
               : b.outcome === "later"
                 ? `${str(b.event)}: it can wait for a later look (${str(b.why)})`
-                : `${str(b.event)}: decided it doesn't matter (${str(b.why)})`;
+                : b.step === "rules"
+                  ? `${str(b.event)}: set aside by a rule (${str(b.why)})`
+                  : `${str(b.event)}: decided it doesn't matter (${str(b.why)})`;
       return {
         who: "Atlas",
         what: `${what}${typeof b.ms === "number" ? ` · ${(b.ms / 1000).toFixed(2)} s` : ""}`,

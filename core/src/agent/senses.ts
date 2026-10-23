@@ -423,7 +423,7 @@ export class SenseDesk {
           kind: "errand",
           title: e.title,
           text: `the errand "${e.title}"${where ? ` (at ${where})` : ""} (id ${e.id})`,
-          question: `The owner has an open errand: "${e.title}"${where ? `, done at ${where}` : ""}. Given this event and where they are and seem to be heading, could now be a good moment to get it done, or to suggest it?`,
+          question: `The owner has an open errand: "${e.title}"${where ? `, done at ${where}` : ""}. Did they just leave somewhere, or are they out and on the move, so a stop for it could fit on their way now? Arriving home, staying put, or a change that isn't about where they are is a no.`,
         });
       }
     }
@@ -437,7 +437,7 @@ export class SenseDesk {
           kind: "agenda",
           title: i.title,
           text: `the ${i.kind} "${i.title}" (due ${shortLocal(new Date(i.due_at), zoneOf(settings))})`,
-          question: `The owner has a ${i.kind} coming up: "${i.title}". Does this event change anything about it, or make now the moment for it?`,
+          question: `The owner has a ${i.kind} due ${shortLocal(new Date(i.due_at), zoneOf(settings))}: "${i.title}". Does this event change something about it: its time, its place, or whether it can still happen? Just being out and about isn't enough.`,
         });
       }
       for (const r of findRecords(this.d.sql, "goal").slice(0, 5)) {

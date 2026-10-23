@@ -9,7 +9,7 @@
 
 import type { Sql } from "./store/db";
 import { append, type LogRow } from "./store/log";
-import { type AtlasRecord, findRecords } from "./store/records";
+import { type AtlasRecord, findRecords, getRecord } from "./store/records";
 import { getSecret, setSecret } from "./store/settings";
 import { getState, setState } from "./store/state";
 
@@ -89,6 +89,32 @@ export function pinOf(r: AtlasRecord): Pin | null {
 /** Every saved place with a pin. */
 export function pins(sql: Sql): Pin[] {
   return [...findRecords(sql, "place"), ...findRecords(sql, "organization")].map(pinOf).filter((p): p is Pin => p != null);
+}
+
+/**
+ * A saved place by id or name, the way people say it: any case, and loosely,
+ * so "UCF Recreation and Wellness Center" and "RWC" both find
+ * "UCF Recreation and Wellness Center (RWC)". An exact name wins, then one
+ * that holds the words, then one whose short name in brackets matches.
+ */
+export function findPlace(sql: Sql, ref: string): AtlasRecord | null {
+  const r = getRecord(sql, ref);
+  if (r && r.state === "active" && (r.type === "place" || r.type === "organization")) return r;
+  const all = [...findRecords(sql, "place"), ...findRecords(sql, "organization")];
+  const norm = (x: string) =>
+    x
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const want = norm(ref);
+  if (!want) return null;
+  return (
+    all.find((p) => norm(p.name) === want) ??
+    all.find((p) => norm(p.name).includes(want) || (want.length > 4 && want.includes(norm(p.name)))) ??
+    all.find((p) => /\(([^)]+)\)/.exec(p.name)?.[1]?.toLowerCase().trim() === want) ??
+    null
+  );
 }
 
 /** The owner's home, when it's a saved place with a pin: a place named Home, or one noted as their home. */

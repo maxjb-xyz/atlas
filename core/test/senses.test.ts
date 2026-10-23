@@ -747,3 +747,25 @@ describe("finding places when OpenStreetMap's servers struggle", () => {
     expect(u.searchParams.get("q")).toBe("RWC");
   }, 15_000);
 });
+
+describe("places, the way people say them", () => {
+  it("finds a saved place by part of its name or its short name, and won't look up 'home' as an address", async () => {
+    await inOwner(async (_a, sql) => {
+      const { findPlace } = await import("../src/location");
+      createRecord(sql, {
+        type: "place",
+        name: "UCF Recreation and Wellness Center (RWC)",
+        fields: { lat: 28.596, lon: -81.199 },
+        source: { via: "chat" },
+      });
+      expect(findPlace(sql, "UCF Recreation and Wellness Center")?.name).toBe("UCF Recreation and Wellness Center (RWC)");
+      expect(findPlace(sql, "rwc")?.name).toBe("UCF Recreation and Wellness Center (RWC)");
+      expect(findPlace(sql, "the moon")).toBeNull();
+      sql.exec(`UPDATE records SET state = 'forgotten' WHERE type = 'place' AND name = 'Home'`);
+    });
+    const b = brain([call("route", { from: "rwc", to: "home" }), say("Where's home?")]);
+    await turn(s, "how long from the RWC to home?");
+    expect(String(b.requests[1]!.messages.at(-1)!.content)).toContain("Home isn't a saved place with a pin yet");
+    expect(world.asked.some((a) => a.includes("nominatim") && /q=home\b/i.test(a))).toBe(false);
+  });
+});

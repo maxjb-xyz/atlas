@@ -117,7 +117,9 @@ function Overview({
         <div className="li" key={r.id}>
           <AreaDot area={s.areas.find((a) => r.areas.includes(a.id))} />
           <span>{r.name}</span>
-          <span className="mono faint small">{shortDay(r.updated_at)}</span>
+          <span className="mono faint small" style={{ marginLeft: 8 }}>
+            {shortDay(r.updated_at)}
+          </span>
         </div>
       ))}
       {!list.length && <p className="faint small">None yet.</p>}
@@ -298,7 +300,9 @@ function RecordRow({ atlas, r, go }: { atlas: Atlas; r: RecordView; go: (d: stri
         areas={s.areas}
         onMove={s.areas.length ? (ids) => atlas.send({ type: "atlas.areas.set", ref: `rec:${r.id}`, areas: ids }) : undefined}
       />
-      <span className="mono faint small">{shortDay(r.updated_at)}</span>
+      <span className="mono faint small" style={{ marginLeft: 8 }}>
+        {shortDay(r.updated_at)}
+      </span>
       {!editing && (
         <span className="row" style={{ gap: 10 }}>
           {r.type === "person" && (

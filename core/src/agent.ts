@@ -123,7 +123,7 @@ import { deleteAutomation, getAutomation, listAutomations, matchPhrase, saveAuto
 import { automationView } from "./agent/views";
 import type { BrowserApi, ExitApi, MapsApi, McpApi, RunResult, Tool, ToolContext, ToolResult, WebApi, WorkspaceApi } from "./tools/types";
 import { geocode, MAPS, nearby, reverse, route } from "./maps";
-import { fetchWeather, roughArea } from "./weather";
+import { fetchWeather, roughArea, temp, unitsFor } from "./weather";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
@@ -2601,7 +2601,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           if (!w.ok) return { ok: false, message: w.error };
           return {
             ok: true,
-            message: `${MAPS[provider].name} works: a test route took ${Math.max(1, Math.round(r.value.s / 60))} min${r.value.traffic ? " with traffic" : ""}. Open-Meteo works: ${Math.round(w.value.now.temp_c)}°C there now.`,
+            message: `${MAPS[provider].name} works: a test route took ${Math.max(1, Math.round(r.value.s / 60))} min${r.value.traffic ? " with traffic" : ""}. Open-Meteo works: ${temp(w.value.now.temp_c, unitsFor(readSettings(this.#sql).units, zoneOf(readSettings(this.#sql))))} there now.`,
           };
         },
         systemFor: (character) => {

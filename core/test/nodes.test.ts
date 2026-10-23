@@ -136,7 +136,7 @@ describe("pairing and the device's socket", () => {
     const b = brain([say("ok")]);
     await turn(s, "is my Mac there?");
     expect(b.requests[0]!.system).toMatch(
-      /Max's MacBook \(desktop, macOS 26 \(arm64\)\): online; idle: away for 12 min\. Tools: notify, run_command \(off; the owner turns it on in Settings → Devices\)/,
+      /Max's MacBook \(desktop, macOS 26 \(arm64\)\): online; idle: away for 12 min\. Tools: notify\(text\?\), run_command\(command\?\) \(off; the owner turns it on in Settings → Devices\)/,
     );
     node.ws.close();
   });
@@ -148,6 +148,11 @@ describe("pairing and the device's socket", () => {
     node.send(HELLO);
     await node.next("node.allowed");
     const s = await connect();
+
+    // A wrong input is turned back before it reaches the device, with the tool's own schema.
+    const wrong = brain([call("device_call", { device: name, tool: "notify", input: { body: "hi" } }), say("Let me fix that.")]);
+    await turn(s, "notify my mac with body hi");
+    expect(String(wrong.requests[1]!.messages.at(-1)!.content)).toContain("It has no body.");
 
     // Notify: just happens.
     brain([call("device_call", { device: name, tool: "notify", input: { text: "hi" } }), say("Sent.")]);

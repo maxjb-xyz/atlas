@@ -347,7 +347,7 @@ export function situationLines(sql: Sql, settings: Settings, now = Date.now()): 
   }
 
   return lines.length
-    ? `The situation, rebuilt from what the phone, calendar and weather last said (don't look up what's here; say how old it is when it matters):\n${lines.map((l) => `- ${l}`).join("\n")}`
+    ? `The situation, rebuilt from what the phone, calendar and weather last said. It's newer than anything said earlier in the conversation: where the owner is now comes from here, not from where they said they were before. Don't look up what's here; say how old it is when it matters, and since when they've been somewhere when you say where:\n${lines.map((l) => `- ${l}`).join("\n")}`
     : "";
 }
 

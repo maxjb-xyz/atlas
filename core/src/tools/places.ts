@@ -4,11 +4,11 @@
 // things, so Atlas does them, shows a receipt, and offers Undo (§12.1).
 
 import { z } from "zod";
-import { here, homePin, metres, type Pin, pinOf, pins } from "../location";
+import { findPlace, here, homePin, metres, type Pin, pinOf, pins } from "../location";
 import { distance as say, unitsFor, sky, temp, type Units } from "../weather";
 import { kindWords, minutes, type Found, type Point, PLACE_KINDS, placeKind, type Travel } from "../maps";
 import { createItem, finish, getItem, upcoming } from "../store/agenda";
-import { correctRecord, createRecord, findRecords, getRecord, type AtlasRecord } from "../store/records";
+import { correctRecord, createRecord, type AtlasRecord } from "../store/records";
 import { get as getRow } from "../store/log";
 import { setState } from "../store/state";
 import { clockLocal, isoLocal, parseWhen, shortLocal } from "../time";
@@ -19,12 +19,8 @@ export const NO_DEADLINE = 8_640_000_000_000_000;
 
 const unitsOf = (ctx: ToolContext): Units => unitsFor(ctx.settings.units, ctx.tz);
 
-/** A saved place by id or name (any case), with or without a pin. */
-function savedPlace(ctx: ToolContext, ref: string): AtlasRecord | null {
-  const r = getRecord(ctx.sql, ref);
-  if (r && r.state === "active" && (r.type === "place" || r.type === "organization")) return r;
-  return findRecords(ctx.sql, "place", ref)[0] ?? findRecords(ctx.sql, "organization", ref)[0] ?? null;
-}
+/** A saved place by id or name, loosely (location.ts), with or without a pin. */
+const savedPlace = (ctx: ToolContext, ref: string): AtlasRecord | null => findPlace(ctx.sql, ref);
 
 type Where = { ok: true; point: Point; name: string; pin?: Pin } | { ok: false; error: string };
 
@@ -57,9 +53,15 @@ function searchNear(ctx: ToolContext): Point | null {
 async function resolve(ctx: ToolContext, ref: string): Promise<Where> {
   const t = ref.trim();
   if (/^(here|me|my location|where i am|current location)$/i.test(t)) return hereNow(ctx);
-  if (/^home$/i.test(t)) {
+  if (/^(my )?(home|house|place|apartment)$/i.test(t)) {
     const h = homePin(ctx.sql);
     if (h) return { ok: true, point: h, name: "Home", pin: h };
+    // "Home" isn't an address: looking it up on the map finds somewhere else called Home.
+    return {
+      ok: false,
+      error:
+        "Home isn't a saved place with a pin yet. Ask where home is (an address), then save it with remember and pin it with place_pin, or say 'this is home' while there.",
+    };
   }
   const saved = savedPlace(ctx, t);
   const pin = saved ? pinOf(saved) : null;
@@ -290,12 +292,12 @@ export const routeTool = defineTool({
     const u = unitsOf(ctx);
     const view = {
       kind: "map" as const,
-      title: `${a.name} to ${b.name}`,
+      title: `${a.name.charAt(0).toUpperCase()}${a.name.slice(1)} to ${b.name}`,
       markers: [
         { name: a.name, lat: a.point.lat, lon: a.point.lon },
         { name: b.name, lat: b.point.lat, lon: b.point.lon },
       ],
-      route: { line: r.value.line, s: Math.round(r.value.s), m: Math.round(r.value.m), by: input.by, traffic: r.value.traffic },
+      route: { line: r.value.line, s: Math.round(r.value.s), m: Math.round(r.value.m), by: input.by, traffic: r.value.traffic, units: u },
     };
     return {
       ok: true,

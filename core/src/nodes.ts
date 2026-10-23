@@ -300,6 +300,13 @@ export function nodeItem(n: Node, event: string, body: unknown): SenseItem {
   };
 }
 
+/** A capability's input fields, as "(text, title?)": optional ones marked, so device_call gets them right. */
+function fields(c: Capability): string {
+  const props = c.input.properties && typeof c.input.properties === "object" ? Object.keys(c.input.properties) : [];
+  const required = Array.isArray(c.input.required) ? (c.input.required as string[]) : [];
+  return props.length ? `(${props.map((p) => (required.includes(p) ? p : `${p}?`)).join(", ")})` : "";
+}
+
 /** The devices line for every prompt: each node, online or not, and what it offers. */
 export function nodesLine(sql: Sql): string {
   const all = nodes(sql);
@@ -307,7 +314,8 @@ export function nodesLine(sql: Sql): string {
   return `Paired devices (use their tools with device_call; one that's offline runs the call when it's back):\n${all
     .map((n) => {
       const tools = n.capabilities.map(
-        (c) => `${c.name}${allowed(n, c) ? (c.acts ? " (asks first)" : "") : " (off; the owner turns it on in Settings → Devices)"}`,
+        (c) =>
+          `${c.name}${fields(c)}${allowed(n, c) ? (c.acts ? " (asks first)" : "") : " (off; the owner turns it on in Settings → Devices)"}`,
       );
       const st = Object.entries(n.state)
         .map(([k, v]) => `${k.replace(/_/g, " ")}: ${typeof v === "string" ? v : JSON.stringify(v)}`)

@@ -10,7 +10,7 @@ import { deviceId, type PushState, pushState, subscribe, unsubscribe } from "./n
 import { addPasskey, deviceName, passkeysSupported } from "./passkey";
 import { Composer } from "./Shell";
 import { useLook } from "./theme";
-import { clock, Icon, QrCode, Sheet, shortDay, Stage } from "./ui";
+import { clock, dayTime, Icon, QrCode, Sheet, shortDay, Stage } from "./ui";
 import { MAPS, type MapsProvider } from "../../core/src/maps";
 import { Markdown } from "./Markdown";
 import { PROVIDERS, type SearchProvider } from "../../core/src/web";
@@ -1836,7 +1836,7 @@ function Senses({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
   const [name, setName] = useState("");
   const made = atlas.state.senseHook;
   const now = Date.now();
-  const ago = (at: number) => (now - at < 60_000 ? "just now" : `${shortDay(at)}, ${clock(at)}`);
+  const ago = (at: number) => (now - at < 60_000 ? "just now" : dayTime(at));
   return (
     <>
       <State
@@ -1936,7 +1936,7 @@ function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
     <>
       <State
         on={on && l.set_up}
-        text={!on ? "Off" : !l.set_up ? "Not set up" : fix ? `Last fix ${shortDay(fix.at)}, ${clock(fix.at)}` : "Waiting for OwnTracks"}
+        text={!on ? "Off" : !l.set_up ? "Not set up" : fix ? `Last fix ${dayTime(fix.at)}` : "Waiting for OwnTracks"}
         what="OwnTracks on your phone tells Atlas where you are."
       />
       {on && fix && (
@@ -1960,9 +1960,10 @@ function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
         {l.pins} saved {l.pins === 1 ? "place has" : "places have"} a pin, sent to OwnTracks as regions so arriving and leaving are noticed.
         Say "this is my gym" somewhere, or "pin the dentist at 12 Main St", to add one.
       </p>
-      {l.refused && (
+      {/* Only while it's the latest news: a good post since means the phone has the right password. */}
+      {l.refused && (!fix || l.refused.at > fix.at) && (
         <p className="err small">
-          A post with the wrong password came {shortDay(l.refused.at)}. If that was your phone, set OwnTracks up again.
+          A post with the wrong password came {dayTime(l.refused.at)}. If that was your phone, set OwnTracks up again.
         </p>
       )}
       {setup ? (
@@ -1977,7 +1978,8 @@ function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
               Open in OwnTracks
             </a>
             <p className="faint small mono" style={{ wordBreak: "break-all" }}>
-              {setup.url} · user {setup.user} · password {setup.password}
+              {setup.url} · user <span style={{ whiteSpace: "nowrap" }}>{setup.user}</span> · password{" "}
+              <span style={{ wordBreak: "break-all" }}>{setup.password}</span>
             </p>
             <p className="muted small">
               This is the only time the password is shown. Setting up again makes a new one, and the old one stops working.

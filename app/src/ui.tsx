@@ -287,6 +287,13 @@ export function AsciiDiamond({ rows = 22, level = 0, breathe = true }: { rows?: 
 
 export const clock = (at: number | Date) => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 export const dayName = (at: number | Date) => new Date(at).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+/** A day and a time, once: "7:54 PM" today, "Yesterday, 7:54 PM", "Tue, 7:54 PM". */
+export const dayTime = (at: number | Date) => {
+  const day = shortDay(at);
+  const time = clock(new Date(at));
+  return day === time ? time : `${day}, ${time}`;
+};
+
 export const shortDay = (at: number | Date) => {
   const d = new Date(at);
   const today = new Date();

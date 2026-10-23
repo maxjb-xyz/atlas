@@ -118,7 +118,7 @@ export function MapView({ view, onClose }: { view: Extract<StageView, { kind: "m
       {r && (
         <p className="muted" style={{ marginBottom: 12 }}>
           {mins(r.s)} {r.by === "drive" ? "by car" : r.by === "walk" ? "on foot" : "by bike"}
-          {r.traffic ? ", with traffic" : ", a typical time (no live traffic)"} · {Math.round(r.m / 100) / 10} km
+          {r.traffic ? ", with traffic" : ", a typical time (no live traffic)"} · {distance(r.m, r.units ?? "metric")}
         </p>
       )}
       <MapCanvas markers={view.markers ?? []} {...(r ? { line: r.line } : {})} />
@@ -164,7 +164,7 @@ export function PlaceView({ page, onClose }: { page: PlacePage; onClose?: () => 
         <ul className="rows">
           {page.visits.slice(0, 12).map((v) => (
             <li key={v.at} className="r">
-              <span>{shortDay(v.at)}</span>
+              <span>{shortDay(v.at) === clock(v.at) ? "Today" : shortDay(v.at)}</span>
               <span className="muted">{clock(v.at)}</span>
               <span className="grow" />
               <span className="mono faint small">{v.stayed_ms != null ? mins(v.stayed_ms / 1000) : "there now"}</span>
@@ -201,24 +201,25 @@ export function WeatherView({ page, onClose }: { page: WeatherPage; onClose?: ()
               {sky(w.now.code)}, feels like {temp(w.now.feels_c, u)}
             </span>
           </div>
-          {page.matters.length > 0 && (
-            <p className="ac-text" style={{ marginBottom: 12 }}>
-              {page.matters.join(" · ")}
-            </p>
-          )}
+          <p className={page.matters.length ? "ac-text" : "muted small"} style={{ marginBottom: 12 }}>
+            <span className="lab">What matters today</span> {page.matters.length ? page.matters.join(" · ") : "Nothing unusual."}
+          </p>
           <div className="weather-hours">
-            {w.hours.map((h) => (
-              <div key={h.t} className="weather-hour">
-                <span className="faint small">{new Date(h.t).toLocaleTimeString([], { hour: "numeric" })}</span>
-                <span>{temp(h.temp_c, u)}</span>
-                <span
-                  className="weather-rain"
-                  style={{ height: `${h.pop >= 10 ? Math.max(3, h.pop * 0.4) : 0}px` }}
-                  title={`${h.pop}% chance of rain`}
-                />
-                <span className="faint small">{h.pop >= 10 ? `${h.pop}%` : ""}</span>
-              </div>
-            ))}
+            {/* From the hour under way on: the hours already gone aren't the forecast. */}
+            {w.hours
+              .filter((h) => h.t > Date.now() - 3_600_000)
+              .map((h) => (
+                <div key={h.t} className="weather-hour">
+                  <span className="faint small">{new Date(h.t).toLocaleTimeString([], { hour: "numeric" })}</span>
+                  <span>{temp(h.temp_c, u)}</span>
+                  <span
+                    className="weather-rain"
+                    style={{ height: `${h.pop >= 10 ? Math.max(3, h.pop * 0.4) : 0}px` }}
+                    title={`${h.pop}% chance of rain`}
+                  />
+                  <span className="faint small">{h.pop >= 10 ? `${h.pop}%` : ""}</span>
+                </div>
+              ))}
           </div>
           <div className="section-rule">
             <span className="lab">The week</span>
@@ -253,6 +254,7 @@ export function whereLine(p: SituationPage, now: number): string {
   const parts = [
     w.away?.home_m != null ? `${distance(w.away.home_m, p.units)} from home` : "",
     w.away?.left ? `left ${w.away.left.name} at ${clock(w.away.left.at)}` : "",
+    w.away?.nearest && !w.away.left ? `${distance(w.away.nearest.m, p.units)} from ${w.away.nearest.name}` : "",
     w.motion ?? "",
   ].filter(Boolean);
   const old = now - w.fix_at > 3 * 3_600_000 ? ` (as of ${since(w.fix_at, now)})` : "";

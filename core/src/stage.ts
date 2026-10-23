@@ -250,6 +250,7 @@ export const MapStage = z.object({
       m: z.number(),
       by: z.enum(["drive", "walk", "bike"]),
       traffic: z.boolean(),
+      units: z.enum(["us", "metric"]).optional(),
     })
     .optional()
     .describe("Leave out: the route tool fills it."),
