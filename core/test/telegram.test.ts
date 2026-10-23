@@ -190,7 +190,7 @@ describe("Telegram", { timeout: 20_000 }, () => {
     expect(JSON.stringify(b.requests[1])).toContain("A receipt from Corner Shop for $42.10, captioned keep this");
   });
 
-  it("asks for an approval with buttons, and a press decides it", async () => {
+  it("asks for an approval with buttons, and a press decides it and carries the work on in the chat", async () => {
     await link();
     s.send({ type: "atlas.webhook.save", name: "Lights off", url: "https://hooks.example.com/lights", method: "POST", about: "Lights" });
     await s.next("atlas.view", (m) => m.view.webhooks.some((w) => w.name === "Lights off"));
@@ -210,6 +210,22 @@ describe("Telegram", { timeout: 20_000 }, () => {
     });
     await waitFor("the webhook call", () => tg.hooks.includes("https://hooks.example.com/lights"));
     expect(tg.sent.some((x) => x.method === "answerCallbackQuery")).toBe(true);
+    await waitFor("the carried-on answer", () => said().find((x) => x.body.text === "Lights are off."));
+  });
+
+  it("carries a chat's task on in that chat when it's approved in the app", async () => {
+    await link();
+    s.send({ type: "atlas.webhook.save", name: "Fan on", url: "https://hooks.example.com/fan", method: "POST", about: "Fan" });
+    await s.next("atlas.view", (m) => m.view.webhooks.some((w) => w.name === "Fan on"));
+    brain([call("webhook_call", { webhook: "Fan on" }), say("It's waiting for your OK."), say("The fan is on.")]);
+    await post(message(OWNER, { text: "fan on" }));
+    await waitFor("the card", () => said().find((x) => x.body.reply_markup));
+    s.send({ type: "atlas.inbox" });
+    const inbox = await s.next("atlas.inbox.items", (m) => m.items.some((i) => i.kind === "approval" && i.title.includes("Fan on")));
+    const a = inbox.items.find((i) => i.kind === "approval" && i.title.includes("Fan on"))!;
+    s.send({ type: "atlas.approval.decide", id: a.id, yes: true });
+    await waitFor("the webhook call", () => tg.hooks.includes("https://hooks.example.com/fan"));
+    await waitFor("the carried-on answer", () => said().find((x) => x.body.text === "The fan is on."));
   });
 });
 

@@ -590,7 +590,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       host: this.#ext,
       notes: () => this.#notes(),
       owner: ({ text, note, via }) => this.#textTurn(text, `chat-${via.message}`, note ?? undefined, via),
-      decide: (id, yes) => this.#decide(id, { yes, by: "chat" }),
+      decide: (id, yes) => this.#decide(id, { yes, by: "button" }),
       face: async (o) => this.#faces.take(o),
       hasFace: (ext, msg) => faceFor(this.#sql, ext.id, { kind: "telegram", value: msg.from.handle ?? msg.from.id }) != null,
       changed,
@@ -4063,6 +4063,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       // Asked on a chat (§16.1): the card is a message with buttons. What needs a hold, or touches the vault, is a link to the app.
       const chat = created ? this.#chatRuns.get(c.run_id) : undefined;
       if (chat) {
+        // The card remembers the chat it was asked in, so the work carries on there once it's approved.
+        this.#sql.exec(
+          `UPDATE agenda SET source = json_set(source, '$.detail.chat', json(?)) WHERE id = ?`,
+          JSON.stringify({ ext: chat.ext, chat: chat.chat, message: chat.message }),
+          item.id,
+        );
         const origin = getState<string>(this.#sql, "origin");
         const viaApp = hold || actionsOf(item).some((a) => a.kind === "vault");
         void this.#channels
@@ -4144,7 +4150,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     id: string,
     o: {
       yes: boolean;
-      by: "app" | "hold" | "push" | "voice" | "chat";
+      by: "app" | "hold" | "push" | "voice" | "chat" | "button";
       edits?: Array<{ index: number; message: string; subject?: string; to?: string }>;
     },
   ): Promise<{ ok: boolean; text: string }> {
@@ -4221,10 +4227,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (offers.length) append(this.#sql, { actor: "atlas", kind: "settings.change", body: { trust: "offered", keys: offers } });
     if (actions.some((a) => a.kind === "delete")) this.#broadcast({ type: "atlas.records.changed" });
     this.#approvalSettled(id);
-    // A yes in the app lets the task that asked carry on from there: after a site for the workspace, a login,
-    // a form, a service's tool or a webhook, Atlas finishes what it was doing, or says it's done.
-    // Said by voice or in text, the yes is already part of a run that carries on by itself.
-    if (o.by === "app" || o.by === "hold" || o.by === "push") {
+    // A yes on the card, wherever the card is (the app, a notification, any chat channel's button), lets the task
+    // that asked carry on from there: after a site for the workspace, a login, a form, a service's tool or a webhook,
+    // Atlas finishes what it was doing, or says it's done. Only a yes said by voice or in text needs nothing more:
+    // it's already part of a run that carries on by itself. A task asked on a chat carries on in that chat.
+    const inRun = o.by === "voice" || o.by === "chat";
+    if (!inRun) {
+      const chat = item.source.detail?.chat as unknown as ChatVia | undefined;
       // What it did and gave back goes with the yes, so the run reports it instead of asking again for what's done.
       const note = [
         `[Atlas, not the owner] The owner said yes on the card, and it's done (don't ask for it or do it again):`,
@@ -4234,7 +4243,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         ),
         "Carry on from there with what it gave back: finish what you were doing, or tell the owner how it went.",
       ].join("\n");
-      void this.keepAliveWhile(() => this.#textTurn(`Yes to ${item.title}. Carry on.`, `approval-${id}`, note));
+      void this.keepAliveWhile(() =>
+        this.#textTurn(
+          `Yes to ${item.title}. Carry on.`,
+          `approval-${id}`,
+          note,
+          chat?.ext && chat.chat ? { ...chat, voice: false } : undefined,
+        ),
+      );
     }
     return { ok, text: results.map((r) => r.text).join(" ") };
   }

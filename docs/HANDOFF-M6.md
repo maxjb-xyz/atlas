@@ -7,9 +7,9 @@ Read [VISION.md](../VISION.md), [CLAUDE.md](../CLAUDE.md) and [docs/M5.md](M5.md
 ## 1. Where things stand
 
 - **M5 is closed** by the owner, with steps not yet run on the deployment carried into M6 ([M5.md §5b](M5.md#5b-carried-into-m6)): everything that needs Gmail, Atlas's own email address, Telegram, or GitHub's and Linear's tokens, plus step 8 again after the next deploy.
-- **The deployment** is the owner's Cloudflare account at a workers.dev address, deployed by hand (pushing doesn't deploy). It runs M5 up to the fix for Workers AI's tool list; the fix for `extract`'s list field (commit after `389f709`) needs one more deploy.
+- **The deployment** is the owner's Cloudflare account at a workers.dev address, deployed by hand (pushing doesn't deploy). It runs M5 up to the fix for Workers AI's tool list; the fix for `extract`'s list field (commit after `389f709`) and the fix for approvals (below) need one more deploy.
 - **The code** is on branch `claude/friendly-einstein-sf3syv` of `maxjb-xyz/atlas` and isn't merged to `main` yet. Merge it (or open a PR) before branching for M6.
-- **The checks** are `npm run check`: bundling the extensions, typecheck, 325 tests in the Workers runtime, and the app build. All pass.
+- **The checks** are `npm run check`: bundling the extensions, typecheck, 326 tests in the Workers runtime, and the app build. All pass.
 - **The size** (rule 4) is about 28,800 lines of core runtime, up from 24,600 at M4's close, plus 3,500 lines of bundled extensions outside the core and 12,400 in the app. What grew: the agent (members, faces, chats, mail), the extension mechanism (about 1,100), contacts and loops (550), faces (500), Atlas's own address (450), channels (200), and the mail and people tools (450). What M5 moved out rather than added beside: every M4 provider tied to one service (iCloud, OwnTracks, OpenStreetMap, Mapbox, Open-Meteo, Tavily, Brave, Exa, GitHub's and Linear's webhook parsing), now bundled extensions.
 - **Working today**, on top of M4:
   - the core and its extensions (VISION §17): a manifest, a Dynamic Worker sandbox whose only way out is the core's gate (hosts allow-listed, secrets filled at the gate by a nonce only the sandbox knows), sign-ins the core runs, cursors, one look on the clock, an address for posts, drafts Atlas writes, Settings → Extensions;
@@ -33,6 +33,7 @@ M0 to M4's lessons still hold. M5 added these:
 - **Anything a stranger can write is an input to every layer.** The reviews found a secret placeholder a stranger could make the gate fill, a spoofed sender taken as the owner, a Message-ID that could add a Bcc, and a forwarded message read as the owner's words. Three reviews of the whole change, each by area, found all of them; run them before the smoke test, not after.
 - **A member's Atlas is a second Atlas, not a view of the first.** Anything that holds an address or a sign-in (extensions, chats, the workspace) belongs to one agent; M5 keeps those in the owner's and says so.
 - **An agent with the setup code runs most of a smoke test,** including members (a software passkey against the real deployment). What it can't do is anything that needs the owner's own accounts: Google, a bot token, a Cloudflare token.
+- **Every yes on a card carries the work on, wherever the card is.** A yes from a chat's button didn't resume the task that asked, so Atlas stopped after doing the thing it waited for. Now only a yes said inside a run (by voice or in text) skips the carry-on; any other surface, including a future channel's buttons, resumes it, and a task asked on a chat answers in that chat.
 - **Workers AI's Kimi can say "done" without calling the tool.** Once, on a member's Atlas. The fix belongs in the character or the tool's description (rule 1).
 
 ## 3. Open issues carried into M6
