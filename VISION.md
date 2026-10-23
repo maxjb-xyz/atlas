@@ -1202,7 +1202,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 2. **Shape (§19.2).** A person agent plus a home agent, to be validated in M0.
 3. **Default assistant name.** The product is Atlas. Proposed: a new user's assistant is called "Atlas" by default, and they can rename it.
 4. **License.** MIT, like Hermes and OpenClaw, or Apache-2.0.
-5. **The phone.** Telnyx and Twilio both gave the owner trouble: hard to set up, and identity checks they'd rather not do. Every carrier with a real number does those checks now, and US texting needs registration on top. So the phone is out of M5 (decided 2026-10-23): the owner talks to Atlas by voice in the app and with Telegram's voice notes, and Atlas calling a business waits for a later milestone. What we found is in [M5.md §4](docs/M5.md#4-the-phone-later).
+5. **The phone.** Telnyx and Twilio both gave the owner trouble: hard to set up, and identity checks they'd rather not do. Every carrier with a real number does those checks now, and US texting needs registration on top. So the phone is out of M5 (decided 2026-10-23): the owner talks to Atlas by voice in the app and with Telegram's voice notes, and Atlas calling a business waits for a later milestone. What we found is in [M5.md §7](docs/M5.md#7-the-phone-later).
 6. **Name.** OpenAI ships a browser called "ChatGPT Atlas" (October 2025). Decide before the public launch whether that matters.
 7. **Files (§21.7):** office formats, how polished they need to be, and sharing outside Atlas. Living pages were decided on 2026-10-22.
 
