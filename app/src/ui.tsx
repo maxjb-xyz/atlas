@@ -93,8 +93,9 @@ export function Stage<T extends string>({
                   aria-selected={t.id === tab}
                   className={t.id === tab ? "on" : ""}
                   onClick={() => onTab?.(t.id)}
+                  title={t.label}
                 >
-                  {t.label}
+                  <span className="tab-label">{t.label}</span>
                   {t.badge != null && t.badge !== 0 && <span className="mono">{t.badge}</span>}
                 </button>
               ))}

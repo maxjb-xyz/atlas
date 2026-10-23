@@ -821,3 +821,49 @@ describe("finding places from Cloudflare", () => {
     expect(new URL(asked[0]!).searchParams.get("q")).toBe("pharmacy");
   });
 });
+
+describe("how nudges land, and the smaller fixes", () => {
+  it("counts each nudge's latest reaction over the week, and the misses the owner pointed out", async () => {
+    await inOwner(async (_a, sql) => {
+      const { append } = await import("../src/store/log");
+      const { startRun } = await import("../src/store/runs");
+      const { landed } = await import("../src/intake");
+      const before = landed(sql);
+      const nudge = (text: string) =>
+        append(sql, { actor: "atlas", kind: "message.out", body: { text, nudge: { from: "noticing", about: text } } });
+      const react = (id: string, reaction: string) => append(sql, { actor: "system", kind: "awareness", body: { nudge: id, reaction } });
+      const a = nudge("Publix on your way");
+      const b = nudge("Rain at three");
+      nudge("Your 9 moved");
+      react(a.id, "opened");
+      react(a.id, "thanks");
+      react(b.id, "ignored");
+      const run = startRun(sql, { actor: "owner", trigger: "message", surface: "app", role: "main" });
+      append(sql, { actor: "atlas", kind: "tool.call", run_id: run, body: { name: "noticed", input: {} } });
+      append(sql, { actor: "atlas", kind: "tool.call", run_id: run, body: { name: "noticed", input: { id: "x" } } });
+      const after = landed(sql);
+      expect(after.nudges - before.nudges).toBe(3);
+      expect(after.thanks - before.thanks).toBe(1);
+      expect(after.ignored - before.ignored).toBe(1);
+      expect(after.waiting - before.waiting).toBe(1);
+      // Two looks in one turn are one miss.
+      expect(after.misses - before.misses).toBe(1);
+    });
+  });
+
+  it("keeps a fresh weather look as the situation's, and a good post clears the refused one", async () => {
+    brain([call("weather", { near: "here", show: true }), say("It's 27 degrees.")]);
+    await inOwner((_a, sql) => sql.exec(`DELETE FROM state WHERE key = 'situation'`));
+    await post(fixAt(north(HOME, 3_000)), auth);
+    await turn(s, "show me the weather");
+    const kept = await inOwner(async (_a, sql) => (await import("../src/situation")).cache(sql).weather);
+    expect(kept?.now.temp_c).toBe(27);
+    expect((await post(fixAt(north(HOME, 3_100)), "Basic bm9wZTpub3Bl")).status).toBe(401);
+    expect(await inOwner(async (_a, sql) => (await import("../src/location")).here(sql).refused)).not.toBeNull();
+    await post(fixAt(north(HOME, 3_200)), auth);
+    expect(await inOwner(async (_a, sql) => (await import("../src/location")).here(sql).refused)).toBeNull();
+    // The phone is a source in Senses as soon as it's set up.
+    const v = await inOwner(async (_a, sql) => (await import("../src/intake")).sensesView(sql));
+    expect(v.sources.map((x) => x.source)).toContain("location");
+  });
+});

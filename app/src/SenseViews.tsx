@@ -50,9 +50,10 @@ export function MapCanvas({ markers, line, height = 360 }: { markers: Marker[]; 
           for (const p of pts) b.extend(p);
           m.fitBounds(b, { padding: 48, maxZoom: 15, duration: 0 });
         }
-        for (const mk of markers) {
+        for (const [i, mk] of markers.entries()) {
           const el = document.createElement("div");
-          el.className = `map-pin ${mk.here ? "here" : ""}`;
+          // On a route, the start is hollow and the end filled, so they can't be mistaken.
+          el.className = `map-pin ${mk.here ? "here" : line?.length && i === 0 && markers.length > 1 ? "start" : ""}`;
           el.title = mk.name;
           new ml.Marker({ element: el }).setLngLat([mk.lon, mk.lat]).addTo(m);
         }
@@ -123,9 +124,9 @@ export function MapView({ view, onClose }: { view: Extract<StageView, { kind: "m
       )}
       <MapCanvas markers={view.markers ?? []} {...(r ? { line: r.line } : {})} />
       <ul className="map-legend small muted">
-        {(view.markers ?? []).map((m) => (
+        {(view.markers ?? []).map((m, i, all) => (
           <li key={`${m.name}${m.lat}`}>
-            <span className={`map-pin small ${m.here ? "here" : ""}`} /> {m.name}
+            <span className={`map-pin small ${m.here ? "here" : r && i === 0 && all.length > 1 ? "start" : ""}`} /> {m.name}
           </li>
         ))}
       </ul>
@@ -378,6 +379,7 @@ export function SensesView({ page: p, onClose }: { page: SensesPage; onClose?: (
           {f.failed} didn't finish; History says why.
         </p>
       )}
+      <Landed l={p.landed} />
       <div className="cells two" style={{ marginTop: 16 }}>
         <div className="cell">
           <span className="lab">Waiting for a look</span>
@@ -391,7 +393,7 @@ export function SensesView({ page: p, onClose }: { page: SensesPage; onClose?: (
             </ul>
           ) : (
             <p className="muted small">
-              Nothing. What can wait is looked over in a batch, about once an hour, and at the start of day and evening.
+              Nothing. What can wait is looked over in a batch, about once an hour, and by the morning brief and evening wrap-up.
             </p>
           )}
         </div>
@@ -438,5 +440,45 @@ export function SensesView({ page: p, onClose }: { page: SensesPage; onClose?: (
         <p className="muted small">No sources yet: set up OwnTracks, the calendar, a device or a webhook in Settings.</p>
       )}
     </>
+  );
+}
+
+/**
+ * How the last week's nudges landed (§10.4, measured): welcome (thanks or a
+ * reply), only opened, ignored or dismissed, "stop", and the misses you
+ * pointed out. These are the numbers that tune what gets through.
+ */
+function Landed({ l }: { l: SensesPage["landed"] }) {
+  const welcome = l.thanks + l.replied;
+  const judged = l.nudges - l.waiting;
+  const parts = [
+    `${welcome} welcome${welcome ? ` (${[l.thanks ? `${l.thanks} thanks` : "", l.replied ? `${l.replied} replied` : ""].filter(Boolean).join(", ")})` : ""}`,
+    l.opened ? `${l.opened} only opened` : "",
+    l.ignored + l.dismissed ? `${l.ignored + l.dismissed} ignored or dismissed` : "",
+    l.stop ? `${l.stop} stop` : "",
+    l.waiting ? `${l.waiting} not reacted to yet` : "",
+  ].filter(Boolean);
+  return (
+    <div className="cells one" style={{ marginTop: 16 }}>
+      <div className="cell">
+        <span className="lab">How your nudges landed, the last {l.days} days</span>
+        {l.nudges ? (
+          <p style={{ fontSize: 15, marginTop: 4 }}>
+            <b>{judged ? `${Math.round((welcome / judged) * 100)}% welcome` : "Too soon to tell"}</b>
+            <span className="muted small">
+              {" "}
+              · {l.nudges} sent: {parts.join(" · ")}
+            </span>
+          </p>
+        ) : (
+          <p className="muted small">No nudges yet.</p>
+        )}
+        <p className="muted small">
+          {l.misses
+            ? `You asked ${l.misses === 1 ? "once" : `${l.misses} times`} why Atlas didn't tell you something.`
+            : "You haven't asked why Atlas didn't tell you something."}
+        </p>
+      </div>
+    </div>
   );
 }

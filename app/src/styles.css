@@ -2232,6 +2232,10 @@ button.chip:hover {
     0 0 0 4px var(--acs),
     0 0 0 1px var(--tx);
 }
+.map-pin.start {
+  background: var(--win);
+  box-shadow: 0 0 0 2px var(--ac);
+}
 .map-pin.small {
   display: inline-block;
   width: 9px;
@@ -2366,4 +2370,13 @@ button.chip:hover {
   .cells.two {
     grid-template-columns: 1fr;
   }
+}
+/* A long view name on a stage tab is cut with an ellipsis, so it never runs off a phone's edge; the full name is its title. */
+.tabs .tab-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cells.one {
+  grid-template-columns: 1fr;
 }

@@ -1928,6 +1928,7 @@ function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
           <span className="muted">
             {" "}
             · accurate to {fix.acc} m{fix.batt != null ? ` · phone ${fix.batt}%${fix.charging ? ", charging" : ""}` : ""}
+            {fix.conn === "wifi" ? " · on Wi-Fi" : fix.conn === "mobile" ? " · on mobile data" : ""}
           </span>
         </p>
       )}
@@ -1944,7 +1945,7 @@ function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
         Say "this is my gym" somewhere, or "pin the dentist at 12 Main St", to add one.
       </p>
       {/* Only while it's the latest news: a good post since means the phone has the right password. */}
-      {l.refused && (!fix || l.refused.at > fix.at) && (
+      {l.refused && (
         <p className="err small">
           A post with the wrong password came {dayTime(l.refused.at)}. If that was your phone, set OwnTracks up again.
         </p>

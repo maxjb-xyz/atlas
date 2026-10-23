@@ -15,6 +15,9 @@
 import { z } from "zod";
 import type { Calendar, CalendarEvent } from "./calendar/types";
 import { minutes } from "./maps";
+import { ownTracksLogin } from "./location";
+import { nodes } from "./nodes";
+import { cache } from "./situation";
 import { newId, parse, type Sql } from "./store/db";
 import { append, type LogRow, type SenseItem } from "./store/log";
 import { getSecret, type Settings, setSecret } from "./store/settings";
@@ -259,13 +262,68 @@ export function lastBySource(sql: Sql): Record<string, { at: number; what: strin
   return out;
 }
 
+/**
+ * How nudges landed over the last week (§10.4, measured): each one's
+ * latest reaction, from the awareness rows, and the misses the owner
+ * pointed out, which are the times their own turns asked `noticed`.
+ */
+export function landed(sql: Sql, days = 7, now = Date.now()): import("./stage").Landed {
+  const since = now - days * 86_400_000;
+  const sent = sql
+    .exec<{ id: string }>(`SELECT id FROM log WHERE kind = 'message.out' AND at > ? AND json_extract(body, '$.nudge') IS NOT NULL`, since)
+    .toArray()
+    .map((r) => r.id);
+  const latest = new Map<string, string>();
+  for (const r of sql
+    .exec<{ nudge: string; reaction: string }>(
+      `SELECT json_extract(body, '$.nudge') AS nudge, json_extract(body, '$.reaction') AS reaction FROM log WHERE kind = 'awareness' AND at > ? AND json_extract(body, '$.reaction') IS NOT NULL ORDER BY seq`,
+      since,
+    )
+    .toArray())
+    latest.set(r.nudge, r.reaction);
+  const out: import("./stage").Landed = {
+    days,
+    nudges: sent.length,
+    thanks: 0,
+    replied: 0,
+    opened: 0,
+    dismissed: 0,
+    ignored: 0,
+    stop: 0,
+    waiting: 0,
+    misses: 0,
+  };
+  for (const id of sent) {
+    const r = latest.get(id);
+    if (r && r in out && r !== "days" && r !== "nudges" && r !== "waiting" && r !== "misses") out[r as "thanks"] += 1;
+    else out.waiting += 1;
+  }
+  out.misses = sql
+    .exec<{ n: number }>(
+      `SELECT COUNT(DISTINCT l.run_id) AS n FROM log l JOIN runs r ON r.id = l.run_id WHERE l.kind = 'tool.call' AND json_extract(l.body, '$.name') = 'noticed' AND r.actor = 'owner' AND l.at > ?`,
+      since,
+    )
+    .one().n;
+  return out;
+}
+
 /** Every source the intake knows, with its state, for Settings and the Senses view. */
 export function sensesView(sql: Sql): import("./protocol").SensesView {
   const states = sourceStates(sql);
   const last = lastBySource(sql);
   // A webhook source that was removed isn't a source any more.
   const hooks = new Set(senseHooks(sql).map((h) => `webhook:${h.name}`));
-  const names = [...new Set([...Object.keys(states), ...Object.keys(last)])].filter((n) => !n.startsWith("webhook") || hooks.has(n)).sort();
+  // Sources that are set up show before they've sent anything: the phone, the calendar, devices, the trip and weather, each webhook.
+  const ready = [
+    ownTracksLogin(sql) ? "location" : "",
+    getState(sql, "calendar_seen") ? "calendar" : "",
+    nodes(sql).length ? "device" : "",
+    cache(sql).weather ? "situation" : "",
+    ...hooks,
+  ].filter(Boolean);
+  const names = [...new Set([...ready, ...Object.keys(states), ...Object.keys(last)])]
+    .filter((n) => !n.startsWith("webhook") || hooks.has(n))
+    .sort();
   return {
     hooks: senseHooks(sql).map((h) => ({
       id: h.id,
@@ -293,6 +351,7 @@ export function sensesPage(sql: Sql, settings: Settings): import("./stage").Sens
   return {
     kind: "senses",
     funnel: funnel(sql, settings),
+    landed: landed(sql),
     sources: sensesView(sql).sources,
     later: laterPile(sql, 20).map((i) => ({ id: i.id, at: i.at, source: i.source, what: yours(i.what) })),
     recent: recent.map((i) => ({ id: i.id, at: i.at, source: i.source, what: yours(i.what), outcome: i.outcome, why: i.why })),

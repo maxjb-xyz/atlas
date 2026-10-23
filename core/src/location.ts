@@ -328,6 +328,12 @@ export function ownTracksAllowed(sql: Sql, authorization: string | null): boolea
   return a.byteLength === b.byteLength && crypto.subtle.timingSafeEqual(a, b);
 }
 
+/** A post with the right password came: an earlier refused one isn't news any more. */
+export function allowedPost(sql: Sql): void {
+  const h = here(sql);
+  if (h.refused) save(sql, { ...h, refused: null });
+}
+
 /** Notes a refused post, for Settings → Devices. */
 export function refused(sql: Sql): void {
   const h = here(sql);

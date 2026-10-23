@@ -80,13 +80,14 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
             {items.map((i) => {
               const on = i.id === current?.id;
               return (
-                <div
-                  key={i.id}
-                  className="r"
-                  style={{ flexDirection: "column", alignItems: "stretch", gap: 8, cursor: "pointer" }}
-                  {...pressable(() => setOpen(i.id))}
-                >
-                  <div className="row" style={{ flexWrap: "nowrap" }}>
+                <div key={i.id} className="r" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+                  {/* Only the header opens the item, so the card's own buttons aren't inside a button. */}
+                  <div
+                    className="row"
+                    style={{ flexWrap: "nowrap", cursor: "pointer" }}
+                    aria-expanded={on}
+                    {...pressable(() => setOpen(i.id))}
+                  >
                     <span className={`tag ${i.kind === "failed" || i.kind === "approval" ? "ac" : ""}`}>
                       {i.kind === "failed"
                         ? "Didn't finish"

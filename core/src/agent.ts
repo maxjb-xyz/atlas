@@ -159,6 +159,7 @@ import {
   ownTracksLink,
   readOwnTracks,
   refused as ownTracksRefused,
+  allowedPost,
 } from "./location";
 
 export { seams };
@@ -2404,6 +2405,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         body: { error: "That isn't OwnTracks' user and password for this Atlas. Set it up again in Settings → Devices." },
       };
     }
+    allowedPost(this.#sql);
     if (!readSettings(this.#sql).location.on) return { status: 200, body: [] };
     let data: unknown;
     try {

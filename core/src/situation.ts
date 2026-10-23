@@ -64,6 +64,12 @@ const EMPTY: SituationCache = { events: [], events_at: 0, weather: null, travel:
 export const cache = (sql: Sql): SituationCache => ({ ...EMPTY, ...(getState<Partial<SituationCache>>(sql, "situation") ?? {}) });
 const save = (sql: Sql, c: SituationCache) => setState(sql, "situation", c);
 
+/** A fresh look at the weather near the owner (the weather tool's) becomes the situation's, so the view and the answer agree. */
+export function keepWeather(sql: Sql, w: Weather): void {
+  const c = cache(sql);
+  save(sql, { ...c, weather: w, weather_error: undefined });
+}
+
 /** Weather is looked at most this often, and only while Atlas is in use. */
 export const WEATHER_MS = 60 * 60_000;
 /** Travel time is worked out again this often for the next event, or sooner after a move. */

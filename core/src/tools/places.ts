@@ -4,6 +4,7 @@
 // things, so Atlas does them, shows a receipt, and offers Undo (§12.1).
 
 import { z } from "zod";
+import { keepWeather } from "../situation";
 import { findPlace, here, homePin, metres, type Pin, pinOf, pins } from "../location";
 import { distance as say, unitsFor, sky, temp, type Units } from "../weather";
 import { kindWords, minutes, type Found, type Point, PLACE_KINDS, placeKind, type Travel } from "../maps";
@@ -328,6 +329,8 @@ export const weatherTool = defineTool({
     if (!at.ok) return fail(at.error);
     const w = await ctx.maps.weather(at.point, { run_id: ctx.run_id, label: `the weather near ${at.name}` });
     if (!w.ok) return fail(w.error);
+    // Near where the owner is, it's the situation's weather too: the view shows this look, not an older one.
+    if (/^here$/i.test(input.near.trim())) keepWeather(ctx.sql, w.value);
     const u = unitsOf(ctx);
     return {
       ok: true,

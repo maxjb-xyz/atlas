@@ -520,6 +520,23 @@ export interface SensesPage {
   sources: import("./protocol").SensesView["sources"];
   later: Array<{ id: string; at: number; source: string; what: string }>;
   recent: Array<{ id: string; at: number; source: string; what: string; outcome: string | null; why: string | null }>;
+  /** How the last week's nudges landed (§10.4, measured): each nudge's latest reaction, and the misses the owner pointed out. */
+  landed: Landed;
+}
+
+export interface Landed {
+  days: number;
+  nudges: number;
+  thanks: number;
+  replied: number;
+  opened: number;
+  dismissed: number;
+  ignored: number;
+  stop: number;
+  /** Not reacted to yet (under two hours old, or waiting for quiet hours to end). */
+  waiting: number;
+  /** Times the owner asked why Atlas didn't tell them something. */
+  misses: number;
 }
 
 /** The few words a view goes by: on its tab, its receipt and its compact card. */

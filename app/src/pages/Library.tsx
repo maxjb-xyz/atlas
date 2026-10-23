@@ -293,6 +293,17 @@ function RecordRow({ atlas, r, go }: { atlas: Atlas; r: RecordView; go: (d: stri
         )}
         <p className="faint small" style={{ marginTop: 2 }}>
           <span className="lab">{r.type}</span> · {sourceText(r)}
+          {(r.type === "place" || r.type === "organization") && (
+            <span>
+              {" "}
+              ·{" "}
+              {typeof r.details.lat === "number"
+                ? `Pinned${typeof r.details.address === "string" ? `, ${r.details.address}` : ""}`
+                : typeof r.details.address === "string"
+                  ? `${r.details.address}, not pinned yet`
+                  : "No address or pin yet"}
+            </span>
+          )}
         </p>
       </div>
       <AreaChip
