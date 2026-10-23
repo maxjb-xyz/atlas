@@ -151,6 +151,15 @@ describe("moving M4's providers out of the core", () => {
       expect(extSecrets(sql, "mapbox")).toEqual({ token: "pk.mapbox-token-123456" });
       expect(extSecrets(sql, "brave")).toEqual({ key: "brave-key-123" });
       expect(extSecrets(sql, "icloud")).toEqual({ app_password: "abcd-efgh-ijkl-mnop" });
+      // Pasted again in another form, it's kept the way Apple writes it; a bundled manifest is the release's own.
+      setExtSecrets(sql, "icloud", { app_password: " WXYZ WXYZ WXYZ WXYZ " });
+      expect(extSecrets(sql, "icloud").app_password).toBe("wxyz-wxyz-wxyz-wxyz");
+      setExtSecrets(sql, "icloud", { app_password: "my-real-password-1" });
+      expect(extSecrets(sql, "icloud").app_password).toBe("my-real-password-1");
+      sql.exec(
+        `UPDATE extensions SET manifest = '{"id":"icloud","name":"iCloud","version":"0.0.1","about":"","provides":[],"hosts":[]}' WHERE id = 'icloud'`,
+      );
+      expect(getExt(sql, "icloud")!.manifest.hosts).toEqual(["icloud.com"]);
       expect(getExt(sql, "icloud")!.settings.username).toBe("owner@icloud.com");
       expect(getExt(sql, "icloud")!.data).toMatchObject({ home: "https://p1-caldav.icloud.com/1/calendars/" });
       expect(getExt(sql, "owntracks")!.data).toMatchObject({ user: "atlas", password: "old-owntracks-password" });

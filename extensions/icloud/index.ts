@@ -39,6 +39,7 @@ const ext: Extension = {
         name: "app_password",
         label: "App-specific password",
         help: "Make one at account.apple.com → Sign-In and Security → App-Specific Passwords. It looks like xxxx-xxxx-xxxx-xxxx. Your Apple ID's own password won't work.",
+        tidy: { when: "^[a-zA-Z]{16}$", group: 4, join: "-", lower: true },
       },
     ],
   },

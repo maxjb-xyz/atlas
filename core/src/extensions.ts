@@ -67,7 +67,11 @@ const fromRaw = (r: Raw): Installed => ({
   ...r,
   source: r.source as ExtSource,
   state: r.state as ExtState,
-  manifest: parse<Manifest>(r.manifest, { id: r.id, name: r.name, version: r.version, about: "", provides: [], hosts: [] }),
+  // A bundled extension follows the release it shipped in: its manifest (hosts, secrets, sign-in) is the bundle's, not what was saved at install.
+  manifest:
+    r.source === "bundled" && BUNDLED[r.id]
+      ? (BUNDLED[r.id]!.manifest as Manifest)
+      : parse<Manifest>(r.manifest, { id: r.id, name: r.name, version: r.version, about: "", provides: [], hosts: [] }),
   methods: parse(r.methods, []),
   settings: parse(r.settings, {}),
   cursor: parse<Json>(r.cursor, null),
@@ -188,7 +192,7 @@ export function setExtSecrets(sql: Sql, id: string, patch: Record<string, string
   for (const [k, v] of Object.entries(patch)) {
     if (!allowed.has(k)) continue;
     if (v == null || v === "") delete all[k];
-    else all[k] = v;
+    else all[k] = tidied(v, (e.manifest.secrets ?? []).find((x) => x.name === k)?.tidy);
   }
   setSecret(sql, `ext:${id}`, Object.keys(all).length ? all : null);
   sql.exec(`UPDATE extensions SET updated_at = ? WHERE id = ?`, Date.now(), id);
@@ -196,6 +200,22 @@ export function setExtSecrets(sql: Sql, id: string, patch: Record<string, string
 }
 
 const TOKEN_KEYS = ["access_token", "refresh_token", "expires_at"];
+
+/** A pasted secret in the form its service writes it, as the manifest says (SecretSpec.tidy). */
+export function tidied(v: string, t?: { when: string; group: number; join: string; lower?: boolean }): string {
+  const bare = v.trim();
+  if (!t) return bare;
+  const letters = bare.replace(/[\s-]+/g, "");
+  let re: RegExp;
+  try {
+    re = new RegExp(t.when);
+  } catch {
+    return bare;
+  }
+  if (!re.test(letters) || t.group < 1) return bare;
+  const cased = t.lower ? letters.toLowerCase() : letters;
+  return (cased.match(new RegExp(`.{1,${Math.floor(t.group)}}`, "g")) ?? []).join(t.join);
+}
 
 export function saveCursor(sql: Sql, id: string, cursor: Json, at = Date.now()): void {
   sql.exec(`UPDATE extensions SET cursor = ?, last_look = ? WHERE id = ?`, JSON.stringify(cursor ?? null), at, id);

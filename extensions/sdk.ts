@@ -46,6 +46,13 @@ export interface SecretSpec {
   /** Where to get it, in a sentence or two. */
   help?: string;
   optional?: boolean;
+  /**
+   * How the core tidies what's pasted before keeping it, since the extension never sees the value:
+   * spaces and dashes taken out, and when what's left matches `when` (a regular expression's source),
+   * put back in groups of `group`, joined by `join`, lowercased if `lower`. An Apple app-specific
+   * password pasted as "ABCD EFGH IJKL MNOP" is kept as Apple writes it, "abcd-efgh-ijkl-mnop".
+   */
+  tidy?: { when: string; group: number; join: string; lower?: boolean };
 }
 
 export interface SettingSpec {
