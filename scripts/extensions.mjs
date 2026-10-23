@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const dir = join(root, "extensions");
 const names = readdirSync(dir).filter((n) => statSync(join(dir, n)).isDirectory() && !n.startsWith(".") && n !== "lib");
 const out = {};
