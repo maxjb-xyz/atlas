@@ -104,30 +104,21 @@ export const Settings = z.object({
   /**
    * Speaking up (§10.3): whether Atlas may tell the owner things on its own.
    * `noticing` covers whatever its senses notice (a move, a change on the
-   * calendar, the weather, traffic, a device); `leave` the look before an
-   * event with a place; the moments have a time. `quiet_about` is what the
-   * owner doesn't want to hear about and `tell_about` what they always do,
-   * in their words: Atlas and `decide` both see them, and the owner edits
-   * them in the app.
+   * calendar, the weather, traffic, a device, a webhook); `leave` the look
+   * before an event with a place. `quiet_about` is what the owner doesn't
+   * want to hear about and `tell_about` what they always do, in their
+   * words: Atlas and `decide` both see them, and the owner edits them in
+   * the app. The daily looks are automations (§13.4), with their own times.
    */
   speaking: z
     .object({
       noticing: z.boolean().default(true),
       leave: z.boolean().default(true),
-      morning: z.object({ on: z.boolean().default(true), at: HHMM.default("08:00") }).default({ on: true, at: "08:00" }),
-      evening: z.object({ on: z.boolean().default(false), at: HHMM.default("20:00") }).default({ on: false, at: "20:00" }),
       quiet_about: z.array(z.string().min(1).max(120)).max(30).default([]),
       /** What the owner always wants to hear about, in their words (from "why didn't you tell me?"). */
       tell_about: z.array(z.string().min(1).max(120)).max(30).default([]),
     })
-    .default({
-      noticing: true,
-      leave: true,
-      morning: { on: true, at: "08:00" },
-      evening: { on: false, at: "20:00" },
-      quiet_about: [],
-      tell_about: [],
-    }),
+    .default({ noticing: true, leave: true, quiet_about: [], tell_about: [] }),
   /** How Atlas says temperatures, speeds and distances. "auto" follows the time zone: US zones get °F and miles. */
   units: z.enum(["auto", "us", "metric"]).default("auto"),
 });

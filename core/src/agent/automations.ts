@@ -52,7 +52,15 @@ export interface DeskDeps {
   outbox: Outbox;
   clock: ToolContext["clock"];
   /** Runs Atlas with a note (an Atlas step); `test` gives it tools that can't change or send anything. */
-  converse(o: { runId: string; note: string; test: boolean }): Promise<LoopResult>;
+  /** A run of Atlas for an Atlas step. With `worth`, it speaks only with `nudge`, and may end in silence. */
+  converse(o: {
+    runId: string;
+    note: string;
+    test: boolean;
+    worth?: { id: string; name: string };
+  }): Promise<LoopResult & { nudged?: string | null }>;
+  /** The day as a look sees it: the later pile, what was said today, the owner's lists; `seen` marks the pile looked at. */
+  picture(): { text: string; seen: () => void };
   decider(): Decider | null;
   /** The owner's calendar, or null when it isn't connected. */
   calendar(): Calendar | null;
@@ -109,6 +117,8 @@ export class AutomationDesk {
     this.runs.set(runId, { test, allowed: [...new Set([...a.allowed, ...fixed])] });
     const results: RunOutcome["results"] = [];
     const said: string[] = [];
+    /** What Atlas steps said as nudges, when the automation reports when it's worth saying. */
+    const spoke: string[] = [];
     let brain: RunOutcome["brain"] = null;
     const usage = { input: 0, output: 0 };
     let steps = 0;
@@ -141,19 +151,34 @@ export class AutomationDesk {
             break;
           }
         } else {
-          const note = this.#note(a, o.why, step.instructions, inputs, results, context, test);
-          const res = await this.d.converse({ runId, note, test });
+          const picture = this.d.picture();
+          const worth = a.report === "worth";
+          const note = this.#note(a, o.why, step.instructions, inputs, results, context, test, picture.text, worth);
+          const res = await this.d.converse({ runId, note, test, ...(worth && !test ? { worth: { id: a.id, name: a.name } } : {}) });
           steps += res.steps;
           brain = res.brain ?? brain;
           usage.input += res.usage.input;
           usage.output += res.usage.output;
-          if (res.state !== "replied" || !res.text.trim()) {
+          // Reporting when it's worth saying, a step that says nothing has done its job: silence is an answer.
+          if (res.state !== "replied" || (!res.text.trim() && !(worth && !test))) {
             error = res.error ?? "Atlas gave no answer.";
             results.push({ step: stepText(step), ok: false, text: error });
             break;
           }
-          said.push(res.text.trim());
-          results.push({ step: stepText(step), ok: true, text: res.text.trim() });
+          // Only a look that reports to the owner has looked the pile over for them; a watch that reports to History hasn't.
+          if (!test && (a.report === "thread" || worth)) picture.seen();
+          if (worth && !test) {
+            // What it said went out as a nudge already; its last words are its note for History.
+            if (res.nudged) spoke.push(res.nudged);
+            results.push({
+              step: stepText(step),
+              ok: true,
+              text: res.nudged ?? `Nothing worth saying${res.text.trim() ? `: ${res.text.trim()}` : "."}`,
+            });
+          } else {
+            said.push(res.text.trim());
+            results.push({ step: stepText(step), ok: true, text: res.text.trim() });
+          }
         }
       }
     } catch (err) {
@@ -162,7 +187,8 @@ export class AutomationDesk {
       this.runs.delete(runId);
     }
     const ok = !error;
-    const text = said.join("\n\n") || (ok ? `Done: ${a.name}.` : "");
+    const text =
+      [...spoke, ...said].join("\n\n") || (ok ? (a.report === "worth" ? `Nothing worth saying: ${a.name}.` : `Done: ${a.name}.`) : "");
     const row = append(this.d.sql, {
       actor: "atlas",
       kind: "automation.run",
@@ -185,7 +211,14 @@ export class AutomationDesk {
     this.d.rows([row]);
     if (own) {
       endRun(this.d.sql, runId, ok ? "replied" : "failed", steps, { ...(error ? { error } : {}), automation: a.id });
-      if (!test) await this.#report(a, ok ? text : `${a.name} didn't run: ${error}`, runId, o.why);
+      // What a step said as a nudge went out already; what's left (a say step's words) is reported as usual.
+      if (!test)
+        await this.#report(
+          a,
+          ok ? said.join("\n\n") || (spoke.length || a.report === "worth" ? "" : text) : `${a.name} didn't run: ${error}`,
+          runId,
+          o.why,
+        );
     }
     const fails = noteRun(this.d.sql, a.id, { test, ok });
     if (!test && !ok) await this.#failed(a, fails, error!);
@@ -214,6 +247,8 @@ export class AutomationDesk {
     done: RunOutcome["results"],
     context: string | undefined,
     test: boolean,
+    picture: string,
+    worth: boolean,
   ): string {
     return [
       `[Atlas's automation "${a.name}", not the owner] It's running now (${WHY[why]}).`,
@@ -224,10 +259,13 @@ export class AutomationDesk {
             .join(", ")}`
         : "",
       done.length ? `Steps already done:\n${done.map((r) => `- ${r.step}: ${r.text}`).join("\n")}` : "",
+      picture,
       `Your instructions: ${fill(instructions, inputs)}`,
       test
-        ? "This is a test run: it uses real data and sends nothing. Your tools can look but not change anything, and webhooks only say what they would do. Write exactly what you would send the owner."
-        : "Do it now with your tools, looking things up rather than assuming. Then write what to tell the owner: short, as you'd say it.",
+        ? `This is a test run: it uses real data and sends nothing. Your tools can look but not change anything, and webhooks only say what they would do. Write exactly what you would send the owner${worth ? ", or that you'd stay quiet and why" : ""}.`
+        : worth
+          ? "Do it now with your tools, looking things up rather than assuming. If there's something worth telling the owner, nudge once with it, short, as you'd say it; if there isn't, don't nudge, and end with a few words for your own log saying why. Silence is a fine outcome."
+          : "Do it now with your tools, looking things up rather than assuming. Then write what to tell the owner: short, as you'd say it.",
     ]
       .filter(Boolean)
       .join("\n\n");

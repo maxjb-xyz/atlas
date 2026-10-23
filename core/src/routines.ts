@@ -1,48 +1,49 @@
 // The default routines (§13.4): a morning brief, an evening wrap-up and a
 // weekly review, made once as ordinary automations the owner can change,
-// turn on or delete. They start off; setup's last step offers each one with
-// its time (§22). Each is one Atlas step with a note, so what it says comes
-// from the calendar, the agenda and what was said, looked up when it runs.
+// turn on or delete. They are Atlas's looks at the day: the morning brief
+// and the evening wrap-up report only when there's something worth saying,
+// and see the later pile and what was already said, like any Atlas step.
+// The morning brief starts on, since it stays quiet on a quiet day; the
+// others start off, and setup offers each with its time (§22).
 
-import { type AutomationInput, listAutomations, saveAutomation } from "./automations";
-import type { Sql } from "./store/db";
+import { type AutomationInput, getAutomation, listAutomations, saveAutomation, setAutomationState } from "./automations";
+import { parse, type Sql } from "./store/db";
 import { getState, setState } from "./store/state";
 
 export const ROUTINES: AutomationInput[] = [
   {
     name: "Morning brief",
-    about: "A default routine: what today holds, each morning.",
+    about: "A default routine: a look at the day ahead each morning, which stays quiet when there's nothing worth saying.",
     when: { kind: "schedule", at: "08:00", days: [] },
     do: [
       {
         kind: "atlas",
         instructions: [
-          "Give the owner their morning brief for today.",
-          "Read today's calendar with calendar_read, and look at the reminders and promises due today in your context.",
-          "Say what today holds in order, flag anything that clashes or needs getting ready for, and end with the one thing most worth doing first.",
-          "If the calendar can't be read, say so in a line and carry on with the rest. If nothing is on, say so in a sentence.",
-          "Keep it short enough to read in half a minute.",
+          "Look at the owner's day ahead, the way a great assistant would at the start of it.",
+          "Read today's calendar with calendar_read, and look at the situation, the reminders, promises and errands due today, what came in overnight, and the weather.",
+          "If there's something they'd be glad to hear now (what today holds and when to leave, a clash, something to get ready, rain before a walk, an errand that fits the day), tell them in a few lines, readable in half a minute, ending with the one thing most worth doing first.",
+          "If the day is empty and nothing came in that matters, stay quiet.",
         ].join(" "),
       },
     ],
-    report: "thread",
+    report: "worth",
   },
   {
     name: "Evening wrap-up",
-    about: "A default routine: how today went and what tomorrow starts with.",
+    about: "A default routine: how today went and what tomorrow starts with, when there's something worth saying.",
     when: { kind: "schedule", at: "21:00", days: [] },
     do: [
       {
         kind: "atlas",
         instructions: [
-          "Wrap up the owner's day.",
-          "Use recall for what was said and done today, and look at tomorrow's calendar and the reminders and promises due tomorrow.",
-          "In a few lines: what got done or decided today, what's still open, and what tomorrow starts with. Pick what matters rather than listing everything.",
-          "If today was quiet, say so in a sentence.",
+          "Look back at the owner's day and ahead to tomorrow.",
+          "Use recall for what was said and done today, and look at tomorrow's calendar, the reminders and promises due tomorrow, and what came in today that could wait.",
+          "If something is worth telling them tonight (something left undone, an early start or something to get ready tomorrow), say it in a few lines, picking what matters rather than listing everything.",
+          "If today was quiet and tomorrow needs nothing from tonight, stay quiet.",
         ].join(" "),
       },
     ],
-    report: "thread",
+    report: "worth",
   },
   {
     name: "Weekly review",
@@ -69,9 +70,47 @@ export const ROUTINES: AutomationInput[] = [
  * made their own). Returns the ids it made, for arming.
  */
 export function seedRoutines(sql: Sql): string[] {
-  if (getState(sql, "routines")) return [];
+  const kept = getState<{ made_at: number; ids: string[]; v?: number }>(sql, "routines");
+  if (kept) {
+    if ((kept.v ?? 1) < 2) upgrade(sql, kept);
+    return [];
+  }
   const taken = new Set(listAutomations(sql).map((a) => a.name.toLowerCase()));
   const made = ROUTINES.filter((r) => !taken.has(r.name.toLowerCase())).map((r) => saveAutomation(sql, r, "default").id);
-  setState(sql, "routines", { made_at: Date.now(), ids: made });
+  for (const id of made) if (getAutomation(sql, id)?.name === "Morning brief") setAutomationState(sql, id, true, "atlas");
+  setState(sql, "routines", { made_at: Date.now(), ids: made, v: 2 });
   return made;
+}
+
+/**
+ * Once, on a deployment made before the daily looks were routines
+ * (2026-10-23): the morning brief and the evening wrap-up the owner hasn't
+ * rewritten get their new steps and report, and take over the start of
+ * day and evening looks, with their times and whether they were on. The
+ * looks' own items on the clock end.
+ */
+function upgrade(sql: Sql, kept: { made_at: number; ids: string[] }): void {
+  const raw = sql.exec<{ value: string }>(`SELECT value FROM settings WHERE key = 'speaking'`).toArray()[0];
+  const old = parse<{ morning?: { on?: boolean; at?: string }; evening?: { on?: boolean; at?: string } }>(raw?.value, {});
+  const looks = {
+    "Morning brief": { on: old.morning?.on ?? true, at: old.morning?.at },
+    "Evening wrap-up": { on: old.evening?.on ?? false, at: old.evening?.at },
+  };
+  for (const id of kept.ids) {
+    const a = getAutomation(sql, id);
+    const fresh = ROUTINES.find((r) => r.name === a?.name);
+    if (!a || !fresh || a.made_by !== "default" || !(a.name in looks)) continue;
+    // A routine whose steps the owner rewrote keeps them; its report and time are theirs too.
+    const original = a.do.length === 1 && a.do[0]!.kind === "atlas" && a.report === "thread";
+    if (!original) continue;
+    const look = looks[a.name as keyof typeof looks];
+    const at = look.at && /^\d\d:\d\d$/.test(look.at) ? look.at : a.when.kind === "schedule" ? a.when.at : "08:00";
+    saveAutomation(sql, { ...fresh, when: { kind: "schedule", at, days: [] } }, "default", a.id);
+    if (look.on && a.state !== "on") setAutomationState(sql, a.id, true, "atlas");
+  }
+  sql.exec(
+    `UPDATE agenda SET state = 'cancelled', updated_at = ? WHERE kind = 'rhythm' AND state = 'scheduled' AND json_extract(source, '$.detail.moment') IN ('morning', 'evening')`,
+    Date.now(),
+  );
+  setState(sql, "routines", { ...kept, v: 2 });
 }

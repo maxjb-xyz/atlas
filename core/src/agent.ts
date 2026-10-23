@@ -128,7 +128,7 @@ import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
 import type { Append } from "./store/log";
-import { NUDGE_WORDS, nudgeTool, SenseDesk, speakingUp } from "./agent/senses";
+import { type NudgeFrom, nudgeTool, SenseDesk, speakingUp } from "./agent/senses";
 import { addHook, hookAllowed, hookItem, hookSeen, noteSource, noticedTool, removeHook, senseHooks } from "./intake";
 import { errandDone, openErrands, placeLooks, placeTools, NO_DEADLINE } from "./tools/places";
 import {
@@ -435,9 +435,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       sql: this.#sql,
       outbox: this.#outbox,
       clock: this.#clock,
-      converse: ({ runId, note, test }) => {
+      converse: async ({ runId, note, test, worth }) => {
         const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
-        return this.#converse({
+        // Reporting when it's worth saying, it speaks the way awareness does: with nudge, or not at all.
+        const nudger = worth ? this.#nudger({ runId, trigger: `automation:${worth.id}`, from: "routine", ref: worth.id }) : null;
+        const res = await this.#converse({
           runId,
           actor: "atlas",
           sourceLogId: null,
@@ -449,9 +451,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           emit: (e) => {
             if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });
           },
-          tools: test ? TEST_TOOLS : AUTOMATION_TOOLS,
+          tools: test ? TEST_TOOLS : nudger ? [...AUTOMATION_TOOLS, nudger.tool] : AUTOMATION_TOOLS,
+          ...(nudger ? { silentOk: true } : {}),
         });
+        return { ...res, nudged: nudger?.said() ?? null };
       },
+      picture: () => this.#senses.picture(),
       decider: () => this.#decider(),
       calendar: () => this.#calendar.source(readSettings(this.#sql)),
       fetch: (...args) => (seams.fetch ?? fetch)(...args),
@@ -471,7 +476,6 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       background: (fn) => void this.keepAliveWhile(fn).catch(() => {}),
       changed: () => this.#broadcast({ type: "atlas.situation" }),
     });
-    void this.#senses.armRhythm().catch(() => {});
     void this.#senses.armTick().catch(() => {});
     // Items a restart left half way are weighed again.
     void this.keepAliveWhile(() => this.#senses.resume()).catch(() => {});
@@ -1663,39 +1667,40 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    * says at the end isn't sent: it's its note for the log. No nudge is
    * silence, and the run still ends replied.
    */
-  #wake(o: {
-    trigger: string;
-    note: string;
-    from: keyof typeof NUDGE_WORDS;
-    ref?: string;
-  }): Promise<{ run_id: string; nudged: boolean; error?: string }> {
+  /**
+   * The one way a run of Atlas's own speaks up (§10.3, §13.1): `nudge`,
+   * once per run, through the outbox as something that can wait (quiet
+   * hours, focus, the day's budget), watched for the owner's reaction.
+   * `said()` is what it sent, if anything.
+   */
+  #nudger(o: { runId: string; trigger: string; from: NudgeFrom; ref?: string }): { tool: Tool; said: () => string | null } {
+    let said: string | null = null;
+    const tool = nudgeTool(async (text, about) => {
+      if (said != null) return { ok: false, text: "You've already nudged in this run; one is enough." };
+      said = text;
+      const row = await this.#outbox.deliver(
+        {
+          text,
+          run_id: o.runId,
+          channel: "app",
+          urgency: "normal",
+          trigger: o.trigger,
+          nudge: { from: o.from, about, ...(o.ref ? { ref: o.ref } : {}) },
+        },
+        { alreadyStreamed: false },
+      );
+      said = String(row.body.text ?? text);
+      this.#senses.sent({ id: row.id, from: o.from, about, ...(o.ref ? { ref: o.ref } : {}), at: row.at, text: said });
+      return { ok: true, text: row.surface === "voice" ? "said aloud in their call" : "sent" };
+    });
+    return { tool, said: () => said };
+  }
+
+  #wake(o: { trigger: string; note: string; from: NudgeFrom; ref?: string }): Promise<{ run_id: string; nudged: boolean; error?: string }> {
     return this.#inLine(async () => {
       const runId = startRun(this.#sql, { actor: "atlas", trigger: o.trigger, surface: "none", role: "main" });
-      let nudged = false;
-      const nudge = nudgeTool(async (text, about) => {
-        if (nudged) return { ok: false, text: "You've already nudged in this run; one is enough." };
-        nudged = true;
-        const row = await this.#outbox.deliver(
-          {
-            text,
-            run_id: runId,
-            channel: "app",
-            urgency: "normal",
-            trigger: o.trigger,
-            nudge: { from: o.from, about, ...(o.ref ? { ref: o.ref } : {}) },
-          },
-          { alreadyStreamed: false },
-        );
-        this.#senses.sent({
-          id: row.id,
-          from: o.from,
-          about,
-          ...(o.ref ? { ref: o.ref } : {}),
-          at: row.at,
-          text: String(row.body.text ?? text),
-        });
-        return { ok: true, text: row.surface === "voice" ? "said aloud in their call" : "sent" };
-      });
+      const nudger = this.#nudger({ runId, ...o });
+      const nudge = nudger.tool;
       const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
       const res: LoopResult = await this.#converse({
         runId,
@@ -1725,10 +1730,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         ...(res.error ? { error: res.error } : {}),
         ...(res.brain ? { brain: brainKey(res.brain) } : {}),
         usage: res.usage as never,
-        said: nudged ? "nudged" : "silent",
+        said: nudger.said() != null ? "nudged" : "silent",
         ...(res.text.trim() ? { note: res.text.trim().slice(0, 500) } : {}),
       });
-      return { run_id: runId, nudged, ...(res.state === "failed" ? { error: res.error ?? "The run failed." } : {}) };
+      return { run_id: runId, nudged: nudger.said() != null, ...(res.state === "failed" ? { error: res.error ?? "The run failed." } : {}) };
     });
   }
 
@@ -1900,7 +1905,6 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         arm: (id) => this.#automations.arm(id),
       },
       speaking: async () => {
-        await this.#senses.armRhythm();
         this.#broadcast({ type: "atlas.view", view: this.#view() });
       },
       helpers: {
@@ -2471,7 +2475,6 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const isOn = readSettings(this.#sql).location.on;
     if (wasOn !== isOn) this.#broadcast({ type: "atlas.rows", rows: isOn ? locationOn(this.#sql) : locationOff(this.#sql) });
     if (keys.includes("calendar") || keys.includes("timezone")) this.#calendar.reset();
-    if (keys.includes("speaking") || keys.includes("timezone")) void this.#senses.armRhythm().catch(() => {});
     this.#refreshVoice();
     this.#broadcast({ type: "atlas.view", view: this.#view() });
   }
@@ -2521,7 +2524,6 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (out.agenda) this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
     if (out.row.kind === "page.change") this.#broadcast({ type: "atlas.pages", pages: pageSummaries(this.#sql) });
     if (out.row.kind === "settings.change") {
-      await this.#senses.armRhythm().catch(() => {});
       this.#broadcast({ type: "atlas.view", view: this.#view() });
     }
   }

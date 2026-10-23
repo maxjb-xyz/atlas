@@ -453,21 +453,118 @@ describe("automations", () => {
     s.close();
   });
 
-  it("include the default routines, made once and off, each on the clock once turned on", async () => {
+  it("include the default routines, made once: the morning brief on and the rest off, each on the clock once on", async () => {
     const s = await connect();
     const brief = await view(s, "Morning brief");
-    // Off until the owner turns it on in setup or Automations, with no test run needed.
-    expect(brief).toMatchObject({ made_by: "default", state: "paused", can_turn_on: true, when: { kind: "schedule", at: "08:00" } });
-    expect(brief.next_at).toBeNull();
-    s.send({ type: "atlas.automation.set", id: brief.id, on: true });
-    expect((await view(s, "Morning brief", (a) => a.state === "on")).next_at).not.toBeNull();
+    // The daily looks are the routines (§13.4): the morning brief starts on, and says something only when it's worth saying.
+    expect(brief).toMatchObject({ made_by: "default", state: "on", report: "worth", when: { kind: "schedule", at: "08:00" } });
+    expect(brief.next_at).not.toBeNull();
+    const wrap = await view(s, "Evening wrap-up");
+    expect(wrap).toMatchObject({ state: "paused", report: "worth", can_turn_on: true });
+    expect(wrap.next_at).toBeNull();
+    s.send({ type: "atlas.automation.set", id: wrap.id, on: true });
+    expect((await view(s, "Evening wrap-up", (a) => a.state === "on")).next_at).not.toBeNull();
     expect((await view(s, "Weekly review")).when).toMatchObject({ kind: "schedule", days: [0] });
-    s.send({ type: "atlas.automation.delete", id: (await view(s, "Evening wrap-up")).id });
+    s.send({ type: "atlas.automation.delete", id: wrap.id });
     await s.next("atlas.automations", (m) => !m.automations.some((a) => a.name === "Evening wrap-up"));
     // Starting again doesn't make a deleted routine again.
     const again = await inOwner((_a, sql) => seedRoutines(sql));
     expect(again).toEqual([]);
     s.close();
+  });
+
+  it("the morning brief looks at the day with what came in, stays quiet when there's nothing to say, and speaks as a nudge when there is", async () => {
+    const s = await connect();
+    const brief = await view(s, "Morning brief");
+    const due = () =>
+      inOwner(async (agent, sql) => {
+        const item = sql
+          .exec<{ id: string }>(
+            `SELECT id FROM agenda WHERE kind = 'automation' AND state = 'scheduled' AND json_extract(source, '$.detail.automation') = ?`,
+            brief.id,
+          )
+          .one().id;
+        sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1000, item);
+        await agent.onAgendaDue({ id: item });
+      });
+    // Something that could wait came in overnight.
+    const waiting = await inOwner(async (_a, sql) => {
+      const { take, mark } = await import("../src/intake");
+      sql.exec(`UPDATE intake SET seen_at = 1 WHERE seen_at IS NULL`);
+      const { fresh } = take(sql, [{ source: "webhook", event: "post", what: "Home server: backup finished", key: `b-${Date.now()}` }]);
+      mark(sql, fresh[0]!.id, { state: "weighed", outcome: "later", why: "It can wait." });
+      return fresh[0]!.id;
+    });
+    const quiet = brain([say("A quiet day: nothing worth saying.")]);
+    await due();
+    const first = (await inOwner((_a, sql) => runs(sql, brief.id))).at(-1)!;
+    expect(first).toMatchObject({ ok: true, report: "worth" });
+    expect(String(first.text)).toContain("Nothing worth saying");
+    const note = String(quiet.requests[0]!.messages.at(-1)!.content);
+    expect(note).toContain("What came in since your last look");
+    expect(note).toContain("Home server: backup finished");
+    expect(quiet.requests[0]!.tools.map((t) => t.name)).toContain("nudge");
+    // It looked the pile over, and said nothing in the thread.
+    expect(
+      await inOwner((_a, sql) => sql.exec<{ seen_at: number | null }>(`SELECT seen_at FROM intake WHERE id = ?`, waiting).one().seen_at),
+    ).not.toBeNull();
+    const said = () =>
+      inOwner((_a, sql) =>
+        sql
+          .exec<{ body: string }>(
+            `SELECT body FROM log WHERE kind = 'message.out' AND json_extract(body, '$.trigger') = ?`,
+            `automation:${brief.id}`,
+          )
+          .toArray()
+          .map((r) => JSON.parse(r.body) as Record<string, unknown>),
+      );
+    expect(await said()).toEqual([]);
+
+    // With something worth saying, it nudges: once, watched for a reaction, and not said again as the run's report.
+    brain([call("nudge", { text: "Your 9 o'clock moved to 10.", about: "a moved meeting" }), say("")]);
+    await due();
+    const out = await said();
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ text: "Your 9 o'clock moved to 10.", nudge: { from: "routine", ref: brief.id } });
+    const n = await inOwner((_a, sql) =>
+      JSON.parse(sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = 'nudges'`).one().value),
+    );
+    expect(n.at(-1)).toMatchObject({ from: "routine", ref: brief.id, about: "a moved meeting" });
+    s.close();
+  });
+
+  it("upgrades a deployment from before: the morning brief takes the start-of-day look's time and turns on, and the old looks end", async () => {
+    await inOwner(async (_a, sql) => {
+      const { ROUTINES } = await import("../src/routines");
+      const old = {
+        ...ROUTINES[0]!,
+        report: "thread" as const,
+        do: [{ kind: "atlas" as const, instructions: "Give the owner their morning brief for today." }],
+      };
+      let id = sql.exec<{ id: string }>(`SELECT id FROM automations WHERE name = 'Morning brief'`).toArray()[0]?.id;
+      id = saveAutomation(sql, old, "default", id).id;
+      setAutomationState(sql, id, false, "owner");
+      sql.exec(
+        `INSERT OR REPLACE INTO state (key, value, updated_at) VALUES ('routines', ?, 0)`,
+        JSON.stringify({ made_at: 1, ids: [id] }),
+      );
+      sql.exec(
+        `INSERT OR REPLACE INTO settings (key, value) VALUES ('speaking', ?)`,
+        JSON.stringify({ noticing: true, leave: true, morning: { on: true, at: "07:30" }, evening: { on: false, at: "20:00" } }),
+      );
+      const { createItem } = await import("../src/store/agenda");
+      const look = createItem(sql, {
+        kind: "rhythm",
+        title: "Start of day",
+        due_at: Date.now() + 3_600_000,
+        source: { via: "senses", detail: { moment: "morning" } },
+      });
+      seedRoutines(sql);
+      const a = getAutomation(sql, id)!;
+      expect(a).toMatchObject({ report: "worth", state: "on", when: { kind: "schedule", at: "07:30" } });
+      expect(sql.exec<{ state: string }>(`SELECT state FROM agenda WHERE id = ?`, look.id).one().state).toBe("cancelled");
+      sql.exec(`DELETE FROM settings WHERE key = 'speaking'`);
+    });
   });
 
   it("follow the calendar through the intake: the first look only remembers, a moved event runs once with the change", async () => {

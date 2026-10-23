@@ -74,7 +74,8 @@ export const Step = z.discriminatedUnion("kind", [
 ]);
 export type Step = z.infer<typeof Step>;
 
-export const Report = z.enum(["thread", "inbox", "silent"]);
+/** Where what it says goes. `worth`: the thread, only when Atlas judges it worth saying, as a nudge (§13.1). */
+export const Report = z.enum(["thread", "worth", "inbox", "silent"]);
 export type Report = z.infer<typeof Report>;
 
 /** What the model and the form fill in. */
@@ -83,7 +84,9 @@ export const AutomationInput = z.object({
   about: z.string().max(300).default(""),
   when: Trigger,
   do: z.array(Step).min(1).max(12),
-  report: Report.default("thread").describe("Where what it says goes: the thread, Inbox, or nowhere but History."),
+  report: Report.default("thread").describe(
+    "Where what it says goes: the thread; worth, the thread only when there's something worth saying (for looks at the day that may stay quiet); Inbox; or nowhere but History.",
+  ),
 });
 export type AutomationInput = z.infer<typeof AutomationInput>;
 

@@ -544,37 +544,6 @@ describe("on the move, and pushes", () => {
   });
 });
 
-describe("rhythm moments", () => {
-  it("start of day is on the clock at its time, may end in silence, and logs which it chose", async () => {
-    seams.decide = decider({ errand: 0 });
-    const item = await inOwner(
-      (_a, sql) =>
-        sql
-          .exec<{ id: string; due_at: number }>(
-            `SELECT id, due_at FROM agenda WHERE kind = 'rhythm' AND state = 'scheduled' AND json_extract(source, '$.detail.moment') = 'morning'`,
-          )
-          .toArray()[0],
-    );
-    expect(item).toBeTruthy();
-    const b = brain([say("Nothing worth saying this morning.")]);
-    const from = await lastSeq();
-    await inOwner(async (a, sql) => {
-      sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1_000, item!.id);
-      await a.onAgendaDue({ id: item!.id });
-    });
-    const row = await waitFor("the moment's row", async () => (await rowsSince(from, "awareness")).find((r) => r.moment === "morning"));
-    expect(row).toMatchObject({ step: "woke", outcome: "silent" });
-    expect(b.requests[0]!.messages.some((m) => String(m.content).includes("start of the day"))).toBe(true);
-    expect(await rowsSince(from, "message.out")).toEqual([]);
-    // It comes back tomorrow, on the same item.
-    const again = await inOwner((_a, sql) =>
-      sql.exec<{ state: string; due_at: number }>(`SELECT state, due_at FROM agenda WHERE id = ?`, item!.id).one(),
-    );
-    expect(again.state).toBe("scheduled");
-    expect(again.due_at).toBeGreaterThan(Date.now());
-  });
-});
-
 describe("ignored nudges", () => {
   it("counts a held nudge's two hours from when it's released, not when it was written", async () => {
     await inOwner(async (a, sql) => {
@@ -601,26 +570,6 @@ describe("ignored nudges", () => {
       }>;
       expect(st.find((n) => n.id === "lg_held")!.reaction).toBeUndefined();
       expect(st.find((n) => n.id === "lg_seen")!.reaction).toBe("ignored");
-    });
-  });
-});
-
-describe("rhythm moments on a cold start", () => {
-  it("leaves a moment that's due for the clock, instead of moving it to tomorrow", async () => {
-    const due = Date.now() - 30_000;
-    await inOwner(async (a, sql) => {
-      sql.exec(
-        `UPDATE agenda SET due_at = ? WHERE kind = 'rhythm' AND state = 'scheduled' AND json_extract(source, '$.detail.moment') = 'morning'`,
-        due,
-      );
-      await a.onStart();
-      const row = sql
-        .exec<{ due_at: number; state: string }>(
-          `SELECT due_at, state FROM agenda WHERE kind = 'rhythm' AND json_extract(source, '$.detail.moment') = 'morning' ORDER BY created_at DESC LIMIT 1`,
-        )
-        .one();
-      // Either still due (waiting for its wake) or already taken by onStart's sweep: never moved past now unseen.
-      expect(row.state === "running" || row.due_at === due).toBe(true);
     });
   });
 });

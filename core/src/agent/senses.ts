@@ -33,13 +33,12 @@ import { z } from "zod";
 import { defineTool, fail, type MapsApi, type Tool, type ToolContext } from "../tools/types";
 
 /** What started a nudge; each has a switch in Settings → Notifications → Speaking up. */
-export type NudgeFrom = "noticing" | "leave" | "morning" | "evening";
+export type NudgeFrom = "noticing" | "leave" | "routine";
 
-export const NUDGE_WORDS: Record<NudgeFrom, string> = {
+/** The switches in Speaking up. A routine's report has its own place: its automation (§13.4). */
+export const NUDGE_WORDS: Record<"noticing" | "leave", string> = {
   noticing: "what Atlas notices",
   leave: "when to leave for events",
-  morning: "the start of day",
-  evening: "the evening",
 };
 
 /** A nudge Atlas sent, and how the owner took it. */
@@ -84,9 +83,8 @@ export const nudges = (sql: Sql): Nudge[] =>
   (getState<Nudge[]>(sql, "nudges") ?? []).map((n) => ({ ...n, from: n.from ?? "noticing", about: n.about ?? "" }));
 const saveNudges = (sql: Sql, all: Nudge[]) => setState(sql, "nudges", all.slice(-40));
 
-export function isOn(s: Settings, k: NudgeFrom): boolean {
-  const v = s.speaking[k];
-  return typeof v === "boolean" ? v : v.on;
+export function isOn(s: Settings, k: keyof typeof NUDGE_WORDS): boolean {
+  return s.speaking[k];
 }
 
 export interface SenseDeps {
@@ -484,36 +482,7 @@ export class SenseDesk {
     return out;
   }
 
-  // --- rhythm moments ---------------------------------------------------------------------------------
-
-  /** Puts the start of day and the evening on the clock at their times, or takes them off. */
-  async armRhythm(now = new Date()): Promise<void> {
-    const settings = readSettings(this.d.sql);
-    const tz = zoneOf(settings);
-    for (const moment of ["morning", "evening"] as const) {
-      const open = upcoming(this.d.sql, 200).find((i) => i.kind === "rhythm" && i.source.detail?.moment === moment);
-      const s = settings.speaking[moment];
-      if (!s.on) {
-        if (open) {
-          await this.d.clock.unschedule(open);
-          finish(this.d.sql, open.id, "cancelled", null, { by: "owner" });
-        }
-        continue;
-      }
-      const at = nextRun({ kind: "schedule", at: s.at, days: [] }, now, tz)!.getTime();
-      // One that's due or under way is the clock's to run (a cold start calls this before the alarm's own wake does).
-      if (open && (open.due_at === at || open.state === "running" || open.due_at <= now.getTime())) continue;
-      const item = open
-        ? rearm(this.d.sql, open.id, at)!
-        : createItem(this.d.sql, {
-            kind: "rhythm",
-            title: moment === "morning" ? "Start of day" : "Evening",
-            due_at: at,
-            source: { via: "senses", detail: { moment } },
-          });
-      await this.d.clock.schedule(item);
-    }
-  }
+  // --- the look before leaving ---------------------------------------------------------------------
 
   /** A look before leaving for the next event with a place, ten minutes before leave-by, once per event. */
   async #armLeave(settings: Settings): Promise<void> {
@@ -554,57 +523,37 @@ export class SenseDesk {
     await this.d.clock.schedule(item);
   }
 
-  /** A rhythm moment came due (the item is already leased): Atlas looks, and may stay silent. Start of day and evening come back tomorrow. */
+  /**
+   * The look before leaving came due (the item is already leased): Atlas
+   * looks, and may stay silent. The start of day and the evening were
+   * looks like this one before they became the routines (§13.4); an item
+   * left from then is ended.
+   */
   async moment(item: AgendaItem): Promise<void> {
     const t0 = Date.now();
     const moment = String(item.source.detail?.moment ?? "");
+    if (moment !== "leave") {
+      finish(this.d.sql, item.id, "cancelled", null, { why: "The daily looks are the morning brief and evening wrap-up now." });
+      return;
+    }
     await this.refresh(true);
     const settings = readSettings(this.d.sql);
     const tz = zoneOf(settings);
-    const kind: NudgeFrom = moment === "leave" ? "leave" : moment === "evening" ? "evening" : "morning";
-    const said = saidToday(this.d.sql, tz);
-    const pile = kind === "leave" ? [] : laterPile(this.d.sql, 30);
-    let note: string;
-    if (kind === "leave") {
-      const t = cache(this.d.sql).travel;
-      if (!t || t.event_id !== item.source.detail?.event_id) {
-        finish(this.d.sql, item.id, "cancelled", null, { why: "The event isn't next any more." });
-        this.#log({
-          moment,
-          event: item.title,
-          step: "rules",
-          outcome: "quiet",
-          why: "The event isn't next any more.",
-          ms: Date.now() - t0,
-        });
-        return;
-      }
-      note = [
-        `[Atlas's clock, not the owner] It's nearly time to leave for "${t.title}" at ${clockLocal(new Date(t.start), tz)} (${t.location}): about ${minutes(t.s)} by car from ${t.from_what === "here" ? "where they are" : "home"}${t.traffic ? " with traffic" : ", typical time with no live traffic"}, so leave by ${clockLocal(new Date(t.leave_by), tz)}.`,
-        "If they're already there or on their way (see the situation), or it clearly doesn't need them to go, don't nudge. Otherwise nudge once, short: when to leave and how long it takes, and anything else that would help on the way (traffic, the weather, something to bring or pick up).",
-        listsLine(settings),
-        reactionsLine(this.d.sql),
-      ]
-        .filter(Boolean)
-        .join("\n\n");
-    } else {
-      note = [
-        `[Atlas's clock, not the owner] It's the ${kind === "morning" ? "start of the day" : "evening"}: your look at ${kind === "morning" ? "the day ahead" : "how today went and what tomorrow holds"}, which may end in silence.`,
-        `Look it over the way a great assistant would: the situation, the calendar, reminders, errands, the people involved and what you know of them, and the weather. Think about what they'd be glad to hear now, or what you could get ready for them. If there's something, nudge once with it, in a few lines; if there isn't, don't nudge.`,
-        pile.length ? `Also look over what came in since your last look, which could wait until now:\n${pileList(pile, tz)}` : "",
-        said.length ? `You've already said today (never say it again):\n${said.map((s) => `- ${s}`).join("\n")}` : "",
-        listsLine(settings),
-        reactionsLine(this.d.sql),
-      ]
-        .filter(Boolean)
-        .join("\n\n");
+    const t = cache(this.d.sql).travel;
+    if (!t || t.event_id !== item.source.detail?.event_id) {
+      finish(this.d.sql, item.id, "cancelled", null, { why: "The event isn't next any more." });
+      this.#log({ moment, event: item.title, step: "rules", outcome: "quiet", why: "The event isn't next any more.", ms: Date.now() - t0 });
+      return;
     }
-    const out = await this.d.wake({ trigger: `rhythm:${item.id}`, note, from: kind });
-    if (!out.error && pile.length)
-      markSeen(
-        this.d.sql,
-        pile.map((i) => i.id),
-      );
+    const note = [
+      `[Atlas's clock, not the owner] It's nearly time to leave for "${t.title}" at ${clockLocal(new Date(t.start), tz)} (${t.location}): about ${minutes(t.s)} by car from ${t.from_what === "here" ? "where they are" : "home"}${t.traffic ? " with traffic" : ", typical time with no live traffic"}, so leave by ${clockLocal(new Date(t.leave_by), tz)}.`,
+      "If they're already there or on their way (see the situation), or it clearly doesn't need them to go, don't nudge. Otherwise nudge once, short: when to leave and how long it takes, and anything else that would help on the way (traffic, the weather, something to bring or pick up).",
+      listsLine(settings),
+      reactionsLine(this.d.sql),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const out = await this.d.wake({ trigger: `rhythm:${item.id}`, note, from: "leave" });
     this.#log(
       {
         moment,
@@ -616,12 +565,38 @@ export class SenseDesk {
       },
       out.run_id,
     );
-    if (kind === "leave") finish(this.d.sql, item.id, out.error ? "failed" : "done", out.run_id);
-    else {
-      const s = settings.speaking[kind];
-      const next = nextRun({ kind: "schedule", at: s.at, days: [] }, new Date(Math.max(Date.now(), item.due_at) + 60_000), tz)!;
-      await this.d.clock.schedule(rearm(this.d.sql, item.id, next.getTime())!);
-    }
+    finish(this.d.sql, item.id, out.error ? "failed" : "done", out.run_id);
+  }
+
+  /**
+   * What a run of Atlas's own on the clock needs to look at the day (§13.4):
+   * what came in that could wait, what it already said today, the owner's
+   * lists, and how its last nudges landed. `seen` marks the pile looked at,
+   * once the run has finished.
+   */
+  picture(): { text: string; seen: () => void } {
+    const settings = readSettings(this.d.sql);
+    const tz = zoneOf(settings);
+    const pile = laterPile(this.d.sql, 30);
+    const said = saidToday(this.d.sql, tz);
+    const text = [
+      pile.length
+        ? `What came in since your last look, which could wait until now (look it over with the rest):\n${pileList(pile, tz)}`
+        : "",
+      said.length ? `What you've already said on your own today (never say it again):\n${said.map((x) => `- ${x}`).join("\n")}` : "",
+      listsLine(settings),
+      reactionsLine(this.d.sql),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    return {
+      text,
+      seen: () =>
+        markSeen(
+          this.d.sql,
+          pile.map((i) => i.id),
+        ),
+    };
   }
 
   // --- reactions ------------------------------------------------------------------------------------------
@@ -666,7 +641,12 @@ export class SenseDesk {
     }
     this.#react(n, reaction);
     if (reaction !== "stop") return null;
-    const moment = n.from === "noticing" ? "" : ` It came from ${NUDGE_WORDS[n.from]}, which has its own switch.`;
+    const moment =
+      n.from === "routine"
+        ? ` It came from one of the owner's automations (id ${n.ref ?? "?"}): if they mean that whole routine, turn it off or change it with automation_set or automation_save, not speaking_up.`
+        : n.from === "leave"
+          ? ` It came from ${NUDGE_WORDS.leave}, which has its own switch.`
+          : "";
     return `The owner seems to be saying stop to the nudge you sent: "${n.text.slice(0, 200)}"${n.about ? ` (about ${n.about})` : ""}.${moment} Work out what they want to stop, as narrow or as broad as they meant it, and change it with speaking_up; ask only if you truly can't tell. Then say what you changed in a few words.`;
   }
 
@@ -801,8 +781,9 @@ function saidToday(sql: Sql, tz: string): string[] {
 
 /** The Speaking up line for every prompt: what Atlas may bring up on its own, and what the owner asked it not to. */
 export function speakingLine(s: Settings): string {
-  const on = (Object.keys(NUDGE_WORDS) as NudgeFrom[]).filter((k) => isOn(s, k)).map((k) => NUDGE_WORDS[k]);
-  const off = (Object.keys(NUDGE_WORDS) as NudgeFrom[]).filter((k) => !isOn(s, k)).map((k) => NUDGE_WORDS[k]);
+  const keys = Object.keys(NUDGE_WORDS) as Array<keyof typeof NUDGE_WORDS>;
+  const on = keys.filter((k) => isOn(s, k)).map((k) => NUDGE_WORDS[k]);
+  const off = keys.filter((k) => !isOn(s, k)).map((k) => NUDGE_WORDS[k]);
   return [
     `Speaking up on your own (Settings → Notifications → Speaking up; change it with speaking_up): ${on.length ? `on for ${on.join(", ")}` : "off for everything"}${on.length && off.length ? `; off for ${off.join(", ")}` : ""}.`,
     s.speaking.tell_about.length ? ` The owner asked you to always bring up: ${s.speaking.tell_about.join("; ")}.` : "",
@@ -832,8 +813,6 @@ export function nudgeTool(send: (text: string, about: string) => Promise<{ ok: b
   });
 }
 
-const HHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "a time like 07:30");
-
 /**
  * The owner's Speaking up, changed by Atlas when they ask ("stop telling me
  * about the weather", "do the morning look at seven"). It's their own
@@ -843,7 +822,8 @@ export const speakingUp = defineTool({
   name: "speaking_up",
   kind: "change_own",
   description: [
-    "Change what you bring up on your own, when the owner asks: add or remove subjects they don't want to hear about (in their words, as narrow or broad as they meant: 'the weather unless it's severe', 'errands'), subjects they always want to hear about ('anything from my landlord', 'reviews requested on my PRs'), or switch what you notice, the look before leaving for events, and the start of day and evening looks (with their times).",
+    "Change what you bring up on your own, when the owner asks: add or remove subjects they don't want to hear about (in their words, as narrow or broad as they meant: 'the weather unless it's severe', 'errands'), subjects they always want to hear about ('anything from my landlord', 'reviews requested on my PRs'), or switch what you notice and the look before leaving for events.",
+    "The morning brief and the evening wrap-up are automations: change their time or turn them off with automation_save or automation_set.",
     "They see a receipt with Undo, and it all shows in Settings → Notifications → Speaking up.",
   ].join(" "),
   input: z.object({
@@ -853,8 +833,6 @@ export const speakingUp = defineTool({
     tell_about_remove: z.array(z.string().min(1).max(120)).max(5).optional(),
     noticing: z.boolean().optional().describe("Whether you speak up about what your senses notice."),
     leave: z.boolean().optional().describe("Whether you look before they leave for an event with a place."),
-    morning: z.object({ on: z.boolean().optional(), at: HHMM.optional() }).optional(),
-    evening: z.object({ on: z.boolean().optional(), at: HHMM.optional() }).optional(),
   }),
   async run(input, ctx) {
     const before = readSettings(ctx.sql).speaking;
@@ -868,8 +846,6 @@ export const speakingUp = defineTool({
     const after: Settings["speaking"] = {
       noticing: input.noticing ?? before.noticing,
       leave: input.leave ?? before.leave,
-      morning: { ...before.morning, ...input.morning },
-      evening: { ...before.evening, ...input.evening },
       quiet_about: edit(before.quiet_about, input.quiet_about_add, input.quiet_about_remove),
       tell_about: edit(before.tell_about, input.tell_about_add, input.tell_about_remove),
     };
@@ -883,9 +859,6 @@ export const speakingUp = defineTool({
       ...(input.tell_about_add ?? []).map((q) => `will always bring up ${q}`),
       ...(input.tell_about_remove ?? []).map((q) => `no longer always brings up ${q}`),
       ...(["noticing", "leave"] as const).filter((k) => input[k] != null).map((k) => `${NUDGE_WORDS[k]} ${input[k] ? "on" : "off"}`),
-      ...(["morning", "evening"] as const)
-        .filter((k) => input[k])
-        .map((k) => `${NUDGE_WORDS[k]} ${after[k].on ? `on at ${after[k].at}` : "off"}`),
     ];
     return {
       ok: true,

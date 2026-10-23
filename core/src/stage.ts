@@ -349,7 +349,7 @@ export interface AutomationView {
   when: import("./automations").Trigger;
   when_text: string;
   steps: Array<{ step: import("./automations").Step; text: string }>;
-  report: "thread" | "inbox" | "silent";
+  report: "thread" | "worth" | "inbox" | "silent";
   /** Whether it can be turned on now: Atlas's need a test run since their last change. */
   can_turn_on: boolean;
   tested_at: number | null;

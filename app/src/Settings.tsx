@@ -1714,10 +1714,11 @@ export function Pair({ atlas, code }: { atlas: Atlas; code: string }) {
 }
 
 /**
- * Speaking up (§10.3): whether Atlas tells you things on its own, the looks
- * it takes at set moments, and, in your own words, what it should always
- * bring up and what never (it keeps both lists itself when you say stop,
- * or ask why it didn't tell you, and you can change them here).
+ * Speaking up (§10.3): whether Atlas tells you what it notices, and when to
+ * leave for events, and, in your own words, what it should always bring up
+ * and what never (it keeps both lists itself when you say stop, or ask why
+ * it didn't tell you, and you can change them here). The daily looks are
+ * the morning brief and evening wrap-up, in Automations.
  */
 function Speaking({ draft, edit }: { draft: SettingsT; edit: Edit }) {
   const sp = draft.speaking;
@@ -1728,23 +1729,6 @@ function Speaking({ draft, edit }: { draft: SettingsT; edit: Edit }) {
       {label}
     </label>
   );
-  const moment = (k: "morning" | "evening", label: string) => (
-    <div className="row">
-      <label className="check" style={{ minWidth: 200 }}>
-        <input type="checkbox" checked={sp[k].on} onChange={(e) => set({ [k]: { ...sp[k], on: e.target.checked } })} />
-        {label}
-      </label>
-      <label className="field" style={{ width: 130 }}>
-        <input
-          type="time"
-          aria-label={`${label}: time`}
-          value={sp[k].at}
-          disabled={!sp[k].on}
-          onChange={(e) => e.target.value && set({ [k]: { ...sp[k], at: e.target.value } })}
-        />
-      </label>
-    </div>
-  );
   return (
     <>
       {flag(
@@ -1752,8 +1736,6 @@ function Speaking({ draft, edit }: { draft: SettingsT; edit: Edit }) {
         "What Atlas notices: where you are and are heading, changes on your calendar, traffic, the weather, your devices, your webhooks",
       )}
       {flag("leave", "When to leave for events with a place, from the travel time")}
-      {moment("morning", "A look at the start of the day")}
-      {moment("evening", "A look in the evening")}
       <Words
         label="Always bring up"
         empty={'Nothing yet. Asking "why didn\'t you tell me?" can add what you meant here.'}
@@ -1770,7 +1752,8 @@ function Speaking({ draft, edit }: { draft: SettingsT; edit: Edit }) {
       />
       <p className="muted small">
         Atlas speaks up when it would help, and stays quiet otherwise; History shows what it decided each time and why, and "show me what
-        you noticed" puts today's on the stage. These wait for quiet hours and count against the day's interruptions.
+        you noticed" puts today's on the stage. These wait for quiet hours and count against the day's interruptions. The morning brief and
+        the evening wrap-up are in <a href="#/automations">Automations</a>, with their times.
       </p>
     </>
   );
