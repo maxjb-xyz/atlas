@@ -7,6 +7,7 @@ A milestone is done when its smoke test passes on the owner's real deployment (V
 ## Layout
 
 - `core/`: the Worker and the person agent (TypeScript, Cloudflare Agents SDK). Its size is reported at each milestone's close (VISION rule 4).
+- `extensions/`: everything tied to one service (VISION §17), each `extensions/<id>/index.ts` against `extensions/sdk.ts`, sandboxed in a Dynamic Worker whose only way out is the core's gate. `npm run extensions` bundles them into `core/src/extensions.gen.ts` (`check`, `dev` and `deploy` run it). Nothing service-specific goes in `core/`.
 - `app/`: the web app (React, Vite), served by the Worker. UI v1 is locked in [docs/ui/](docs/ui/README.md).
 - `desktop/`: the desktop app (Tauri, Rust): Atlas in a window, and the first node (VISION §16.3). Built for the Mac by `.github/workflows/desktop.yml`, only on a published release.
 - `bench/`: the voice latency benchmark, run against a deployed Atlas.
