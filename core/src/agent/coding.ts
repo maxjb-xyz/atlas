@@ -68,6 +68,8 @@ const DECISION_LOST_MS = 12 * 60_000;
 const DECISION_BUDGET = { steps: 24, ms: 10 * 60_000 };
 /** Decisions in one job before Atlas calls it going in circles. */
 const MAX_DECISIONS = 60;
+/** Wakes in a row that fail before the job ends with the last one's reason. */
+const MAX_ERRORS = 4;
 /** Times the agent is started again after it ended on its own, before the job fails with its words. */
 const MAX_REVIVES = 4;
 /** What the job keeps of the agent's stream. */
@@ -137,6 +139,8 @@ export interface CodingJob {
   /** Atlas ran something itself in review. */
   tested: boolean;
   revives: number;
+  /** Wakes in a row that failed (the workspace unreachable through a deploy, say), before the job gives up. */
+  errors?: number;
   cost: { total: number; base: number; last: number };
   pr: { number: number; link: string; title: string } | null;
   error: string | null;
@@ -488,9 +492,26 @@ export class CodingDesk {
       else if (job.phase === "deciding") {
         if (!job.deciding || Date.now() - job.deciding.at > DECISION_LOST_MS)
           await this.#decide(job, "The last look at this turn didn't finish, so this is a fresh one.");
+        else await this.h.watch(job.id, job.deciding.at + DECISION_LOST_MS + 60_000);
       } else if (job.phase === "publishing") await this.#publish(job);
+      const fresh = getJob(this.h.sql, id);
+      if (fresh?.errors) {
+        fresh.errors = 0;
+        saveJob(this.h.sql, fresh);
+      }
     } catch (err) {
-      await this.#fail(job, errText(err));
+      // A wake can fail for a passing reason (the workspace restarting through a deploy): try again a few times, then give up with the reason.
+      const fresh = getJob(this.h.sql, id) ?? job;
+      if (ENDED.includes(fresh.phase)) return;
+      fresh.errors = (fresh.errors ?? 0) + 1;
+      if (fresh.errors >= MAX_ERRORS) {
+        await this.#fail(fresh, errText(err));
+        return;
+      }
+      this.#note(fresh, `That didn't work (${clip(errText(err), 300)}); trying again shortly.`);
+      saveJob(this.h.sql, fresh);
+      this.h.changed();
+      await this.h.watch(id, Date.now() + 30_000 * fresh.errors).catch(() => {});
     }
   }
 
@@ -923,6 +944,8 @@ export class CodingDesk {
     job.phase = "deciding";
     saveJob(this.h.sql, job);
     this.h.changed();
+    // If the look is lost without a word, the clock notices and starts another.
+    await this.h.watch(job.id, Date.now() + DECISION_LOST_MS + 60_000);
     const d = this.h.decider();
     try {
       await this.h.launch({
