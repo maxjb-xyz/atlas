@@ -8,6 +8,7 @@ import { readdirSync, statSync, writeFileSync, mkdtempSync, rmSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const dir = join(root, "extensions");
