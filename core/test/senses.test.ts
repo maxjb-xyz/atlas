@@ -78,7 +78,7 @@ function fakeWorld() {
   return { f, asked };
 }
 
-/** A fake decide role: an errand question is yes when `yes` says so; a reaction reads "thanks" or "stop" from the reply. */
+/** A fake decide role: a person task's question scores `errand`; a reaction reads "thanks" or "stop" from the reply. */
 function decider(o: { errand: number; now?: number; later?: number }): Decider & { asked: Array<Record<string, string>> } {
   const asked: Array<Record<string, string>> = [];
   return {
@@ -94,7 +94,7 @@ function decider(o: { errand: number; now?: number; later?: number }): Decider &
         else if (id === "stop") out[id] = /"stop/i.test(state.split("The owner replied:")[1] ?? "") ? 0.95 : 0.05;
         else if (id === "thanks") out[id] = /thank/i.test(state.split("The owner replied:")[1] ?? "") ? 0.95 : 0.05;
         // Like Clef: an errand fits when they're leaving somewhere and heading on, not when they arrive.
-        else if (q.instructions.includes("errand")) out[id] = /left|moved/.test(state.split("\n")[0]!) ? o.errand : 0.05;
+        else if (q.instructions.includes("in touch with")) out[id] = o.errand;
         else out[id] = 0.01;
       }
       return out;
@@ -147,7 +147,7 @@ beforeEach(async () => {
   seams.calendar = fakeCalendar([]);
   seams.embed = fakeEmbedder();
   await inOwner((_a, sql) => {
-    sql.exec(`DELETE FROM records WHERE type IN ('place', 'organization')`);
+    sql.exec(`DELETE FROM records WHERE type IN ('place', 'organization', 'task')`);
     sql.exec(`DELETE FROM state WHERE key IN ('location', 'situation', 'nudges')`);
     sql.exec(`DELETE FROM settings WHERE key IN ('location', 'speaking', 'maps')`);
     sql.exec(
@@ -171,11 +171,11 @@ afterEach(() => {
 });
 
 describe("the gym-to-store moment", () => {
-  it("keeps the errand, and leaving the gym brings a nudge about a store on the way home", async () => {
+  it("keeps a task that fits at a grocery store, and leaving the gym brings a nudge about a store on the way home", async () => {
     const d = decider({ errand: 0.92 });
     seams.decide = d;
     const b = brain([
-      call("errand_add", { what: "Oat milk", kind: "grocery" }),
+      call("task_add", { what: "Oat milk", fits: { kind: "grocery" } }),
       say("I'll keep an eye out."),
       // The wake run, after leaving the gym.
       call("place_find", { kind: "grocery", near: "here", on_the_way_to: "home" }),
@@ -191,11 +191,12 @@ describe("the gym-to-store moment", () => {
       say("Nudged about the Publix."),
     ]);
     const t = await turn(s, "I need oat milk");
-    expect(t.results[0]!.body.receipt).toMatchObject({ text: "Errand · Oat milk" });
-    const agenda = await inOwner((_a, sql) =>
-      sql.exec<{ title: string; state: string }>(`SELECT title, state FROM agenda WHERE kind = 'errand' AND state = 'scheduled'`).toArray(),
-    );
-    expect(agenda).toEqual([{ title: "Oat milk", state: "scheduled" }]);
+    expect(t.results[0]!.body.receipt).toMatchObject({ text: "To do · Oat milk · at a grocery store" });
+    // It's a task record, open, and nothing on the clock (it has no deadline).
+    const open = await inOwner(async (_a, sql) => (await import("../src/tasks")).openTasks(sql).map((r) => r.name));
+    expect(open).toEqual(["Oat milk"]);
+    const view = await s.next("atlas.view", (m) => m.view.tasks.some((x) => x.title === "Oat milk"));
+    expect(view.view.tasks[0]).toMatchObject({ title: "Oat milk", fits: "at a grocery store", status: "open" });
 
     const from = await lastSeq();
     await post(fixAt(GYM, Date.now() - 50 * 60_000), auth);
@@ -208,12 +209,13 @@ describe("the gym-to-store moment", () => {
     const aware = await waitFor("the awareness row", async () => (await rowsSince(from, "awareness")).find((r) => r.step === "woke"));
     expect(aware).toMatchObject({ outcome: "nudged", event: expect.stringContaining("left Gym") });
     expect(aware.run_id).toBe(nudge.run_id);
-    // Decide was asked about the errand, with the event and the situation.
-    expect(Object.values(d.asked.at(-1)!).join(" ")).toContain("Oat milk");
+    // A task at a place isn't left to decide's score: leaving a place is always worth a look for it.
+    expect(Object.values(d.asked.at(-1)!).join(" ")).not.toContain("Oat milk");
+    expect(aware.why).toContain("Oat milk");
     // The wake run had the note, the nudge tool and the map's tools.
     const wake = b.requests[2]!;
     expect(wake.messages.some((m) => m.role === "user" && String(m.content).includes("[Atlas's senses, not the owner]"))).toBe(true);
-    expect(wake.tools.map((x) => x.name)).toEqual(expect.arrayContaining(["nudge", "place_find", "route", "errand_done"]));
+    expect(wake.tools.map((x) => x.name)).toEqual(expect.arrayContaining(["nudge", "place_find", "route", "task_done"]));
     expect(wake.system).toContain("Where: out, not at a saved place");
     expect(wake.system).toContain("Oat milk (at a grocery store)");
     // The map's calls left through the outbox, with Atlas's name, each with a receipt.
@@ -234,7 +236,7 @@ describe("the gym-to-store moment", () => {
     expect(n).toContain('"reaction":"thanks"');
   });
 
-  it("stays quiet when decide says an event isn't worth a thought, open errand or not, without waking Atlas", async () => {
+  it("stays quiet when decide says an event isn't worth a thought, a person task or not, without waking Atlas", async () => {
     const d = decider({ errand: 0.1 });
     seams.decide = d;
     const b = brain([]);
@@ -259,18 +261,13 @@ describe("the gym-to-store moment", () => {
     expect(kept).toEqual({ state: "done", outcome: "never" });
 
     await inOwner(async (_a, sql) => {
-      const { createItem } = await import("../src/store/agenda");
-      createItem(sql, {
-        kind: "errand",
-        title: "Stamps",
-        due_at: 8_640_000_000_000_000,
-        source: { via: "chat", detail: { place_kind: "post" } },
-      });
+      const { addTask } = await import("../src/tasks");
+      addTask(sql, { title: "Ask Sam about the budget", fits: { person: "Sam" }, source: { via: "chat" } });
     });
     const from2 = await lastSeq();
     await post(fixAt(north(HOME, 2_000)), auth);
     const nope = await waitFor("the decide row", async () => (await rowsSince(from2, "awareness")).find((r) => r.step === "decide"));
-    expect(nope).toMatchObject({ outcome: "not relevant", scores: { Stamps: 0.1, "worth a thought now": 0.01 } });
+    expect(nope).toMatchObject({ outcome: "not relevant", scores: { "Ask Sam about the budget": 0.1, "worth a thought now": 0.01 } });
     expect(b.requests).toHaveLength(0);
   });
 
@@ -494,13 +491,8 @@ describe("on the move, and pushes", () => {
     await inOwner(async (_a, sql) => {
       // Earlier tests' looks are an hour old here, so the cool-down starts clear.
       sql.exec(`UPDATE log SET at = at - 3600000 WHERE kind = 'awareness'`);
-      const { createItem } = await import("../src/store/agenda");
-      createItem(sql, {
-        kind: "errand",
-        title: "Stamps",
-        due_at: 8_640_000_000_000_000,
-        source: { via: "chat", detail: { place_kind: "post" } },
-      });
+      const { addTask } = await import("../src/tasks");
+      addTask(sql, { title: "Stamps", fits: { kind: "post" }, source: { via: "chat" } });
     });
     brain([say("Nothing on the way."), say("Still nothing.")]);
     const from = await lastSeq();

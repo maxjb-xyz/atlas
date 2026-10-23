@@ -20,8 +20,8 @@ export const ROUTINES: AutomationInput[] = [
         kind: "atlas",
         instructions: [
           "Look at the owner's day ahead, the way a great assistant would at the start of it.",
-          "Read today's calendar with calendar_read, and look at the situation, the reminders, promises and errands due today, what came in overnight, and the weather.",
-          "If there's something they'd be glad to hear now (what today holds and when to leave, a clash, something to get ready, rain before a walk, an errand that fits the day), tell them in a few lines, readable in half a minute, ending with the one thing most worth doing first.",
+          "Read today's calendar with calendar_read, and look at the situation, the reminders and promises due today, the open tasks, what came in overnight, and the weather.",
+          "If there's something they'd be glad to hear now (what today holds and when to leave, a clash, something to get ready, rain before a walk, a task that fits the day), tell them in a few lines, readable in half a minute, ending with the one thing most worth doing first.",
           "If the day is empty and nothing came in that matters, stay quiet.",
         ].join(" "),
       },

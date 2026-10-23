@@ -22,8 +22,7 @@ import { get as getRow, type LogRow, type Surface } from "./store/log";
 import type { Settings } from "./store/settings";
 import { isoLocal, longLocal, shortLocal } from "./time";
 import { situationLines } from "./situation";
-import { openErrands } from "./tools/places";
-import { kindWords } from "./maps";
+import { openTasks, taskView } from "./tasks";
 import { pileLine, speakingLine } from "./agent/senses";
 import { nodesLine } from "./nodes";
 
@@ -99,7 +98,7 @@ export function systemPrompt(opts: {
     skillsLine(sql),
     serversLine(opts.mcp ?? []),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
-    errandsLine(sql, tz),
+    tasksLine(sql, tz),
     speakingLine(settings),
     // What could wait, for the owner's own turns; Atlas's own runs get it in their notes.
     surface === "none" ? "" : pileLine(sql, settings),
@@ -230,16 +229,14 @@ function skillsLine(sql: Sql): string {
     : "";
 }
 
-/** Open errands (§10.3): things to do near the right kind of place, which Atlas suggests on the way. */
-function errandsLine(sql: Sql, tz: string): string {
-  const open = openErrands({ sql }).slice(0, 20);
+/** Open tasks (§5.1): what the owner has to do, with when each fits; Atlas brings one up when it fits. */
+function tasksLine(sql: Sql, tz: string): string {
+  const open = openTasks(sql).slice(0, 25);
   if (!open.length) return "";
-  return `Open errands (you suggest a stop when the owner's on the way; errand_done when they've done it):\n${open
-    .map((e) => {
-      const k = e.source.detail?.place_kind;
-      const at = typeof k === "string" ? ` (at ${kindWords(k)})` : "";
-      const by = e.due_at < 8_000_000_000_000 ? `, by ${shortLocal(new Date(e.due_at), tz)}` : "";
-      return `- ${e.title}${at}${by} (id ${e.id})`;
+  return `To do (open tasks; bring one up when it fits, task_done when it's done or not needed):\n${open
+    .map((r) => {
+      const v = taskView(r);
+      return `- ${v.title}${v.fits ? ` (${v.fits})` : ""}${v.by ? `, by ${shortLocal(new Date(v.by), tz)}` : ""} (id ${v.id})`;
     })
     .join("\n")}`;
 }

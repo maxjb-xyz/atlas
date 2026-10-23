@@ -316,9 +316,9 @@ export function SituationView({ page: p, onClose }: { page: SituationPage; onClo
           {p.devices.map((d) => `${d.name}: ${d.online ? d.state || "online" : "offline"}`).join(" · ")}
         </p>
       )}
-      {p.errands.length > 0 && (
+      {p.tasks.length > 0 && (
         <p className="small" style={{ marginTop: 8 }}>
-          <span className="lab">Errands</span> {p.errands.map((e) => e.title).join(" · ")}
+          <span className="lab">To do</span> {p.tasks.map((t) => `${t.title} (${t.fits})`).join(" · ")}
         </p>
       )}
       {markers.length > 0 && (

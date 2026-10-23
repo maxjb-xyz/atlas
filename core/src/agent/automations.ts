@@ -18,7 +18,7 @@ import {
   stepText,
 } from "../automations";
 import type { Decider } from "../brains/decide";
-import type { Calendar, CalendarEvent } from "../calendar/types";
+import type { Calendar } from "../calendar/types";
 import type { LoopResult } from "../loop";
 import type { Outbox, Urgency } from "../outbox";
 import { type AgendaItem, createItem, finish, getItem, rearm } from "../store/agenda";

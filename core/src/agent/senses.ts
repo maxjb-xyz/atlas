@@ -17,8 +17,7 @@
 
 import { type Decider } from "../brains/decide";
 import type { Calendar } from "../calendar/types";
-import { nextRun } from "../automations";
-import { kindWords } from "../maps";
+import { fitsOf, fitsText, openTasks } from "../tasks";
 import { type AgendaItem, createItem, finish, getItem, rearm, upcoming } from "../store/agenda";
 import { parse, type Sql } from "../store/db";
 import { append, type LogRow } from "../store/log";
@@ -59,15 +58,13 @@ export interface Nudge {
 export const REACT_MS = 30 * 60_000;
 /** A nudge nobody reacted to in this long was ignored. */
 export const IGNORED_MS = 2 * 3_600_000;
+/** What an item may matter to: a task at a place (always looked at for a location item), another task, the agenda, a commitment or goal. */
+type OpenKind = "place" | "task" | "agenda" | "commitment";
+/** Something open an item could matter to, with the question decide is asked about it (none for a place task). */
+type OpenThing = { id: string; kind: OpenKind; title: string; text: string; question: string; place?: string };
+
 /** How sure `decide` must be that an event matters before Atlas wakes. */
 export const MATTERS = 0.5;
-/**
- * For an errand, less sure is enough: Clef scored leaving the gym with an
- * errand open between 0.39 and 0.57 on the owner's deployment, and a
- * missed moment can't wait for a later look, while a look that finds
- * nothing on the way stays silent.
- */
-export const ERRAND_MATTERS = 0.35;
 /** The later pile is looked over when its oldest has waited this long, or it has this many, and at most this often. */
 export const REVIEW_AFTER_MS = 60 * 60_000;
 const REVIEW_COUNT = 8;
@@ -287,8 +284,17 @@ export class SenseDesk {
       settle("never", "rules", "Speaking up about what Atlas notices is off.");
       return;
     }
-    // Errands are about where the owner is, so only a move or a place asks about them.
-    const open = this.#openThings(settings).filter((o) => o.kind !== "errand" || row.body.source === "location");
+    const all = this.#openThings(settings);
+    // A task that fits at a place is about where the owner is: leaving a place or moving is always worth a look for
+    // it, and so is arriving at the task's own place (a rule, since decide scored leaving the gym with one open either
+    // side of any bar). Nothing else asks about it.
+    const b = row.body as SenseItem & { place?: { name?: string } };
+    const here = b.event === "arrived" ? (b.place?.name ?? "").toLowerCase() : "";
+    const placed =
+      b.source !== "location"
+        ? []
+        : all.filter((o) => o.kind === "place" && (b.event === "left" || b.event === "moved" || (here && o.place?.toLowerCase() === here)));
+    const open = all.filter((o) => o.kind !== "place");
 
     // 2. Decide: now, later or never, and does it matter to anything open?
     const decider = this.d.decider();
@@ -306,7 +312,7 @@ export class SenseDesk {
       };
       try {
         scores = await decider.yesNo(state.slice(0, 4_000), questions, AbortSignal.timeout(8_000));
-        matched = open.filter((o) => (scores![o.id] ?? 0) >= (o.kind === "errand" ? ERRAND_MATTERS : MATTERS));
+        matched = open.filter((o) => (scores![o.id] ?? 0) >= MATTERS);
         now = (scores[NOW] ?? 0) >= MATTERS || matched.length > 0;
         later = (scores[LATER] ?? 0) >= MATTERS;
       } catch (err) {
@@ -317,6 +323,12 @@ export class SenseDesk {
       // Without decide, the main brain looks now only when something is open; the rest waits for the batch.
       why = "there's no decide role here";
       now = open.length > 0;
+    }
+    if (placed.length) {
+      matched = [...placed, ...(scores ? matched : [])];
+      now = true;
+      const fits = `where the owner is changed, and ${placed.length === 1 ? "a task fits" : "tasks fit"} at a place: ${placed.map((o) => o.title).join(", ")}`;
+      why = why ? `${why}; ${fits}.` : `${fits[0]!.toUpperCase()}${fits.slice(1)}.`;
     }
     const top = scores
       ? Object.fromEntries(
@@ -363,7 +375,7 @@ export class SenseDesk {
     ]
       .filter(Boolean)
       .join("\n\n");
-    const ref = matched.find((m) => m.kind === "errand");
+    const ref = matched.find((m) => m.kind === "place" || m.kind === "task");
     const out = await this.d.wake({ trigger: `sense:${row.id}`, note, from: "noticing", ...(ref ? { ref: ref.id } : {}) });
     mark(this.d.sql, row.id, { state: out.error ? "failed" : "done", run_id: out.run_id, ...(out.error ? { why: out.error } : {}) });
     this.#log(
@@ -428,24 +440,31 @@ export class SenseDesk {
     );
   }
 
-  /** What an event could matter to: open errands, and commitments, reminders and promises coming up. */
-  #openThings(
-    settings: Settings,
-  ): Array<{ id: string; kind: "errand" | "agenda" | "commitment"; title: string; text: string; question: string }> {
-    const out: Array<{ id: string; kind: "errand" | "agenda" | "commitment"; title: string; text: string; question: string }> = [];
-    {
-      for (const e of upcoming(this.d.sql, 200)
-        .filter((i) => i.kind === "errand" && i.state === "scheduled")
-        .slice(0, 20)) {
-        const where = errandWhere(e);
-        out.push({
-          id: e.id,
-          kind: "errand",
-          title: e.title,
-          text: `the errand "${e.title}"${where ? ` (at ${where})` : ""} (id ${e.id})`,
-          question: `The owner has an open errand: "${e.title}"${where ? `, done at ${where}` : ""}. Did they just leave somewhere, or are they out and on the move, so a stop for it could fit on their way now? Arriving home, staying put, or a change that isn't about where they are is a no.`,
-        });
+  /**
+   * What an item could matter to: open tasks (those that fit at a place,
+   * with a person, or in words), and commitments, goals, reminders and
+   * promises coming up. Plain to-dos with no fit aren't asked about.
+   */
+  #openThings(settings: Settings): OpenThing[] {
+    const out: OpenThing[] = [];
+    for (const t of openTasks(this.d.sql).slice(0, 25)) {
+      const f = fitsOf(t);
+      const fits = fitsText(f);
+      if (!fits) continue;
+      const text = `the task "${t.name}" (${fits}) (id ${t.id})`;
+      if (f.kind || f.place) {
+        out.push({ id: t.id, kind: "place", title: t.name, text, question: "", ...(f.place ? { place: f.place } : {}) });
+        continue;
       }
+      out.push({
+        id: t.id,
+        kind: "task",
+        title: t.name,
+        text,
+        question: f.person
+          ? `The owner wants to "${t.name}" next time they're in touch with ${f.person}. Is this item from, with or about ${f.person}?`
+          : `The owner wants to "${t.name}" ${f.words}. Does this item mean now is that time?`,
+      });
     }
     {
       const soon = Date.now() + 86_400_000;
@@ -722,7 +741,7 @@ function pileList(pile: IntakeItem[], tz: string): string {
 
 /** What a run woken by a sense is asked to do: think, and speak only if it helps. The judgment is Atlas's own. */
 const AWARE = [
-  "This is your chance to be useful without being asked. Think about what it means for the owner right now, given the situation, their calendar, errands, reminders and people, and what you know of them, and connect the dots they'd want connected.",
+  "This is your chance to be useful without being asked. Think about what it means for the owner right now, given the situation, their calendar, tasks, reminders and people, and what you know of them, and connect the dots they'd want connected.",
   "Look things up if that would help (a route, a place on their way, the weather, their calendar), and do what's yours to do. If telling them now would help, nudge once, in a sentence or two, the way you'd text a friend.",
   "If it wouldn't (it changes nothing for them, it can wait, you'd be guessing, they're busy), don't nudge: end with a few words for your own log saying why. Silence is often right.",
 ].join(" ");
@@ -745,13 +764,6 @@ export function pileLine(sql: Sql, settings: Settings): string {
   const pile = laterPile(sql, PILE_SHOWN);
   if (!pile.length) return "";
   return `Noticed since your last look, and could wait (bring it up only if it fits; noticed has the rest):\n${pileList(pile, zoneOf(settings))}`;
-}
-
-/** An errand's kind of place or particular place, in words. */
-function errandWhere(e: AgendaItem): string {
-  const k = e.source.detail?.place_kind;
-  if (typeof k === "string") return kindWords(k);
-  return typeof e.source.detail?.place === "string" ? e.source.detail.place : "";
 }
 
 /** The last nudges and how the owner took each, for Atlas's note, so it learns what's welcome. */

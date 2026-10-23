@@ -40,7 +40,7 @@ import {
   type SettingsView,
   type SkillView,
 } from "./protocol";
-import { type AgendaItem, createItem, due, finish, getItem, lease, rearm, setScheduleId, upcoming } from "./store/agenda";
+import { type AgendaItem, createItem, due, finish, getItem, lease, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, newId, parse, type Sql } from "./store/db";
 import { type Actor, append, forRun, get as getRow, type LogRow, logTo, type Surface, thread } from "./store/log";
 import { indexNewMessages } from "./store/memory";
@@ -125,12 +125,14 @@ import type { BrowserApi, ExitApi, MapsApi, McpApi, RunResult, Tool, ToolContext
 import { geocode, MAPS, nearby, reverse, route } from "./maps";
 import { fetchWeather, roughArea, temp, unitsFor } from "./weather";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
-import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from "./helper";
+import { HelperAgent, type HelperHost, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
 import type { Append } from "./store/log";
 import { type NudgeFrom, nudgeTool, SenseDesk, speakingUp } from "./agent/senses";
 import { addHook, hookAllowed, hookItem, hookSeen, noteSource, noticedTool, removeHook, senseHooks } from "./intake";
-import { errandDone, openErrands, placeLooks, placeTools, NO_DEADLINE } from "./tools/places";
+import { placeLooks, placeTools, NO_DEADLINE } from "./tools/places";
+import { taskDone, taskTools } from "./tools/tasks";
+import { closeTask, fromErrands, getTaskOpen } from "./tasks";
 import {
   type AtlasToNode,
   allowedMap,
@@ -224,6 +226,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     ...skillTools,
     ...mcpToolset,
     ...placeTools,
+    ...taskTools,
     deviceCall,
     speakingUp,
     noticedTool,
@@ -238,7 +241,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     mcpTools,
     mcpCall,
     ...placeLooks,
-    errandDone,
+    taskDone,
     deviceCall,
     noticedTool,
   ],
@@ -486,6 +489,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     } catch (err) {
       console.error(JSON.stringify({ at: "routines.seed", error: err instanceof Error ? err.message : String(err) }));
     }
+    // Errands from before tasks become tasks, once (§5.1).
+    try {
+      const moved = fromErrands(this.#sql);
+      for (const e of moved.ended) void this.#clock.unschedule(e).catch(() => {});
+      for (const r of moved.reminders) void this.#clock.schedule(r).catch(() => {});
+    } catch (err) {
+      console.error(JSON.stringify({ at: "tasks.from_errands", error: err instanceof Error ? err.message : String(err) }));
+    }
     for (const a of listAutomations(this.#sql)) void this.#automations.arm(a.id).catch(() => {});
     // The weekly pass over skills' checks, once there's a skill with one.
     const checks = ensureSkillChecks(this.#sql);
@@ -641,15 +652,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       }
-      case "atlas.errand.done": {
-        const item = getItem(this.#sql, msg.id);
-        if (!item || item.kind !== "errand" || item.state !== "scheduled") {
-          this.#send(connection, { type: "atlas.error", message: "That errand isn't open any more." });
+      case "atlas.task.done": {
+        const out = closeTask(this.#sql, msg.id, msg.done ? "done" : "dropped", { via: "owner" });
+        if (!out) {
+          this.#send(connection, { type: "atlas.error", message: "That task isn't open any more." });
           return;
         }
-        await this.#clock.unschedule(item);
-        finish(this.#sql, item.id, msg.done ? "done" : "cancelled", null, { by: "owner" });
+        for (const r of out.reminders) await this.#clock.unschedule(r);
         this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       }
       case "atlas.location.setup": {
@@ -1559,13 +1570,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       await this.keepAliveWhile(() => this.#senses.moment(item));
       return;
     }
-    if (item.kind === "errand") {
-      // An errand's deadline: the owner hears it once, and the errand stays open until it's done.
-      try {
-        await this.keepAliveWhile(() => this.#inLine(() => this.#remind(item, false)));
-      } finally {
-        this.#sql.exec(`UPDATE agenda SET state = 'scheduled', due_at = ?, lease_until = NULL WHERE id = ?`, NO_DEADLINE, item.id);
-      }
+    // An errand from before tasks that slipped past the move: it's a task now, so its item just ends.
+    // A task's deadline whose task was closed or forgotten since doesn't remind.
+    if (item.kind === "errand" || (typeof item.source.detail?.task === "string" && !getTaskOpen(this.#sql, item.source.detail.task))) {
+      finish(this.#sql, item.id, "cancelled", null, {
+        why: item.kind === "errand" ? "Errands are tasks now." : "The task isn't open any more.",
+      });
       this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
       return;
     }
@@ -1578,8 +1588,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   async #remind(item: AgendaItem, done = true): Promise<void> {
     const tz = zoneOf(readSettings(this.#sql));
     const what =
-      item.kind === "errand"
-        ? `The errand "${item.title}" is due now (its deadline; kept ${shortLocal(new Date(item.created_at), tz)}) and isn't done.`
+      typeof item.source.detail?.task === "string"
+        ? `The task "${item.title}" is due now (its deadline; kept ${shortLocal(new Date(item.created_at), tz)}) and isn't done. It stays open until it is.`
         : `The reminder "${item.title}" is due now (set ${shortLocal(new Date(item.created_at), tz)}).`;
     const note = `[Atlas's clock, not the owner] ${what} Give it to the owner in one short message, as you'd say it. Don't ask follow-up questions unless it truly helps.`;
     // The promise is kept even when no brain can answer: the owner still gets the reminder.
@@ -1587,7 +1597,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const runId = await this.#atlasSays(
       `agenda:${item.id}`,
       note,
-      `${item.kind === "errand" ? "Errand due" : "Reminder"}: ${item.title}`,
+      `${typeof item.source.detail?.task === "string" ? "Due" : "Reminder"}: ${item.title}`,
       "now",
     );
     if (!done) return;
@@ -2331,6 +2341,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       this.#broadcast({ type: "atlas.status", run_id: runId, text: e.text });
     } else if (e.type === "row") {
       this.#broadcast({ type: "atlas.rows", rows: [e.row] });
+      // A task kept or closed changes Agenda's To do.
+      if (String(e.row.body.name ?? "").startsWith("task_")) this.#broadcast({ type: "atlas.view", view: this.#view() });
     }
   }
 

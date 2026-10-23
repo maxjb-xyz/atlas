@@ -10,9 +10,9 @@
 
 import type { Calendar, CalendarEvent } from "./calendar/types";
 import type { SenseItem } from "./store/log";
+import { openTasks, taskView } from "./tasks";
 import { focusNow } from "./outbox";
 import type { SituationPage, WeatherPage } from "./stage";
-import { upcoming } from "./store/agenda";
 import { nodes } from "./nodes";
 import { here, homePin, metres, nearest, pins } from "./location";
 import { type Found, MAPS, minutes, type Point, type Route, type Travel } from "./maps";
@@ -443,13 +443,10 @@ export function situationPage(sql: Sql, settings: Settings, now = Date.now(), de
       })),
       ...devices,
     ],
-    errands: upcoming(sql, 200)
-      .filter((i) => i.kind === "errand" && i.state === "scheduled")
-      .map((i) => ({
-        id: i.id,
-        title: i.title,
-        kind: typeof i.source.detail?.place_kind === "string" ? i.source.detail.place_kind : null,
-      })),
+    tasks: openTasks(sql)
+      .map(taskView)
+      .filter((t) => t.fits)
+      .map((t) => ({ id: t.id, title: t.title, fits: t.fits! })),
     units,
     credit: MAPS[settings.maps.provider].credit,
   };

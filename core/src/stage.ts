@@ -508,7 +508,8 @@ export interface SituationPage {
   calendar_error: string | null;
   weather: { line: string; matters: string[]; at: number } | null;
   devices: Array<{ name: string; state: string; online: boolean }>;
-  errands: Array<{ id: string; title: string; kind: string | null }>;
+  /** Open tasks that fit somewhere or with someone (§5.1), with when they fit. */
+  tasks: Array<{ id: string; title: string; fits: string }>;
   units: "us" | "metric";
   credit: string;
 }

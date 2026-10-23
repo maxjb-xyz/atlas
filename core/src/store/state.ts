@@ -80,7 +80,9 @@ export type StateName =
   /** What the calendar's last look saw over the next 14 days, to tell its changes. */
   | "calendar_seen"
   /** Webhook sources the owner added (§10.4): their names; their keys are secrets. */
-  | "sense_hooks";
+  | "sense_hooks"
+  /** When the errands from before tasks were moved over (once). */
+  | "tasks_from_errands";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

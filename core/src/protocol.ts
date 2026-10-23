@@ -239,8 +239,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.node.allow"), id: z.string().max(64), capability: z.string().max(40), on: z.boolean() }),
   /** Unpairs a device at once. */
   z.object({ type: z.literal("atlas.node.remove"), id: z.string().max(64) }),
-  /** Agenda's Done or Drop on an errand. */
-  z.object({ type: z.literal("atlas.errand.done"), id: z.string().max(64), done: z.boolean() }),
+  /** Agenda's Done or Drop on a task (§5.1). */
+  z.object({ type: z.literal("atlas.task.done"), id: z.string().max(64), done: z.boolean() }),
   /** Settings → Devices → Set up OwnTracks: makes OwnTracks' own user and password (replacing any before) and its setup link. */
   z.object({ type: z.literal("atlas.location.setup") }),
   /** Settings → Connections → Senses: a webhook source with its own address and key, or removing one. */
@@ -491,6 +491,8 @@ export interface SettingsView {
   nodes: import("./nodes").NodeView[];
   /** The intake's sources (Settings → Connections → Senses, §10.4): webhook sources, and each source's state. */
   senses: SensesView;
+  /** Open tasks (§5.1), for Agenda's To do. */
+  tasks: import("./tasks").TaskView[];
 }
 
 export interface SensesView {

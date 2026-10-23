@@ -9,8 +9,6 @@ import { getState } from "./state";
 /** The ChatGPT model new chains start with, and the one picked after sign-in when the plan has it. */
 export const DEFAULT_CHATGPT_MODEL = "gpt-5.6-terra";
 
-const HHMM = z.string().regex(/^\d{2}:\d{2}$/);
-
 export const BrainChoice = z.object({
   provider: z.enum(["chatgpt", "workers-ai"]),
   model: z.string().min(1).max(200),

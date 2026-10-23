@@ -1,21 +1,19 @@
-// Places, routes, weather and errands (VISION §10, §19.1). Looking things up
-// on a map leaves Atlas, so each call goes through the outbox's look with a
-// receipt; pinning a place and keeping an errand change the owner's own
-// things, so Atlas does them, shows a receipt, and offers Undo (§12.1).
+// Places, routes and weather (VISION §10, §19.1). Looking things up on a
+// map leaves Atlas, so each call goes through the outbox's look with a
+// receipt; pinning a place changes the owner's own things, so Atlas does it,
+// shows a receipt, and offers Undo (§12.1).
 
 import { z } from "zod";
 import { keepWeather } from "../situation";
 import { findPlace, here, homePin, metres, type Pin, pinOf, pins } from "../location";
 import { distance as say, unitsFor, sky, temp, type Units } from "../weather";
 import { kindWords, minutes, type Found, type Point, PLACE_KINDS, placeKind, type Travel } from "../maps";
-import { createItem, finish, getItem, upcoming } from "../store/agenda";
 import { correctRecord, createRecord, type AtlasRecord } from "../store/records";
-import { get as getRow } from "../store/log";
 import { setState } from "../store/state";
-import { clockLocal, isoLocal, parseWhen, shortLocal } from "../time";
+import { clockLocal } from "../time";
 import { defineTool, fail, type ToolContext } from "./types";
 
-/** An errand with no deadline sits on the clock here, past anything that's due. */
+/** An item with no time (a device call queued for later) sits on the clock here, past anything that's due. */
 export const NO_DEADLINE = 8_640_000_000_000_000;
 
 const unitsOf = (ctx: ToolContext): Units => unitsFor(ctx.settings.units, ctx.tz);
@@ -174,7 +172,7 @@ export const placeFind = defineTool({
   timeoutMs: 60_000,
   description: [
     "Find places on the map: a kind of place (a grocery store, a pharmacy) or one by name, near somewhere, or along the way to somewhere.",
-    "With on_the_way_to (often 'home'), it routes there from `near` and finds places just off the route, with how many minutes off the way each one is: that's how you suggest an errand stop.",
+    "With on_the_way_to (often 'home'), it routes there from `near` and finds places just off the route, with how many minutes off the way each one is: that's how you suggest a stop for a task.",
     "Results come from OpenStreetMap (or Mapbox when the owner picked it); opening hours are often missing, so don't promise a place is open unless the result says so.",
   ].join(" "),
   input: z.object({
@@ -352,84 +350,6 @@ export const weatherTool = defineTool({
   },
 });
 
-// --- errands ---------------------------------------------------------------------------------------
-
-export const errandAdd = defineTool({
-  name: "errand_add",
-  kind: "change_own",
-  description: [
-    "Keep an errand: something the owner needs to do or get somewhere, with no set time ('I need oat milk', 'drop off the package', 'get the car washed').",
-    "You keep it in mind as they move about, and suggest it when it fits: on their way, nearby, or a good moment. Use it whenever they mention something like that; with a time, use reminder_create instead.",
-    "The owner sees an 'Errand' chip with Undo, and the errand in Agenda.",
-  ].join(" "),
-  input: z.object({
-    what: z.string().min(1).max(200).describe("The errand in a few words: 'Oat milk'."),
-    kind: z
-      .string()
-      .max(60)
-      .optional()
-      .describe(`The kind of place it can be done at: ${PLACE_KINDS.join(", ")}, or any other, as for place_find.`),
-    place: z.string().max(120).optional().describe("A particular saved place or store, when it has to be that one."),
-    by: z.string().optional().describe("A deadline, if there is one, as a local date-time YYYY-MM-DDTHH:mm."),
-  }),
-  async run(input, ctx) {
-    const deadline = input.by ? parseWhen(input.by, ctx.tz) : null;
-    if (input.by && !deadline) return fail(`Couldn't read the deadline "${input.by}". Use YYYY-MM-DDTHH:mm.`);
-    const said = ctx.source_log_id ? getRow(ctx.sql, ctx.source_log_id) : null;
-    const item = createItem(ctx.sql, {
-      kind: "errand",
-      title: input.what,
-      due_at: deadline?.getTime() ?? NO_DEADLINE,
-      source: {
-        run_id: ctx.run_id,
-        via: "chat",
-        ...(said ? { log_id: said.id } : {}),
-        detail: {
-          ...(input.kind ? { place_kind: input.kind } : {}),
-          ...(input.place ? { place: input.place } : {}),
-          ...(said ? { said: String(said.body.text ?? "").slice(0, 300) } : {}),
-        },
-      },
-    });
-    if (deadline) await ctx.clock.schedule(item);
-    return {
-      ok: true,
-      output: {
-        id: item.id,
-        errand: item.title,
-        ...(input.kind ? { at: kindWords(input.kind) } : {}),
-        ...(deadline ? { by: isoLocal(deadline, ctx.tz) } : {}),
-      },
-      receipt: {
-        text: `Errand · ${item.title}${deadline ? ` · by ${shortLocal(deadline, ctx.tz)}` : ""}`,
-        undo: { kind: "reminder.cancel", id: item.id },
-      },
-    };
-  },
-});
-
-export const errandDone = defineTool({
-  name: "errand_done",
-  kind: "change_own",
-  description:
-    "Mark an errand done (the owner got it, or doesn't need it any more), so Atlas stops suggesting it. Its id is in the open errands in your context.",
-  input: z.object({ id: z.string().max(64), why: z.enum(["done", "not needed"]).default("done") }),
-  async run(input, ctx) {
-    const item = getItem(ctx.sql, input.id);
-    if (!item || item.kind !== "errand") return fail(`There's no errand with id ${input.id}.`);
-    if (item.state !== "scheduled") return fail(`"${item.title}" isn't open any more.`);
-    await ctx.clock.unschedule(item);
-    finish(ctx.sql, item.id, input.why === "done" ? "done" : "cancelled", ctx.run_id, { by: "owner" });
-    return { ok: true, output: { done: item.title }, receipt: { text: `${input.why === "done" ? "Done" : "Dropped"} · ${item.title}` } };
-  },
-});
-
-/** Open errands, oldest first. */
-export const openErrands = (ctx: Pick<ToolContext, "sql">) =>
-  upcoming(ctx.sql, 200)
-    .filter((i) => i.kind === "errand" && i.state === "scheduled")
-    .sort((a, b) => a.created_at - b.created_at);
-
-export const placeTools = [placePin, placeFind, routeTool, weatherTool, errandAdd, errandDone];
+export const placeTools = [placePin, placeFind, routeTool, weatherTool];
 export const placeLooks = [placeFind, routeTool, weatherTool];
 export { pins };

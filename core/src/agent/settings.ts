@@ -2,6 +2,7 @@
 // brain health) and its live tests (§22: every check is a live test).
 
 import { sensesView } from "../intake";
+import { openTasks, taskView } from "../tasks";
 import { zoneOf } from "../time";
 import type { BrainRouter } from "../brains/router";
 import { type Brain, brainKey } from "../brains/types";
@@ -67,6 +68,7 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
     location: locationView(sql),
     nodes: nodes(sql).map(nodeView),
     senses: sensesView(sql),
+    tasks: openTasks(sql).map(taskView),
   };
 }
 
