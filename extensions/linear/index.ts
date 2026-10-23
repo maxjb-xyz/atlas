@@ -118,6 +118,8 @@ const ext: Extension = {
     };
   },
   async test(ctx) {
+    if (ctx.has && !ctx.has.includes("key"))
+      return { text: "Without a key, Linear's webhooks still come in; add a key to hear about what's assigned to you or mentions you." };
     const res = await get("https://api.linear.app/graphql", {
       method: "POST",
       headers: { authorization: ctx.secret("key"), "content-type": "application/json" },

@@ -13,7 +13,7 @@ import type { SenseItem } from "../intake";
 import type { MailView } from "../protocol";
 import type { Sql } from "../store/db";
 import { append } from "../store/log";
-import { ownerRecord } from "../store/records";
+import { ownerName, ownerRecord } from "../store/records";
 import { getSecret, readSettings } from "../store/settings";
 import { getState, setState } from "../store/state";
 import { cf } from "../atlasmail";
@@ -188,7 +188,7 @@ export class MailDesk {
   /** Who Atlas is, in the From line: its name, and that it writes for the owner. */
   fromName(): string {
     const s = readSettings(this.d.sql);
-    const owner = ownerRecord(this.d.sql).name;
+    const owner = ownerName(this.d.sql);
     return `${s.assistant_name} (AI assistant for ${owner && owner !== "Owner" ? owner.split(" ")[0] : "its owner"})`;
   }
 

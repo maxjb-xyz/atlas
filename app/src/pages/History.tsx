@@ -154,7 +154,7 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
             : "";
         return {
           who,
-          what: `${str(b.what)}${b.repeat ? " (a repeat, set aside)" : ""}${facts ? `. Read: ${facts}` : ""}`,
+          what: `${str(b.what)}${b.repeat ? " (a repeat, set aside)" : ""}${facts ? `. Read: ${facts}` : ""}${b.read_error ? `. Its words couldn't be read: ${str(b.read_error)}` : ""}`,
           kind: `sense.${str(b.source)}`,
         };
       }

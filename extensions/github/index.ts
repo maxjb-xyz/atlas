@@ -145,6 +145,10 @@ const ext: Extension = {
     };
   },
   async test(ctx) {
+    if (ctx.has && !ctx.has.includes("token"))
+      return {
+        text: "Without a token, GitHub's webhooks still come in; add a token to hear about reviews, assignments and mentions without one.",
+      };
     const me = await json<{ login: string; email?: string | null }>(
       await get(`${API}/user`, {
         headers: { authorization: `Bearer ${ctx.secret("token")}`, accept: "application/vnd.github+json", "user-agent": "Atlas" },

@@ -9,7 +9,7 @@ import { bytesOf, type Message, type Out } from "../../../extensions/sdk";
 import type { ExtensionHost, Installed } from "../extensions";
 import type { Sql } from "../store/db";
 import { append } from "../store/log";
-import { ownerRecord } from "../store/records";
+import { ownerName, ownerRecord } from "../store/records";
 import { readSettings } from "../store/settings";
 import { getState, setState } from "../store/state";
 import type { Notes } from "../voice/providers";
@@ -209,7 +209,7 @@ export class ChannelDesk {
     told[k] = Date.now();
     setState(this.d.sql, "channel_told", told);
     const s = readSettings(this.d.sql);
-    const owner = ownerRecord(this.d.sql).name;
+    const owner = ownerName(this.d.sql);
     const whose = owner && owner !== "Owner" ? `${owner.split(" ")[0]}'s` : "its owner's";
     await this.send(e.id, {
       chat: m.chat,

@@ -9,7 +9,7 @@ import { channelsOf, findPerson, trustOf } from "./contacts";
 import { getArea, listAreas } from "./store/areas";
 import type { Json, Sql } from "./store/db";
 import { append } from "./store/log";
-import { getRecord, ownerRecord } from "./store/records";
+import { getRecord, ownerName, ownerRecord } from "./store/records";
 import { readSettings } from "./store/settings";
 import { getState, setState } from "./store/state";
 
@@ -68,7 +68,7 @@ export function faceFor(sql: Sql, address: string, who: { kind: "email" | "teleg
 /** The face's character: who it is, whose, what it may share and do, and the rules no message changes. */
 export function facePrompt(sql: Sql, face: Face, o: { tz: string; now: Date; person: string | null; test?: boolean }): string {
   const s = readSettings(sql);
-  const owner = ownerRecord(sql).name;
+  const owner = ownerName(sql);
   const first = owner && owner !== "Owner" ? owner.split(" ")[0]! : "the owner";
   const areas = face.areas.map((id) => getArea(sql, id)).filter((a) => a != null);
   const p = o.person ? getRecord(sql, o.person) : null;

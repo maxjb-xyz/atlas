@@ -9,7 +9,8 @@ import { BrainError } from "./types";
 
 export const EXTRACT_MODEL = "@cf/cloudflare/clairic";
 
-export type FieldType = "text" | "number" | "date" | "time" | "datetime" | "duration" | "list";
+/** Clairic's field types (Workers AI docs, 2026-10): a span of the text, an ISO date, a number, a list of spans, an estimate. */
+export type FieldType = "text" | "number" | "date" | "list";
 
 export interface Field {
   type: FieldType;
@@ -24,7 +25,8 @@ export interface Extracted {
 
 export interface Extractor {
   model: string;
-  extract(state: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Record<string, Extracted>>;
+  /** `today` anchors dates written without a year ("Friday, October 30"). */
+  extract(state: string, fields: Record<string, Field>, signal?: AbortSignal, today?: string): Promise<Record<string, Extracted>>;
 }
 
 interface AiLike {
@@ -34,10 +36,10 @@ interface AiLike {
 export function workersAIExtractor(ai: AiLike, model = EXTRACT_MODEL): Extractor {
   return {
     model,
-    async extract(state, fields, signal) {
+    async extract(state, fields, signal, today) {
       let res: unknown;
       try {
-        res = await ai.run(model, { state, fields }, signal ? { signal } : undefined);
+        res = await ai.run(model, { state, fields, ...(today ? { reference_date: today } : {}) }, signal ? { signal } : undefined);
       } catch (err) {
         throw new BrainError(`Workers AI couldn't extract with ${model}: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -67,14 +69,15 @@ export function workersAIExtractor(ai: AiLike, model = EXTRACT_MODEL): Extractor
 /** What Atlas asks of words from other people: what they ask, by when, a meeting they set up or move, money owed. */
 export const MESSAGE_FIELDS: Record<string, Field> = {
   asks: { type: "text", instructions: "What the sender asks the recipient to do or answer, in a few words, if they ask anything." },
-  reply_by: { type: "datetime", instructions: "When the sender needs an answer or an action by, if they say." },
+  reply_by: { type: "date", instructions: "The date the sender needs an answer or an action by, if they say." },
   event: {
     type: "text",
     instructions:
       "A meeting, appointment or reservation this message sets up, moves or cancels, in a few words (like 'dentist appointment').",
   },
   event_change: { type: "text", instructions: "What happens to that meeting or appointment: new, moved, or cancelled." },
-  event_time: { type: "datetime", instructions: "The meeting or appointment's new date and time." },
+  event_date: { type: "date", instructions: "The date the meeting or appointment is on now (its new date, if it moved)." },
+  event_time: { type: "text", instructions: "The time of day the meeting or appointment is at now, as the text says it (like '3:00 PM')." },
   amount: { type: "number", instructions: "An amount of money the recipient owes, is due, or was paid." },
   due: { type: "date", instructions: "When a bill or payment is due." },
   people: { type: "list", instructions: "Other people named in the message, by name." },

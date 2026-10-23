@@ -487,14 +487,18 @@ export class SenseDesk {
     const raw = this.d.sql.exec<{ raw: string | null }>(`SELECT raw FROM intake WHERE id = ?`, row.id).toArray()[0]?.raw;
     if (!raw || raw.length < 20) return {};
     try {
-      const facts = sure(await extractor.extract(raw.slice(0, 8_000), MESSAGE_FIELDS, AbortSignal.timeout(10_000)));
+      const today = new Date().toLocaleDateString("en-CA", { timeZone: zoneOf(readSettings(this.d.sql)) });
+      const facts = sure(await extractor.extract(raw.slice(0, 8_000), MESSAGE_FIELDS, AbortSignal.timeout(15_000), today));
       if (Object.keys(facts).length) {
         this.d.sql.exec(`UPDATE log SET body = json_set(body, '$.facts', json(?)) WHERE id = ?`, JSON.stringify(facts), row.id);
         row.body.facts = facts as never;
       }
       return facts;
     } catch (err) {
-      console.error(JSON.stringify({ at: "intake.extract", item: row.id, error: err instanceof Error ? err.message : String(err) }));
+      const error = err instanceof Error ? err.message : String(err);
+      console.error(JSON.stringify({ at: "intake.extract", item: row.id, error }));
+      // Kept on the item, so History and the Senses screen say why nothing was read.
+      this.d.sql.exec(`UPDATE log SET body = json_set(body, '$.read_error', ?) WHERE id = ?`, error.slice(0, 300), row.id);
       return {};
     }
   }

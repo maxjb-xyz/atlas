@@ -6,11 +6,11 @@ import { getMember, members } from "./members";
 import type { SharedArea } from "./protocol";
 import { listAreas } from "./store/areas";
 import type { Sql } from "./store/db";
-import { createRecord, ownerRecord } from "./store/records";
+import { createRecord, ownerName, ownerRecord } from "./store/records";
 
 /** The areas shared with a member, or, for the owner (null), every area shared with anyone. */
 export function sharedAreas(sql: Sql, member: string | null): SharedArea[] {
-  const owner = ownerRecord(sql).name || "the owner";
+  const owner = ownerName(sql) || "the owner";
   const names = new Map(members(sql).map((m) => [m.id, m.name]));
   return listAreas(sql)
     .filter((a) => (member ? a.settings.shared_with.includes(member) : a.settings.shared_with.length > 0))

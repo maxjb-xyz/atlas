@@ -143,6 +143,8 @@ export interface Ctx {
   tz: string;
   /** This extension's own address for posts, when it takes them. */
   address?: string;
+  /** Which of its secrets are set (never their values), so it can say what's missing instead of sending an empty one. */
+  has?: string[];
   /** What the core shares for what the extension provides: the owner's saved places, for a location app. */
   data?: Json;
 }

@@ -463,6 +463,7 @@ export class ExtensionHost {
       tz: this.d.tz(),
       ...(this.address(e) ? { address: this.address(e)! } : {}),
       ...(o.data !== undefined ? { data: o.data } : {}),
+      has: Object.keys(secrets),
     };
     if (seams.extension) {
       try {

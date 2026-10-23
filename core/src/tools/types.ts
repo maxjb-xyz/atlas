@@ -243,11 +243,26 @@ export function toSpec(tool: Tool): ToolSpec {
   return { name: tool.name, description: tool.description, parameters: withoutPropertyNames(schema) as Record<string, unknown> };
 }
 
+/**
+ * A schema every provider takes: no `propertyNames`, and no tuples. Draft 7 writes a tuple as `items: [a, b]`,
+ * which Workers AI's models refuse for the whole tool list ("is not of type 'object', 'boolean'"); it becomes a
+ * list of the first item's kind with a fixed length.
+ */
 function withoutPropertyNames(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(withoutPropertyNames);
   if (!v || typeof v !== "object") return v;
   const out: Record<string, unknown> = {};
-  for (const [k, x] of Object.entries(v)) if (k !== "propertyNames") out[k] = withoutPropertyNames(x);
+  for (const [k, x] of Object.entries(v)) {
+    if (k === "propertyNames") continue;
+    if (k === "items" && Array.isArray(x)) {
+      out.items = withoutPropertyNames(x[0] ?? {});
+      out.minItems = x.length;
+      out.maxItems = x.length;
+      continue;
+    }
+    if (k === "additionalItems") continue;
+    out[k] = withoutPropertyNames(x);
+  }
   return out;
 }
 
