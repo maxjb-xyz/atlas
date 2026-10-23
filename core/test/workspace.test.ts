@@ -2,7 +2,7 @@ import { SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { seams, type WorkspaceStub } from "../src/agent";
 import { saveEntry } from "../src/vault";
-import { throughGate } from "../src/workspace";
+import { carrying, throughGate } from "../src/workspace";
 import { call, env, fakeCalendar, fakeEmbedder, say, SECRET } from "./helpers";
 import { brain, connect, inOwner, out, turn } from "./owner";
 
@@ -180,6 +180,18 @@ describe("the workspace's gate", () => {
     if ("refused" in out) throw new Error(`refused ${out.refused}`);
     return out.request.headers;
   };
+
+  it("opens a key's site for the command that carries it, even one the owner never allowed (a clone from GitHub)", () => {
+    const rule = { host: "github.com", path: "/ann/budget.git/", header: "authorization", value: "Basic dG9rZW4=", nonce: "n0nce" };
+    const extra = carrying([rule]);
+    expect(extra.allow).toEqual(["github.com"]);
+    const out = throughGate(new Request("https://github.com/ann/budget.git/info/refs", { headers: { "x-atlas-key": "n0nce" } }), {
+      allow: [...extra.allow],
+      inject: {},
+      rules: extra.rules,
+    });
+    expect("request" in out && out.request.headers.get("authorization")).toBe("Basic dG9rZW4=");
+  });
 
   it("refuses a site the owner hasn't allowed", () => {
     expect(throughGate(new Request("https://evil.example/x"), gate)).toEqual({ refused: "evil.example" });

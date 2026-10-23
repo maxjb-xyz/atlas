@@ -177,6 +177,16 @@ interface Gate {
 
 const allowed = (host: string, allow: string[]) => allow.some((a) => host === a || host.endsWith(`.${a}`));
 const covers = (host: string, h: string) => host === h || host.endsWith(`.${h}`);
+/**
+ * What a command carrying keys adds to the gate while it runs: the keys, and
+ * their sites, which it has to reach (a clone needs the code host even when
+ * the owner never opened it to the workspace). The site is open to anything
+ * in the container for that while; the key still goes only with the nonce.
+ */
+export function carrying(rules: KeyRule[]): { allow: string[]; rules: KeyRule[] } {
+  return { allow: [...new Set(rules.map((r) => r.host))], rules };
+}
+
 /** The header Atlas's own commands carry their nonce in. The gate takes it off before the request leaves. */
 export const NONCE_HEADER = "x-atlas-key";
 
@@ -493,7 +503,7 @@ export class Workspace extends DurableObject<Env> {
         // What's in a command's own environment (a nonce) never goes to a job's user.
         if (o.as && o.env && Object.keys(o.env).length) throw new Error("A job's commands don't take an environment of their own.");
         await this.#setBase({ allow: o.allow, inject: o.inject });
-        if (o.rules?.length) this.#extra.set(key, { allow: [], rules: o.rules });
+        if (o.rules?.length) this.#extra.set(key, carrying(o.rules));
         await this.#gate();
         this.#blocked.clear();
         const inner = `cd ${sh(cwd)} && timeout -k 5 ${o.timeout_s} bash -lc ${sh(o.command)}`;
@@ -835,7 +845,7 @@ export class Workspace extends DurableObject<Env> {
     const d = `${PUSH}/${id}-${crypto.randomUUID().slice(0, 8)}`;
     const git = jobDir(id) + "/repo/.git";
     const key = `push:${d}`;
-    this.#extra.set(key, { allow: [], rules: o.rules });
+    this.#extra.set(key, carrying(o.rules));
     try {
       await this.#gate();
       const p = await this.#c.exec(
@@ -888,7 +898,7 @@ export class Workspace extends DurableObject<Env> {
     const dir = jobDir(id);
     const stage = `${PUSH}/clone-${id}-${crypto.randomUUID().slice(0, 8)}`;
     const key = `clone:${stage}`;
-    this.#extra.set(key, { allow: [], rules: o.rules });
+    this.#extra.set(key, carrying(o.rules));
     try {
       await this.#gate();
       const p = await this.#c.exec(
