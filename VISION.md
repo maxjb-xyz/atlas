@@ -426,7 +426,7 @@ Every event goes through the intake's steps (§10.4), which come down to three:
 2. **Decide,** using the `decide` role (Clef by default). Is this worth a thought now, later or not at all? Does it matter to anything open, such as a commitment, an errand, an event, a project, an automation or a person you care about? Which area is it in, and how urgent is it? This takes tens of milliseconds and costs a fraction of a cent.
 3. **Atlas.** Only if step 2 says now does the main brain run, with the event and the records it touches; what can wait, it sees in a batch later. It decides whether to act, tell you, or stay quiet. What to make of an event is its own judgment, from the character and the situation, never a script per kind of event (rule 1).
 
-**Rhythm moments** add a few looks a day even without events: start of day, before and after meetings, and evening. Each one is allowed to end in silence.
+**Looks on the clock** are automations, not a second mechanism (decided 2026-10-23): the morning brief and the evening wrap-up are default routines (§13.4) that report only when something is worth saying. What awareness keeps is the look before leaving for an event with a place: it follows the trip's travel time, which moves with traffic and where you are, so it's news the intake notices, not a time of day.
 
 **Example:**
 1. "Left the gym" arrives from your phone.
@@ -460,7 +460,7 @@ Adapters keep a cursor (Gmail's history id, GitHub's last time), so a restart ne
 4. **Fold in.** The records, the situation and the later pile change, whatever the outcome.
 5. **Atlas** wakes only for now, and acts, tells you, or stays quiet (§10.3).
 
-**Two speeds.** The glance is cheap and per item. The later pile is looked over in a batch by a run of Atlas's own, with the full picture, on the clock and at rhythm moments, and the next conversation sees it too ("since you last looked"). A batch costs less than waking for each item, and judges better than a small model deciding each one alone.
+**Two speeds.** The glance is cheap and per item. The later pile is looked over in a batch by a run of Atlas's own, with the full picture, on the clock and by the routines that look at the day (§13.4), and the next conversation sees it too ("since you last looked"). A batch costs less than waking for each item, and judges better than a small model deciding each one alone.
 
 **Open loops.** Silence can be news: a reply you're waiting for, a review someone's waiting on you for. An item can open a loop with a time ("no reply from the landlord in 3 days"), and the clock raises it when the time passes, the way an absence trigger does (§13.2).
 
@@ -566,6 +566,8 @@ Each area can raise or lower these defaults. The Permissions page (under Atlas i
 
 An automation is: **when** [a trigger happens], **do** [this], **allowed to** [use these powers], **report** [here].
 
+Report is the thread, Inbox, only History, or **the thread when it's worth saying**: then Atlas's step decides whether there's anything to say, and silence is a fine outcome. That kind of report goes out like anything Atlas says on its own (§10.3): it waits for quiet hours, counts against the day's interruption budget (§14), and its reactions are logged like a nudge's.
+
 ### 13.2 Triggers
 
 | Trigger | Examples |
@@ -592,7 +594,7 @@ Any trigger can have conditions: "only on weekdays", "only when I'm home", "only
 - **Starting paused.** A new automation stays paused until you've seen a test run, unless you made it yourself in the form.
 - **History.** Each run is listed with its result, time and cost. Two failures in a row and Atlas tells you; after several more, it pauses the automation.
 - **Promises are automations.** Anything Atlas says it'll do shows in Agenda as a promise, linked to where it said it. Scheduled runs show there too; the automations themselves live on the Automations page.
-- **Default routines** ship as automations you can edit: a morning brief, an evening wrap-up, a weekly review. They start off; setup offers each one with its time (§22), and you turn on the ones you want.
+- **Default routines** ship as automations you can edit: a morning brief, an evening wrap-up, a weekly review. They are Atlas's looks at the day: the morning brief and the evening wrap-up report when they're worth saying. Every Atlas step in an automation sees the situation, the later pile (§10.4) and what Atlas already told you today, so a look covers what came in overnight and never says the same thing twice. The morning brief starts on, since it stays quiet when there's nothing to say (decided 2026-10-23); the others start off. Setup offers each one with its time (§22).
 - **Templates** can be shared.
 
 ---
