@@ -19,6 +19,8 @@ export const seams: {
   contextWindow: number | null;
   /** The `extract` role: undefined uses Workers AI's Clairic, null means none. */
   extract: import("../brains/extract").Extractor | null | undefined;
+  /** Voice notes and photos on chat channels: undefined uses Workers AI (and ElevenLabs when set up). */
+  notes: import("../voice/providers").Notes | undefined;
   /** The `decide` role: undefined uses Workers AI's Clef, null means none. */
   decide: Decider | null | undefined;
   /** Cloudflare's web search: undefined uses the AI binding, null means none. */
@@ -51,6 +53,7 @@ export const seams: {
   contextWindow: null,
   decide: undefined,
   extract: undefined,
+  notes: undefined,
   websearch: undefined,
   browser: undefined,
   workspace: undefined,

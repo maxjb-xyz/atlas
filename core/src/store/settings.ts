@@ -93,8 +93,10 @@ export const Settings = z.object({
         .default({ on: false, from: "22:00", to: "07:00" }),
       /** The daily interruption budget (§14): pushes a day for things that can wait. 0 means no limit. */
       budget: z.number().int().min(0).max(100).default(10),
+      /** Where Atlas reaches the owner when the app isn't in view: a push, or a chat channel they've linked (§16.1). */
+      reach: z.string().min(1).max(40).default("push"),
     })
-    .default({ push: true, quiet: { on: false, from: "22:00", to: "07:00" }, budget: 10 }),
+    .default({ push: true, quiet: { on: false, from: "22:00", to: "07:00" }, budget: 10, reach: "push" }),
   /** Location (§10.1): whether Atlas takes in what the phone sends. Off drops it, and Atlas says it doesn't know where you are. */
   location: z.object({ on: z.boolean().default(true) }).default({ on: true }),
   /** Maps (§19.1): which maps extension answers (§17): OpenStreetMap's by default, Mapbox's by key, or another. */

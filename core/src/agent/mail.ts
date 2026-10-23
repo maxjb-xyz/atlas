@@ -24,8 +24,18 @@ export interface MailDeps {
   origin(): string | null;
   /** The owner said something by mail: a turn in their thread, with what they forwarded as a note. */
   owner(text: string, note: string | null): Promise<void>;
-  /** Someone else's mail, for the intake (and the faces). */
+  /** Someone else's mail, for the intake. */
   take(items: SenseItem[], o: { raw: string }): void;
+  /** Someone else's mail, for the face on Atlas's address that's for them. False when none is. */
+  face(o: {
+    from: string;
+    address: string;
+    subject: string;
+    text: string;
+    thread: string;
+    message_id?: string;
+    references?: string[];
+  }): Promise<boolean>;
   changed(): void;
 }
 
@@ -242,12 +252,28 @@ export class MailDesk {
           .toArray()[0]
       : undefined;
     const name = mail.from?.name?.trim();
+    const thread = sent?.thread ?? threadOf(mail.messageId, ids(mail.references));
+    // A face on Atlas's address answers people it's for (§7.2); mail answering what Atlas sent stays Atlas's.
+    if (
+      !sent?.thread &&
+      passed &&
+      (await this.d.face({
+        from: name ? `${name} <${from}>` : from,
+        address: from,
+        subject,
+        text: text.slice(0, 12_000),
+        thread,
+        ...(mail.messageId ? { message_id: mail.messageId } : {}),
+        references: [...ids(mail.references), ...(mail.messageId ? [mail.messageId] : [])],
+      }))
+    )
+      return { status: 202, text: "Taken." };
     const item: SenseItem = {
       source: "email",
       event: sent?.thread ? "reply" : "received",
       what: `Mail to Atlas from ${name || from || "someone"}${sent?.thread ? ", answering mail Atlas sent" : ""}: "${subject.slice(0, 160) || "(no subject)"}"`,
       key: mail.messageId ?? `${from}:${subject}:${time}`,
-      thread: sent?.thread ?? threadOf(mail.messageId, ids(mail.references)),
+      thread,
       from: name ? `${name} <${from}>` : from,
       signals: [...(sent?.thread ? ["reply"] : []), ...(passed ? [] : ["unverified"])],
       ...(mail.messageId ? { message_id: mail.messageId } : {}),

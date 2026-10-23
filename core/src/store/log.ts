@@ -5,7 +5,8 @@ import type { StageView } from "../stage";
 import { type Json, newId, parse, type Sql } from "./db";
 
 export type Actor = "owner" | "atlas" | "system";
-export type Surface = "app" | "voice" | "api" | "none";
+/** Where a run was asked: the app, a call, the API, a chat channel (§16.1), or nowhere (Atlas's own). */
+export type Surface = "app" | "voice" | "api" | "chat" | "none";
 
 export type LogKind =
   | "message.in"
@@ -39,6 +40,13 @@ export type LogKind =
   | "skill.change"
   /** An event on the owner's calendar was changed from Atlas: moved back by Undo (§12.1). */
   | "calendar.change"
+  /** A face's conversations (§7.2): what someone said to a face, what it said back (or the owner, from Inbox). */
+  | "face.in"
+  | "face.out"
+  /** What a face handed the owner: a message it took, or a pull-in. Inbox shows it. */
+  | "face.handoff"
+  /** The faces' daily digest, for Inbox. */
+  | "face.digest"
   /** Something a sense noticed (§10.1): arriving at or leaving a place, a real move, location turned off or on. */
   | "sense"
   /** What awareness made of a sense event or a rhythm moment (§10.3): stopped by a rule, decided not to matter, or woke Atlas, and what it chose; and the owner's reaction to a nudge. */

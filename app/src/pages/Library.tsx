@@ -341,6 +341,15 @@ function RecordRow({ atlas, r, go }: { atlas: Atlas; r: RecordView; go: (d: stri
           >
             Correct
           </button>
+          {r.type !== "person" && (
+            <button
+              className="link"
+              title="Faces covering its areas may share it with the people they talk to"
+              onClick={() => atlas.send({ type: "atlas.record.share", id: r.id, shared: !r.shared })}
+            >
+              {r.shared ? "Shareable ✓" : "Shareable"}
+            </button>
+          )}
           <button className="link" onClick={() => atlas.send({ type: "atlas.record.forget", id: r.id })}>
             Forget
           </button>

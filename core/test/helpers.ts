@@ -234,7 +234,7 @@ export function fakeDecider(
 // only the manifest's hosts, over the test's fake network (`seams.fetch`).
 
 import { seams } from "../src/agent/seams";
-import { allowedHost, fill } from "../src/extensions";
+import { allowedHost, fill, textual } from "../src/extensions";
 import { type Extension, useFetch } from "../../extensions/sdk";
 import brave from "../../extensions/brave";
 import exa from "../../extensions/exa";
@@ -248,6 +248,7 @@ import osm from "../../extensions/osm";
 import owntracks from "../../extensions/owntracks";
 import tavily from "../../extensions/tavily";
 import resend from "../../extensions/resend";
+import telegram from "../../extensions/telegram";
 
 export const EXTENSIONS: Record<string, Extension> = {
   brave,
@@ -262,6 +263,7 @@ export const EXTENSIONS: Record<string, Extension> = {
   owntracks,
   tavily,
   resend,
+  telegram,
 };
 
 /** The requests extensions made in this test, as the gate let them out (secrets filled in). */
@@ -281,8 +283,13 @@ export function runExtensionsHere(more: Record<string, Extension> = {}): void {
         });
       const headers = new Headers();
       for (const [k, v] of req.headers) headers.set(k, fill(v, secrets));
-      const body = req.body ? fill(await req.text(), secrets) : undefined;
-      const out: RequestInit = { method: req.method, headers, ...(body !== undefined ? { body } : {}) };
+      // As at the gate: text bodies get their secrets put in; anything else (a file) goes as it is.
+      const body = req.body
+        ? textual(req.headers.get("content-type"))
+          ? fill(await req.text(), secrets)
+          : await req.formData().catch(() => null)
+        : undefined;
+      const out: RequestInit = { method: req.method, headers, ...(body != null ? { body } : {}) };
       extensionRequests.push({ ext: id, url, init: out });
       if (!seams.fetch) throw new Error(`An extension (${id}) reached for ${host}, and this test has no fake network.`);
       return seams.fetch(url, out);

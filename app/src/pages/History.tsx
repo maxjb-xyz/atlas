@@ -88,6 +88,18 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         what: `${{ made: "Made", changed: "Changed", on: "Turned on", paused: "Paused", deleted: "Deleted" }[str(b.change)] ?? "Changed"} the automation ${str(b.name)}${b.why ? `: ${str(b.why)}` : ""}`,
         kind: `automation.${str(b.change)}`,
       };
+    case "face.in":
+      return { who: `${str(b.from) || "Someone"}${b.test ? " (test)" : ""}`, what: str(b.text), kind: "face.in" };
+    case "face.out":
+      return { who: b.by === "owner" ? "You, through a face" : `Face${b.test ? " (test)" : ""}`, what: str(b.text), kind: "face.out" };
+    case "face.handoff":
+      return {
+        who: `${str(b.face_name)}`,
+        what: `${b.kind === "handoff" ? "Pulled you in" : "Took a message"} from ${str(b.from)}: ${str(b.text)}`,
+        kind: `face.${str(b.kind)}`,
+      };
+    case "face.digest":
+      return { who: str(b.face_name), what: str(b.text).split("\n")[0] ?? "", kind: "face.digest" };
     case "calendar.change":
       return { who: "You", what: `Moved ${str(b.title)} back`, kind: "calendar.moved" };
     case "page.change":
@@ -324,6 +336,7 @@ export function History({ atlas }: { atlas: Atlas }) {
         { id: "actions", label: "Actions" },
         { id: "conversations", label: "Conversations" },
         { id: "jobs", label: "Jobs" },
+        { id: "faces", label: "Faces" },
       ]}
       tab={filter}
       onTab={(f) => {

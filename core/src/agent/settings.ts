@@ -21,9 +21,12 @@ import { vault, vaultView } from "../vault";
 import type { VapidKeys } from "../push";
 import type { ChatGPTSignIn } from "./chatgpt";
 import { here, nearest, pins } from "../location";
-import { installed } from "../extensions";
+import { installed, providing } from "../extensions";
 import type { ExtensionDesk } from "./extensions";
 import type { MailDesk } from "./mail";
+import { faces } from "../faces";
+import { getRecord } from "../store/records";
+import { links } from "./channels";
 import { nodes, nodeView } from "../nodes";
 import type { LocationView } from "../protocol";
 
@@ -50,6 +53,15 @@ export function settingsView(
       refused: refusal ? { ...refusal, note: parts.calendar.note(refusal, settings) } : null,
     },
     extensions: parts.extensions?.views() ?? [],
+    faces: faces(sql).map((f) => ({
+      ...f,
+      people_names: f.people.map((id) => getRecord(sql, id)?.name ?? "someone forgotten"),
+      pull_names: f.pull_people.map((id) => getRecord(sql, id)?.name ?? "someone forgotten"),
+    })),
+    channels: providing(sql, "channel").map((e) => {
+      const l = links(sql)[e.id];
+      return { ext: e.id, name: e.name, linked: l ? { name: l.name, at: l.at } : null };
+    }),
     mail: parts.mail?.view() ?? {
       address: null,
       domain: null,

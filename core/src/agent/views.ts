@@ -50,6 +50,7 @@ export function recordView(sql: Sql, r: AtlasRecord): RecordView {
       : { via: r.source.via },
     corrections: history.length,
     was: last ? { name: last.name ?? r.name, fact: typeof last.fields.fact === "string" ? last.fields.fact : "", at: last.at } : null,
+    shared: r.visibility === "shared",
     ...(r.type === "person"
       ? { channels: channelsOf(r).map((c) => ({ kind: c.kind, value: c.value, via: c.via })), trust: trustOf(r) }
       : {}),
@@ -350,6 +351,7 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
   ],
   conversations: ["message.in", "message.out"],
   jobs: ["job.result", "agenda.change", "automation.run"],
+  faces: ["face.in", "face.out", "face.handoff", "face.digest"],
 };
 
 /** Whether a row belongs on History's list for a filter: the things that happened, not the plumbing. */
@@ -481,7 +483,9 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
           ? clean(JSON.stringify(a.input))
           : a.kind === "email"
             ? clean(`${a.subject}\n${a.text}`)
-            : true,
+            : a.kind === "face_reply"
+              ? clean(a.text)
+              : true,
   );
   const hold = needsHold(actions);
   return {
@@ -504,6 +508,16 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
 }
 
 function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
+  if (a.kind === "face_reply") {
+    return {
+      kind: "face_reply",
+      title: a.name,
+      detail: "Your face's answer, which goes out in your name.",
+      where: String((a.where as { kind?: string }).kind === "mail" ? "Atlas's email" : ((a.where as { ext?: string }).ext ?? "a chat")),
+      undo: "It can't be taken back once it's sent.",
+      message: a.text,
+    };
+  }
   if (a.kind === "email") {
     return {
       kind: "email",
@@ -605,6 +619,7 @@ function pastItems(sql: Sql): InboxItem[] {
   const rows = sql
     .exec<{ id: string }>(
       `SELECT id FROM log WHERE at > ? AND (kind = 'job.result'
+         OR kind = 'face.handoff' OR kind = 'face.digest'
          OR (kind = 'automation.run' AND json_extract(body, '$.report') = 'inbox' AND json_extract(body, '$.test') = 0 AND json_extract(body, '$.quiet') IS NULL)
          OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.interrupted') IS NULL AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%' AND json_extract(body, '$.trigger') NOT LIKE 'automation%'))
          AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 100`,
@@ -614,6 +629,48 @@ function pastItems(sql: Sql): InboxItem[] {
     .toArray()
     .map((r) => getRow(sql, r.id)!);
   return rows.map((r): InboxItem => {
+    // What a face handed the owner (§7.2), with the conversation, answerable from here; and the faces' digest.
+    if (r.kind === "face.handoff" || r.kind === "face.digest") {
+      const b = r.body as Record<string, unknown>;
+      const conv = typeof b.conv === "string" ? b.conv : "";
+      const talk = conv
+        ? sql
+            .exec<{ kind: string; body: string }>(
+              `SELECT kind, body FROM log WHERE kind IN ('face.in', 'face.out') AND json_extract(body, '$.conv') = ? ORDER BY seq DESC LIMIT 12`,
+              conv,
+            )
+            .toArray()
+            .reverse()
+            .map((x) => {
+              const t = JSON.parse(x.body) as { text?: string; by?: string };
+              return {
+                who: (x.kind === "face.in" ? "them" : t.by === "owner" ? "you" : "face") as "them" | "face" | "you",
+                text: String(t.text ?? "").slice(0, 1_000),
+              };
+            })
+        : [];
+      return {
+        id: r.id,
+        kind: "face",
+        title:
+          r.kind === "face.digest"
+            ? `${String(b.face_name ?? "A face")}'s day`
+            : `${String(b.face_name ?? "A face")}: ${b.kind === "handoff" ? "wants you" : "a message"} from ${String(b.from ?? "someone")}`,
+        text: String(b.text ?? "").slice(0, 2_000),
+        at: r.at,
+        areas: r.areas,
+        run_id: r.run_id,
+        face: {
+          name: String(b.face_name ?? ""),
+          from: String(b.from ?? ""),
+          urgent: b.urgent === true,
+          reach: Array.isArray(b.reach) ? (b.reach as string[]) : [],
+          details: (b.details && typeof b.details === "object" ? b.details : {}) as Record<string, string>,
+          conversation: talk,
+          can_answer: r.kind === "face.handoff" && !conv.startsWith("test:"),
+        },
+      };
+    }
     // An automation that reports to Inbox (§13.1: report here).
     if (r.kind === "automation.run") {
       const ok = r.body.ok !== false;

@@ -17,6 +17,7 @@ export interface PageSummary {
   views: string[];
 }
 import { z } from "zod";
+import { FaceInput } from "./face-shape";
 import type { LogRow } from "./store/log";
 import type { AgendaItem } from "./store/agenda";
 import { BrainChoice, Settings, SettingsPatch } from "./store/settings";
@@ -45,9 +46,11 @@ export interface RecordView {
   /** For a person (§7.1): how to reach them, each with where it came from, and how much the owner trusts them. */
   channels?: Array<{ kind: string; value: string; via: string }>;
   trust?: string;
+  /** Whether faces may share it, from its areas (§7.2). */
+  shared: boolean;
 }
 
-export type HistoryFilter = "everything" | "actions" | "conversations" | "jobs";
+export type HistoryFilter = "everything" | "actions" | "conversations" | "jobs" | "faces";
 
 export interface HistoryStats {
   actions: number;
@@ -70,7 +73,7 @@ export interface CalendarEventView {
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "node" | "email";
+  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "node" | "email" | "face_reply";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -100,7 +103,7 @@ export interface ApprovalView {
 export interface InboxItem {
   /** The log row it comes from; for an approval, its id; for a question, its key. */
   id: string;
-  kind: "review" | "failed" | "approval" | "question";
+  kind: "review" | "failed" | "approval" | "question" | "face";
   title: string;
   text: string;
   at: number;
@@ -109,6 +112,16 @@ export interface InboxItem {
   approval?: ApprovalView;
   /** Atlas asking the owner something it can't decide alone, such as whether to stop asking for an action. */
   question?: { key: string; yes: string; no: string };
+  /** What a face handed the owner (§7.2): who it's from, the conversation, and whether it can be answered from here. */
+  face?: {
+    name: string;
+    from: string;
+    urgent: boolean;
+    reach: string[];
+    details: Record<string, string>;
+    conversation: Array<{ who: "them" | "face" | "you"; text: string }>;
+    can_answer: boolean;
+  };
 }
 
 /** An area as the app shows it, in Library → Areas and on chips (§6, §21.3). */
@@ -271,6 +284,16 @@ export const ClientMessage = z.discriminatedUnion("type", [
     sending: z.string().max(40),
   }),
   z.object({ type: z.literal("atlas.mail.remove") }),
+  /** Faces (§7.2): make or change one, remove it, talk to it as a stranger, or answer what one handed you. */
+  z.object({ type: z.literal("atlas.face.save"), face: FaceInput }),
+  z.object({ type: z.literal("atlas.face.remove"), id: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.face.test"), id: z.string().max(40), conv: z.string().max(40), text: z.string().min(1).max(4_000) }),
+  z.object({ type: z.literal("atlas.face.answer"), id: z.string().max(64), text: z.string().min(1).max(4_000) }),
+  /** A chat channel (§16.1): a code for the owner to send from their own account, or forgetting who they are there. */
+  z.object({ type: z.literal("atlas.channel.code"), ext: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.channel.unlink"), ext: z.string().max(40) }),
+  /** Whether faces may share a record from its areas (§7.2). */
+  z.object({ type: z.literal("atlas.record.share"), id: z.string().max(64), shared: z.boolean() }),
   z.object({ type: z.literal("atlas.mail.test") }),
   /** Library → People → Import: from an extension that provides contacts, or a vCard file's text. */
   z.object({ type: z.literal("atlas.contacts.import"), from: z.string().max(40).optional(), vcards: z.string().max(5_000_000).optional() }),
@@ -339,7 +362,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** History: the log, newest first. */
   z.object({
     type: z.literal("atlas.history"),
-    filter: z.enum(["everything", "actions", "conversations", "jobs"]),
+    filter: z.enum(["everything", "actions", "conversations", "jobs", "faces"]),
     before_seq: z.number().int().optional(),
     area: z.string().max(64).nullable().optional(),
     /** Local midnight, for today's totals. */
@@ -493,6 +516,10 @@ export interface SettingsView {
   extensions: ExtensionView[];
   /** Atlas's own address (§16.2). */
   mail: MailView;
+  /** Faces (§7.2). */
+  faces: FaceView[];
+  /** Chat channels (§16.1), and who the owner is on each. */
+  channels: Array<{ ext: string; name: string; linked: { name: string; at: number } | null }>;
   chatgpt: ChatGPTView;
   /** Provider health, by "provider:model". */
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
@@ -540,6 +567,9 @@ export interface SensesView {
 }
 
 /** One extension as Settings shows it (§17). */
+/** A face as Settings shows it: its settings (§7.2). */
+export type FaceView = import("./face-shape").Face & { people_names: string[]; pull_names: string[] };
+
 /** Atlas's own address as Settings shows it (§16.2). */
 export interface MailView {
   address: string | null;
@@ -676,6 +706,9 @@ export type ServerMessage =
   | { type: "atlas.ext.signin"; id: string; url?: string; error?: string }
   /** How setting up, taking down or testing Atlas's address went, in the provider's words when it didn't. */
   | { type: "atlas.mail"; ok: boolean; text: string }
+  /** A face's answer in a test conversation. */
+  | { type: "atlas.face.said"; id: string; conv: string; ok: boolean; text: string }
+  | { type: "atlas.channel.code"; ext: string; code: string; expires: number }
   | { type: "atlas.contacts.imported"; ok: boolean; text: string }
   /** A new webhook source's address, with its key in it, shown once. */
   | { type: "atlas.sense.hook"; id: string; name: string; url: string }

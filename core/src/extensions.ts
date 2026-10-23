@@ -249,7 +249,7 @@ export function fill(text: string, secrets: Record<string, string>, inUrl = fals
     });
 }
 
-const textual = (type: string | null) => !type || /json|text|xml|x-www-form-urlencoded|javascript|graphql/i.test(type);
+export const textual = (type: string | null) => !type || /json|text|xml|x-www-form-urlencoded|javascript|graphql/i.test(type);
 
 /**
  * Every request an extension makes comes here. A host its manifest names
@@ -570,6 +570,8 @@ const same = (a: string, b: string) => {
 export async function postAllowed(sql: Sql, e: Installed, key: string, req: ExtRequest): Promise<string | null> {
   if (!same(key, e.key)) return "the address's key doesn't match";
   if (e.state !== "on") return `the ${e.name} extension is off`;
+  const th = e.manifest.receives?.token_header;
+  if (th && !same(req.headers[th.toLowerCase()] ?? "", e.key)) return `the post doesn't carry ${e.name}'s secret token`;
   const sig = e.manifest.receives?.signature;
   if (!sig) return null;
   const secret = extSecrets(sql, e.id)[sig.secret];

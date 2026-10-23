@@ -10,12 +10,13 @@ import { deviceId, type PushState, pushState, subscribe, unsubscribe } from "./n
 import { addPasskey, deviceName, passkeysSupported } from "./passkey";
 import { Composer } from "./Shell";
 import { useLook } from "./theme";
-import { clock, dayTime, Icon, QrCode, Sheet, shortDay, Stage } from "./ui";
+import { clock, dayTime, Icon, QrCode, Sheet, shortDay, Stage, useNow } from "./ui";
 import { Markdown } from "./Markdown";
 import { CLOUDFLARE_SEARCH } from "../../core/src/web";
 import { FIELDS, type VaultKind } from "../../core/src/vault-fields";
 
 type Section =
+  | "faces"
   | "character"
   | "look"
   | "brains"
@@ -34,6 +35,7 @@ const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
     items: [
       ["character", "Character & voice"],
       ["look", "Look & themes"],
+      ["faces", "Faces"],
     ],
   },
   { group: "Brains", items: [["brains", "Brains"]] },
@@ -157,6 +159,7 @@ export function SettingsPage({
               <>
                 {section === "character" && <Character atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "look" && <Look draft={draft} edit={edit} />}
+                {section === "faces" && <Faces atlas={atlas} view={view} />}
                 {section === "brains" && <Brains atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "connections" && <Connections atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "extensions" && (
@@ -574,12 +577,48 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
       </Row>
       <Row label="Chat">
         <ProvidedBy atlas={atlas} view={view} what="channel" none="No chat channel yet." />
+        <ChatLinks atlas={atlas} view={view} />
       </Row>
       <Row label="And more">
         <p className="muted small">
           The other services you want to hear from (GitHub, Linear, your own) are <a href="#/settings/extensions">extensions</a>.
         </p>
       </Row>
+    </>
+  );
+}
+
+/**
+ * Who you are on each chat channel (§16.1): message the bot from your own
+ * account, then send it the code shown here. After that, those messages are
+ * you talking to Atlas.
+ */
+function ChatLinks({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const code = atlas.state.channelCode;
+  const now = useNow(30_000);
+  return (
+    <>
+      {view.channels.map((c) => (
+        <div key={c.ext} className="row small">
+          <span className="grow">
+            {c.linked ? `${c.name}: you're ${c.linked.name || "linked"} there.` : `${c.name}: not linked to you yet.`}
+          </span>
+          {c.linked ? (
+            <button className="btn" onClick={() => atlas.send({ type: "atlas.channel.unlink", ext: c.ext })}>
+              Unlink
+            </button>
+          ) : (
+            <button className="btn" onClick={() => atlas.send({ type: "atlas.channel.code", ext: c.ext })}>
+              Link my account
+            </button>
+          )}
+        </div>
+      ))}
+      {code && code.expires > now && !view.channels.find((c) => c.ext === code.ext)?.linked && (
+        <p className="small">
+          Send <b className="mono">{code.code}</b> to the bot from your own account, within 15 minutes.
+        </p>
+      )}
     </>
   );
 }
@@ -689,6 +728,310 @@ function AtlasEmail({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
       </div>
       {note && <p className={`small ${note.ok ? "ok" : "err"}`}>{note.message}</p>}
     </>
+  );
+}
+
+type FaceV = SettingsView["faces"][number];
+
+const SHARE_LABELS: Record<string, string> = {
+  free_busy: "Whether you're free or busy",
+  public: "What you marked shareable",
+  status: "How open work is going",
+};
+const CAN_LABELS: Record<string, string> = {
+  messages: "Take messages",
+  hold_time: "Hold time for you to confirm",
+  answer: "Answer questions",
+  collect: "Note people's details",
+};
+const PULL_LABELS: Record<string, string> = {
+  urgent: "Something's urgent",
+  money: "Money is involved",
+  cant_answer: "It can't answer",
+  people: "These people write",
+};
+
+/**
+ * Faces (§7.2): Atlas as other people reach it. Each has a name and an
+ * introduction, the addresses it answers on, who it's for, the areas it
+ * covers and what it shares, what it can do, when it pulls you in, and
+ * whether it speaks as Atlas or as you. "Talk to it as a stranger" tries it.
+ */
+function Faces({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const [editing, setEditing] = useState<FaceV | "new" | null>(null);
+  const addresses = [
+    ...(view.mail.address ? [{ id: "email", name: `Atlas's email (${view.mail.address})` }] : []),
+    ...view.channels.map((c) => ({ id: c.ext, name: c.name })),
+  ];
+  return (
+    <>
+      <Head
+        title="Faces"
+        sub="Atlas as other people reach it: on your Telegram bot or Atlas's own email, answering only from what you share, and handing you what matters."
+        right={
+          <button className="btn primary" onClick={() => setEditing("new")}>
+            New face
+          </button>
+        }
+      />
+      {!addresses.length && (
+        <p className="muted small">
+          A face needs somewhere to answer: set up Atlas's email or a chat channel in <a href="#/settings/connections">Connections</a>.
+        </p>
+      )}
+      {editing ? (
+        <FaceEditor
+          atlas={atlas}
+          view={view}
+          face={editing === "new" ? null : editing}
+          addresses={addresses}
+          done={() => setEditing(null)}
+        />
+      ) : (
+        <div className="rows">
+          {view.faces.map((f) => (
+            <div className="r" key={f.id}>
+              <span className="grow">
+                <b>{f.name}</b>{" "}
+                <span className="muted small">
+                  {f.on ? "" : "Off · "}
+                  {f.addresses.map((a) => addresses.find((x) => x.id === a)?.name ?? a).join(", ") || "No addresses"} ·{" "}
+                  {f.audience === "anyone" ? "anyone" : f.audience === "known" ? "people you know" : f.people_names.join(", ")} · speaks as{" "}
+                  {f.speaks_as === "atlas" ? "Atlas" : "you"}
+                </span>
+              </span>
+              <button className="btn" onClick={() => setEditing(f)}>
+                Edit
+              </button>
+            </div>
+          ))}
+          {!view.faces.length && (
+            <p className="muted small">No faces yet. Without one, Atlas tells people whose assistant it is and nothing more.</p>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+function FaceEditor({
+  atlas,
+  view,
+  face,
+  addresses,
+  done,
+}: {
+  atlas: Atlas;
+  view: SettingsView;
+  face: FaceV | null;
+  addresses: Array<{ id: string; name: string }>;
+  done: () => void;
+}) {
+  const areas = atlas.state.areas.filter((a) => a.state !== "archived");
+  const [f, setF] = useState(() => ({
+    name: face?.name ?? "",
+    intro: face?.intro ?? "",
+    addresses: face?.addresses ?? addresses.map((a) => a.id).slice(0, 1),
+    audience: face?.audience ?? ("anyone" as FaceV["audience"]),
+    people: face?.people_names.join(", ") ?? "",
+    areas: face?.areas ?? [],
+    shares: face?.shares ?? ({} as FaceV["shares"]),
+    can: face?.can ?? (["messages", "answer"] as FaceV["can"]),
+    pulls: face?.pulls ?? (["urgent", "money", "cant_answer"] as FaceV["pulls"]),
+    pull_people: face?.pull_names.join(", ") ?? "",
+    speaks_as: face?.speaks_as ?? ("atlas" as FaceV["speaks_as"]),
+    digest: face?.digest ?? ("daily" as FaceV["digest"]),
+    on: face?.on ?? true,
+  }));
+  const toggle = <T extends string>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+  const names = (t: string) =>
+    t
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+  const save = () => {
+    atlas.send({
+      type: "atlas.face.save",
+      face: { ...(face ? { id: face.id } : {}), ...f, people: names(f.people), pull_people: names(f.pull_people) },
+    });
+    done();
+  };
+  return (
+    <div className="rows" style={{ gap: 10 }}>
+      <label className="field">
+        <span>Name</span>
+        <input value={f.name} placeholder="Front desk" onChange={(e) => setF({ ...f, name: e.target.value })} />
+      </label>
+      <label className="field">
+        <span>How it introduces itself (it always says it's an AI)</span>
+        <textarea rows={2} value={f.intro} onChange={(e) => setF({ ...f, intro: e.target.value })} />
+      </label>
+      <div className="field">
+        <span>Where it answers</span>
+        {addresses.map((a) => (
+          <label key={a.id} className="row small">
+            <input
+              type="checkbox"
+              checked={f.addresses.includes(a.id)}
+              onChange={() => setF({ ...f, addresses: toggle(f.addresses, a.id) })}
+            />{" "}
+            {a.name}
+          </label>
+        ))}
+      </div>
+      <label className="field">
+        <span>Who it's for</span>
+        <select value={f.audience} onChange={(e) => setF({ ...f, audience: e.target.value as FaceV["audience"] })}>
+          <option value="anyone">Anyone</option>
+          <option value="known">People you know</option>
+          <option value="people">Only these people</option>
+        </select>
+      </label>
+      {f.audience === "people" && (
+        <label className="field">
+          <span>Their names, as Atlas knows them</span>
+          <input value={f.people} placeholder="Jordan Kim, Dana Whitfield" onChange={(e) => setF({ ...f, people: e.target.value })} />
+        </label>
+      )}
+      <div className="field">
+        <span>The areas it covers, and what it shares from each</span>
+        {areas.map((a) => (
+          <div key={a.id} className="rows" style={{ gap: 2 }}>
+            <label className="row small">
+              <input type="checkbox" checked={f.areas.includes(a.id)} onChange={() => setF({ ...f, areas: toggle(f.areas, a.id) })} />{" "}
+              <b>{a.name}</b>
+            </label>
+            {f.areas.includes(a.id) && (
+              <div className="row small" style={{ paddingLeft: 22, gap: 12 }}>
+                {Object.entries(SHARE_LABELS).map(([k, label]) => (
+                  <label key={k} className="row">
+                    <input
+                      type="checkbox"
+                      checked={(f.shares[a.id] ?? []).includes(k as never)}
+                      onChange={() => setF({ ...f, shares: { ...f.shares, [a.id]: toggle(f.shares[a.id] ?? [], k as never) } })}
+                    />{" "}
+                    {label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        {!areas.length && <p className="muted small">No areas yet: it can take messages and nothing more.</p>}
+      </div>
+      <div className="field">
+        <span>What it can do</span>
+        <div className="row small" style={{ gap: 12 }}>
+          {Object.entries(CAN_LABELS).map(([k, label]) => (
+            <label key={k} className="row">
+              <input type="checkbox" checked={f.can.includes(k as never)} onChange={() => setF({ ...f, can: toggle(f.can, k as never) })} />{" "}
+              {label}
+            </label>
+          ))}
+        </div>
+      </div>
+      <div className="field">
+        <span>When it pulls you in</span>
+        <div className="row small" style={{ gap: 12 }}>
+          {Object.entries(PULL_LABELS).map(([k, label]) => (
+            <label key={k} className="row">
+              <input
+                type="checkbox"
+                checked={f.pulls.includes(k as never)}
+                onChange={() => setF({ ...f, pulls: toggle(f.pulls, k as never) })}
+              />{" "}
+              {label}
+            </label>
+          ))}
+        </div>
+        {f.pulls.includes("people") && (
+          <input value={f.pull_people} placeholder="Names, comma separated" onChange={(e) => setF({ ...f, pull_people: e.target.value })} />
+        )}
+      </div>
+      <label className="field">
+        <span>It speaks as</span>
+        <select value={f.speaks_as} onChange={(e) => setF({ ...f, speaks_as: e.target.value as FaceV["speaks_as"] })}>
+          <option value="atlas">Atlas (it answers on its own)</option>
+          <option value="owner">You (each answer waits for your OK, until you trust it)</option>
+        </select>
+      </label>
+      <label className="field">
+        <span>Digest of its conversations</span>
+        <select value={f.digest} onChange={(e) => setF({ ...f, digest: e.target.value as FaceV["digest"] })}>
+          <option value="daily">Daily, in Inbox (anything urgent comes right away)</option>
+          <option value="off">None</option>
+        </select>
+      </label>
+      <label className="row small">
+        <input type="checkbox" checked={f.on} onChange={() => setF({ ...f, on: !f.on })} /> On
+      </label>
+      <div className="row">
+        <button className="btn primary" disabled={!f.name.trim()} onClick={save}>
+          Save
+        </button>
+        <button className="btn" onClick={done}>
+          Cancel
+        </button>
+        {face && (
+          <button
+            className="btn"
+            onClick={() => {
+              atlas.send({ type: "atlas.face.remove", id: face.id });
+              done();
+            }}
+          >
+            Remove
+          </button>
+        )}
+      </div>
+      {face && <StrangerChat atlas={atlas} face={face} />}
+    </div>
+  );
+}
+
+/** "Talk to it as a stranger" (§7.2): a test chat that sees only what the face would. Nothing in it goes anywhere. */
+function StrangerChat({ atlas, face }: { atlas: Atlas; face: FaceV }) {
+  const [conv] = useState(() => `${face.id}-${Date.now().toString(36)}`);
+  const [mine, setMine] = useState<string[]>([]);
+  const [text, setText] = useState("");
+  const theirs = atlas.state.faceSaid[conv] ?? [];
+  const lines = mine.flatMap((m, i) => [
+    { who: "you", text: m, ok: true },
+    ...(theirs[i] ? [{ who: face.name, text: theirs[i]!.text, ok: theirs[i]!.ok }] : []),
+  ]);
+  const waiting = mine.length > theirs.length;
+  return (
+    <div className="field" style={{ marginTop: 16 }}>
+      <span>Talk to it as a stranger</span>
+      <div className="rows" style={{ gap: 4 }}>
+        {lines.map((l, i) => (
+          <p key={i} className={`small ${l.ok ? "" : "err"}`}>
+            <b>{l.who === "you" ? "You" : l.who}:</b> {l.text}
+          </p>
+        ))}
+        {waiting && <p className="muted small">{face.name} is writing.</p>}
+      </div>
+      <form
+        className="row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!text.trim() || waiting) return;
+          setMine([...mine, text.trim()]);
+          atlas.send({ type: "atlas.face.test", id: face.id, conv, text: text.trim() });
+          setText("");
+        }}
+      >
+        <input
+          className="grow"
+          value={text}
+          placeholder="Write as someone who doesn't know you"
+          onChange={(e) => setText(e.target.value)}
+        />
+        <button className="btn" disabled={!text.trim() || waiting}>
+          Send
+        </button>
+      </form>
+    </div>
   );
 }
 
@@ -1490,6 +1833,27 @@ function Notifications({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
           )}
         </div>
         {error && <p className="err small">{error}</p>}
+      </Row>
+      <Row label="Reach me on">
+        <label className="field">
+          <span>When Atlas isn't open in front of you, messages reach you</span>
+          <select
+            value={draft.notifications.reach}
+            onChange={(e) => edit({ notifications: { ...draft.notifications, reach: e.target.value } })}
+          >
+            <option value="push">As a notification on your device</option>
+            {view.channels
+              .filter((c) => c.linked)
+              .map((c) => (
+                <option key={c.ext} value={c.ext}>
+                  In {c.name}
+                </option>
+              ))}
+          </select>
+        </label>
+        <p className="muted small">
+          Quiet hours and the daily budget apply either way. A chat you haven't linked yet is in Connections → Chat.
+        </p>
       </Row>
       <Row label="Devices">
         <div className="rows">

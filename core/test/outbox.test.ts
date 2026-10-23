@@ -145,7 +145,7 @@ describe("push notifications", () => {
       const net = fakeNet();
       await outbox(sql, net.f, { looking: true }).box.deliver({ text: "a", run_id: null, channel: "app" }, { alreadyStreamed: false });
       await outbox(sql, net.f, { inCall: true }).box.deliver({ text: "b", run_id: null, channel: "app" }, { alreadyStreamed: false });
-      writeSettings(sql, { notifications: { push: false, quiet: readSettings(sql).notifications.quiet, budget: 10 } });
+      writeSettings(sql, { notifications: { push: false, quiet: readSettings(sql).notifications.quiet, budget: 10, reach: "push" } });
       await outbox(sql, net.f).box.deliver({ text: "c", run_id: null, channel: "app" }, { alreadyStreamed: false });
       expect(net.calls).toEqual([]);
     }));
@@ -162,6 +162,7 @@ describe("push notifications", () => {
           push: true,
           quiet: { on: true, from: hhmm(Date.now() - 3_600_000), to: hhmm(Date.now() + 3_600_000) },
           budget: 10,
+          reach: "push",
         },
       });
       const net = fakeNet();

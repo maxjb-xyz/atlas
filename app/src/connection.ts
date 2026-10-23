@@ -94,6 +94,10 @@ export interface State {
   /** OwnTracks' setup, shown once in Settings → Devices. */
   /** An extension's setup, shown once (a link and its QR code, a password), by the extension's id. */
   extSetup: Record<string, { ok: boolean; text: string; link?: string; fields?: Array<{ label: string; value: string }> }>;
+  /** A face's answers in "talk to it as a stranger", by test conversation (§7.2). */
+  faceSaid: Record<string, Array<{ ok: boolean; text: string }>>;
+  /** The code to link a chat channel, shown until it's sent from the owner's account (§16.1). */
+  channelCode: { ext: string; code: string; expires: number } | null;
   /** A webhook source just added: its address with its key, shown once. */
   senseHook: { id: string; name: string; url: string } | null;
   /** Pairing codes looked up (null: not waiting), and the answer to Pair (the device's name, or null), by code. */
@@ -134,6 +138,8 @@ const initial: State = {
   kept: null,
   situationVersion: 0,
   extSetup: {},
+  faceSaid: {},
+  channelCode: null,
   senseHook: null,
   pairing: {},
   paired: {},
@@ -313,6 +319,10 @@ function reduce(s: State, a: Action): State {
       // The sign-in page, in this tab: it sends the owner back to Settings when it's done.
       if (m.url) window.location.assign(m.url);
       return m.error ? { ...s, tests: { ...s.tests, [`ext:${m.id}`]: { ok: false, message: m.error } } } : s;
+    case "atlas.face.said":
+      return { ...s, faceSaid: { ...s.faceSaid, [m.conv]: [...(s.faceSaid[m.conv] ?? []), { ok: m.ok, text: m.text }] } };
+    case "atlas.channel.code":
+      return { ...s, channelCode: { ext: m.ext, code: m.code, expires: m.expires } };
     case "atlas.mail":
       return { ...s, tests: { ...s.tests, mail: { ok: m.ok, message: m.text } } };
     case "atlas.contacts.imported":

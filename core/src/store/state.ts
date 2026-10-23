@@ -88,7 +88,17 @@ export type StateName =
   /** When the M4 providers were moved out of the core into bundled extensions (once, §17). */
   | "extensions_moved"
   /** Atlas's own address (§16.2): its domain, the relay and rule in the domain's account, and who sends. */
-  | "atlas_mail";
+  | "atlas_mail"
+  /** Who the owner is on each chat channel (§16.1): their account there, linked once with a code from the app. */
+  | "channel_links"
+  /** The code the app shows for linking a chat channel, and until when it's good. */
+  | "channel_code"
+  /** Chat messages already taken, so one sent again isn't taken twice. */
+  | "channel_seen"
+  /** When a stranger was last told whose assistant this is, so it's said once a day. */
+  | "channel_told"
+  /** The faces (§7.2): each one's settings. */
+  | "faces";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

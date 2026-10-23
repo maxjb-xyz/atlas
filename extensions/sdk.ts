@@ -103,7 +103,15 @@ export interface Manifest {
    * that mark a post as its service's when it arrives at one of the owner's general webhook sources (§10.4):
    * the core checks that source's key, then hands the post to this extension to read.
    */
-  receives?: { signature?: Signature; claims?: string[] };
+  receives?: {
+    signature?: Signature;
+    claims?: string[];
+    /**
+     * A header the service sends back on every post, set to the address's own key (Telegram's secret
+     * token): the core refuses a post without it.
+     */
+    token_header?: string;
+  };
   /** The least time between two calls, for free services that ask to be called gently. */
   pace_ms?: number;
   /** What it costs while it's on, when that isn't nothing. */

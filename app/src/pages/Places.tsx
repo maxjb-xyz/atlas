@@ -1,7 +1,7 @@
 // Inbox and Agenda (§21.2). Automations has its own page.
 
 import { useEffect, useState } from "react";
-import type { CalendarEventView } from "../../../core/src/protocol";
+import type { CalendarEventView, InboxItem } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { ApprovalCard } from "../Approval";
 import { Markdown } from "../Markdown";
@@ -96,7 +96,11 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                             : "Needs your OK"
                           : i.kind === "question"
                             ? "Question"
-                            : "Ready for review"}
+                            : i.kind === "face"
+                              ? i.face?.urgent
+                                ? "Urgent, from a face"
+                                : "From a face"
+                              : "Ready for review"}
                     </span>
                     <span style={{ fontWeight: 500 }} className="grow">
                       {i.title}
@@ -132,7 +136,8 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                       </div>
                     </div>
                   )}
-                  {on && !i.approval && !i.question && (
+                  {on && i.face && <FaceHandoff atlas={atlas} item={i} />}
+                  {on && !i.approval && !i.question && !i.face && (
                     <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       <div className="panel">{i.text ? <Markdown text={i.text} /> : "No details."}</div>
                       <div className="chain">
@@ -362,5 +367,59 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
         </div>
       </Sheet>
     </Stage>
+  );
+}
+
+/** What a face handed you (§7.2): the conversation, what it noted, and an answer that goes back through the face. */
+function FaceHandoff({ atlas, item }: { atlas: Atlas; item: InboxItem }) {
+  const f = item.face!;
+  const [text, setText] = useState("");
+  return (
+    <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }} onClick={(e) => e.stopPropagation()}>
+      <p>{item.text}</p>
+      {Object.keys(f.details).length > 0 && (
+        <p className="small">
+          {Object.entries(f.details)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(" · ")}
+        </p>
+      )}
+      {f.reach.length > 0 && <p className="muted small">How to reach them: {f.reach.join(", ")}</p>}
+      {f.conversation.length > 0 && (
+        <div className="panel rows" style={{ gap: 4 }}>
+          {f.conversation.map((c, n) => (
+            <p key={n} className="small">
+              <b>{c.who === "them" ? f.from : c.who === "you" ? "You" : f.name}:</b> {c.text}
+            </p>
+          ))}
+        </div>
+      )}
+      {f.can_answer && (
+        <form
+          className="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!text.trim()) return;
+            atlas.send({ type: "atlas.face.answer", id: item.id, text: text.trim() });
+            setText("");
+          }}
+        >
+          <input
+            className="grow"
+            value={text}
+            placeholder={`Answer ${f.from}, through ${f.name}`}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <button className="btn primary" disabled={!text.trim()}>
+            Send
+          </button>
+        </form>
+      )}
+      <div className="row">
+        <button className="btn" onClick={() => atlas.send({ type: "atlas.inbox.done", id: item.id })}>
+          Done
+        </button>
+      </div>
+    </div>
   );
 }

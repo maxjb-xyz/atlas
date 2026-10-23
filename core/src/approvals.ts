@@ -84,6 +84,15 @@ export type Action =
    * extension that sends it), or as Atlas, from Atlas's own address. The
    * owner can change who it's to, the subject and the words in the card.
    */
+  /** A face's answer that goes out in the owner's name (§7.2: speaking as you asks each time, until trusted). */
+  | {
+      kind: "face_reply";
+      name: string;
+      face: string;
+      conv: string;
+      where: Record<string, Json>;
+      text: string;
+    }
   | {
       kind: "email";
       name: string;
@@ -109,6 +118,7 @@ export const kindOf = (a: Action): ToolKind =>
   a.kind === "node" ||
   a.kind === "mcp_add" ||
   a.kind === "email" ||
+  a.kind === "face_reply" ||
   (a.kind === "vault" && !a.card) ||
   (a.kind === "mcp" && !a.destructive)
     ? "outside"
@@ -123,13 +133,15 @@ export const trustKey = (a: Action): string | null =>
       : a.kind === "node"
         ? // On a device, trust is earned for exactly this, not for every command the tool could run.
           `node:${a.node}:${a.tool}:${JSON.stringify(a.input)}`
-        : a.kind === "email"
-          ? // Mail is trusted by who it's to and whose name it's in: "mail to Doug as you".
-            `email:${a.as}:${[...a.to, ...(a.cc ?? [])]
-              .map((x) => x.toLowerCase())
-              .sort()
-              .join(",")}`
-          : null;
+        : a.kind === "face_reply"
+          ? `face:${a.face}`
+          : a.kind === "email"
+            ? // Mail is trusted by who it's to and whose name it's in: "mail to Doug as you".
+              `email:${a.as}:${[...a.to, ...(a.cc ?? [])]
+                .map((x) => x.toLowerCase())
+                .sort()
+                .join(",")}`
+            : null;
 
 export const needsHold = (actions: Action[]) => actions.some((a) => ASKS[kindOf(a)].hold);
 

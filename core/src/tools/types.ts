@@ -23,8 +23,21 @@ import type { Weather } from "../weather";
 /** What kind of action a tool takes decides when Atlas asks first (§12.1). */
 export type { ToolKind } from "../approvals";
 
+/** A face's run (§7.2): which face, the conversation, and how it reaches the owner. */
+export interface FaceRun {
+  face: import("../faces").Face;
+  conv: string;
+  /** Who's writing, as they gave themselves ("Jordan <jordan@x.com>", "@jordan"), and the person Atlas knows them as. */
+  from: string;
+  person: string | null;
+  /** Hands something to the owner: a message, or a pull-in that may push now. */
+  pull(o: { kind: "message" | "handoff"; text: string; urgent: boolean; details?: Record<string, string> }): Promise<void>;
+}
+
 export interface ToolContext {
   sql: Sql;
+  /** Set only in a face's run: the face and its conversation. */
+  face?: FaceRun;
   run_id: string;
   settings: Settings;
   tz: string;
