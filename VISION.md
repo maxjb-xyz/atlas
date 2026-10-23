@@ -637,11 +637,13 @@ In the app, Atlas settings → Notifications shows channels per urgency, quiet h
 ### 16.1 Channels
 
 Channels are the text surfaces where people reach Atlas or a face:
-- SMS and calls (Telnyx or Twilio);
+- SMS and calls (the provider is still open, §26);
 - email;
 - Telegram, Discord, WhatsApp, Signal and Slack;
 - iMessage, through a Mac node;
 - the website widget.
+
+**Discord comes first** (decided 2026-10-23, for M5): it has an official bot API, needs no phone number, and runs on Cloudflare alone, with one small Durable Object holding Discord's connection, so the owner and other people can message Atlas there. Signal has no official bot API that we've found; signal-cli, the unofficial client, needs a process that's always on and a number of its own, so Signal would come through a node (§16.3), like iMessage through a Mac, unless Signal opens one.
 
 Each channel is an adapter (§17). In a messaging thread Atlas texts like a person who has things to show you, the way messaging-native agents such as Instinct do: it sends what the channel can carry, not a link to everything.
 - **Rich where the channel allows.** An adapter says what its channel carries (images, files, reactions, effects, buttons, voice notes, formatting, length), and each stage view goes out in the richest form that fits:
@@ -658,7 +660,7 @@ Each channel is an adapter (§17). In a messaging thread Atlas texts like a pers
 
 ### 16.2 Atlas's own email
 
-Atlas can have its own addresses through Cloudflare Email Service. This needs a domain on Cloudflare.
+Atlas can have its own addresses through Cloudflare Email Service. This needs a domain on Cloudflare, in any Cloudflare account, not only Atlas's own (decided 2026-10-23, for M5). The owner gives Atlas an API token for the domain's account; Atlas onboards the domain for sending there, and puts a small relay Worker and a routing rule there that pass mail for its address on to Atlas, signed. It sends through Email Service's API with the same token. It's the same path when the domain is in Atlas's own account, so every owner sets it up the same way, from Settings. Sending to anyone, not only your own verified addresses, needs Workers Paid on the domain's account.
 
 What Atlas's own address is for:
 - CC Atlas to find a meeting time;
@@ -1179,7 +1181,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 2. **Shape (§19.2).** A person agent plus a home agent, to be validated in M0.
 3. **Default assistant name.** The product is Atlas. Proposed: a new user's assistant is called "Atlas" by default, and they can rename it.
 4. **License.** MIT, like Hermes and OpenClaw, or Apache-2.0.
-5. **Default phone provider.** Telnyx (what old Atlas used) or Twilio.
+5. **Default phone provider.** Telnyx (what old Atlas used) or Twilio, both of which gave the owner trouble, so it's open again. What we found on 2026-10-23 is in [M5.md §4](docs/M5.md#4-the-phone-still-open): Signal and WhatsApp reach only their own users, not a phone number, and US texting needs the same registration on every carrier, while calls don't.
 6. **Name.** OpenAI ships a browser called "ChatGPT Atlas" (October 2025). Decide before the public launch whether that matters.
 7. **Files (§21.7):** office formats, how polished they need to be, and sharing outside Atlas. Living pages were decided on 2026-10-22.
 
