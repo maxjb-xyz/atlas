@@ -7,12 +7,14 @@
 // the last one it saw, and writes to the agent's stdin through it. A deploy
 // costs nothing but a reconnect.
 //
-// It listens on a port inside the container, which only the workspace's
-// Durable Object reaches (`getTcpPort`). Each agent runs with exactly the
-// environment the core gives it, nothing inherited, so it can't pick up a
-// credential it wasn't meant to have. What it prints on stderr goes to a log
-// in the job's folder, and its last lines come back with its status, so a
-// failure explains itself.
+// It listens on a port inside the container and answers only requests that
+// carry its key, which the workspace's Durable Object gave it in its
+// environment: no agent can read root's environment, so none can drive it.
+// Each agent runs as its job's own user, in its own process group, with
+// exactly the environment the core gives it, nothing inherited, so it can't
+// pick up a credential it wasn't meant to have; stopping a job stops all it
+// started. What it prints on stderr goes to a log in the job's folder, and
+// its last lines come back with its status, so a failure explains itself.
 //
 // It's plain JavaScript for the container's Node, kept here as text: the
 // workspace writes it into the container when it first needs it. No
@@ -21,7 +23,9 @@
 export const BRIDGE_PORT = 7701;
 export const BRIDGE_PATH = "/opt/atlas/bridge.mjs";
 /** Changing the bridge changes this, so a container running an older one starts the new one. */
-export const BRIDGE_VERSION = "1";
+export const BRIDGE_VERSION = "2";
+/** The header every request to the bridge carries its key in. */
+export const BRIDGE_KEY_HEADER = "x-atlas-bridge-key";
 
 export const BRIDGE_JS = String.raw`// Atlas's bridge: runs coding agents and keeps what they print until it's read.
 import http from "node:http";
@@ -30,6 +34,9 @@ import { spawn } from "node:child_process";
 
 const VERSION = "${BRIDGE_VERSION}";
 const PORT = ${BRIDGE_PORT};
+const KEY = process.env.ATLAS_BRIDGE_KEY || "";
+/** The most of an agent's lines one read hands back, in characters: a long session's replay comes in several reads. */
+const READ_LIMIT = 2000000;
 /** Lines kept per job before the oldest unread ones are dropped (the core reads every minute or faster). */
 const KEEP = 20000;
 const jobs = new Map();
@@ -55,7 +62,13 @@ function start(o) {
   if (was && was.exit === null) return { already: true, ...status(was) };
   fs.mkdirSync(o.cwd, { recursive: true });
   if (o.log) fs.mkdirSync(o.log.replace(/\/[^/]*$/, ""), { recursive: true });
-  const child = spawn(o.command[0], o.command.slice(1), { cwd: o.cwd, env: o.env || {}, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(o.command[0], o.command.slice(1), {
+    cwd: o.cwd,
+    env: o.env || {},
+    stdio: ["pipe", "pipe", "pipe"],
+    detached: true,
+    ...(o.uid != null ? { uid: o.uid, gid: o.gid } : {}),
+  });
   const j = { id: o.id, child, lines: [], seq: was ? was.seq : 0, exit: null, signal: null, started: Date.now(), err: "", buf: "", waiters: [] };
   jobs.set(o.id, j);
   const log = o.log ? fs.createWriteStream(o.log, { flags: "a" }) : null;
@@ -102,7 +115,17 @@ function wake(j) {
 function read(j, after, wait) {
   // What the core has seen is no longer kept.
   while (j.lines.length && j.lines[0].seq <= after) j.lines.shift();
-  const out = () => ({ lines: j.lines.filter((l) => l.seq > after).slice(0, 2000), ...status(j) });
+  const out = () => {
+    const lines = [];
+    let size = 0;
+    for (const l of j.lines) {
+      if (l.seq <= after) continue;
+      if (lines.length && size + l.text.length > READ_LIMIT) break;
+      lines.push(l);
+      size += l.text.length;
+    }
+    return { lines, ...status(j) };
+  };
   if (j.lines.some((l) => l.seq > after) || j.exit !== null || !wait) return Promise.resolve(out());
   return new Promise((resolve) => {
     const t = setTimeout(() => resolve(out()), Math.min(wait, 25000));
@@ -113,16 +136,15 @@ function read(j, after, wait) {
   });
 }
 
+/** Stops the agent and everything it started: its whole process group. */
 function stop(j) {
-  if (j.exit !== null) return;
-  try {
-    j.child.kill("SIGTERM");
-  } catch {}
-  setTimeout(() => {
+  const group = (sig) => {
     try {
-      if (j.exit === null) j.child.kill("SIGKILL");
+      process.kill(-j.child.pid, sig);
     } catch {}
-  }, 5000);
+  };
+  group("SIGTERM");
+  setTimeout(() => group("SIGKILL"), 3000);
 }
 
 function body(req) {
@@ -150,7 +172,12 @@ http
   .createServer(async (req, res) => {
     try {
       const url = new URL(req.url, "http://bridge");
+      if (!KEY || req.headers["x-atlas-bridge-key"] !== KEY) return send(res, 403, { error: "The bridge answers only Atlas." });
       const id = url.searchParams.get("id") || "";
+      if (req.method === "POST" && url.pathname === "/exit") {
+        send(res, 200, { ok: true });
+        return setTimeout(() => process.exit(0), 100);
+      }
       if (url.pathname === "/health") return send(res, 200, { ok: true, version: VERSION, jobs: [...jobs.keys()] });
       if (req.method === "POST" && url.pathname === "/start") return send(res, 200, start(await body(req)));
       const j = job(id);

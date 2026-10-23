@@ -172,7 +172,7 @@ describe("the workspace's gate", () => {
     inject: { "pypi.org": "Bearer vault-key" },
     rules: [
       { host: "api.anthropic.com", header: "x-api-key", value: "sk-ant-real" },
-      { host: "github.com", header: "authorization", value: "Basic dG9rZW4=", nonce: "n0nce" },
+      { host: "github.com", path: "/ann/budget.git/", header: "authorization", value: "Basic dG9rZW4=", nonce: "n0nce" },
     ],
   };
   const pass = (url: string, headers: Record<string, string> = {}) => {
@@ -202,5 +202,8 @@ describe("the workspace's gate", () => {
     const ok = pass("https://github.com/ann/budget.git/info/refs", { "x-atlas-key": "n0nce" });
     expect(ok.get("authorization")).toBe("Basic dG9rZW4=");
     expect(ok.get("x-atlas-key")).toBeNull();
+    // Even with the nonce, the token reaches only this repo's git address: not another repo, not the API.
+    expect(pass("https://github.com/mallory/loot.git/git-receive-pack", { "x-atlas-key": "n0nce" }).get("authorization")).toBeNull();
+    expect(pass("https://api.github.com/user", { "x-atlas-key": "n0nce" }).get("authorization")).toBeNull();
   });
 });

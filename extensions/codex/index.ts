@@ -19,6 +19,8 @@ const ext: Extension = {
     hosts: ["api.openai.com"],
     agent: {
       package: "@agentclientprotocol/codex-acp@2.2.2",
+      // The adapter asks for Codex ^0.160.1; this keeps it at the version it was checked with.
+      with: ["@openai/codex@0.160.1"],
       bin: "codex-acp",
       model: { url: "https://api.openai.com/v1", header: "authorization", prefix: "Bearer ", key: { signin: "chatgpt" } },
       // Codex's own ChatGPT sign-in talks to chatgpt.com, which refuses Cloudflare; the gateway sign-in points it at the public API.

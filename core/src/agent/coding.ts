@@ -45,6 +45,14 @@ import { DECIDING, JOB_TOOLS } from "../tools/coding";
 import { fail, type ToolContext, type ToolResult } from "../tools/types";
 import type { AgentStatus, JobGate, JobRead, KeyRule } from "../workspace";
 import { getState, setState } from "../store/state";
+import { secretValues } from "../store/settings";
+import { scrub } from "../outbox";
+
+/** Keeps a job's result until Atlas has told the owner, so a restart in between can't lose it (as helpers' are kept). */
+function untold(sql: Sql, id: string): void {
+  const list = getState<string[]>(sql, "jobs_unreported") ?? [];
+  setState(sql, "jobs_unreported", [...list.filter((x) => x !== id), id].slice(-50));
+}
 
 /** Marks an Inbox item as dealt with (as views' inboxDone does). */
 function inboxDone(sql: Sql, id: string): void {
@@ -68,6 +76,8 @@ const DECISION_LOST_MS = 12 * 60_000;
 const DECISION_BUDGET = { steps: 24, ms: 10 * 60_000 };
 /** Decisions in one job before Atlas calls it going in circles. */
 const MAX_DECISIONS = 60;
+/** How often a job touches the workspace while Atlas looks at a turn, so the container stays up (it sleeps after ten idle minutes). */
+const KEEP_UP_MS = 4 * 60_000;
 /** Wakes in a row that fail before the job ends with the last one's reason. */
 const MAX_ERRORS = 4;
 /** Times the agent is started again after it ended on its own, before the job fails with its words. */
@@ -102,6 +112,10 @@ export interface Question {
   log?: string;
   at: number;
 }
+
+/** What waits for a job's next wake. */
+type Mail =
+  { kind: "words"; text: string; at: number } | { kind: "site"; approval: string; yes: boolean; at: number } | { kind: "stop"; at: number };
 
 export interface CodingJob {
   id: string;
@@ -149,6 +163,10 @@ export interface CodingJob {
   saved_at: number;
   /** Updates are a replay of a loaded session, not new. */
   loading?: boolean;
+  /** A prompt waiting to go to the agent (the owner's answer), sent by the next step. */
+  queued?: { text: string; who: Entry["who"] };
+  /** The last look ended without deciding; another that doesn't fails the job. */
+  unsure?: boolean;
   /** The pull request the review asked for, once it's ready; and where the code host opened it. */
   publish?: { title: string; body: string };
   opened?: { number: number; link: string };
@@ -158,7 +176,7 @@ export interface CodingJob {
 export interface JobWorkspace {
   jobAgent(o: {
     id: string;
-    agent: { package: string; bin: string };
+    agent: { package: string; bin: string; with?: string[] };
     env: Record<string, string>;
     gate: JobGate;
   }): Promise<AgentStatus & { already: boolean; notes: string[] }>;
@@ -168,6 +186,14 @@ export interface JobWorkspace {
   jobSave(id: string, o: { base: string }): Promise<{ ok: boolean; note: string }>;
   jobRestore(id: string, o: { branch: string }): Promise<{ restored: boolean; note: string }>;
   jobHere(id: string): Promise<boolean>;
+  jobPush(o: {
+    id: string;
+    sha: string;
+    url: string;
+    branch: string;
+    env: Record<string, string>;
+    rules: KeyRule[];
+  }): Promise<{ exit: number; out: string }>;
 }
 
 export interface PullRequest {
@@ -186,7 +212,16 @@ export interface CodingHost {
   sql: Sql;
   ws(): JobWorkspace | null;
   /** Runs a command in the workspace and waits for it: a job's folder, with keys for this command only. */
-  exec(o: { command: string; cwd: string; timeout_s: number; rules?: KeyRule[]; run_id: string | null }): Promise<{
+  exec(o: {
+    command: string;
+    cwd: string;
+    timeout_s: number;
+    rules?: KeyRule[];
+    env?: Record<string, string>;
+    /** Runs as this job's user. */
+    as?: string;
+    run_id: string | null;
+  }): Promise<{
     exit: number;
     output: string;
     blocked: string[];
@@ -230,7 +265,7 @@ const b64 = (s: string) => {
 const randomHex = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, "0")).join("");
 
 /** The job's folders in the workspace. */
-export const JOBS_DIR = "/workspace/jobs";
+export const JOBS_DIR = "/srv/jobs";
 const dirOf = (id: string) => `${JOBS_DIR}/${id}`;
 
 /** A branch name from the job's title: "atlas/budget-app-failing-test-x7k2". */
@@ -273,6 +308,14 @@ export const codingJobs = (sql: Sql, since = 0): CodingJob[] =>
       `SELECT data FROM coding WHERE phase NOT IN ('done', 'failed', 'cancelled') OR updated_at > ? ORDER BY updated_at DESC LIMIT 30`,
       since,
     )
+    .toArray()
+    .map((r) => parse<CodingJob | null>(r.data, null))
+    .filter((j): j is CodingJob => j != null);
+
+/** Every job that hasn't ended, however many there are. */
+export const activeJobs = (sql: Sql): CodingJob[] =>
+  sql
+    .exec<{ data: string }>(`SELECT data FROM coding WHERE phase NOT IN ('done', 'failed', 'cancelled') ORDER BY updated_at DESC`)
     .toArray()
     .map((r) => parse<CodingJob | null>(r.data, null))
     .filter((j): j is CodingJob => j != null);
@@ -343,12 +386,10 @@ export function jobState(sql: Sql, job: CodingJob, now = Date.now()) {
 
 /** Coding jobs running now, in the owner's context (§8.2: "how's the Keyframes job?" answers from here). */
 export function codingLines(sql: Sql, now: Date): string[] {
-  return codingJobs(sql, now.getTime() - 3600_000)
-    .filter((j) => !ENDED.includes(j.phase))
-    .map((j) => {
-      const s = jobState(sql, j, now.getTime());
-      return `- ${j.title} (coding job id ${j.id}, ${s.agent} on ${j.repo}, branch ${j.branch}): ${s.now}; ${s.minutes} min so far${s.last ? `; last: ${s.last}` : ""}${s.spent_usd ? `; $${s.spent_usd} spent` : ""}`;
-    });
+  return activeJobs(sql).map((j) => {
+    const s = jobState(sql, j, now.getTime());
+    return `- ${j.title} (coding job id ${j.id}, ${s.agent} on ${j.repo}, branch ${j.branch}): ${s.now}; ${s.minutes} min so far${s.last ? `; last: ${s.last}` : ""}${s.spent_usd ? `; $${s.spent_usd} spent` : ""}`;
+  });
 }
 
 // --- the desk --------------------------------------------------------------------------------------------
@@ -467,8 +508,8 @@ export class CodingDesk {
 
   /** After a restart: every job that was moving gets a wake, in case its own was lost. */
   async resume(): Promise<void> {
-    for (const j of codingJobs(this.h.sql)) {
-      if (ENDED.includes(j.phase) || j.phase === "waiting") continue;
+    for (const j of activeJobs(this.h.sql)) {
+      if (j.phase === "waiting" && !(getState<Mail[]>(this.h.sql, `coding_mail:${j.id}`) ?? []).length) continue;
       await this.h.watch(j.id, Date.now() + 2_000).catch(() => {});
     }
   }
@@ -487,12 +528,21 @@ export class CodingDesk {
     const job = getJob(this.h.sql, id);
     if (!job || ENDED.includes(job.phase)) return;
     try {
+      // What the owner said or decided (and Stop) comes first.
+      if (await this.#mail(job)) return;
       if (job.phase === "preparing") await this.#prepare(job);
       else if (job.phase === "working") await this.#pump(job);
       else if (job.phase === "deciding") {
         if (!job.deciding || Date.now() - job.deciding.at > DECISION_LOST_MS)
           await this.#decide(job, "The last look at this turn didn't finish, so this is a fresh one.");
-        else await this.h.watch(job.id, job.deciding.at + DECISION_LOST_MS + 60_000);
+        else {
+          // While Atlas looks, the workspace is touched now and then, so its container doesn't sleep under the job.
+          await this.h
+            .ws()
+            ?.jobRead(job.id, job.seq, 0)
+            .catch(() => null);
+          await this.h.watch(job.id, Math.min(Date.now() + KEEP_UP_MS, job.deciding.at + DECISION_LOST_MS + 60_000));
+        }
       } else if (job.phase === "publishing") await this.#publish(job);
       const fresh = getJob(this.h.sql, id);
       if (fresh?.errors) {
@@ -544,28 +594,55 @@ export class CodingDesk {
     return { allow: [host], rules: [{ host, header: spec.model.header, value: `${spec.model.prefix ?? ""}${key}` }] };
   }
 
-  /** git's token for the code host, behind a nonce only Atlas's own git commands carry. */
-  #gitKey(job: CodingJob): { rules: KeyRule[]; flag: string; url: string } {
+  /**
+   * git's token for the code host, behind a nonce only Atlas's own git
+   * commands carry, and only for this job's repo: its exact host and its git
+   * address's path. Every process in the container can read a command line,
+   * so a nonce seen by the agent reaches no other repo, and only while
+   * Atlas's command runs. The token itself is never in the container.
+   */
+  #gitKey(job: CodingJob): { rules: KeyRule[]; env: Record<string, string>; url: string } {
     const host = getExt(this.h.sql, job.host);
     const git = host?.manifest.git;
     if (!host || !git) throw new Error(`The ${job.host} code host isn't installed any more.`);
     const token = extSecrets(this.h.sql, host.id)[git.secret];
     if (!token) throw new Error(`${host.name} has no token: add one in Settings → Extensions → ${host.name}.`);
     const nonce = randomHex(16);
+    const url = git.clone.replace("{repo}", job.repo);
+    const where = new URL(url);
+    const path = `${where.pathname.replace(/\/+$/, "")}/`;
     return {
-      rules: git.hosts.map((h) => ({ host: h, header: "authorization", value: `Basic ${b64(`${git.user}:${token}`)}`, nonce })),
-      flag: `-c http.extraHeader=${sh(`x-atlas-key: ${nonce}`)}`,
-      url: git.clone.replace("{repo}", job.repo),
+      rules: [{ host: where.hostname, path, header: "authorization", value: `Basic ${b64(`${git.user}:${token}`)}`, nonce }],
+      // In git's environment, which only root can read; never on a command line, which any process can.
+      env: {
+        GIT_CONFIG_COUNT: "2",
+        GIT_CONFIG_KEY_0: "http.extraHeader",
+        GIT_CONFIG_VALUE_0: `x-atlas-key: ${nonce}`,
+        GIT_CONFIG_KEY_1: "core.hooksPath",
+        GIT_CONFIG_VALUE_1: "/dev/null",
+      },
+      url,
     };
   }
 
-  /** Atlas's own command in the job's folder, said in the job's stream when it fails. */
-  async #exec(job: CodingJob, command: string, o: { timeout_s?: number; rules?: KeyRule[]; run?: string } = {}) {
+  /**
+   * Atlas's own command in the job's folder. It runs as the job's user, so
+   * nothing the agent wrote (a test, a hook, a git filter) runs with more
+   * than the agent's rights; only a fresh clone (`root`) runs as root, with
+   * git's key in its environment.
+   */
+  async #exec(
+    job: CodingJob,
+    command: string,
+    o: { timeout_s?: number; rules?: KeyRule[]; env?: Record<string, string>; run?: string; root?: boolean } = {},
+  ) {
     return this.h.exec({
       command,
       cwd: dirOf(job.id),
       timeout_s: o.timeout_s ?? 300,
       ...(o.rules ? { rules: o.rules } : {}),
+      ...(o.env ? { env: o.env } : {}),
+      ...(o.root ? {} : { as: job.id }),
       run_id: o.run ?? null,
     });
   }
@@ -580,12 +657,12 @@ export class CodingDesk {
       [
         "rm -rf repo && git init -q repo && cd repo",
         `git remote add origin ${sh(git.url)}`,
-        `git ${git.flag} fetch -q --depth 50 origin ${sh(what)} 2>&1`,
+        `git fetch -q --depth 50 origin ${sh(what)} 2>&1`,
         `git checkout -q -b ${sh(job.branch)} FETCH_HEAD`,
         `git config user.name ${sh(id.name)} && git config user.email ${sh(id.email)}`,
         "git rev-parse HEAD",
       ].join(" && "),
-      { rules: git.rules, timeout_s: 600 },
+      { rules: git.rules, env: git.env, timeout_s: 600, root: true },
     );
     if (out.exit !== 0)
       throw new Error(
@@ -595,11 +672,15 @@ export class CodingDesk {
   }
 
   async #prepare(job: CodingJob): Promise<void> {
-    this.#note(job, `Getting ${job.repo} into the workspace.`);
-    saveJob(this.h.sql, job);
-    this.h.changed();
-    await this.#clone(job);
-    this.#note(job, `On a new branch, ${job.branch}, from ${job.base} (${job.base_sha!.slice(0, 7)}).`);
+    // After a restart partway, the clone that's there is kept.
+    if (!job.base_sha) {
+      this.#note(job, `Getting ${job.repo} into the workspace.`);
+      saveJob(this.h.sql, job);
+      this.h.changed();
+      await this.#clone(job);
+      this.#note(job, `On a new branch, ${job.branch}, from ${job.base} (${job.base_sha!.slice(0, 7)}).`);
+      saveJob(this.h.sql, job);
+    } else await this.#folder(job);
     await this.#connect(job);
     await this.#prompt(job, this.#firstPrompt(job));
   }
@@ -630,7 +711,7 @@ export class CodingDesk {
    * job's folder back first when the container was lost, and loads its
    * session. Returns whether the conversation carried over.
    */
-  async #connect(job: CodingJob): Promise<{ carried: boolean }> {
+  async #connect(job: CodingJob): Promise<{ carried: boolean; alive: boolean }> {
     const ws = this.#ws();
     const spec = this.#spec(job);
     const e = getExt(this.h.sql, job.agent)!;
@@ -640,7 +721,12 @@ export class CodingDesk {
     const fill = (v: string) => v.replace(/\{url\}/g, spec.model.url).replace(/\{key\}/g, PLACEHOLDER);
     const env: Record<string, string> = Object.fromEntries(Object.entries(spec.env ?? {}).map(([k, v]) => [k, fill(v)]));
     if (spec.home) env[spec.home] = `${dir}/home`;
-    const started = await ws.jobAgent({ id: job.id, agent: { package: spec.package, bin: spec.bin }, env, gate });
+    const started = await ws.jobAgent({
+      id: job.id,
+      agent: { package: spec.package, bin: spec.bin, ...(spec.with ? { with: spec.with } : {}) },
+      env,
+      gate,
+    });
     for (const n of started.notes) this.#note(job, n);
     if (!started.already) {
       // A new process: the bridge's numbering goes on from here, and the session has to be loaded.
@@ -650,7 +736,8 @@ export class CodingDesk {
       job.cost.base += job.cost.last;
       job.cost.last = 0;
     }
-    if (job.ready) return { carried: true };
+    // Still running with its session ready: a turn in flight carries on.
+    if (job.ready) return { carried: true, alive: started.already };
     const init = (await this.#rpc(job, "initialize", initializeParams(VERSION), 120_000)) as {
       agentCapabilities?: { loadSession?: boolean };
     };
@@ -692,7 +779,7 @@ export class CodingDesk {
     }
     job.ready = true;
     saveJob(this.h.sql, job);
-    return { carried };
+    return { carried, alive: false };
   }
 
   /** Sends a request and reads until its answer comes, handling whatever else the agent says meanwhile. */
@@ -741,6 +828,7 @@ export class CodingDesk {
       }
       job.seq = l.seq;
       job.progress_at = Date.now();
+      job.revives = 0;
     }
     if (replies.length) await this.#ws().jobSend(job.id, replies);
     if (lines.length) {
@@ -831,8 +919,14 @@ export class CodingDesk {
     const gate = await this.#gateFor(getExt(this.h.sql, job.agent)!);
     const end = Date.now() + 45_000;
     while (Date.now() < end && job.phase === "working") {
+      if (!job.ready) {
+        await this.#revive(job, "its session wasn't ready (a restart partway through starting it)");
+        return;
+      }
       const got = await ws.jobRead(job.id, job.seq, Math.min(20_000, end - Date.now()), gate);
       if (!got.ok || !got.running) {
+        // The last things it said before it ended still count.
+        if (got.ok) await this.#take(job, got.lines);
         await this.#revive(job, got.ok ? this.#ended(job, got) : got.why);
         return;
       }
@@ -873,9 +967,14 @@ export class CodingDesk {
       await this.#fail(job, `The agent kept stopping: ${why}`);
       return;
     }
-    this.#note(job, `The agent wasn't running (${clip(why, 300)}); starting it again.`);
-    job.ready = false;
-    const { carried } = await this.#connect(job);
+    const { carried, alive } = await this.#connect(job);
+    if (alive && job.acp.turn) {
+      // It was there all along (the read failed, not the agent): its turn carries on.
+      saveJob(this.h.sql, job);
+      await this.h.watch(job.id, Date.now() + 5_000);
+      return;
+    }
+    this.#note(job, `The agent wasn't running (${clip(why, 300)}); it's started again.`);
     const text = carried
       ? "You were interrupted (the workspace restarted). Carry on with the task where you left off."
       : [
@@ -912,12 +1011,7 @@ export class CodingDesk {
       await this.#prompt(job, `The owner says: ${words.join("\n")}\n\nCarry on with that in mind.`, "owner");
       return;
     }
-    if (job.stop === "cancelled") {
-      // Cancelled with nothing waiting to say: it was stopped.
-      saveJob(this.h.sql, job);
-      return;
-    }
-    await this.#decide(job);
+    await this.#decide(job, job.stop === "cancelled" ? "The agent stopped its turn itself." : undefined);
   }
 
   // --- Atlas's decisions (the middleman) ---------------------------------------------------------------------
@@ -944,8 +1038,8 @@ export class CodingDesk {
     job.phase = "deciding";
     saveJob(this.h.sql, job);
     this.h.changed();
-    // If the look is lost without a word, the clock notices and starts another.
-    await this.h.watch(job.id, Date.now() + DECISION_LOST_MS + 60_000);
+    // The clock comes back while it looks: to keep the workspace up, and to start another look if this one is lost.
+    await this.h.watch(job.id, Date.now() + KEEP_UP_MS);
     const d = this.h.decider();
     try {
       await this.h.launch({
@@ -1056,8 +1150,13 @@ Now: ${d.now}.`;
       if (DECIDING.includes(name) && current.acted) return fail(`You already decided this turn (${current.acted}). End your run.`);
       const a = parsed.data as Record<string, unknown>;
       try {
-        return await this.#act(job, current, name, a);
+        const out = await this.#act(job, current, name, a);
+        if (current.acted) job.unsure = false;
+        return out;
       } catch (err) {
+        // It didn't happen, so it isn't decided: the look can try again or do something else.
+        current.acted = null;
+        saveJob(this.h.sql, job);
         return fail(errText(err));
       }
     });
@@ -1111,6 +1210,11 @@ Now: ${d.now}.`;
               site: String(a.host).toLowerCase(),
               at: Date.now(),
             };
+      // A question is the agent's words passed on: one of the owner's secrets never goes out in one.
+      if (scrub(question.text, secretValues(this.h.sql)) !== question.text) {
+        deciding.acted = null;
+        return fail("That question holds one of the owner's secrets, so it can't be asked. Ask without it.");
+      }
       if (question.site) {
         const got = await this.h.site({ run_id: deciding.run, host: question.site, why: String(a.why) });
         if ("allowed" in got) {
@@ -1136,6 +1240,8 @@ Now: ${d.now}.`;
       job.question = question;
       job.phase = "waiting";
       job.log.push({ at: Date.now(), who: "atlas", text: `Asked the owner: ${question.text}` });
+      // Waiting is written down before anything slow, so an answer that comes at once finds it.
+      saveJob(this.h.sql, job);
       await this.#save(job);
       saveJob(this.h.sql, job);
       this.h.rows([row]);
@@ -1144,6 +1250,10 @@ Now: ${d.now}.`;
       return { ok: true, output: { asked: true, note: "The job waits for the owner's answer. End your run." } };
     }
     if (name === "job_ready") {
+      if (job.steer.length) {
+        deciding.acted = null;
+        return fail(`The owner said something for the agent first: "${clip(job.steer.join(" "), 400)}". Pass it on with agent_reply.`);
+      }
       job.phase = "publishing";
       job.pr = null;
       job.log.push({ at: Date.now(), who: "atlas", text: `Reviewed; opening a pull request: ${String(a.title)}` });
@@ -1184,7 +1294,8 @@ Now: ${d.now}.`;
       }
       job.deciding = null;
       const said = outcome.text.trim();
-      if (outcome.state === "replied" && said && job.decisions < MAX_DECISIONS) {
+      if (outcome.state === "replied" && said && !job.unsure && job.decisions < MAX_DECISIONS) {
+        job.unsure = true;
         await this.#decide(job, `Your last look ended without deciding; it said: "${clip(said, 500)}". Decide now with one of the tools.`);
         return;
       }
@@ -1194,92 +1305,140 @@ Now: ${d.now}.`;
 
   // --- the owner's words ---------------------------------------------------------------------------------
 
-  /** The owner's words for a job: the answer to its question, or a change of direction. */
-  answer(jobId: string, text: string, via: "app" | "chat" | "run" = "run"): Promise<{ ok: boolean; text: string }> {
-    return this.#line(jobId, async () => {
-      const job = getJob(this.h.sql, jobId);
-      if (!job) return { ok: false, text: "There's no coding job with that id." };
-      if (ENDED.includes(job.phase)) return { ok: false, text: `That job has ended (${job.phase}).` };
-      if (job.phase === "waiting" && job.question && !job.question.site) {
-        const q = job.question;
-        job.answers.push({ q: q.text, a: text, source: "you", at: Date.now() });
-        job.question = null;
-        if (q.log) inboxDone(this.h.sql, q.log);
-        await this.#prompt(job, `The owner answered your question ("${clip(q.text, 300)}"): ${text}`, "owner");
-        return { ok: true, text: `Passed on to ${job.title}; it's carrying on.` };
-      }
-      job.steer.push(text);
-      job.log.push({ at: Date.now(), who: "owner", text: `(for the agent) ${text}` });
-      if (job.phase === "working") {
-        // It's mid-turn: stop the turn, and the owner's words go in as soon as it has.
-        await this.#cancelTurn(job);
-        saveJob(this.h.sql, job);
-        this.h.changed();
-        await this.h.watch(job.id, Date.now() + 1_000);
-        return { ok: true, text: `${job.title}: the agent gets that as soon as it stops what it's doing.` };
-      }
-      if (job.phase === "waiting" && job.question?.site) {
-        saveJob(this.h.sql, job);
-        return { ok: true, text: `${job.title} is waiting on your OK for ${job.question.site}; the agent gets this with it.` };
-      }
-      saveJob(this.h.sql, job);
-      this.h.changed();
-      return { ok: true, text: `${job.title}: the agent gets that next.` };
-    });
+  /**
+   * The owner's words for a job: the answer to its question, or a change of
+   * direction. They're written down at once, never waiting behind a long
+   * step, and the job's next wake (now) passes them on; while the agent is
+   * mid-turn, its turn is stopped so they go in as soon as it has.
+   */
+  async answer(jobId: string, text: string, _via: "app" | "chat" | "run" = "run"): Promise<{ ok: boolean; text: string }> {
+    const job = getJob(this.h.sql, jobId);
+    if (!job) return { ok: false, text: "There's no coding job with that id." };
+    if (ENDED.includes(job.phase)) return { ok: false, text: `That job has ended (${job.phase}).` };
+    this.#post(jobId, { kind: "words", text, at: Date.now() });
+    if (job.phase === "working") await this.#cancelTurn(job).catch(() => {});
+    await this.h.watch(jobId, Date.now());
+    if (job.phase === "waiting" && job.question && !job.question.site)
+      return { ok: true, text: `Passed on to ${job.title}; it's carrying on.` };
+    if (job.phase === "working") return { ok: true, text: `${job.title}: the agent gets that as soon as it stops what it's doing.` };
+    if (job.phase === "waiting" && job.question?.site)
+      return { ok: true, text: `${job.title} is waiting on your OK for ${job.question.site}; the agent gets this with it.` };
+    return { ok: true, text: `${job.title}: the agent gets that next.` };
   }
 
   /** A job is waiting on this approval card (a site it asked for). */
   waitsOn(approval: string): boolean {
-    return codingJobs(this.h.sql).some((j) => j.phase === "waiting" && j.question?.approval === approval);
+    return activeJobs(this.h.sql).some((j) => j.phase === "waiting" && j.question?.approval === approval);
   }
 
-  /** An approval was settled: a job waiting on that site carries on. */
+  /** An approval was settled: the job waiting on that site carries on at its next wake (now). */
   async settled(approval: string, yes: boolean): Promise<void> {
-    const job = codingJobs(this.h.sql).find((j) => j.phase === "waiting" && j.question?.approval === approval);
+    const job = activeJobs(this.h.sql).find((j) => j.phase === "waiting" && j.question?.approval === approval);
     if (!job) return;
-    await this.#line(job.id, async () => {
-      const fresh = getJob(this.h.sql, job.id);
-      if (!fresh || fresh.phase !== "waiting" || fresh.question?.approval !== approval) return;
-      const site = fresh.question.site!;
-      fresh.question = null;
-      const words = fresh.steer.length ? `\n\nThe owner also says: ${fresh.steer.splice(0).join("\n")}` : "";
-      await this.#prompt(
-        fresh,
-        yes
-          ? `The owner allowed ${site}; the workspace can reach it now. Try again.${words}`
-          : `The owner didn't allow ${site}. Find a way without it, or say what you need.${words}`,
-        "owner",
-      );
-    });
+    this.#post(job.id, { kind: "site", approval, yes, at: Date.now() });
+    await this.h.watch(job.id, Date.now());
   }
 
-  /** Stop on the Jobs tab: the agent stops, the branch is kept, and the job says how far it got. */
-  stop(jobId: string): Promise<boolean> {
-    return this.#line(jobId, async () => {
-      const job = getJob(this.h.sql, jobId);
-      if (!job || ENDED.includes(job.phase)) return false;
-      await this.#cancelTurn(job).catch(() => {});
-      await this.#save(job).catch(() => {});
-      await this.h
-        .ws()
-        ?.jobStop(job.id)
-        .catch(() => {});
-      if (job.deciding) {
-        this.h.abort(job.deciding.id);
-        endRun(this.h.sql, job.deciding.run, "failed", 0, { error: "Stopped by the owner." });
-        job.deciding = null;
-      }
-      job.phase = "cancelled";
-      job.log.push({
-        at: Date.now(),
-        who: "note",
-        text: `Stopped by the owner. The branch ${job.branch} is kept in the workspace. Last: ${lastWord(job) || "nothing yet"}.`,
-      });
-      saveJob(this.h.sql, job);
-      finish(this.h.sql, job.id, "cancelled", null, { by: "owner" });
-      this.h.changed();
+  /**
+   * Stop on the Jobs tab: the agent and all it started stop at once, and the
+   * job's next wake ends it, keeping the branch and saying how far it got.
+   */
+  async stop(jobId: string): Promise<boolean> {
+    const job = getJob(this.h.sql, jobId);
+    if (!job || ENDED.includes(job.phase)) return false;
+    this.#post(jobId, { kind: "stop", at: Date.now() });
+    if (job.deciding) this.h.abort(job.deciding.id);
+    await this.h
+      .ws()
+      ?.jobStop(jobId)
+      .catch(() => {});
+    await this.h.watch(jobId, Date.now());
+    this.h.changed();
+    return true;
+  }
+
+  /** What waits for the job's next wake: the owner's words, a settled approval, Stop. */
+  #post(id: string, m: Mail): void {
+    const all = getState<Mail[]>(this.h.sql, `coding_mail:${id}`) ?? [];
+    setState(this.h.sql, `coding_mail:${id}`, [...all, m].slice(-50));
+  }
+
+  #stopping(id: string): boolean {
+    return (getState<Mail[]>(this.h.sql, `coding_mail:${id}`) ?? []).some((m) => m.kind === "stop");
+  }
+
+  /** Takes what waits for the job, in the job's line. Returns true when the job moved on (or ended). */
+  async #mail(job: CodingJob): Promise<boolean> {
+    const mail = getState<Mail[]>(this.h.sql, `coding_mail:${job.id}`) ?? [];
+    if (!mail.length) return false;
+    setState(this.h.sql, `coding_mail:${job.id}`, null);
+    if (mail.some((m) => m.kind === "stop")) {
+      await this.#cancelled(job);
       return true;
+    }
+    for (const m of mail) {
+      if (m.kind !== "words") continue;
+      job.log.push({ at: m.at, who: "owner", text: `(for the agent) ${m.text}` });
+      if (job.phase === "waiting" && job.question && !job.question.site) {
+        const q = job.question;
+        job.answers.push({ q: q.text, a: m.text, source: "you", at: m.at });
+        job.question = null;
+        if (q.log) inboxDone(this.h.sql, q.log);
+        job.queued = { text: `The owner answered your question ("${clip(q.text, 300)}"): ${m.text}`, who: "owner" };
+      } else job.steer.push(m.text);
+    }
+    const site = mail.find((m): m is Extract<Mail, { kind: "site" }> => m.kind === "site");
+    if (site && job.phase === "waiting" && job.question?.approval === site.approval) {
+      const host = job.question.site!;
+      job.question = null;
+      job.queued = {
+        text: site.yes
+          ? `The owner allowed ${host}; the workspace can reach it now. Try again.`
+          : `The owner didn't allow ${host}. Find a way without it, or say what you need.`,
+        who: "owner",
+      };
+    }
+    if (job.queued && job.phase === "waiting") {
+      const q = job.queued;
+      const words = job.steer.length ? `\n\nThe owner also says: ${job.steer.splice(0).join("\n")}` : "";
+      job.queued = undefined;
+      saveJob(this.h.sql, job);
+      await this.#prompt(job, `${q.text}${words}`, q.who);
+      return true;
+    }
+    saveJob(this.h.sql, job);
+    this.h.changed();
+    return false;
+  }
+
+  /** Stopped by the owner: the branch is kept, and the job says how far it got. */
+  async #cancelled(job: CodingJob): Promise<void> {
+    await this.#cancelTurn(job).catch(() => {});
+    await this.#save(job).catch(() => {});
+    await this.h
+      .ws()
+      ?.jobStop(job.id)
+      .catch(() => {});
+    this.#endLooks(job, "Stopped by the owner.");
+    job.phase = "cancelled";
+    job.log.push({
+      at: Date.now(),
+      who: "note",
+      text: `Stopped by the owner. The branch ${job.branch} is kept in the workspace. Last: ${lastWord(job) || "nothing yet"}.`,
     });
+    saveJob(this.h.sql, job);
+    finish(this.h.sql, job.id, "cancelled", null, { by: "owner" });
+    this.h.changed();
+  }
+
+  /** Ends every look still running for the job, so no run is left without its saved state. */
+  #endLooks(job: CodingJob, why: string): void {
+    for (const [id, run] of Object.entries(job.looks ?? {})) {
+      this.h.abort(id);
+      endRun(this.h.sql, run, "failed", 0, { error: why });
+    }
+    job.looks = {};
+    job.deciding = null;
   }
 
   // --- the end ---------------------------------------------------------------------------------------------
@@ -1293,25 +1452,30 @@ Now: ${d.now}.`;
       ?.jobStop(job.id)
       .catch(() => {});
     await this.#folder(job);
-    const git = this.#gitKey(job);
+    // 1. As the job's user, with no key on the gate and the repo's hooks off: what's left is committed.
     const commit = await this.#exec(
       job,
       [
         "cd repo",
-        `git add -A && (git diff --cached --quiet || git commit -q -m ${sh(p.title)})`,
+        `git -c core.hooksPath=/dev/null add -A && (git diff --cached --quiet || git -c core.hooksPath=/dev/null commit -q --no-verify -m ${sh(p.title)})`,
         `n=$(git rev-list --count ${job.base_sha}..HEAD) && echo "commits: $n" && test "$n" -gt 0`,
-        `git ${git.flag} push -q --force origin ${sh(`HEAD:refs/heads/${job.branch}`)} 2>&1`,
+        `echo "publish: $(git rev-parse HEAD)"`,
       ].join(" && "),
-      { rules: git.rules, timeout_s: 300 },
+      { timeout_s: 300 },
     );
-    if (commit.exit !== 0) {
+    const sha = /publish: ([0-9a-f]{40})/.exec(commit.output)?.[1];
+    if (commit.exit !== 0 || !sha) {
       const none = /commits: 0/.test(commit.output);
       throw new Error(
         none
           ? "The branch has no changes from where it started, so there's nothing for a pull request."
-          : `Couldn't push ${job.branch} to ${job.repo}: ${tail(commit.output.trim(), 600)}`,
+          : `Couldn't commit what's left on ${job.branch}: ${tail(commit.output.trim(), 600)}`,
       );
     }
+    // 2. Pushed by root from a copy of its own (the workspace's jobPush), with the key for this repo alone.
+    const git = this.#gitKey(job);
+    const pushed = await this.#ws().jobPush({ id: job.id, sha, url: git.url, branch: job.branch, env: git.env, rules: git.rules });
+    if (pushed.exit !== 0) throw new Error(`Couldn't push ${job.branch} to ${job.repo}: ${tail(pushed.out.trim(), 600)}`);
     this.#note(job, `Pushed ${job.branch}.`);
     const action: PullRequest = {
       kind: "pull_request",
@@ -1344,7 +1508,10 @@ Now: ${d.now}.`;
     });
     finish(this.h.sql, job.id, "done", null, { link: job.pr.link });
     this.h.changed();
-    if (item) this.h.report(item, { state: "done", text });
+    if (item) {
+      untold(this.h.sql, job.id);
+      this.h.report(item, { state: "done", text });
+    }
   }
 
   /** Called by the outbox once the code host opened the pull request: where it is. */
@@ -1368,11 +1535,10 @@ Now: ${d.now}.`;
       .ws()
       ?.jobStop(job.id)
       .catch(() => {});
-    if (job.deciding && job.deciding.run !== run) {
-      this.h.abort(job.deciding.id);
-      endRun(this.h.sql, job.deciding.run, "failed", 0, { error: reason });
-    }
-    job.deciding = null;
+    const keep = run ? Object.entries(job.looks ?? {}).find(([, r]) => r === run) : undefined;
+    if (keep) delete job.looks![keep[0]];
+    this.#endLooks(job, reason);
+    if (keep) job.looks = { [keep[0]]: keep[1] };
     job.phase = "failed";
     job.error = reason;
     job.log.push({ at: Date.now(), who: "note", text: `Ended: ${reason}` });
@@ -1386,7 +1552,10 @@ Now: ${d.now}.`;
     finish(this.h.sql, job.id, "failed", null, { error: reason });
     this.h.changed();
     const item = getItem(this.h.sql, job.id);
-    if (item) this.h.report(item, { state: "failed", text: `${reason} The branch is ${job.branch}.` });
+    if (item) {
+      untold(this.h.sql, job.id);
+      this.h.report(item, { state: "failed", text: `${reason} The branch is ${job.branch}.` });
+    }
   }
 
   // --- views -----------------------------------------------------------------------------------------------

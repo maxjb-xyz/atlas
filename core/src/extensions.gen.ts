@@ -100,6 +100,9 @@ export const BUNDLED: Record<string, { manifest: Manifest; methods: string[]; co
       ],
       "agent": {
         "package": "@agentclientprotocol/codex-acp@2.2.2",
+        "with": [
+          "@openai/codex@0.160.1"
+        ],
         "bin": "codex-acp",
         "model": {
           "url": "https://api.openai.com/v1",
@@ -118,7 +121,7 @@ export const BUNDLED: Record<string, { manifest: Manifest; methods: string[]; co
       }
     },
     "methods": [],
-    "code": "// extensions/codex/index.ts\nvar ext = {\n  manifest: {\n    id: \"codex\",\n    name: \"Codex\",\n    version: \"1.0.0\",\n    about: \"OpenAI's coding agent, for coding jobs: it works in your workspace on a branch, on your ChatGPT plan through the sign-in in Settings \\u2192 Brains. It never holds the sign-in's token; the workspace's gate adds it.\",\n    provides: [\"coding\"],\n    hosts: [\"api.openai.com\"],\n    agent: {\n      package: \"@agentclientprotocol/codex-acp@2.2.2\",\n      bin: \"codex-acp\",\n      model: { url: \"https://api.openai.com/v1\", header: \"authorization\", prefix: \"Bearer \", key: { signin: \"chatgpt\" } },\n      // Codex's own ChatGPT sign-in talks to chatgpt.com, which refuses Cloudflare; the gateway sign-in points it at the public API.\n      env: { NO_BROWSER: \"1\" },\n      gateway: true,\n      home: \"CODEX_HOME\",\n      // Asks only about what looks unsafe; Atlas answers.\n      mode: \"agent\"\n    }\n  }\n};\nvar index_default = ext;\nexport {\n  index_default as default\n};\n"
+    "code": "// extensions/codex/index.ts\nvar ext = {\n  manifest: {\n    id: \"codex\",\n    name: \"Codex\",\n    version: \"1.0.0\",\n    about: \"OpenAI's coding agent, for coding jobs: it works in your workspace on a branch, on your ChatGPT plan through the sign-in in Settings \\u2192 Brains. It never holds the sign-in's token; the workspace's gate adds it.\",\n    provides: [\"coding\"],\n    hosts: [\"api.openai.com\"],\n    agent: {\n      package: \"@agentclientprotocol/codex-acp@2.2.2\",\n      // The adapter asks for Codex ^0.160.1; this keeps it at the version it was checked with.\n      with: [\"@openai/codex@0.160.1\"],\n      bin: \"codex-acp\",\n      model: { url: \"https://api.openai.com/v1\", header: \"authorization\", prefix: \"Bearer \", key: { signin: \"chatgpt\" } },\n      // Codex's own ChatGPT sign-in talks to chatgpt.com, which refuses Cloudflare; the gateway sign-in points it at the public API.\n      env: { NO_BROWSER: \"1\" },\n      gateway: true,\n      home: \"CODEX_HOME\",\n      // Asks only about what looks unsafe; Atlas answers.\n      mode: \"agent\"\n    }\n  }\n};\nvar index_default = ext;\nexport {\n  index_default as default\n};\n"
   },
   "exa": {
     "manifest": {

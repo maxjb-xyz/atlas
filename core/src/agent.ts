@@ -205,6 +205,8 @@ export interface WorkspaceStub extends Partial<JobWorkspace> {
     inject: Record<string, string>;
     cwd?: string;
     rules?: import("./workspace").KeyRule[];
+    env?: Record<string, string>;
+    as?: string;
   }): Promise<ReadableStream<Uint8Array>>;
   read(path: string): Promise<{ ok: true; bytes: ArrayBuffer } | { ok: false; error: string }>;
   list(): Promise<Array<{ path: string; size: number; dir: boolean }> | null>;
@@ -3790,6 +3792,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         ...this.#wsGate(),
         ...(o.cwd ? { cwd: o.cwd } : {}),
         ...(o.rules?.length ? { rules: o.rules } : {}),
+        ...(o.env ? { env: o.env } : {}),
+        ...(o.as ? { as: o.as } : {}),
       });
       const out: RunResult = { exit: -1, output: "", ms: 0, blocked: [], notes: [] };
       const show = (text: string) => this.#broadcast({ type: "atlas.workspace.out", run_id: o.run_id, text });
@@ -3859,6 +3863,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           timeout_s: o.timeout_s,
           cwd: o.cwd,
           ...(o.rules ? { rules: o.rules } : {}),
+          ...(o.env ? { env: o.env } : {}),
+          ...(o.as ? { as: o.as } : {}),
         });
         return { exit: r.exit, output: r.output, blocked: r.blocked };
       },

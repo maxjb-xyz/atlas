@@ -41,7 +41,8 @@ function fakeWorkspace(turns: Turn[]) {
     afterAsk: null as null | (() => void),
     prompts: [] as string[],
     answers: [] as Array<{ id: unknown; result: unknown }>,
-    commands: [] as Array<{ command: string; cwd?: string; rules?: KeyRule[] }>,
+    commands: [] as Array<{ command: string; cwd?: string; rules?: KeyRule[]; env?: Record<string, string>; as?: string }>,
+    pushes: [] as Array<{ id: string; sha: string; url: string; branch: string; env: Record<string, string>; rules: KeyRule[] }>,
     envs: [] as Array<Record<string, string>>,
     gates: [] as unknown[],
     starts: 0,
@@ -134,12 +135,18 @@ function fakeWorkspace(turns: Turn[]) {
     });
   const ws: WorkspaceStub = {
     async run(o) {
-      st.commands.push({ command: o.command, ...(o.cwd ? { cwd: o.cwd } : {}), ...(o.rules ? { rules: o.rules } : {}) });
+      st.commands.push({
+        command: o.command,
+        ...(o.cwd ? { cwd: o.cwd } : {}),
+        ...(o.rules ? { rules: o.rules } : {}),
+        ...(o.env ? { env: o.env } : {}),
+        ...(o.as ? { as: o.as } : {}),
+      });
       let out = "";
       if (o.command.includes("fetch -q --depth 50")) {
         st.here = true;
         out = "0123456789abcdef0123456789abcdef01234567\n";
-      } else if (o.command.includes(" push ")) out = "commits: 2\n";
+      } else if (o.command.includes("rev-list --count")) out = "commits: 2\npublish: 89abcdef0123456789abcdef0123456789abcdef\n";
       else if (o.command.includes("npm test")) out = "12 passing\n";
       else if (o.command.includes("git diff")) out = "- off by one\n+ fixed\n";
       else if (o.command.includes("cat package.json")) out = '{ "scripts": { "test": "vitest" } }\n';
@@ -189,6 +196,11 @@ function fakeWorkspace(turns: Turn[]) {
     },
     async jobHere() {
       return st.here;
+    },
+    async jobPush(o) {
+      st.pushes.push(o);
+      st.running = false;
+      return { exit: 0, out: "" };
     },
   };
   return { ws, st, emit, update };
@@ -355,9 +367,17 @@ describe("coding jobs", { timeout: 30_000 }, () => {
       const working = await stepTo(agent, id, "working");
       const clone = st.commands[0]!;
       expect(clone.command).toContain("git remote add origin 'https://github.com/ann/budget.git'");
-      expect(clone.command).toMatch(/http\.extraHeader='x-atlas-key: [0-9a-f]{32}'/);
+      // git's nonce is in its environment, which only root can read, never on the command line.
+      expect(clone.command).not.toContain("x-atlas-key");
+      expect(clone.env).toMatchObject({
+        GIT_CONFIG_KEY_0: "http.extraHeader",
+        GIT_CONFIG_VALUE_0: expect.stringMatching(/^x-atlas-key: [0-9a-f]{32}$/),
+      });
+      expect(clone.as).toBeUndefined();
+      // The key is for this repo's git address alone.
       expect(clone.rules![0]).toMatchObject({
         host: "github.com",
+        path: "/ann/budget.git/",
         header: "authorization",
         value: `Basic ${btoa("x-access-token:ghp_test_token_456")}`,
       });
@@ -394,10 +414,27 @@ describe("coding jobs", { timeout: 30_000 }, () => {
       expect(st.answers[0]).toEqual({ id: 902, result: { outcome: { outcome: "selected", optionId: "allow-once" } } });
 
       // Atlas ran the review itself, pushed with the nonce, and opened the pull request through GitHub.
-      const push = st.commands.find((c) => c.command.includes(" push "))!;
-      expect(push.command).toContain("git add -A");
-      expect(push.command).toMatch(/push -q --force origin 'HEAD:refs\/heads\/atlas\/budget-app-failing-test-/);
-      expect(push.rules![0]!.nonce).toMatch(/^[0-9a-f]{32}$/);
+      // What's left is committed in the agent's repo with no key on the gate and its hooks off;
+      // the push goes from a clean copy of Atlas's own, to the code host's address, with the key for this repo alone.
+      // What's left is committed as the job's user, with no key on the gate and the repo's hooks off;
+      // the push goes from root's own copy, to the code host's address, with the key for this repo alone.
+      const commit = st.commands.find((c) => c.command.includes("rev-parse HEAD") && c.command.includes("add -A"))!;
+      expect(commit.command).toContain("git -c core.hooksPath=/dev/null add -A");
+      expect(commit.rules).toBeUndefined();
+      expect(commit.as).toBe(id);
+      // Atlas's own review ran as the job's user too.
+      expect(st.commands.find((c) => c.command.includes("npm test"))!.as).toBe(id);
+      expect(st.pushes).toEqual([
+        expect.objectContaining({
+          id,
+          sha: "89abcdef0123456789abcdef0123456789abcdef",
+          url: "https://github.com/ann/budget.git",
+          branch: expect.stringMatching(/^atlas\/budget-app-failing-test-/),
+          env: expect.objectContaining({ GIT_CONFIG_VALUE_0: expect.stringMatching(/^x-atlas-key: [0-9a-f]{32}$/) }),
+          rules: [expect.objectContaining({ host: "github.com", path: "/ann/budget.git/", nonce: expect.any(String) })],
+        }),
+      ]);
+      expect(st.pushes[0]!.env.GIT_CONFIG_VALUE_0).toBe(`x-atlas-key: ${st.pushes[0]!.rules[0]!.nonce}`);
       expect(prs).toEqual([
         expect.objectContaining({
           title: "Fix the off-by-one in the date parser",
@@ -459,9 +496,9 @@ describe("coding jobs", { timeout: 30_000 }, () => {
       expect(st.saves).toBeGreaterThan(0);
 
       const out = await agent.apiJobSay(id, "Keep both");
-      expect(out.ok).toBe(true);
+      expect(out).toEqual({ ok: true, text: "Passed on to Budget API; it's carrying on." });
+      const after = await stepTo(agent, id, "working", (j) => j.turns === 2);
       expect(st.prompts.at(-1)).toBe('The owner answered your question ("Drop the old API, or keep both?"): Keep both');
-      const after = (await agent.apiCodingWake(id))!;
       expect(after.answers).toEqual([expect.objectContaining({ a: "Keep both", source: "you" })]);
       expect((await agent.apiInbox()).some((i) => i.job?.id === id)).toBe(false);
     });

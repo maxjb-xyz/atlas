@@ -184,7 +184,14 @@ export interface WorkspaceApi {
   /** `cwd` is /workspace by default, or a coding job's folder; `rules` are keys for this command only (a git token behind a nonce). */
   run(
     command: string,
-    o: { run_id: string; timeout_s: number; cwd?: string; rules?: import("../workspace").KeyRule[] },
+    o: {
+      run_id: string;
+      timeout_s: number;
+      cwd?: string;
+      rules?: import("../workspace").KeyRule[];
+      env?: Record<string, string>;
+      as?: string;
+    },
   ): Promise<RunResult>;
   read(path: string): Promise<{ ok: true; bytes: ArrayBuffer } | { ok: false; error: string }>;
   /** A link to a server on `port` in the workspace, for a day. */

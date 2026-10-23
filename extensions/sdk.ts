@@ -52,6 +52,8 @@ export type Provides =
 export interface CodingAgent {
   /** The npm package with its ACP server, pinned: "@agentclientprotocol/codex-acp@2.2.2". */
   package: string;
+  /** More packages to install beside it, pinned: its own binary, so its version can't drift under a range. */
+  with?: string[];
   /** The command the package installs. */
   bin: string;
   model: {
