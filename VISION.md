@@ -698,13 +698,31 @@ The node protocol is public, so anyone can build a node.
 
 ## 17. Extensibility
 
+Atlas is a core and its extensions (decided 2026-10-23, for M5). The core is the foundation every Atlas has, whatever services its owner uses, and it changes only by release, never at run time and never by Atlas itself (§23.2). Everything that ties Atlas to one company's service, or to one app's way of talking, is an extension, even when it ships with Atlas and is on by default.
+
+**The core** is:
+- Atlas's own mechanisms: the loop, the log, the clock, the outbox, the intake, records, approvals, the vault, areas, automations, faces, members, and the app;
+- the platform it runs on (§19): Workers AI (Clef, Clairic, embeddings, Aura and Flux, Kimi), Browser Run, Containers, R2, and Cloudflare's Email Service and Email Routing for Atlas's own address;
+- the open standards it's built from: MCP, Web Push, passkeys, and the node protocol (§16.3).
+
+**Extensions** are everything else: the owner's calendar and contacts (iCloud over CalDAV and CardDAV, Google, Outlook), their mail (Gmail), chat channels (Telegram, Discord, Signal), the services they want to hear from (GitHub, Linear), location apps (OwnTracks), maps, weather and search providers (OpenStreetMap, Mapbox, Open-Meteo, Tavily), sending providers (Resend), and model providers (ChatGPT, ElevenLabs).
+
 | Layer | What it's for | Standard |
 |---|---|---|
 | Skills | Know-how and procedures | SKILL.md (Agent Skills) |
-| MCP | Tools and connections | MCP, plus MCP Apps for views on the stage |
-| Extensions | New senses (adapters into the intake, §10.4), channels, stage views, model providers and node types | Small, typed TypeScript modules that run sandboxed in Dynamic Workers, so Atlas can write one itself, with your OK |
+| MCP | Tools Atlas can call | MCP, plus MCP Apps for views on the stage |
+| Extensions | New senses (adapters into the intake, §10.4), channels, providers (calendar, contacts, mail, maps, weather, search, models, voice), stage views and node types | A small TypeScript module with a manifest, sandboxed in a Dynamic Worker, so Atlas can write one itself, with your OK |
 | API | Every surface | One public API: a live event stream plus HTTP. Atlas's own app, desktop, voice and command line all use it. Atlas is also an MCP server, so Claude, ChatGPT or an editor can talk to it. |
 | Nodes | Devices | The public node protocol (§16.3) |
+
+**How an extension works.**
+- **A manifest says what it is and what it can touch:** what it provides (a sense, a channel, a calendar, a model), the only hosts it may reach, the secrets it needs (a token you paste) or a sign-in for the core to run for it (OAuth), how often it looks, and whether it takes posts at an address of its own.
+- **It runs sandboxed.** Each call runs it in a Dynamic Worker whose only way out is the core's gate, which lets it reach the hosts its manifest names and nothing else, and adds its secrets to its requests there. The extension never sees a secret's value, and it never sees the log, the records or the owner's other connections: the core hands it what a call needs and takes back typed results.
+- **It speaks through the core.** What it notices goes into the intake as items, like any sense (§10.4); a message it receives goes to the owner's thread or to a face; what it sends leaves through the outbox, with a receipt and the owner's OK where §12 says so. It can't act on its own.
+- **A source it can't hear from gets a look on the clock.** A service that can't post to Atlas is asked "what's new since last time?" by an item on the agenda (§4.3), at the interval its manifest asks for, while it's installed and on. Its cursor (Gmail's history id, GitHub's last time) is where it left off, kept by the core, so a restart neither misses nor repeats anything.
+- **It installs from the app:** browse the ones that ship with Atlas, see what each can touch before installing, turn it off, remove it. Atlas can write one for a service it has no extension for, as a draft you review and install, never on its own.
+
+**Bundled extensions** live in the repo beside the core (`extensions/`), are reviewed like the core, and are the defaults: iCloud for the calendar and contacts, OpenStreetMap and Open-Meteo, and the rest. They use the same manifest and interface as any other. Model and voice providers are bundled extensions too, but every turn and every spoken word goes through them, so a bundled extension may run inside the core's own Worker instead of a sandbox when measuring shows the sandbox's extra step costs time that matters (voice latency, §11.2). Only bundled extensions may; where one runs is a choice in the code, not in the extension, so moving it back is one line.
 
 Everything installs from the app: browse, preview what it can touch, install, undo.
 
@@ -769,8 +787,8 @@ Everything installs from the app: browse, preview what it can touch, install, un
 | Email | Email Service for sending, Email Routing for receiving |
 | Brains | AI Gateway |
 | Public webhooks | The Worker itself (OwnTracks, SMS, GitHub, email) |
-| Maps, routes and places | Not Cloudflare: OpenStreetMap's free services by default, with no key or account (decided 2026-10-22): OpenFreeMap for the map, Nominatim for addresses, FOSSGIS's OSRM for routes, Overpass for what's nearby. Each is volunteer-run with fair-use rules, so Atlas asks little of them (sparse events, cached answers). Mapbox's free tier by key, picked in Settings, adds traffic to travel times and better store search. Pins always come from OpenStreetMap or the phone, since Mapbox's free answers can't be kept. Each call leaves through the outbox |
-| Weather | Not Cloudflare: Open-Meteo, which needs no key and is free for non-commercial use, as a personal Atlas is (decided 2026-10-22) |
+| Maps, routes and places | Not Cloudflare, so bundled extensions (§17): OpenStreetMap's free services by default, with no key or account (decided 2026-10-22): OpenFreeMap for the map, Nominatim for addresses, FOSSGIS's OSRM for routes, Overpass for what's nearby. Each is volunteer-run with fair-use rules, so Atlas asks little of them (sparse events, cached answers). Mapbox's free tier by key, picked in Settings, adds traffic to travel times and better store search. Pins always come from OpenStreetMap or the phone, since Mapbox's free answers can't be kept. Each call leaves through the outbox |
+| Weather | Not Cloudflare, so a bundled extension (§17): Open-Meteo, which needs no key and is free for non-commercial use, as a personal Atlas is (decided 2026-10-22) |
 
 ### 19.2 Shape (to be validated in M0)
 
