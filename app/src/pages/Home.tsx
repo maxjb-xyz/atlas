@@ -8,6 +8,7 @@ import type { StageView } from "../../../core/src/stage";
 import type { Atlas } from "../connection";
 import { Console, VoiceStrip } from "../Shell";
 import { type Shown, shownFrom, StageSheet, titleOf } from "../StageViews";
+import { whereLine } from "../SenseViews";
 import { ApprovalCard } from "../Approval";
 import { addDays, AsciiDiamond, clock, dayName, Empty, Sheet, shortDay, Stage, startOfDay, useNow } from "../ui";
 import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
@@ -39,6 +40,12 @@ function identity(s: Shown): string | null {
       return `page:${v.page}`;
     case "mcp_app":
       return `mcp_app:${v.call}`;
+    case "place":
+      return `place:${v.place}`;
+    case "weather":
+    case "situation":
+    case "senses":
+      return v.kind;
     default:
       return null;
   }
@@ -205,7 +212,9 @@ export function Home({
         </div>
       }
     >
-      {tab === "now" && <Now atlas={atlas} />}
+      {tab === "now" && (
+        <Now atlas={atlas} showSituation={() => openView({ id: "local:situation", view: { kind: "situation" }, title: "Situation" })} />
+      )}
       {tab === "week" && <WeekTab atlas={atlas} />}
       {tab === "jobs" && <Jobs atlas={atlas} selected={job} onSelect={setJob} />}
       {tab === "receipt" && receipt && <ReceiptView atlas={atlas} row={receipt} />}
@@ -230,8 +239,14 @@ function greeting(d: Date): string {
   return h < 5 ? "Late night" : h < 12 ? "Morning" : h < 17 ? "Afternoon" : "Evening";
 }
 
-function Now({ atlas }: { atlas: Atlas }) {
+function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void }) {
   const s = atlas.state;
+  // The situation (§10.2): where you are, leave-by and weather that matters, rebuilt by the agent from what the senses said.
+  useEffect(() => {
+    if (atlas.voice.connected) atlas.send({ type: "atlas.stage", ref: "situation", view: { kind: "situation" } });
+  }, [atlas.voice.connected, s.situationVersion]);
+  const sit = s.stage.situation?.kind === "situation" ? s.stage.situation : null;
+  const nowMs = useNow();
   const today = startOfDay(new Date());
   // From Monday, so the week's load counts the days already gone, through a week from today for Next.
   const monday = weekStart(today);
@@ -250,13 +265,17 @@ function Now({ atlas }: { atlas: Atlas }) {
   const busiest = load.indexOf(Math.max(...load));
   const max = Math.max(1, ...load);
   const underway = next && !next.all_day && eventStart(next).getTime() <= Date.now();
-  const line = underway
-    ? `Now: ${next.title}, until ${clock(eventEnd(next))}.`
-    : next
-      ? `Nothing on the calendar until ${dayName(eventStart(next))}${next.all_day ? "" : ` at ${clock(eventStart(next))}`}.`
-      : s.view?.secrets.icloud
-        ? "Nothing on the calendar this week."
-        : "Connect a calendar in Settings and I'll keep an eye on your week.";
+  const leave = sit?.next?.travel && sit.next.travel.leave_by > nowMs - 15 * 60_000 ? sit.next : null;
+  const line = leave
+    ? `Leave by ${clock(leave.travel!.leave_by)} for ${leave.title}.`
+    : underway
+      ? `Now: ${next.title}, until ${clock(eventEnd(next))}.`
+      : next
+        ? `Nothing on the calendar until ${dayName(eventStart(next))}${next.all_day ? "" : ` at ${clock(eventStart(next))}`}.`
+        : s.view?.secrets.icloud
+          ? "Nothing on the calendar this week."
+          : "Connect a calendar in Settings and I'll keep an eye on your week.";
+  const where = sit && sit.where.known ? whereLine(sit, nowMs) : null;
 
   return (
     <Sheet>
@@ -268,9 +287,28 @@ function Now({ atlas }: { atlas: Atlas }) {
               {greeting(new Date())}
               {owner ? `, ${owner}` : ""}.
             </h1>
+            {where && (
+              <p style={{ fontSize: 15, marginTop: 4 }}>
+                <a
+                  className="link"
+                  href="#/home"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    showSituation();
+                  }}
+                >
+                  {where}
+                </a>
+              </p>
+            )}
             <p className="muted" style={{ fontSize: 15, marginTop: 4 }}>
               {line}
             </p>
+            {sit?.weather && sit.weather.matters.length > 0 && (
+              <p className="ac-text small" style={{ marginTop: 4 }}>
+                {sit.weather.matters.join(" · ")}
+              </p>
+            )}
           </div>
         </div>
         <div className="cells">
@@ -286,6 +324,11 @@ function Now({ atlas }: { atlas: Atlas }) {
                 {next.location && (
                   <p className="lab" style={{ marginTop: 6 }}>
                     {next.location}
+                  </p>
+                )}
+                {sit?.next?.travel && sit.next.title === next.title && (
+                  <p className="small" style={{ marginTop: 6 }}>
+                    Leave by <b>{clock(sit.next.travel.leave_by)}</b> · {Math.max(1, Math.round(sit.next.travel.s / 60))} min by car
                   </p>
                 )}
               </>

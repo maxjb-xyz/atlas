@@ -18,11 +18,12 @@ import {
   stepText,
 } from "../automations";
 import type { Decider } from "../brains/decide";
-import type { Calendar, CalendarEvent } from "../calendar/types";
+import type { Calendar } from "../calendar/types";
 import type { LoopResult } from "../loop";
 import type { Outbox, Urgency } from "../outbox";
 import { type AgendaItem, createItem, finish, getItem, rearm } from "../store/agenda";
-import type { Json, Sql } from "../store/db";
+import { type Json, parse, type Sql } from "../store/db";
+import { describe } from "../intake";
 import { append, type LogRow } from "../store/log";
 import { keywordSearch } from "../store/memory";
 import { endRun, startRun } from "../store/runs";
@@ -51,7 +52,15 @@ export interface DeskDeps {
   outbox: Outbox;
   clock: ToolContext["clock"];
   /** Runs Atlas with a note (an Atlas step); `test` gives it tools that can't change or send anything. */
-  converse(o: { runId: string; note: string; test: boolean }): Promise<LoopResult>;
+  /** A run of Atlas for an Atlas step. With `worth`, it speaks only with `nudge`, and may end in silence. */
+  converse(o: {
+    runId: string;
+    note: string;
+    test: boolean;
+    worth?: { id: string; name: string };
+  }): Promise<LoopResult & { nudged?: string | null }>;
+  /** The day as a look sees it: the later pile, what was said today, the owner's lists; `seen` marks the pile looked at. */
+  picture(): { text: string; seen: () => void };
   decider(): Decider | null;
   /** The owner's calendar, or null when it isn't connected. */
   calendar(): Calendar | null;
@@ -108,6 +117,8 @@ export class AutomationDesk {
     this.runs.set(runId, { test, allowed: [...new Set([...a.allowed, ...fixed])] });
     const results: RunOutcome["results"] = [];
     const said: string[] = [];
+    /** What Atlas steps said as nudges, when the automation reports when it's worth saying. */
+    const spoke: string[] = [];
     let brain: RunOutcome["brain"] = null;
     const usage = { input: 0, output: 0 };
     let steps = 0;
@@ -140,19 +151,34 @@ export class AutomationDesk {
             break;
           }
         } else {
-          const note = this.#note(a, o.why, step.instructions, inputs, results, context, test);
-          const res = await this.d.converse({ runId, note, test });
+          const picture = this.d.picture();
+          const worth = a.report === "worth";
+          const note = this.#note(a, o.why, step.instructions, inputs, results, context, test, picture.text, worth);
+          const res = await this.d.converse({ runId, note, test, ...(worth && !test ? { worth: { id: a.id, name: a.name } } : {}) });
           steps += res.steps;
           brain = res.brain ?? brain;
           usage.input += res.usage.input;
           usage.output += res.usage.output;
-          if (res.state !== "replied" || !res.text.trim()) {
+          // Reporting when it's worth saying, a step that says nothing has done its job: silence is an answer.
+          if (res.state !== "replied" || (!res.text.trim() && !(worth && !test))) {
             error = res.error ?? "Atlas gave no answer.";
             results.push({ step: stepText(step), ok: false, text: error });
             break;
           }
-          said.push(res.text.trim());
-          results.push({ step: stepText(step), ok: true, text: res.text.trim() });
+          // Only a look that reports to the owner has looked the pile over for them; a watch that reports to History hasn't.
+          if (!test && (a.report === "thread" || worth)) picture.seen();
+          if (worth && !test) {
+            // What it said went out as a nudge already; its last words are its note for History.
+            if (res.nudged) spoke.push(res.nudged);
+            results.push({
+              step: stepText(step),
+              ok: true,
+              text: res.nudged ?? `Nothing worth saying${res.text.trim() ? `: ${res.text.trim()}` : "."}`,
+            });
+          } else {
+            said.push(res.text.trim());
+            results.push({ step: stepText(step), ok: true, text: res.text.trim() });
+          }
         }
       }
     } catch (err) {
@@ -161,7 +187,8 @@ export class AutomationDesk {
       this.runs.delete(runId);
     }
     const ok = !error;
-    const text = said.join("\n\n") || (ok ? `Done: ${a.name}.` : "");
+    const text =
+      [...spoke, ...said].join("\n\n") || (ok ? (a.report === "worth" ? `Nothing worth saying: ${a.name}.` : `Done: ${a.name}.`) : "");
     const row = append(this.d.sql, {
       actor: "atlas",
       kind: "automation.run",
@@ -184,7 +211,14 @@ export class AutomationDesk {
     this.d.rows([row]);
     if (own) {
       endRun(this.d.sql, runId, ok ? "replied" : "failed", steps, { ...(error ? { error } : {}), automation: a.id });
-      if (!test) await this.#report(a, ok ? text : `${a.name} didn't run: ${error}`, runId, o.why);
+      // What a step said as a nudge went out already; what's left (a say step's words) is reported as usual.
+      if (!test)
+        await this.#report(
+          a,
+          ok ? said.join("\n\n") || (spoke.length || a.report === "worth" ? "" : text) : `${a.name} didn't run: ${error}`,
+          runId,
+          o.why,
+        );
     }
     const fails = noteRun(this.d.sql, a.id, { test, ok });
     if (!test && !ok) await this.#failed(a, fails, error!);
@@ -213,6 +247,8 @@ export class AutomationDesk {
     done: RunOutcome["results"],
     context: string | undefined,
     test: boolean,
+    picture: string,
+    worth: boolean,
   ): string {
     return [
       `[Atlas's automation "${a.name}", not the owner] It's running now (${WHY[why]}).`,
@@ -223,10 +259,13 @@ export class AutomationDesk {
             .join(", ")}`
         : "",
       done.length ? `Steps already done:\n${done.map((r) => `- ${r.step}: ${r.text}`).join("\n")}` : "",
+      picture,
       `Your instructions: ${fill(instructions, inputs)}`,
       test
-        ? "This is a test run: it uses real data and sends nothing. Your tools can look but not change anything, and webhooks only say what they would do. Write exactly what you would send the owner."
-        : "Do it now with your tools, looking things up rather than assuming. Then write what to tell the owner: short, as you'd say it.",
+        ? `This is a test run: it uses real data and sends nothing. Your tools can look but not change anything, and webhooks only say what they would do. Write exactly what you would send the owner${worth ? ", or that you'd stay quiet and why" : ""}.`
+        : worth
+          ? "Do it now with your tools, looking things up rather than assuming. If there's something worth telling the owner, nudge once with it, short, as you'd say it; if there isn't, don't nudge, and end with a few words for your own log saying why. Silence is a fine outcome."
+          : "Do it now with your tools, looking things up rather than assuming. Then write what to tell the owner: short, as you'd say it.",
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -317,7 +356,7 @@ export class AutomationDesk {
       if (a.when.kind === "schedule") await this.run(a, { why: "schedule" });
       else {
         const look = await this.look(a, false);
-        if (look.run) await this.run(a, { why: a.when.kind === "event" ? "calendar" : a.when.kind, context: look.note });
+        if (look.run) await this.run(a, { why: a.when.kind, context: look.note });
       }
     } finally {
       // The next time is set even if this one failed, so a bad night doesn't stop tomorrow's.
@@ -354,7 +393,7 @@ export class AutomationDesk {
         note: `Nothing about "${t.nothing_about}" has come up since ${shortLocal(new Date(since), tz)} (${t.for_days} days).`,
       };
     }
-    if (t.kind === "event" && t.on === "calendar") return this.#calendarLook(a, test);
+    if (t.kind === "event" && t.on === "calendar") return this.#calendarLook(a);
     if (t.kind !== "watch") return { run: true, note: "" };
     let text: string;
     try {
@@ -384,49 +423,57 @@ export class AutomationDesk {
   }
 
   /**
-   * A calendar trigger's look: the next 14 days, compared with what the last
-   * look saw. An event added, moved, renamed or removed counts, filtered to
-   * the trigger's words when it has them. Events that only came into the
-   * window, or passed out of it, don't count as changes.
+   * What the intake took in (§10.4). A calendar change runs each automation
+   * whose trigger follows the calendar, when the change has its words. The
+   * intake's look is the one place calendar changes are noticed.
    */
-  async #calendarLook(a: Automation, test: boolean): Promise<{ run: boolean; note: string }> {
+  async sensed(rows: LogRow[]): Promise<void> {
+    // An event coming up isn't a change to the calendar.
+    const changes = rows.filter((r) => r.body.source === "calendar" && r.body.event !== "soon");
+    if (!changes.length) return;
+    for (const a of listAutomations(this.d.sql)) {
+      if (a.state !== "on" || a.when.kind !== "event" || a.when.on !== "calendar") continue;
+      const about = a.when.about?.trim().toLowerCase();
+      const hits = changes.filter(
+        (r) =>
+          !about ||
+          String(r.body.text ?? describe(r))
+            .toLowerCase()
+            .includes(about),
+      );
+      if (hits.length)
+        await this.run(a, { why: "calendar", context: `The calendar changed:\n${hits.map((r) => `- ${describe(r)}`).join("\n")}` });
+    }
+  }
+
+  /** A calendar trigger's test: the changes the intake noticed in the last two weeks that have its words. */
+  #calendarLook(a: Automation): { run: boolean; note: string } {
     const t = a.when as Extract<Automation["when"], { kind: "event" }>;
-    const cal = this.d.calendar();
-    if (!cal) throw new Error("The calendar isn't connected. Connect it in Settings → Connections.");
-    const now = Date.now();
-    const until = now + WINDOW_MS;
-    const read = await cal.read({ start: new Date(now), end: new Date(until) });
-    const tz = zoneOf(readSettings(this.d.sql));
-    if (read.stale) return this.#quiet(a, test, `Couldn't ask the calendar, so this look is skipped: ${read.stale.why}`);
-    const seen: Record<string, Seen> = Object.fromEntries(read.events.map((e) => [e.id, seenOf(e)]));
-    const before = a.memo.events && typeof a.memo.events === "object" ? (a.memo.events as unknown as Record<string, Seen>) : null;
-    const prevUntil = typeof a.memo.until === "number" ? a.memo.until : 0;
-    if (!test) setMemo(this.d.sql, a.id, { ...a.memo, events: seen as unknown as Json, until, at: now });
-    if (!before) {
-      const list = read.events.slice(0, 8).map((e) => `- ${eventText(seenOf(e), tz)}`);
-      return test
-        ? { run: true, note: `There's no earlier look to compare with yet. The next 14 days:\n${list.join("\n") || "- nothing"}` }
-        : this.#quiet(a, test, `First look: ${read.events.length} events in the next 14 days. Atlas watches for changes from here.`);
-    }
     const about = t.about?.trim().toLowerCase();
-    const counts = (e: Seen) => !about || `${e.t} ${e.l ?? ""} ${e.n ?? ""}`.toLowerCase().includes(about);
-    const changes: string[] = [];
-    for (const [id, e] of Object.entries(seen)) {
-      const old = before[id];
-      if (!old) {
-        if (Date.parse(e.s) < prevUntil && counts(e)) changes.push(`Added: ${eventText(e, tz)}`);
-      } else if (old.s !== e.s || old.e !== e.e) {
-        if (counts(e) || counts(old)) changes.push(`Moved: ${old.t}, from ${whenOf(old, tz)} to ${whenOf(e, tz)}`);
-      } else if (old.t !== e.t || (old.l ?? "") !== (e.l ?? "")) {
-        if (counts(e) || counts(old)) changes.push(`Changed: ${eventText(old, tz)} is now ${eventText(e, tz)}`);
-      }
-    }
-    for (const [id, old] of Object.entries(before)) {
-      if (!seen[id] && Date.parse(old.e) > now && Date.parse(old.s) < until && counts(old)) changes.push(`Removed: ${eventText(old, tz)}`);
-    }
-    if (!changes.length)
-      return this.#quiet(a, test, about ? `Nothing about "${t.about}" changed on the calendar.` : "No calendar changes.");
-    return { run: true, note: `The calendar changed since ${shortLocal(new Date(Number(a.memo.at ?? now)), tz)}:\n${changes.join("\n")}` };
+    const found = this.d.sql
+      .exec<{ body: string }>(
+        `SELECT body FROM log WHERE kind = 'sense' AND json_extract(body, '$.source') = 'calendar' AND json_extract(body, '$.event') != 'soon' AND at > ? ORDER BY seq DESC LIMIT 100`,
+        Date.now() - 14 * 86_400_000,
+      )
+      .toArray()
+      .map((r) => ({ body: parse<Record<string, unknown>>(r.body, {}) }))
+      .filter(
+        (r) =>
+          !about ||
+          String(r.body.text ?? describe(r))
+            .toLowerCase()
+            .includes(about),
+      )
+      .slice(0, 8);
+    if (!found.length)
+      return {
+        run: true,
+        note: `No calendar changes${about ? ` about "${t.about}"` : ""} in the last two weeks. It runs on the next one.`,
+      };
+    return {
+      run: true,
+      note: `The latest calendar changes${about ? ` about "${t.about}"` : ""}:\n${found.map((r) => `- ${describe(r)}`).join("\n")}`,
+    };
   }
 
   #quiet(a: Automation, test: boolean, note: string): { run: boolean; note: string } {
@@ -441,31 +488,6 @@ export class AutomationDesk {
     return { run: false, note };
   }
 }
-
-/** How far ahead a calendar trigger watches. */
-const WINDOW_MS = 14 * 86_400_000;
-
-/** What a calendar look remembers of an event: title, start, end, place and the start of its notes. */
-interface Seen {
-  t: string;
-  s: string;
-  e: string;
-  l?: string;
-  n?: string;
-  d?: boolean;
-}
-
-const seenOf = (e: CalendarEvent): Seen => ({
-  t: e.title,
-  s: e.start,
-  e: e.end,
-  ...(e.location ? { l: e.location } : {}),
-  ...(e.notes ? { n: e.notes.slice(0, 200) } : {}),
-  ...(e.all_day ? { d: true } : {}),
-});
-
-const whenOf = (e: Seen, tz: string) => (e.d ? `${e.s} (all day)` : shortLocal(new Date(e.s), tz));
-const eventText = (e: Seen, tz: string) => `${e.t}, ${whenOf(e, tz)}${e.l ? `, at ${e.l}` : ""}`;
 
 /** Whether a trigger looks at something before its steps run. */
 const looksFirst = (a: Automation) =>

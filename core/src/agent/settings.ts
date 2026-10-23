@@ -1,6 +1,8 @@
 // What Settings shows (values, whether each secret is set, sign-in state and
 // brain health) and its live tests (§22: every check is a live test).
 
+import { sensesView } from "../intake";
+import { openTasks, taskView } from "../tasks";
 import { zoneOf } from "../time";
 import type { BrainRouter } from "../brains/router";
 import { type Brain, brainKey } from "../brains/types";
@@ -19,6 +21,9 @@ import { webhooks, webhookView } from "../webhooks";
 import { vault, vaultView } from "../vault";
 import type { VapidKeys } from "../push";
 import type { ChatGPTSignIn } from "./chatgpt";
+import { here, nearest, ownTracksLogin, pins } from "../location";
+import { nodes, nodeView } from "../nodes";
+import type { LocationView } from "../protocol";
 
 export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar: CalendarSense; router: BrainRouter }): SettingsView {
   const passkeys = (getState<StoredPasskey[]>(sql, "passkeys") ?? []).map((p) => ({
@@ -37,6 +42,7 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
       tavily_api_key: Boolean(getSecret(sql, "tavily_api_key")),
       brave_api_key: Boolean(getSecret(sql, "brave_api_key")),
       exa_api_key: Boolean(getSecret(sql, "exa_api_key")),
+      mapbox_token: Boolean(getSecret(sql, "mapbox_token")),
       icloud: icloud
         ? { username: icloud.username, refused: refusal ? { ...refusal, note: parts.calendar.note(refusal, settings) } : null }
         : null,
@@ -59,6 +65,35 @@ export function settingsView(sql: Sql, parts: { chatgpt: ChatGPTSignIn; calendar
     health: parts.router.snapshot(),
     passkeys,
     setup: setupView(sql),
+    location: locationView(sql),
+    nodes: nodes(sql).map(nodeView),
+    senses: sensesView(sql),
+    tasks: openTasks(sql).map(taskView),
+  };
+}
+
+function locationView(sql: Sql): LocationView {
+  const h = here(sql);
+  const login = ownTracksLogin(sql);
+  const all = pins(sql);
+  const f = h.fix;
+  const n = f && !h.place ? nearest(all, f) : null;
+  return {
+    set_up: login != null,
+    made_at: login?.made_at ?? null,
+    fix: f
+      ? {
+          at: f.at,
+          acc: Math.round(f.acc),
+          ...(f.batt != null ? { batt: f.batt } : {}),
+          ...(f.charging != null ? { charging: f.charging } : {}),
+          ...(f.conn ? { conn: f.conn } : {}),
+        }
+      : null,
+    place: h.place ? { name: h.place.name, since: h.place.since } : null,
+    near: n ? { name: n.pin.name, m: Math.round(n.m) } : null,
+    refused: h.refused,
+    pins: all.length,
   };
 }
 
@@ -85,6 +120,8 @@ export interface TestDeps {
   search(): Promise<TestOutcome>;
   /** Calls a webhook now, on the owner's own word. */
   webhook(id: string | undefined): Promise<TestOutcome>;
+  /** Looks up a place, a route and the weather, with the maps the owner picked. */
+  maps(): Promise<TestOutcome>;
 }
 
 /** What the Character page's sample answers, so the owner hears the character before saving it. */
@@ -108,6 +145,7 @@ export async function liveTest(deps: TestDeps, msg: Extract<ClientMessage, { typ
         detail: c,
       };
     }
+    if (msg.what === "maps") return await deps.maps();
     if (msg.what === "brain") {
       if (!choice) return { ok: false, message: "There's no brain at that spot." };
       const brain = deps.makeBrain(choice);

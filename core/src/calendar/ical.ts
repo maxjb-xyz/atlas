@@ -4,7 +4,7 @@
 // only yields its first occurrence.
 
 import { isValidZone, zonedToUtc as wallToUtc } from "../time";
-import type { CalendarEvent } from "./types";
+import type { CalendarEvent, EventPerson } from "./types";
 
 interface Prop {
   name: string;
@@ -193,5 +193,29 @@ function toEvent(props: Prop[], calendar: string, floating: string | null): Cale
   const notes = text("DESCRIPTION");
   if (location) ev.location = location;
   if (notes) ev.notes = notes;
+  const people = peopleOf(props);
+  if (people.length) ev.people = people;
   return ev;
+}
+
+/** The organizer and the attendees, once each, leaving out rooms and other resources. */
+function peopleOf(props: Prop[]): EventPerson[] {
+  const out: EventPerson[] = [];
+  for (const p of props) {
+    if (p.name !== "ORGANIZER" && p.name !== "ATTENDEE") continue;
+    const cutype = (p.params.CUTYPE ?? "INDIVIDUAL").toUpperCase();
+    if (cutype !== "INDIVIDUAL" && cutype !== "GROUP" && cutype !== "UNKNOWN") continue;
+    const address = /^mailto:(.+)$/i.exec(p.value.trim())?.[1] ?? p.params.EMAIL;
+    const email = address && /^[^@\s]+@[^@\s]+$/.test(address.trim()) ? address.trim().toLowerCase() : undefined;
+    const name = p.params.CN ? unescapeText(p.params.CN).trim() || undefined : undefined;
+    if (!email && !name) continue;
+    const same = out.find((o) => (email && o.email === email) || (!email && name && o.name === name));
+    if (same) {
+      if (!same.name && name) same.name = name;
+      continue;
+    }
+    out.push({ ...(name && name.toLowerCase() !== email ? { name } : {}), ...(email ? { email } : {}) });
+    if (out.length >= 30) break;
+  }
+  return out;
 }

@@ -54,7 +54,9 @@ export function ApprovalCard({ atlas, a }: { atlas: Atlas; a: ApprovalView }) {
                           ? "Uses a connected service"
                           : s.kind === "mcp_add"
                             ? "Connects a service"
-                            : "Reaches outside"}
+                            : s.kind === "node"
+                              ? "Runs on your device"
+                              : "Reaches outside"}
               </span>
             </div>
             <p className="small">{s.detail}</p>

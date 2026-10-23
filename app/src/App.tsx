@@ -6,7 +6,7 @@ import { Home } from "./pages/Home";
 import { Library } from "./pages/Library";
 import { Agenda, Inbox } from "./pages/Places";
 import { Automations } from "./pages/Automations";
-import { SettingsPage } from "./Settings";
+import { Pair, SettingsPage } from "./Settings";
 import { Setup } from "./Setup";
 import { Palette, Sidebar, TabBar, Toolbar, Transcript } from "./Shell";
 import { AsciiDiamond, Diamond, useRoute } from "./ui";
@@ -211,6 +211,7 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
         {place === "library" && <Library atlas={atlas} detail={detail} go={sub} />}
         {place === "history" && <History atlas={atlas} />}
         {place === "settings" && <SettingsPage atlas={atlas} detail={detail} go={sub} onSignOut={signOut} onSetup={onSetup} />}
+        {place === "pair" && <Pair atlas={atlas} code={detail} />}
       </div>
       <TabBar atlas={atlas} place={place} />
       {transcript && <Transcript atlas={atlas} onClose={() => setTranscript(false)} />}

@@ -9,6 +9,9 @@ import { Markdown } from "../Markdown";
 import { Composer } from "../Shell";
 import { AreaChip, clock, dayName, Diamond, Empty, pressable, Sheet, Stage, startOfDay } from "../ui";
 
+/** A line written for Atlas ("The owner arrived at ...") as the owner reads it here. */
+const yours = (what: string) => what.replace(/^The owner /, "You ");
+
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : JSON.stringify(v));
 
 function describe(r: LogRow): { who: string; what: string; kind: string } {
@@ -40,7 +43,7 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
       }
       return {
         who: r.actor === "owner" ? "You" : "Atlas",
-        what: `${str(b.kind) === "job" ? "Job" : str(b.kind) === "promise" ? "Promise" : "Reminder"} ${str(b.change) === "done" && str(b.kind) === "promise" ? "kept" : str(b.change)}: ${str(b.title)}`,
+        what: `${{ job: "Job", promise: "Promise", errand: "Errand", rhythm: "Look", situation: "Situation", device: "Device call" }[str(b.kind)] ?? "Reminder"} ${str(b.change) === "done" && str(b.kind) === "promise" ? "kept" : str(b.change) === "cancelled" && str(b.kind) === "errand" ? "dropped" : str(b.change)}: ${str(b.title)}`,
         kind: `${str(b.kind)}.${str(b.change)}`,
       };
     case "area.change":
@@ -113,6 +116,71 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         what: `${{ made: "Made", replaced: "Replaced", deleted: "Deleted" }[str(b.change)] ?? "Changed"} the file ${str(b.name)}`,
         kind: `file.${str(b.change)}`,
       };
+    case "sense": {
+      if (b.source === "situation" || b.source === "calendar" || b.source === "webhook") {
+        const who =
+          b.source === "calendar"
+            ? "Calendar"
+            : b.source === "webhook"
+              ? str((b.hook as { name?: string } | undefined)?.name) || "Webhook"
+              : ({ travel: "Traffic", weather: "Weather" }[str(b.event)] ?? "Situation");
+        return { who, what: `${str(b.what)}${b.repeat ? " (a repeat, set aside)" : ""}`, kind: `sense.${str(b.source)}` };
+      }
+      if (b.source === "node" || b.source === "device") {
+        const device = str((b.node as { name?: string } | undefined)?.name);
+        const what =
+          b.event === "online"
+            ? "Came online"
+            : b.event === "offline"
+              ? "Went offline"
+              : str(b.what) || `${str(b.event).replace(/_/g, " ")}: ${JSON.stringify(b.body ?? {}).slice(0, 120)}`;
+        return { who: device, what, kind: `device.${str(b.event)}` };
+      }
+      const place = (b.place as { name?: string } | undefined)?.name ?? "a saved place";
+      const stayed = typeof b.stayed_ms === "number" && b.stayed_ms >= 60_000 ? `, after ${minutesText(b.stayed_ms)}` : "";
+      const what =
+        b.event === "arrived"
+          ? `Arrived at ${place}`
+          : b.event === "left"
+            ? `Left ${place}${stayed}`
+            : b.event === "moved"
+              ? `On the move${b.near ? `, ${(Number((b.near as { m: number }).m) / 1000).toFixed(1)} km from ${str((b.near as { name: string }).name)}` : ""}`
+              : b.event === "off"
+                ? "Location turned off"
+                : "Location turned on";
+      return { who: "Phone", what, kind: `sense.${str(b.event)}` };
+    }
+    case "awareness": {
+      if (b.reaction) {
+        const how =
+          {
+            replied: "You replied to",
+            thanks: "You said thanks for",
+            stop: "You said stop to",
+            ignored: "Nobody looked at",
+            opened: "You opened",
+            dismissed: "You dismissed",
+          }[str(b.reaction)] ?? "Reaction to";
+        return { who: "You", what: `${how} the nudge: “${str(b.text)}”`, kind: `nudge.${str(b.reaction)}` };
+      }
+      const what =
+        b.outcome === "nudged"
+          ? `${yours(str(b.event))}: it mattered, so Atlas spoke up`
+          : b.outcome === "silent"
+            ? `${yours(str(b.event))}: Atlas looked and stayed quiet`
+            : b.outcome === "failed"
+              ? `${yours(str(b.event))}: the look didn't finish: ${str(b.why)}`
+              : b.outcome === "later"
+                ? `${yours(str(b.event))}: it can wait for a later look (${str(b.why)})`
+                : b.step === "rules"
+                  ? `${yours(str(b.event))}: set aside by a rule (${str(b.why)})`
+                  : `${yours(str(b.event))}: decided it doesn't matter (${str(b.why)})`;
+      return {
+        who: "Atlas",
+        what: `${what}${typeof b.ms === "number" ? ` · ${(b.ms / 1000).toFixed(2)} s` : ""}`,
+        kind: `awareness.${str(b.outcome)}`,
+      };
+    }
     case "delivery": {
       const where =
         b.channel === "push"
@@ -135,7 +203,19 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
                     ? b.what === "connect"
                       ? `${b.ok === false ? "Tried to connect" : "Connected"} ${str(b.to)} (${str(b.text)})`
                       : `Used ${str(b.text)} on ${str(b.to)}`
-                    : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
+                    : b.channel === "maps"
+                      ? b.what === "geocode"
+                        ? `Looked up “${str(b.text)}” on ${str(b.to)}`
+                        : b.what === "route"
+                          ? `Routed ${str(b.text)} with ${str(b.to)}`
+                          : b.what === "reverse"
+                            ? `Looked up the address of where you are on ${str(b.to)}`
+                            : `Looked for ${str(b.text)} on ${str(b.to)}`
+                      : b.channel === "node"
+                        ? `Used ${str(b.text).replace(/_/g, " ")} on ${str(b.to)}`
+                        : b.channel === "weather"
+                          ? `Looked at ${str(b.text)} on ${str(b.to)}`
+                          : `${str(b.channel)}${b.to ? ` · ${str(b.to)}` : ""}`;
       const what =
         b.ok === false
           ? `${where}, but it didn't work: ${str(b.error)}`
@@ -143,7 +223,7 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
             ? `${where}: ${str(b.note)}`
             : b.answer
               ? `${where}: ${str(b.answer)}`
-              : b.channel === "web" || b.channel === "browser" || b.channel === "vault" || b.channel === "mcp"
+              : ["web", "browser", "vault", "mcp", "maps", "weather", "node"].includes(str(b.channel))
                 ? where
                 : `${where}${b.text ? `: “${str(b.text)}”` : ""}`;
       return { who: b.by === "owner" ? "You" : "Atlas", what, kind: `deliver.${str(b.channel)}` };
@@ -171,19 +251,28 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
                           : `Workspace: ${str(b.workspace)}${b.name ? ` (${str(b.name)})` : ""}`
                         : b.mcp
                           ? `${b.mcp === "added" ? "Added" : "Removed"} the MCP server ${str(b.name)} (${str(b.url)})`
-                          : b.trust
-                            ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
-                            : b.focus
-                              ? b.focus === "on"
-                                ? `Focus until ${new Date(Number(b.until)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${b.about ? `: ${str(b.about)}` : ""}`
-                                : "Ended focus"
-                              : "Changed settings";
+                          : b.node
+                            ? `${str(b.name)}: ${str(b.node)}`
+                            : b.owntracks
+                              ? "Set up OwnTracks, with a new password"
+                              : b.trust
+                                ? `Trust ${str(b.trust)}${b.name ? `: ${str(b.name)}` : ""}`
+                                : b.focus
+                                  ? b.focus === "on"
+                                    ? `Focus until ${new Date(Number(b.until)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${b.about ? `: ${str(b.about)}` : ""}`
+                                    : "Ended focus"
+                                  : "Changed settings";
       return { who: r.actor === "owner" ? "You" : "Atlas", what, kind: "settings.change" };
     }
     default:
       return { who: r.actor, what: r.kind, kind: r.kind };
   }
 }
+
+const minutesText = (ms: number) => {
+  const m = Math.max(1, Math.round(ms / 60_000));
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`;
+};
 
 export function History({ atlas }: { atlas: Atlas }) {
   const s = atlas.state;

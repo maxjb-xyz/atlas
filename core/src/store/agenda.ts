@@ -6,7 +6,22 @@
 import { append } from "./log";
 import { type Json, newId, parse, type Sql } from "./db";
 
-export type AgendaKind = "reminder" | "promise" | "job" | "notify" | "approval" | "automation" | "skills";
+export type AgendaKind =
+  | "reminder"
+  | "promise"
+  | "job"
+  | "notify"
+  | "approval"
+  | "automation"
+  | "skills"
+  /** Something to do when you're near the right kind of place (§10.3), with no time unless it has a deadline. */
+  | "errand"
+  /** A rhythm moment (§10.3): start of day, evening, or a look before leaving for an event. */
+  | "rhythm"
+  /** The situation's refresh (§10.2): the weather and travel time, kept current while they're needed. */
+  | "situation"
+  /** A call to a paired device that was offline (§16.3), run when it's back. */
+  | "device";
 export type AgendaState = "scheduled" | "running" | "done" | "cancelled" | "failed";
 
 export interface AgendaSource {
@@ -55,7 +70,7 @@ export function getItem(sql: Sql, id: string): AgendaItem | null {
   return r ? fromRaw(r) : null;
 }
 
-export function upcoming(sql: Sql, limit = 50): AgendaItem[] {
+export function upcoming(sql: Sql, limit = 100): AgendaItem[] {
   return sql
     .exec<RawItem>(`SELECT * FROM agenda WHERE state IN ('scheduled', 'running') ORDER BY due_at LIMIT ?`, limit)
     .toArray()

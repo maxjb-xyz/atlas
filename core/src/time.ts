@@ -115,6 +115,11 @@ export function shortLocal(date: Date, tz: string): string {
   }).format(date);
 }
 
+/** "2:35 PM": a time of day in the owner's zone. */
+export function clockLocal(date: Date, tz: string): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }).format(date);
+}
+
 /** "Wednesday, October 21, 2026, 4:05 PM": the fresh block's "now". */
 export function longLocal(date: Date, tz: string): string {
   return new Intl.DateTimeFormat("en-US", { timeZone: tz, dateStyle: "full", timeStyle: "short" }).format(date);

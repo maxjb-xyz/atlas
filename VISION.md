@@ -60,7 +60,7 @@ These rules bind as firmly as the architecture does.
 1. **No code rewrites or second-guesses the model's output.** If Atlas behaves wrongly, fix the character, the context, a tool's description, or the tool itself. Never add a filter.
 2. **Safety lives at the exits, not inside the turn.** The exits are wherever data leaves, money moves, other people are touched, or something can't be undone (§12, §14, §15).
 3. **One of everything.** One loop, one log, one clock, one way out. A new mechanism has to replace an existing one.
-4. **The core has a size limit.** The target is under 25k lines of TypeScript for the core runtime, not counting UI and extensions. Going over means something has to go.
+4. **The core stays small enough to check.** Each new mechanism replaces an old one where it can (rule 3), and each milestone's close reports the core runtime's size, not counting UI and extensions, with what grew and why. (Changed 2026-10-23: this replaced a 25k-line cap. Atlas needs room to grow, as Hermes and OpenClaw did; what the cap guarded against, a core no one can hold in their head (§2, cause 3), is watched by one of everything and the size report instead.)
 5. **No behavior flags.** Settings exist for people. Flags that switch between two implementations of the same behavior are not allowed.
 6. **Everything has a screen.** Every concept can be seen, changed and undone in the app. Talking to Atlas is a shortcut, never the only way. After the one-click deploy, nothing needs a terminal.
 7. **Done means it works on the real deployment.** A milestone is done when its smoke test passes on the owner's real deployment: a short list of day-in-the-life checks, run by hand, that covers every surface and failure path the milestone adds. Green tests are required but not enough. The owner keeps living with each milestone while the next one is built, and anything that feels wrong becomes a fix. (Changed 2026-10-21, after M0: a smoke test replaced a week of use, so milestones aren't held up waiting.)
@@ -124,7 +124,7 @@ These are all **agenda items**:
 - long jobs and follow-ups;
 - promises.
 
-Each item is a row with a kind, a next-run time or a trigger, a lease, and a link to where it came from. One scheduler, built on Durable Object alarms, wakes them all.
+Each item is a row with a kind, a next-run time or a trigger, a lease, and a link to where it came from. One scheduler, built on Durable Object alarms, wakes them all. Only what has a time or a trigger is on the clock: a thing to do with no time is a task (§5.1), not an agenda item.
 
 When Atlas says it will do something later, it creates an agenda item in the same step, and the console shows it as a receipt (§21.1). It also shows in Agenda as a promise.
 
@@ -138,7 +138,7 @@ The outbox does three things:
    - approvals (§12);
    - the secrets scrubber;
    - sharing rules (§7);
-   - the public-query check, so private details never go into a web search or a map query. Private means a secret, an email address, a phone number, or a street address Atlas keeps; names, places and topics aren't, on their own (decided 2026-10-22).
+   - the public-query check, so private details never go into a web search. Private means a secret, an email address, a phone number, a street address Atlas keeps, or where you are; names, places and topics aren't, on their own (decided 2026-10-22). Places are the one exception, and only for the maps services (§19.1): a saved address or where you are can go to them for a pin, a route, travel time or what's nearby, and nowhere else. Weather gets only a rough area, about 10 km across (decided 2026-10-22, for M4).
 3. **Writes a delivery receipt** into the log.
 
 ---
@@ -152,6 +152,7 @@ Atlas shouldn't forget. It keeps everything and gets good at finding it.
 1. **The log** (§4.2): permanent and raw.
 2. **Records:** typed, curated knowledge.
    - **Built-in types:** person, place, organization, event, task, goal (a project is a goal), note, preference, commitment, document.
+   - **A task** is anything to do: open, done or dropped, with an optional deadline and an optional **when it fits**: a kind of place ("a pharmacy"), a place ("the office"), a person ("next time I talk to Sam"), or plain words ("when the new season's out"). Errands, to-dos at work and things to try for fun are all tasks (decided 2026-10-23). A deadline puts one reminder on the clock (§4.3); the task itself stays a record. The intake (§10.4) checks open tasks against what comes in, and Agenda lists them under To do.
    - **Collections** are types Atlas creates when it needs them ("assignments", "clients", "workouts", "festival deadlines"). Atlas can add fields later, and you can create and edit collections in the app like a spreadsheet.
    - **Links** connect records: works with, part of, lives at, about.
    - **Every record carries:**
@@ -397,14 +398,15 @@ Skills use the SKILL.md format, so skills from Claude Code, Codex, Hermes and Op
 
 ### 10.1 Senses
 
-Senses are sources that put events into the log:
-- location: OwnTracks first, then the phone app;
+Senses are sources that put events into the log, all through one intake (§10.4):
+- location: OwnTracks first, posting to Atlas over HTTPS with its own token (a web app can't send location in the background), then the phone app (decided 2026-10-22);
 - calendar changes, mail and messages;
 - Home Assistant and home devices, through a home node;
 - the desktop and phone apps: focus, battery, connection;
 - webhooks;
 - faces' conversations;
-- weather and travel.
+- weather and travel;
+- the services you connect: Gmail, Slack, GitHub, Linear and the rest. Each is an adapter (§17) that turns what the service has into the intake's rows; a webhook source and the watch (§13.2) cover a service with no adapter yet.
 
 ### 10.2 The situation
 
@@ -416,24 +418,58 @@ Each person has a small, live situation record that is always in context:
 - weather that matters;
 - device states.
 
-It's rebuilt from the latest events, never guessed.
+It's rebuilt from the latest events in the intake, never guessed.
 
 ### 10.3 Awareness without the cost
 
-Every event goes through three steps:
+Every event goes through the intake's steps (§10.4), which come down to three:
 1. **Rules,** which are cheap and fixed: duplicates, quiet hours, sources you've turned off.
-2. **Decide,** using the `decide` role (Clef by default). Does this event matter to anything open, such as a commitment, an errand, an automation or a person you care about? Which area is it in, and how urgent is it? This takes tens of milliseconds and costs a fraction of a cent.
-3. **Atlas.** Only if step 2 says the event matters does the main brain run, with the event and the records it touches. It decides whether to act, tell you, or stay quiet.
+2. **Decide,** using the `decide` role (Clef by default). Is this worth a thought now, later or not at all? Does it matter to anything open, such as a commitment, a task, an event, a project, an automation or a person you care about? Which area is it in, and how urgent is it? This takes tens of milliseconds and costs a fraction of a cent.
+3. **Atlas.** Only if step 2 says now does the main brain run, with the event and the records it touches; what can wait, it sees in a batch later. It decides whether to act, tell you, or stay quiet. What to make of an event is its own judgment, from the character and the situation, never a script per kind of event (rule 1).
 
-**Rhythm moments** add a few looks a day even without events: start of day, before and after meetings, and evening. Each one is allowed to end in silence.
+**Looks on the clock** are automations, not a second mechanism (decided 2026-10-23): the morning brief and the evening wrap-up are default routines (§13.4) that report only when something is worth saying. What the clock gives the senses is **the moment before each event** (decided 2026-10-23): shortly before something on your calendar starts, or before it's time to leave for one with a place, the intake gets an item for it, with who it's with. It's weighed like any other item. It matters when something open touches it, like a task to tell Doug something when you see him, or when it's time to leave, which follows the trip's travel time as it moves with traffic and where you are.
 
 **Example:**
 1. "Left the gym" arrives from your phone.
-2. Decide matches it to the open errand "get oat milk".
+2. It matches the open task "get oat milk", which fits at a grocery store. A task tied to a place is looked at whenever you leave somewhere or move; one tied to a person, whenever something comes in from or about them, such as an event with them coming up (matched by what Atlas knows of them: their names and addresses); others, when decide says the item fits.
 3. Atlas checks your route home.
 4. It sends: "There's a Publix two minutes off your way home. Still need oat milk?", on your phone or in your ear.
 
-**Reactions are logged** for each kind of nudge: replied, ignored, dismissed, "stop", "thanks". They tune what gets through. Later, Cloudflare's fine-tuning platform could train a personal `decide` model from them.
+The gym is one example, not the design. Others like it, with nothing built for any of them: a meeting moved so it now clashes with another, traffic that means leaving earlier, rain before a walk to your next thing, a pull request waiting on your review, a reply from the landlord after a week.
+
+**Reactions are logged** for each nudge, with what it was about in Atlas's words: replied, ignored, dismissed, "stop", "thanks". They tune what gets through, and "stop" becomes what you don't want to hear about, in your words, which you can see and change. Later, Cloudflare's fine-tuning platform could train a personal `decide` model from them.
+
+### 10.4 One intake
+
+Everything Atlas takes in goes through one intake, whatever its source (decided 2026-10-23). It does two separate jobs:
+- **Knowing.** Every item is read, linked to what it's about (a person, a project, an event) and folded into the records and the situation. An item judged not worth attention still does all of that, so a wrong call costs attention, never information (rule 9).
+- **Attending.** What Atlas thinks about now runs on changes to things that matter, not on raw items: "the dentist moved to Friday, which now clashes with the shoot", not "an email arrived".
+
+**The shared row.** An adapter turns each raw item into a `sense` row of one shape:
+- what happened, in a line;
+- a key, so the same thing arriving twice, or from two sources, counts once;
+- the thread or thing it belongs to: an email thread, an issue, an event;
+- who it's from, and the source's own signals (assigned to you, a review requested, a newsletter), so cheap rules can use them before any model runs;
+- a link back, and the raw content, kept aside and quarantined (§20).
+
+Adapters keep a cursor (Gmail's history id, GitHub's last time), so a restart neither misses nor repeats anything. Each item moves through saved states, received, then weighed, then done or failed, and a restart picks up where it stopped.
+
+**The steps.**
+1. **Collect** (code, cheap and fixed): duplicates, sources you've turned off, and your own actions coming back to you.
+2. **Read.** Structured sources (location, the calendar, devices) are read by code. Words from other people (mail, messages, a webhook's payload) are read by a quarantined helper with the `extract` role (§5.4), which returns typed facts and links, never instructions.
+3. **Weigh** (`decide`): a glance at each item, ending in **now** (urgent, or it matters to something open right now), **later** (worth knowing, but it can wait) or **never** (it changes nothing for you).
+4. **Fold in.** The records, the situation and the later pile change, whatever the outcome.
+5. **Atlas** wakes only for now, and acts, tells you, or stays quiet (§10.3).
+
+**Two speeds.** The glance is cheap and per item. The later pile is looked over in a batch by a run of Atlas's own, with the full picture, on the clock and by the routines that look at the day (§13.4), and the next conversation sees it too ("since you last looked"). A batch costs less than waking for each item, and judges better than a small model deciding each one alone.
+
+**Open loops.** Silence can be news: a reply you're waiting for, a review someone's waiting on you for. An item can open a loop with a time ("no reply from the landlord in 3 days"), and the clock raises it when the time passes, the way an absence trigger does (§13.2).
+
+**Learning both ways.** Reactions to nudges show what was noise (§10.3). "Why didn't you tell me?" shows what was missed: Atlas finds the item, says what it decided and why, and your correction becomes a standing preference. What to always bring up and what never to are lists in your own words; `decide` and Atlas both read them, and you edit them in the app.
+
+**The Senses screen.** Every source with its state (its last item, its last error in the provider's own words), and today's funnel: what came in, what was a duplicate, never, later and now, and what Atlas said. "Show me what you noticed" puts it on the stage.
+
+**Measured.** The share of nudges you thank or reply to, the share you ignore, and the misses you point out. Each milestone from M4 reports them from the owner's real use.
 
 ---
 
@@ -531,13 +567,15 @@ Each area can raise or lower these defaults. The Permissions page (under Atlas i
 
 An automation is: **when** [a trigger happens], **do** [this], **allowed to** [use these powers], **report** [here].
 
+Report is the thread, Inbox, only History, or **the thread when it's worth saying**: then Atlas's step decides whether there's anything to say, and silence is a fine outcome. That kind of report goes out like anything Atlas says on its own (§10.3): it waits for quiet hours, counts against the day's interruption budget (§14), and its reactions are logged like a nudge's.
+
 ### 13.2 Triggers
 
 | Trigger | Examples |
 |---|---|
 | **On request** | A phrase you say or type ("goodnight", "I'm heading out", "focus for 45 minutes"), a button in the app or a home-screen widget, a hotkey, an Apple Shortcut or NFC tag, a Stream Deck key, a webhook URL. It can take inputs such as `$duration` or `$who`. |
 | **Schedule** | "Every weekday at 8", "the last Friday of the month", "an hour before any flight" |
-| **Event** | An email from someone or about something, a calendar change, arriving at or leaving a place, a device changing state, a webhook, a message to a face, another automation finishing |
+| **Event** | An email from someone or about something, a calendar change, arriving at or leaving a place, a device changing state, a webhook, a message to a face, another automation finishing. Event triggers read the intake (§10.4), so a change is noticed once, for awareness and automations alike. |
 | **Watch** | A condition checked on a schedule: a price, a web page, an API, a repo. A cheap check runs first, and `decide` judges whether the change matters before Atlas wakes up. |
 | **Absence** | Something that didn't happen: "no reply from the landlord in 3 days", "no workout logged since Monday" |
 
@@ -557,7 +595,7 @@ Any trigger can have conditions: "only on weekdays", "only when I'm home", "only
 - **Starting paused.** A new automation stays paused until you've seen a test run, unless you made it yourself in the form.
 - **History.** Each run is listed with its result, time and cost. Two failures in a row and Atlas tells you; after several more, it pauses the automation.
 - **Promises are automations.** Anything Atlas says it'll do shows in Agenda as a promise, linked to where it said it. Scheduled runs show there too; the automations themselves live on the Automations page.
-- **Default routines** ship as automations you can edit: a morning brief, an evening wrap-up, a weekly review. They start off; setup offers each one with its time (§22), and you turn on the ones you want.
+- **Default routines** ship as automations you can edit: a morning brief, an evening wrap-up, a weekly review. They are Atlas's looks at the day: the morning brief and the evening wrap-up report when they're worth saying. Every Atlas step in an automation sees the situation, the later pile (§10.4) and what Atlas already told you today, so a look covers what came in overnight and never says the same thing twice. The morning brief starts on, since it stays quiet when there's nothing to say (decided 2026-10-23); the others start off. Setup offers each one with its time (§22).
 - **Templates** can be shared.
 
 ---
@@ -650,6 +688,8 @@ Kinds of node:
 
 The node protocol is public, so anyone can build a node.
 
+**The first node is the desktop app** (decided 2026-10-22, for M4): the Tauri app of §21.10, for a Mac with Apple silicon first. GitHub Actions builds it on a Mac only when a release is published (or by hand), and attaches it to the release. It isn't signed yet, so macOS asks once before opening it.
+
 ---
 
 ## 17. Extensibility
@@ -658,7 +698,7 @@ The node protocol is public, so anyone can build a node.
 |---|---|---|
 | Skills | Know-how and procedures | SKILL.md (Agent Skills) |
 | MCP | Tools and connections | MCP, plus MCP Apps for views on the stage |
-| Extensions | New senses, channels, stage views, model providers and node types | Small, typed TypeScript modules that run sandboxed in Dynamic Workers, so Atlas can write one itself, with your OK |
+| Extensions | New senses (adapters into the intake, §10.4), channels, stage views, model providers and node types | Small, typed TypeScript modules that run sandboxed in Dynamic Workers, so Atlas can write one itself, with your OK |
 | API | Every surface | One public API: a live event stream plus HTTP. Atlas's own app, desktop, voice and command line all use it. Atlas is also an MCP server, so Claude, ChatGPT or an editor can talk to it. |
 | Nodes | Devices | The public node protocol (§16.3) |
 
@@ -725,6 +765,8 @@ Everything installs from the app: browse, preview what it can touch, install, un
 | Email | Email Service for sending, Email Routing for receiving |
 | Brains | AI Gateway |
 | Public webhooks | The Worker itself (OwnTracks, SMS, GitHub, email) |
+| Maps, routes and places | Not Cloudflare: OpenStreetMap's free services by default, with no key or account (decided 2026-10-22): OpenFreeMap for the map, Nominatim for addresses, FOSSGIS's OSRM for routes, Overpass for what's nearby. Each is volunteer-run with fair-use rules, so Atlas asks little of them (sparse events, cached answers). Mapbox's free tier by key, picked in Settings, adds traffic to travel times and better store search. Pins always come from OpenStreetMap or the phone, since Mapbox's free answers can't be kept. Each call leaves through the outbox |
+| Weather | Not Cloudflare: Open-Meteo, which needs no key and is free for non-commercial use, as a personal Atlas is (decided 2026-10-22) |
 
 ### 19.2 Shape (to be validated in M0)
 
@@ -1115,8 +1157,8 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 | M1 | **The companion:** the full loop (budgets, compaction, basic helpers), the log, records and recall, areas, the character, the UI v1 shell (§21: Home with the stage and console, Inbox, Agenda, Automations, Library, History, settings) with the first views, receipts, themes (Graphite and Daylight), and setup steps 1 to 5. | It feels like Atlas in conversation and knows your stuff. |
 | M2 | **Follow-through:** the stage's `show` tool first (§21.6), then the agenda, automations with all five triggers, approvals with earned trust, the outbox and notifications, and the default routines. | Everything Atlas says it'll do actually happens. |
 | M3 | **Hands:** the sandbox, browser, web, Code Mode, skills and learning, the vault, and finding a way. | It finishes unfamiliar tasks. |
-| M4 | **Senses:** nodes (phone, desktop), the situation, decide-then-wake awareness, and location-based errands. | The gym-to-store moment, and others like it. |
-| M5 | **People:** contacts, faces (email, phone, chat), members and shared areas, and digests. | It deals with people for you. |
+| M4 | **Senses:** nodes (phone, desktop), the situation, one intake (§10.4) with decide-then-wake awareness, the later pile and the Senses screen, and tasks that come up when they fit, starting with places. | The gym-to-store moment, and others like it. |
+| M5 | **People:** contacts, faces (email, phone, chat), members and shared areas, and digests; the mail, messages, GitHub and Linear senses, with `extract` and open loops. | It deals with people for you. |
 | M6 | **Delegation:** coding jobs through ACP, Atlas as the middleman, and long research jobs. | It runs your projects while you're away. |
 | M7 | **Launch:** setup polish (steps 6 and 7), moving in, all themes, ambient mode, docs, the deploy button, and a public release. | Someone else can install it and love it. |
 
@@ -1156,6 +1198,7 @@ The owner's list of things Atlas should grow into. None of it is in M0 to M7, bu
 | **An animated avatar** | A humanoid presence that appears on a display when it helps, and points at or works with what's on screen. | The same: views render anywhere, and the voice stream carries timing (ElevenLabs returns alignment) so lip-sync is possible later. |
 | **Debrief** | On a schedule or on request, you talk freely about your day while Atlas mostly listens, then shows what it took away: records, commitments, a journal entry, follow-ups, each one to confirm. | An automation template (§13) plus a voice "listen" mode with backchannels. Extraction (§5.4) already does the rest. |
 | **Cloudflare Sandboxes** | Already in the plan: the workspace (§9.1). | Nothing extra. |
+| **A heartbeat** (to consider, 2026-10-23) | Atlas itself glances at everything every 30 to 60 minutes while the owner is awake, even when nothing came in, and usually stays quiet. It catches what no event announces ("it's 5:40, you haven't left, and your 6:00 is across town"). Today the heartbeat only refreshes the calendar, weather and traffic and looks over the later pile; Atlas's own looks come from events (§10.4) and the routines (§13.4). | It costs a main-brain run per beat, so it needs the cost on the Brains page and a reason the events and routines don't cover. A look on the clock is already one agenda item (the senses' tick), so it would be a step in that tick, not a new mechanism. |
 
 ---
 

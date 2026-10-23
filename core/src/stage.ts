@@ -224,6 +224,53 @@ export const WorkspaceStage = z.object({ kind: z.literal("workspace") });
 /** Atlas's browser, live (§9.1): there's one, so the view only says to show it. */
 export const BrowserStage = z.object({ kind: z.literal("browser") });
 
+const Marker = z.object({
+  name: z.string().max(120),
+  lat: z.number().min(-90).max(90),
+  lon: z.number().min(-180).max(180),
+  here: z.boolean().optional(),
+});
+
+/** A map (§21.6): saved places marked, and a route when there is one. Markers and the route are filled by Atlas, not the model. */
+export const MapStage = z.object({
+  kind: z.literal("map"),
+  title,
+  places: z
+    .array(z.string().min(1).max(120))
+    .max(20)
+    .optional()
+    .describe(
+      "Saved places to mark, by name or id, and 'here' for where the owner is. For a route, use the route tool with show: true instead.",
+    ),
+  markers: z.array(Marker).max(30).optional().describe("Leave out: Atlas fills it from places."),
+  route: z
+    .object({
+      line: z.array(z.tuple([z.number(), z.number()])).max(5_000),
+      s: z.number(),
+      m: z.number(),
+      by: z.enum(["drive", "walk", "bike"]),
+      traffic: z.boolean(),
+      units: z.enum(["us", "metric"]).optional(),
+    })
+    .optional()
+    .describe("Leave out: the route tool fills it."),
+});
+
+/** A saved place (§21.6): its details, what Atlas knows, a map, and the owner's visits. */
+export const PlaceStage = z.object({
+  kind: z.literal("place"),
+  place: z.string().min(1).max(120).describe("The saved place's name or id."),
+});
+
+/** The weather near the owner (§21.6): now, the next hours, and what matters. */
+export const WeatherStage = z.object({ kind: z.literal("weather") });
+
+/** The situation (§10.2, §21.6): where the owner is, what they're doing, what's next and when to leave, weather and devices. */
+export const SituationStage = z.object({ kind: z.literal("situation") });
+
+/** What Atlas noticed (§10.4): today's funnel, each source's state, what's waiting for a look, and the latest decisions. */
+export const SensesStage = z.object({ kind: z.literal("senses") });
+
 export const PageStage = z.object({
   kind: z.literal("page"),
   page: z.string().min(1).max(80).describe("The page's name or id."),
@@ -250,6 +297,11 @@ export const StageView = z.discriminatedUnion("kind", [
   KitStage,
   AppStage,
   McpAppStage,
+  MapStage,
+  PlaceStage,
+  WeatherStage,
+  SituationStage,
+  SensesStage,
 ]);
 export type StageView = z.infer<typeof StageView>;
 export type StageKind = StageView["kind"];
@@ -297,7 +349,7 @@ export interface AutomationView {
   when: import("./automations").Trigger;
   when_text: string;
   steps: Array<{ step: import("./automations").Step; text: string }>;
-  report: "thread" | "inbox" | "silent";
+  report: "thread" | "worth" | "inbox" | "silent";
   /** Whether it can be turned on now: Atlas's need a test run since their last change. */
   can_turn_on: boolean;
   tested_at: number | null;
@@ -402,12 +454,96 @@ export type StagePage =
   | BrowserStagePage
   | FileStagePage
   | WorkspaceStagePage
+  | PlacePage
+  | WeatherPage
+  | SituationPage
+  | SensesPage
   | { kind: "missing"; why: string };
+
+/** A saved place as its view shows it. */
+export interface PlacePage {
+  kind: "place";
+  place: RecordView;
+  pin: { lat: number; lon: number; radius_m: number } | null;
+  /** Arrivals from the log, newest first, with how long each stay was when it ended. */
+  visits: Array<{ at: number; stayed_ms: number | null }>;
+  /** Whether the owner is there now. */
+  here: boolean;
+  credit: string;
+}
+
+/** The weather as its view shows it, in the owner's units. */
+export interface WeatherPage {
+  kind: "weather";
+  weather: import("./weather").Weather | null;
+  units: "us" | "metric";
+  tz: string;
+  matters: string[];
+  error?: string;
+}
+
+/** The situation as its view shows it, and Now on Home reads it (§10.2). */
+export interface SituationPage {
+  kind: "situation";
+  where:
+    | { known: false; why: string }
+    | {
+        known: true;
+        place: { name: string; since: number } | null;
+        /** Away from saved places: how far from home and the nearest place. */
+        away: { home_m: number | null; nearest: { name: string; m: number } | null; left: { name: string; at: number } | null } | null;
+        fix_at: number;
+        motion: string | null;
+        point: { lat: number; lon: number };
+      };
+  doing: { title: string; until: number } | null;
+  focus: { until: number; about: string } | null;
+  next: {
+    title: string;
+    start: number;
+    location: string | null;
+    travel: { s: number; traffic: boolean; leave_by: number; from: "here" | "home"; at: number } | null;
+    travel_error: string | null;
+  } | null;
+  calendar_error: string | null;
+  weather: { line: string; matters: string[]; at: number } | null;
+  devices: Array<{ name: string; state: string; online: boolean }>;
+  /** Open tasks that fit somewhere or with someone (§5.1), with when they fit. */
+  tasks: Array<{ id: string; title: string; fits: string }>;
+  units: "us" | "metric";
+  credit: string;
+}
+
+/** What Atlas noticed, as its view shows it (§10.4). */
+export interface SensesPage {
+  kind: "senses";
+  funnel: { in: number; duplicate: number; never: number; later: number; now: number; failed: number; nudged: number };
+  sources: import("./protocol").SensesView["sources"];
+  later: Array<{ id: string; at: number; source: string; what: string }>;
+  recent: Array<{ id: string; at: number; source: string; what: string; outcome: string | null; why: string | null }>;
+  /** How the last week's nudges landed (§10.4, measured): each nudge's latest reaction, and the misses the owner pointed out. */
+  landed: Landed;
+}
+
+export interface Landed {
+  days: number;
+  nudges: number;
+  thanks: number;
+  replied: number;
+  opened: number;
+  dismissed: number;
+  ignored: number;
+  stop: number;
+  /** Not reacted to yet (under two hours old, or waiting for quiet hours to end). */
+  waiting: number;
+  /** Times the owner asked why Atlas didn't tell them something. */
+  misses: number;
+}
 
 /** The few words a view goes by: on its tab, its receipt and its compact card. */
 export function stageTitle(
   v: StageView,
-  names: { area?: string; person?: string; automation?: string; page?: string; file?: string } = {},
+  names: { area?: string; person?: string; automation?: string; page?: string; file?: string; place?: string } = {},
 ): string {
   switch (v.kind) {
     case "file":
@@ -422,6 +558,16 @@ export function stageTitle(
       return v.title;
     case "browser":
       return "Browser";
+    case "map":
+      return v.title;
+    case "place":
+      return names.place ?? v.place;
+    case "weather":
+      return "Weather";
+    case "situation":
+      return "Situation";
+    case "senses":
+      return "Noticed";
     case "workspace":
       return "Workspace";
     case "area":

@@ -14,7 +14,17 @@ export interface CalendarEvent {
   all_day: boolean;
   location?: string;
   notes?: string;
+  /** Who it's with: the organizer and those invited, as the invite names them (not rooms or other resources). */
+  people?: EventPerson[];
 }
+
+export interface EventPerson {
+  name?: string;
+  email?: string;
+}
+
+/** A person on an event as one line: "Doug Henderson <doug@acme.com>", or whichever of the two the invite has. */
+export const personText = (p: EventPerson): string => (p.name && p.email ? `${p.name} <${p.email}>` : (p.name ?? p.email ?? ""));
 
 export interface CalendarRange {
   start: Date;

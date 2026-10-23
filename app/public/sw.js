@@ -32,10 +32,24 @@ async function openAtlas(url) {
   } else await self.clients.openWindow(url);
 }
 
+/** Tells Atlas how a notification was taken, so nudges it sent on its own learn from it (§10.3). */
+function reacted(tag, how) {
+  if (!tag) return Promise.resolve();
+  return fetch("/api/reaction", {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: tag, how }),
+  }).catch(() => {});
+}
+
+self.addEventListener("notificationclose", (event) => event.waitUntil(reacted(event.notification.tag, "dismissed")));
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
   const url = new URL(data.url || "/", self.location.origin).href;
+  event.waitUntil(reacted(event.notification.tag, "opened"));
   if (event.action === "approve" && data.approval) {
     // Approve without opening Atlas; if that doesn't work, open Inbox so the card is there.
     event.waitUntil(

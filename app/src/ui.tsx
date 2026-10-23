@@ -93,8 +93,9 @@ export function Stage<T extends string>({
                   aria-selected={t.id === tab}
                   className={t.id === tab ? "on" : ""}
                   onClick={() => onTab?.(t.id)}
+                  title={t.label}
                 >
-                  {t.label}
+                  <span className="tab-label">{t.label}</span>
                   {t.badge != null && t.badge !== 0 && <span className="mono">{t.badge}</span>}
                 </button>
               ))}
@@ -287,6 +288,13 @@ export function AsciiDiamond({ rows = 22, level = 0, breathe = true }: { rows?: 
 
 export const clock = (at: number | Date) => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 export const dayName = (at: number | Date) => new Date(at).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+/** A day and a time, once: "7:54 PM" today, "Yesterday, 7:54 PM", "Tue, 7:54 PM". */
+export const dayTime = (at: number | Date) => {
+  const day = shortDay(at);
+  const time = clock(new Date(at));
+  return day === time ? time : `${day}, ${time}`;
+};
+
 export const shortDay = (at: number | Date) => {
   const d = new Date(at);
   const today = new Date();
@@ -322,13 +330,13 @@ export function useNow(ms = 30_000): number {
 
 // --- routing ------------------------------------------------------------------------------
 
-export type Place = "home" | "inbox" | "agenda" | "automations" | "library" | "history" | "settings";
+export type Place = "home" | "inbox" | "agenda" | "automations" | "library" | "history" | "settings" | "pair";
 
 /** The place, and an optional detail ("library/areas"), kept in the address so back and forward work. */
 export function useRoute(): [Place, string, (p: Place, detail?: string) => void] {
   const read = (): [Place, string] => {
     const [p = "home", d = ""] = location.hash.replace(/^#\/?/, "").split("/");
-    const places: Place[] = ["home", "inbox", "agenda", "automations", "library", "history", "settings"];
+    const places: Place[] = ["home", "inbox", "agenda", "automations", "library", "history", "settings", "pair"];
     return [places.includes(p as Place) ? (p as Place) : "home", decodeURIComponent(d)];
   };
   const [route, setRoute] = useState(read);
@@ -341,4 +349,32 @@ export function useRoute(): [Place, string, (p: Place, detail?: string) => void]
     location.hash = `/${p}${detail ? `/${encodeURIComponent(detail)}` : ""}`;
   };
   return [route[0], route[1], go];
+}
+
+// --- QR codes ------------------------------------------------------------------------------
+
+/** A QR code for a link, drawn in the theme's colours on a light square so any camera reads it. */
+export function QrCode({ text, size = 200 }: { text: string; size?: number }) {
+  const [cells, setCells] = useState<boolean[][] | null>(null);
+  useEffect(() => {
+    let gone = false;
+    void import("qrcode-generator").then(({ default: qrcode }) => {
+      const qr = qrcode(0, "L");
+      qr.addData(text);
+      qr.make();
+      const n = qr.getModuleCount();
+      if (!gone) setCells(Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => qr.isDark(r, c))));
+    });
+    return () => {
+      gone = true;
+    };
+  }, [text]);
+  if (!cells) return <div style={{ width: size, height: size }} />;
+  const n = cells.length + 4;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${n} ${n}`} role="img" aria-label="QR code" style={{ borderRadius: 8 }}>
+      <rect width={n} height={n} fill="#ffffff" />
+      <path fill="#191817" d={cells.flatMap((row, r) => row.map((dark, c) => (dark ? `M${c + 2} ${r + 2}h1v1h-1z` : ""))).join("")} />
+    </svg>
+  );
 }

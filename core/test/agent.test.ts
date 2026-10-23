@@ -385,7 +385,7 @@ describe("the thread", () => {
       type: "atlas.secret.set",
       secret: { name: "icloud", value: { username: "owner@icloud.com", app_password: "abcd-efgh-ijkl-mnop" } },
     });
-    await s.next("atlas.view");
+    await s.next("atlas.view", (m) => m.view.secrets.icloud != null);
     s.send({ type: "atlas.say", text: "what's on today?", client_id: "c9" });
     const refused = await s.next("atlas.view", (m) => Boolean(m.view.secrets.icloud?.refused));
     const r = refused.view.secrets.icloud!.refused!;
@@ -475,7 +475,7 @@ describe("the thread", () => {
     brains([]);
     const s = await connect();
     s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: "sk_eleven_secret_value" } });
-    const view = await s.next("atlas.view");
+    const view = await s.next("atlas.view", (m) => m.view.secrets.elevenlabs_api_key);
     expect(view.view.secrets.elevenlabs_api_key).toBe(true);
     expect(JSON.stringify(view)).not.toContain("sk_eleven_secret_value");
     s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: null } });
@@ -508,7 +508,7 @@ describe("setup", () => {
     s.send({ type: "atlas.voices.list" });
     expect((await s.next("atlas.voices")).error).toContain("Add an ElevenLabs API key");
     s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: "sk_eleven_test_key" } });
-    await s.next("atlas.view");
+    await s.next("atlas.view", (m) => m.view.secrets.elevenlabs_api_key);
     s.send({ type: "atlas.voices.list" });
     expect((await s.next("atlas.voices", (m) => m.voices.length > 0)).voices).toEqual([
       { id: "v1", name: "George", preview_url: "https://x/p.mp3", description: "british" },
@@ -523,7 +523,8 @@ describe("setup", () => {
     });
     s.send({ type: "atlas.setup.people", people: [{ name: "Dana", why: "producer" }] });
     s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: null } });
-    await s.next("atlas.view");
+    // The view from this change, not one an earlier step left unread: that one can come before the people are saved.
+    await s.next("atlas.view", (m) => !m.view.secrets.elevenlabs_api_key);
     const people = await runInDurableObject(owner(), (_i: PersonAgent, state) =>
       state.storage.sql.exec<{ name: string }>(`SELECT name FROM records WHERE type = 'person'`).toArray(),
     );
@@ -577,7 +578,7 @@ describe("voice", () => {
     // A long stored secret used to hold back every word until the turn ended.
     const s = await connect();
     s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: `sk_${"x".repeat(180)}` } });
-    await s.next("atlas.view");
+    await s.next("atlas.view", (m) => m.view.secrets.elevenlabs_api_key);
     const said = await runInDurableObject(owner(), async (agent: PersonAgent) => {
       const spoken = await agent.onTurn("am I free", {
         connection: { id: "voice-2" } as never,

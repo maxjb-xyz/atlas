@@ -67,7 +67,7 @@ export interface CalendarEventView {
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add";
+  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "node";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -154,6 +154,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
       z.object({ name: z.literal("tavily_api_key"), value: z.string().min(8).max(200).nullable() }),
       z.object({ name: z.literal("brave_api_key"), value: z.string().min(8).max(200).nullable() }),
       z.object({ name: z.literal("exa_api_key"), value: z.string().min(8).max(200).nullable() }),
+      z.object({ name: z.literal("mapbox_token"), value: z.string().min(20).max(400).nullable() }),
       z.object({
         name: z.literal("icloud"),
         value: z.object({ username: z.string().min(3).max(200), app_password: z.string().min(4).max(64) }).nullable(),
@@ -230,6 +231,21 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.push.remove"), device: z.string().min(1).max(64) }),
   /** Focus for a while (§14), or end it with 0 minutes. */
   z.object({ type: z.literal("atlas.focus"), minutes: z.number().int().min(0).max(720), about: z.string().max(80).optional() }),
+  /** The pairing a code names (§16.3), so the owner sees what's asking before saying yes. */
+  z.object({ type: z.literal("atlas.node.pairing"), code: z.string().min(4).max(20) }),
+  /** The owner's yes or no to pairing a device. */
+  z.object({ type: z.literal("atlas.node.pair"), code: z.string().min(4).max(20), yes: z.boolean() }),
+  /** A device's capability turned on or off. */
+  z.object({ type: z.literal("atlas.node.allow"), id: z.string().max(64), capability: z.string().max(40), on: z.boolean() }),
+  /** Unpairs a device at once. */
+  z.object({ type: z.literal("atlas.node.remove"), id: z.string().max(64) }),
+  /** Agenda's Done or Drop on a task (§5.1). */
+  z.object({ type: z.literal("atlas.task.done"), id: z.string().max(64), done: z.boolean() }),
+  /** Settings → Devices → Set up OwnTracks: makes OwnTracks' own user and password (replacing any before) and its setup link. */
+  z.object({ type: z.literal("atlas.location.setup") }),
+  /** Settings → Connections → Senses: a webhook source with its own address and key, or removing one. */
+  z.object({ type: z.literal("atlas.sense.hook.add"), name: z.string().min(1).max(60) }),
+  z.object({ type: z.literal("atlas.sense.hook.remove"), id: z.string().max(64) }),
   /** "Sign in with ChatGPT": start, then paste the address the browser landed on. */
   z.object({ type: z.literal("atlas.chatgpt.start") }),
   z.object({ type: z.literal("atlas.chatgpt.finish"), url: z.string().min(1).max(8000) }),
@@ -365,7 +381,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
-    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push", "webhook", "search"]),
+    what: z.enum(["calendar", "brain", "voice", "character", "sample", "push", "webhook", "search", "maps"]),
     /** For "push": the device to send the test notification to. */
     device: z.string().max(64).optional(),
     /** For "webhook": which one to call. */
@@ -435,6 +451,7 @@ export interface SettingsView {
     tavily_api_key: boolean;
     brave_api_key: boolean;
     exa_api_key: boolean;
+    mapbox_token: boolean;
     /**
      * `refused` says when and why iCloud last refused the sign-in, how many times in a row, and when Atlas tries
      * again by itself; `note` says all that in a sentence. Meanwhile Atlas answers from its copy of the calendar.
@@ -468,6 +485,38 @@ export interface SettingsView {
   /** Focus in force, if any (§14). */
   focus: { until: number; about: string } | null;
   setup: { done: string[]; skipped: string[]; finished: boolean };
+  /** Location (Settings → Devices, §10.1): whether OwnTracks is set up, the last fix and place, and the last refused post. */
+  location: LocationView;
+  /** Paired devices (Settings → Devices, §16.3). */
+  nodes: import("./nodes").NodeView[];
+  /** The intake's sources (Settings → Connections → Senses, §10.4): webhook sources, and each source's state. */
+  senses: SensesView;
+  /** Open tasks (§5.1), for Agenda's To do. */
+  tasks: import("./tasks").TaskView[];
+}
+
+export interface SensesView {
+  hooks: Array<{ id: string; name: string; made_at: number; last_at: number | null; refused_at: number | null }>;
+  /** Each source by name: when it last sent something, and when it last worked or failed, with the provider's words. */
+  sources: Array<{
+    source: string;
+    last: { at: number; what: string } | null;
+    ok_at: number | null;
+    error: string | null;
+    error_at: number | null;
+  }>;
+}
+
+export interface LocationView {
+  set_up: boolean;
+  made_at: number | null;
+  fix: { at: number; acc: number; batt?: number; charging?: boolean; conn?: string } | null;
+  place: { name: string; since: number } | null;
+  /** The nearest saved place, when not at one. */
+  near: { name: string; m: number } | null;
+  refused: { at: number; n: number } | null;
+  /** Saved places with a pin, which the phone has as regions. */
+  pins: number;
 }
 
 export type ChatGPTView =
@@ -535,6 +584,20 @@ export type ServerMessage =
   /** Helpers' jobs: running ones, and ones that ended in the last hour (§21.4). */
   | { type: "atlas.jobs"; jobs: JobView[] }
   | { type: "atlas.view"; view: SettingsView }
+  /** The situation changed (a sense event, a refresh): views showing it, and Now, ask again. */
+  | { type: "atlas.situation" }
+  /** What a pairing code names, or null when it's wrong or ran out. */
+  | {
+      type: "atlas.node.pairing";
+      code: string;
+      pairing: { code: string; name: string; kind: string; platform?: string; expires: number } | null;
+    }
+  /** The answer to Pair: the device's name, or null when it didn't pair. */
+  | { type: "atlas.node.paired"; code: string; name: string | null }
+  /** OwnTracks' setup, shown once: where it posts, its user and password, and the link that fills them in. */
+  | { type: "atlas.location.setup"; url: string; user: string; password: string; link: string }
+  /** A new webhook source's address, with its key in it, shown once. */
+  | { type: "atlas.sense.hook"; id: string; name: string; url: string }
   | { type: "atlas.test.result"; what: string; ref?: string; ok: boolean; message: string; detail?: unknown }
   | { type: "atlas.error"; message: string }
   /** This socket's sign-in was ended; the app goes back to signing in. */

@@ -95,6 +95,30 @@ export const Settings = z.object({
       budget: z.number().int().min(0).max(100).default(10),
     })
     .default({ push: true, quiet: { on: false, from: "22:00", to: "07:00" }, budget: 10 }),
+  /** Location (§10.1): whether Atlas takes in what the phone sends. Off drops it, and Atlas says it doesn't know where you are. */
+  location: z.object({ on: z.boolean().default(true) }).default({ on: true }),
+  /** Maps (§19.1): OpenStreetMap's free services, or Mapbox by key (its token is kept with the secrets). */
+  maps: z.object({ provider: z.enum(["osm", "mapbox"]).default("osm") }).default({ provider: "osm" }),
+  /**
+   * Speaking up (§10.3): whether Atlas may tell the owner things on its own.
+   * `noticing` covers whatever its senses notice (a move, a change on the
+   * calendar, the weather, traffic, a device, a webhook); `leave` the look
+   * before an event with a place. `quiet_about` is what the owner doesn't
+   * want to hear about and `tell_about` what they always do, in their
+   * words: Atlas and `decide` both see them, and the owner edits them in
+   * the app. The daily looks are automations (§13.4), with their own times.
+   */
+  speaking: z
+    .object({
+      noticing: z.boolean().default(true),
+      leave: z.boolean().default(true),
+      quiet_about: z.array(z.string().min(1).max(120)).max(30).default([]),
+      /** What the owner always wants to hear about, in their words (from "why didn't you tell me?"). */
+      tell_about: z.array(z.string().min(1).max(120)).max(30).default([]),
+    })
+    .default({ noticing: true, leave: true, quiet_about: [], tell_about: [] }),
+  /** How Atlas says temperatures, speeds and distances. "auto" follows the time zone: US zones get °F and miles. */
+  units: z.enum(["auto", "us", "metric"]).default("auto"),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -115,6 +139,10 @@ export const SettingsPatch = z.object({
   calendar: f.calendar.unwrap().optional(),
   notifications: f.notifications.unwrap().optional(),
   web: f.web.unwrap().optional(),
+  location: f.location.unwrap().optional(),
+  maps: f.maps.unwrap().optional(),
+  units: f.units.unwrap().optional(),
+  speaking: f.speaking.unwrap().optional(),
 } satisfies { [K in keyof typeof f]: z.ZodType });
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
@@ -163,7 +191,13 @@ export type SecretName =
   /** The owner's webhooks: their addresses are credentials. */
   | "webhooks"
   /** The vault (§15): logins, cards and keys, by name, tied to sites. */
-  | "vault";
+  | "vault"
+  /** OwnTracks' own user and password (§10.1), for its posts to the Worker and nothing else. */
+  | "owntracks"
+  /** A Mapbox token, when the owner picks Mapbox for maps (§19.1). */
+  | "mapbox_token"
+  /** Each webhook source's key (§10.4), by its id. */
+  | "sense_hooks";
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];
@@ -192,6 +226,8 @@ export function secretValues(sql: Sql): string[] {
     ["chatgpt_tokens", ["refresh_token"]],
     ["chatgpt_tokens", ["id_token"]],
     ["push_vapid", ["private_jwk", "d"]],
+    ["owntracks", ["password"]],
+    ["mapbox_token", []],
   ];
   const hooks = getSecret<Array<{ url?: unknown }>>(sql, "webhooks") ?? [];
   const out: string[] = [];

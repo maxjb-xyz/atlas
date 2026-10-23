@@ -89,6 +89,15 @@ export interface State {
   mcpServers: import("../../core/src/protocol").McpServerView[] | null;
   /** The page Keep just made, so the view can say where it went. */
   kept: { id: string; name: string } | null;
+  /** Bumped when the situation changes, so Now and the situation, weather and place views ask again. */
+  situationVersion: number;
+  /** OwnTracks' setup, shown once in Settings → Devices. */
+  ownTracks: { url: string; user: string; password: string; link: string } | null;
+  /** A webhook source just added: its address with its key, shown once. */
+  senseHook: { id: string; name: string; url: string } | null;
+  /** Pairing codes looked up (null: not waiting), and the answer to Pair (the device's name, or null), by code. */
+  pairing: Record<string, { name: string; kind: string; platform?: string; expires: number } | null>;
+  paired: Record<string, string | null>;
 }
 
 const initial: State = {
@@ -122,6 +131,11 @@ const initial: State = {
   skills: null,
   mcpServers: null,
   kept: null,
+  situationVersion: 0,
+  ownTracks: null,
+  senseHook: null,
+  pairing: {},
+  paired: {},
 };
 
 type Action =
@@ -278,6 +292,16 @@ function reduce(s: State, a: Action): State {
     }
     case "atlas.page.kept":
       return { ...s, kept: { id: m.id, name: m.name } };
+    case "atlas.node.pairing":
+      return { ...s, pairing: { ...s.pairing, [m.code]: m.pairing } };
+    case "atlas.node.paired":
+      return { ...s, paired: { ...s.paired, [m.code]: m.name } };
+    case "atlas.situation":
+      return { ...s, situationVersion: s.situationVersion + 1 };
+    case "atlas.location.setup":
+      return { ...s, ownTracks: { url: m.url, user: m.user, password: m.password, link: m.link } };
+    case "atlas.sense.hook":
+      return { ...s, senseHook: { id: m.id, name: m.name, url: m.url } };
   }
   return s;
 }

@@ -236,6 +236,7 @@ export function Switch({ on, onChange, disabled }: { on: boolean; onChange: (on:
 
 const REPORT: Record<AutomationView["report"], [string, string]> = {
   thread: ["Thread", "Says it to you, and notifies you if Atlas isn't open"],
+  worth: ["Thread, when it's worth saying", "Says it only when there's something worth saying, and waits for quiet hours"],
   inbox: ["Inbox", "Waits in Inbox for you to look over"],
   silent: ["History", "Only in History"],
 };
@@ -792,10 +793,11 @@ function AutomationForm({
         <span className="faint small">Say and webhook steps run as written, with no model. An Atlas step uses judgment.</span>
       </div>
 
-      <label className="field" style={{ width: 300 }}>
+      <label className="field" style={{ width: 420 }}>
         <span>Report</span>
         <select value={f.report} onChange={(e) => setF({ ...f, report: e.target.value as AutomationInput["report"] })}>
           <option value="thread">In the thread, and a notification if Atlas isn't open</option>
+          <option value="worth">In the thread, only when it's worth saying</option>
           <option value="inbox">In Inbox</option>
           <option value="silent">Only in History</option>
         </select>

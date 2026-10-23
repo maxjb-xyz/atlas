@@ -74,7 +74,8 @@ export const Step = z.discriminatedUnion("kind", [
 ]);
 export type Step = z.infer<typeof Step>;
 
-export const Report = z.enum(["thread", "inbox", "silent"]);
+/** Where what it says goes. `worth`: the thread, only when Atlas judges it worth saying, as a nudge (§13.1). */
+export const Report = z.enum(["thread", "worth", "inbox", "silent"]);
 export type Report = z.infer<typeof Report>;
 
 /** What the model and the form fill in. */
@@ -83,7 +84,9 @@ export const AutomationInput = z.object({
   about: z.string().max(300).default(""),
   when: Trigger,
   do: z.array(Step).min(1).max(12),
-  report: Report.default("thread").describe("Where what it says goes: the thread, Inbox, or nowhere but History."),
+  report: Report.default("thread").describe(
+    "Where what it says goes: the thread; worth, the thread only when there's something worth saying (for looks at the day that may stay quiet); Inbox; or nowhere but History.",
+  ),
 });
 export type AutomationInput = z.infer<typeof AutomationInput>;
 
@@ -191,12 +194,19 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: Maker, id?:
   const now = Date.now();
   const atlas = by === "atlas";
   // The default routines start off: setup offers them, and the owner turns on the ones they want (§13.4, §22).
-  const state = atlas ? "paused" : (old?.state ?? (by === "default" ? "paused" : "on"));
+  // Moving a schedule (its time or days) doesn't change what it does, so it keeps its state, test and grants.
+  const moved =
+    !!old &&
+    old.when.kind === "schedule" &&
+    input.when.kind === "schedule" &&
+    JSON.stringify(old.do) === JSON.stringify(input.do) &&
+    old.report === input.report;
+  const state = moved ? old.state : atlas ? "paused" : (old?.state ?? (by === "default" ? "paused" : "on"));
   // What it may call without asking was granted for the steps the owner saw; a change takes it back until they turn it on again.
-  const allowed = !atlas && state === "on" ? webhookNames(input) : [];
+  const allowed = moved ? old.allowed : !atlas && state === "on" ? webhookNames(input) : [];
   if (old) {
     sql.exec(
-      `UPDATE automations SET name = ?, about = ?, trigger = ?, steps = ?, report = ?, state = ?, allowed = ?, changed_by = ?, updated_at = ?, tested_at = NULL, fails = 0, paused_why = NULL, memo = ? WHERE id = ?`,
+      `UPDATE automations SET name = ?, about = ?, trigger = ?, steps = ?, report = ?, state = ?, allowed = ?, changed_by = ?, updated_at = ?, tested_at = ?, fails = 0, paused_why = ?, memo = ? WHERE id = ?`,
       input.name,
       input.about,
       JSON.stringify(input.when),
@@ -204,8 +214,11 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: Maker, id?:
       input.report,
       state,
       JSON.stringify(allowed),
-      atlas ? "atlas" : "owner",
+      // A move isn't a change to what it does, so who last changed that stays as it was.
+      moved ? old.changed_by : atlas ? "atlas" : "owner",
       now,
+      moved ? old.tested_at : null,
+      moved ? old.paused_why : null,
       // A new trigger starts looking afresh.
       JSON.stringify(JSON.stringify(old.when) === JSON.stringify(input.when) ? old.memo : {}),
       old.id,
@@ -297,16 +310,11 @@ const webhookNames = (a: Pick<AutomationInput, "do">) => [
 // --- when it runs --------------------------------------------------------------------------
 
 /** Whether an automation's trigger runs on the clock (and so has an agenda item). */
-export const onClock = (t: Trigger) =>
-  t.kind === "schedule" || t.kind === "watch" || t.kind === "absence" || (t.kind === "event" && t.on === "calendar");
-
-/** How often a calendar trigger reads the calendar for changes. Each read is at most one sign-in, and Atlas keeps a copy. */
-export const CALENDAR_EVERY_MS = 30 * 60_000;
+export const onClock = (t: Trigger) => t.kind === "schedule" || t.kind === "watch" || t.kind === "absence";
 
 /** The next time a clock trigger fires after `from`, in the owner's time zone, or null for triggers that don't run on the clock. */
 export function nextRun(t: Trigger, from: Date, tz: string): Date | null {
   if (t.kind === "watch") return new Date(from.getTime() + t.every_hours * 3600_000);
-  if (t.kind === "event") return t.on === "calendar" ? new Date(from.getTime() + CALENDAR_EVERY_MS) : null;
   if (t.kind !== "schedule" && t.kind !== "absence") return null;
   const days = t.kind === "schedule" ? t.days : [];
   const [h, m] = t.at.split(":").map(Number) as [number, number];

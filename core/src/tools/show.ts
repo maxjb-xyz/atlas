@@ -2,6 +2,7 @@
 // that view's contract. The view is saved on this call's receipt in the log,
 // so the console's receipt opens it and a refresh still has it.
 
+import { findPlace } from "../location";
 import { z } from "zod";
 import { areaPage, personPage } from "../agent/views";
 import { type StageView, StageView as StageViewSchema, stageTitle } from "../stage";
@@ -12,6 +13,7 @@ import { getApp } from "../mcp";
 import { getArea, listAreas } from "../store/areas";
 import { findRecords, getRecord, recordsNamed } from "../store/records";
 import { defineTool, fail, type ToolResult } from "./types";
+import { here, pinOf } from "../location";
 
 export const show = defineTool({
   name: "show",
@@ -19,10 +21,12 @@ export const show = defineTool({
   description: [
     "Put a view on the stage of the owner's app, beside your reply.",
     "Use it when the owner asks to see something, when they ask what's going on with one of their areas or who someone is, and when the answer is several items that read better as a list or a table than as sentences.",
-    "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `automation` (one of the owner's automations, as When → Do → Report with its runs), `page` (one of the owner's kept pages), `list` and `table` (things you've put together in this turn), `draft` (words for the owner to copy and send themselves, such as an email or a post), `plan` (steps toward something, each with whether it's to do, under way, done or waiting) `research` (an answer from the web, with the sources you searched or read), `browser` (your browser, live), `file` (one of the files you made, to look at and download), `document` (a longer write-up to read, in Markdown), `code` (code, with its language), `chart` (bars or lines of numbers you have), `compare` (options side by side on what matters, with your pick), `kit` (a layout of parts: text, headline stats, a list, a table, a chart, a compare) and `app` (a small interactive HTML app, sandboxed with no network, for things like a checklist or a calculator).",
+    "Show a view for what this turn is about; don't put back a view from an earlier turn that nobody asked for again.",
+    "Asked about the weather, put up `weather`; about where they are or what's next, `situation`; about what you've noticed, `senses` (never a list you put together yourself): the stage shows it while you answer in a line.",
+    "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `automation` (one of the owner's automations, as When → Do → Report with its runs), `page` (one of the owner's kept pages), `list` and `table` (things you've put together in this turn), `draft` (words for the owner to copy and send themselves, such as an email or a post), `plan` (steps toward something, each with whether it's to do, under way, done or waiting) `research` (an answer from the web, with the sources you searched or read), `browser` (your browser, live), `file` (one of the files you made, to look at and download), `document` (a longer write-up to read, in Markdown), `code` (code, with its language), `chart` (bars or lines of numbers you have), `compare` (options side by side on what matters, with your pick), `kit` (a layout of parts: text, headline stats, a list, a table, a chart, a compare), `app` (a small interactive HTML app, sandboxed with no network, for things like a checklist or a calculator), `map` (saved places marked on a map; for a route, use route with show: true), `place` (a saved place: its details, a map and the owner's visits), `weather` (the weather near the owner, hour by hour), `situation` (where the owner is, what's next and when to leave, weather and devices) and `senses` (what your senses took in today and what you decided: the funnel, each source's state, what's waiting for a look).",
     "A view isn't a file: when the owner asks for a spreadsheet or a document to keep or download, make a file (file_save, or the workspace for .xlsx, .docx or PDF), which opens on the stage by itself.",
     "Fill a list, table or research view only with what you've looked up or what's in the conversation, never with guesses, and say where it came from in `source` (for research, in its `sources`).",
-    "The owner sees the view as you answer, so keep your reply to what matters most and don't read the view out. In a voice conversation, say a sentence or two and let the stage show the rest.",
+    "The owner sees the view as you answer, so don't read the view out, but always say at least a line: what matters most in it. In a voice conversation, say a sentence or two and let the stage show the rest.",
   ].join(" "),
   input: z.object({ view: StageViewSchema }),
   async run({ view }, ctx) {
@@ -39,7 +43,11 @@ export const show = defineTool({
 });
 
 type Resolved =
-  | { view: StageView; names: { area?: string; person?: string; automation?: string; page?: string; file?: string }; what?: unknown }
+  | {
+      view: StageView;
+      names: { area?: string; person?: string; automation?: string; page?: string; file?: string; place?: string };
+      what?: unknown;
+    }
   | { error: string };
 
 /** Turns a name into the id the view keeps, and checks a table's rows fit its columns. Pages use it for the views they keep. */
@@ -148,8 +156,44 @@ export function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Re
       if (!a) return { error: `There's no automation called "${view.automation}".` };
       return { view: { kind: "automation", automation: a.id }, names: { automation: a.name } };
     }
+    case "weather":
+    case "situation":
+    case "senses":
+      return { view, names: {} };
+    case "place": {
+      const r = savedPlaceOf(sql, view.place);
+      if (!r) return { error: `There's no saved place called "${view.place}". Save it with remember, and pin it with place_pin.` };
+      return { view: { kind: "place", place: r.id }, names: { place: r.name } };
+    }
+    case "map": {
+      // A route's map comes filled from the route tool; one from show marks saved places.
+      if (view.markers?.length) return { view, names: {} };
+      const markers: Array<{ name: string; lat: number; lon: number; here?: boolean }> = [];
+      for (const name of view.places ?? []) {
+        if (/^(here|me|my location)$/i.test(name.trim())) {
+          const f = here(sql).fix;
+          if (!f) return { error: "Atlas doesn't know where the owner is (no location yet, or it's off), so 'here' can't be marked." };
+          markers.push({ name: "You", lat: f.lat, lon: f.lon, here: true });
+          continue;
+        }
+        const r = savedPlaceOf(sql, name);
+        const pin = r ? pinOf(r) : null;
+        if (!pin) {
+          return {
+            error: r
+              ? `${r.name} isn't pinned on the map yet. Pin it with place_pin (from its address), then show the map.`
+              : `There's no saved place called "${name}". To show an address, pin it as a place first, or use route with show: true.`,
+          };
+        }
+        markers.push({ name: pin.name, lat: pin.lat, lon: pin.lon });
+      }
+      if (!markers.length) return { error: "Give the map at least one place to mark." };
+      return { view: { ...view, markers }, names: {} };
+    }
   }
 }
+
+const savedPlaceOf = (sql: Parameters<typeof getArea>[0], ref: string) => findPlace(sql, ref);
 
 /** What the model learns from showing an area, so it can talk about it without looking again. */
 function areaSummary(page: Extract<ReturnType<typeof areaPage>, { kind: "area" }>) {

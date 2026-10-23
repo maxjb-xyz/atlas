@@ -10,7 +10,8 @@ import { deviceId, type PushState, pushState, subscribe, unsubscribe } from "./n
 import { addPasskey, deviceName, passkeysSupported } from "./passkey";
 import { Composer } from "./Shell";
 import { useLook } from "./theme";
-import { Icon, Sheet, shortDay, Stage } from "./ui";
+import { clock, dayTime, Icon, QrCode, Sheet, shortDay, Stage } from "./ui";
+import { MAPS, type MapsProvider } from "../../core/src/maps";
 import { Markdown } from "./Markdown";
 import { PROVIDERS, type SearchProvider } from "../../core/src/web";
 import { FIELDS, type VaultKind } from "../../core/src/vault-fields";
@@ -97,7 +98,7 @@ export function SettingsPage({
       label="Settings"
       tabs={[{ id: section, label }]}
       tab={section}
-      meta="Atlas · M3"
+      meta="Atlas · M4"
       dock={
         <div className="dock slim">
           {dirty && (
@@ -520,6 +521,9 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
       <Row label="Web search">
         <WebSearch atlas={atlas} draft={draft} edit={edit} view={view} />
       </Row>
+      <Row label="Maps and weather">
+        <Maps atlas={atlas} draft={draft} edit={edit} view={view} />
+      </Row>
       <Row label="Webhooks">
         <State
           on={view.webhooks.length > 0}
@@ -527,6 +531,9 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
           what="Lights, scenes, anything with a web address. Atlas asks before calling one."
         />
         <Webhooks atlas={atlas} view={view} />
+      </Row>
+      <Row label="Senses">
+        <Senses atlas={atlas} view={view} />
       </Row>
       <Row label="MCP servers">
         <McpServers atlas={atlas} />
@@ -560,7 +567,9 @@ function WebSearch({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settings
           ))}
         </select>
       </label>
-      <p className="muted small">{p.about} Private details (secrets, emails, phone numbers, saved addresses) never go into a search.</p>
+      <p className="muted small">
+        {p.about} Private details (secrets, emails, phone numbers, saved addresses, where you are) never go into a search.
+      </p>
       {p.key && (
         <SecretField
           label={`${p.name} key`}
@@ -1361,6 +1370,9 @@ function Notifications({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
         </label>
         <p className="muted small">With Atlas open in front of you, or in a voice call, messages just arrive there.</p>
       </Row>
+      <Row label="Speaking up">
+        <Speaking draft={draft} edit={edit} />
+      </Row>
       <Row label="Quiet hours">
         <label className="check">
           <input
@@ -1478,7 +1490,13 @@ function Devices({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
   const [removing, setRemoving] = useState<string | null>(null);
   return (
     <>
-      <Head title="Devices" sub="Passkeys that can sign in to Atlas. Each one only works here." />
+      <Head title="Devices" sub="Where you are, from your phone, and the passkeys that sign in to Atlas." />
+      <Row label="Location">
+        <Location atlas={atlas} view={view} />
+      </Row>
+      <Row label="Paired devices">
+        <PairedDevices atlas={atlas} view={view} />
+      </Row>
       <Row label="Passkeys">
         <div className="rows">
           {view.passkeys.map((p) => (
@@ -1518,6 +1536,518 @@ function Devices({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
         <AddPasskey />
         <p className="muted small">Lost every passkey? Your setup code still signs you in.</p>
       </Row>
+    </>
+  );
+}
+
+/**
+ * Paired devices (§16.3): each one online or not, its capabilities with a
+ * switch (sensitive ones start off), and Remove, which unpairs it at once.
+ * Pairing starts on the device, which shows a QR code and a short code.
+ */
+function PairedDevices({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const [code, setCode] = useState("");
+  const [removing, setRemoving] = useState<string | null>(null);
+  return (
+    <>
+      {view.nodes.map((n) => (
+        <div key={n.id} className="device-card">
+          <div className="row" style={{ gap: 10 }}>
+            <span className={`tag ${n.online ? "ok" : ""}`}>{n.online ? "● Online" : "Offline"}</span>
+            <span style={{ fontWeight: 500 }}>{n.name}</span>
+            <span className="muted small">
+              {n.platform ?? n.kind}
+              {!n.online && n.last_seen ? ` · last seen ${shortDay(n.last_seen)}` : ""}
+            </span>
+            <span className="grow" />
+            {removing === n.id ? (
+              <span className="row" style={{ gap: 8 }}>
+                <span className="small">Unpair it?</span>
+                <button
+                  className="link err"
+                  onClick={() => {
+                    atlas.send({ type: "atlas.node.remove", id: n.id });
+                    setRemoving(null);
+                  }}
+                >
+                  Remove
+                </button>
+                <button className="link" onClick={() => setRemoving(null)}>
+                  Keep
+                </button>
+              </span>
+            ) : (
+              <button className="link" onClick={() => setRemoving(n.id)}>
+                Remove
+              </button>
+            )}
+          </div>
+          {n.capabilities.length ? (
+            <div className="rows" style={{ marginTop: 6 }}>
+              {n.capabilities.map((c) => (
+                <label className="r check" key={c.name} style={{ alignItems: "flex-start" }}>
+                  <input
+                    type="checkbox"
+                    checked={c.on}
+                    onChange={(e) => atlas.send({ type: "atlas.node.allow", id: n.id, capability: c.name, on: e.target.checked })}
+                  />
+                  <span className="grow">
+                    <span style={{ fontWeight: 500 }}>{c.name.replace(/_/g, " ")}</span>
+                    {c.sensitive && (
+                      <span className="tag ac" style={{ marginLeft: 8 }}>
+                        Sensitive
+                      </span>
+                    )}
+                    {c.acts && (
+                      <span className="tag" style={{ marginLeft: 8 }}>
+                        Asks first
+                      </span>
+                    )}
+                    <span className="muted small" style={{ display: "block" }}>
+                      {c.description}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="muted small">It says what it can do when it first connects.</p>
+          )}
+        </div>
+      ))}
+      {!view.nodes.length && (
+        <p className="muted small">
+          No devices yet. Install the Atlas desktop app on your Mac (from the repo's releases), and it shows a QR code to scan with your
+          phone, or a code to type here.
+        </p>
+      )}
+      <div className="row">
+        <input
+          value={code}
+          placeholder="Code from the device, like K7Q2-M9XA"
+          onChange={(e) => setCode(e.target.value)}
+          style={{ maxWidth: 260 }}
+        />
+        <a
+          className="btn"
+          href={`#/pair/${encodeURIComponent(code.trim())}`}
+          aria-disabled={!code.trim()}
+          onClick={(e) => !code.trim() && e.preventDefault()}
+        >
+          Pair
+        </a>
+      </div>
+    </>
+  );
+}
+
+/** Pairing a device (§16.3): what's asking, and a yes or no. The device shows the code; this is where it lands when scanned. */
+export function Pair({ atlas, code }: { atlas: Atlas; code: string }) {
+  const s = atlas.state;
+  const [said, setSaid] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (atlas.voice.connected && code) atlas.send({ type: "atlas.node.pairing", code });
+  }, [code, atlas.voice.connected]);
+  const asked = code in s.pairing ? { pairing: s.pairing[code] ?? null } : null;
+  const done = said == null ? null : { yes: said, name: code in s.paired ? s.paired[code]! : null };
+  const p = asked?.pairing;
+  return (
+    <Stage label="Pair a device" meta="Atlas · M4">
+      <Sheet>
+        <div className="sheet-in" style={{ maxWidth: 560 }}>
+          <div className="sheet-title">
+            <h1 className="disp">
+              {done ? (done.yes ? (done.name ? `Paired ${done.name}` : "Pairing") : "Not paired") : "Pair this device?"}
+            </h1>
+          </div>
+          {done ? (
+            <p>
+              {done.yes && done.name
+                ? `${done.name} connects in a moment. Its tools are in Settings → Devices, with the sensitive ones off until you turn them on.`
+                : "Nothing was paired."}{" "}
+              <a className="link" href="#/settings/devices">
+                Settings → Devices
+              </a>
+            </p>
+          ) : !asked ? (
+            <p className="muted">{s.view ? "Looking up the code." : "Connecting to Atlas."}</p>
+          ) : !p ? (
+            <p className="err">
+              That code isn't waiting to pair: it may be mistyped, or it ran out (codes last ten minutes). Start again on the device.
+            </p>
+          ) : (
+            <>
+              <p style={{ fontSize: 15, marginBottom: 8 }}>
+                <b>{p.name}</b> ({p.platform ?? p.kind}) wants to connect to your Atlas with code{" "}
+                <span className="mono">{code.toUpperCase()}</span>.
+              </p>
+              <p className="muted small" style={{ marginBottom: 16 }}>
+                Pair only a device you're setting up yourself, right now. Once paired, Atlas can use what it offers while it's online;
+                anything that acts on it asks you first, and sensitive things start off. You can remove it any time.
+              </p>
+              <div className="row">
+                <button
+                  className="btn primary"
+                  onClick={() => {
+                    setSaid(true);
+                    atlas.send({ type: "atlas.node.pair", code, yes: true });
+                  }}
+                >
+                  Pair
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    setSaid(false);
+                    atlas.send({ type: "atlas.node.pair", code, yes: false });
+                  }}
+                >
+                  Not now
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </Sheet>
+    </Stage>
+  );
+}
+
+/**
+ * Speaking up (§10.3): whether Atlas tells you what it notices, and when to
+ * leave for events, and, in your own words, what it should always bring up
+ * and what never (it keeps both lists itself when you say stop, or ask why
+ * it didn't tell you, and you can change them here). The daily looks are
+ * the morning brief and evening wrap-up, in Automations.
+ */
+function Speaking({ draft, edit }: { draft: SettingsT; edit: Edit }) {
+  const sp = draft.speaking;
+  const set = (patch: Partial<SettingsT["speaking"]>) => edit({ speaking: { ...sp, ...patch } });
+  const flag = (k: "noticing" | "leave", label: string) => (
+    <label className="check">
+      <input type="checkbox" checked={sp[k]} onChange={(e) => set({ [k]: e.target.checked })} />
+      {label}
+    </label>
+  );
+  return (
+    <>
+      {flag(
+        "noticing",
+        "What Atlas notices: where you are and are heading, changes on your calendar, traffic, the weather, your devices, your webhooks",
+      )}
+      {flag("leave", "When to leave for events with a place, from the travel time")}
+      <Words
+        label="Always bring up"
+        empty={'Nothing yet. Asking "why didn\'t you tell me?" can add what you meant here.'}
+        placeholder="Like: anything from my landlord"
+        list={sp.tell_about}
+        set={(tell_about) => set({ tell_about })}
+      />
+      <Words
+        label="Don't bring up"
+        empty={'Nothing yet. Saying "stop" to a nudge adds what you meant here.'}
+        placeholder="Like: the weather unless it's severe"
+        list={sp.quiet_about}
+        set={(quiet_about) => set({ quiet_about })}
+      />
+      <p className="muted small">
+        Atlas speaks up when it would help, and stays quiet otherwise; History shows what it decided each time and why, and "show me what
+        you noticed" puts today's on the stage. These wait for quiet hours and count against the day's interruptions. The morning brief and
+        the evening wrap-up are in <a href="#/automations">Automations</a>, with their times.
+      </p>
+    </>
+  );
+}
+
+/** A list of the owner's own words, with a × on each and a field to add one. */
+function Words(o: { label: string; empty: string; placeholder: string; list: string[]; set: (list: string[]) => void }) {
+  const [adding, setAdding] = useState("");
+  const add = () => {
+    const t = adding.trim();
+    if (t && !o.list.some((q) => q.toLowerCase() === t.toLowerCase())) o.set([...o.list, t]);
+    setAdding("");
+  };
+  return (
+    <>
+      <p className="small" style={{ marginTop: 12 }}>
+        {o.label}
+      </p>
+      {o.list.length ? (
+        <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+          {o.list.map((q) => (
+            <button key={q} className="chip" title="Take this off the list" onClick={() => o.set(o.list.filter((x) => x !== q))}>
+              {q} ×
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="muted small">{o.empty}</p>
+      )}
+      <div className="row">
+        <label className="field" style={{ flex: 1 }}>
+          <input
+            aria-label={o.label}
+            placeholder={o.placeholder}
+            value={adding}
+            maxLength={120}
+            onChange={(e) => setAdding(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && add()}
+          />
+        </label>
+        <button className="btn sm" onClick={add} disabled={!adding.trim()}>
+          Add
+        </button>
+      </div>
+    </>
+  );
+}
+
+const SOURCE_NAMES: Record<string, string> = {
+  location: "Phone (OwnTracks)",
+  device: "Paired devices",
+  calendar: "Calendar",
+  situation: "Trip and weather",
+  webhook: "Webhook sources",
+};
+
+/**
+ * Senses (§10.4): every source the intake has heard from, with its state,
+ * and webhook sources: any service that can post (GitHub, Linear, a home
+ * server) gets its own address with its own key, shown once.
+ */
+function Senses({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const [name, setName] = useState("");
+  const made = atlas.state.senseHook;
+  const now = Date.now();
+  const ago = (at: number) => (now - at < 60_000 ? "just now" : dayTime(at));
+  return (
+    <>
+      <State
+        on={view.senses.sources.length > 0}
+        text={view.senses.sources.length ? `${view.senses.sources.length} sources` : "Nothing yet"}
+        what="Everything Atlas takes in comes through here and is weighed: now, later, or not at all."
+      />
+      {view.senses.sources.map((s) => {
+        const bad = s.error && (!s.ok_at || (s.error_at ?? 0) > s.ok_at);
+        return (
+          <p className="small" key={s.source}>
+            <b>{SOURCE_NAMES[s.source] ?? s.source.replace(/^webhook:/, "")}</b>{" "}
+            <span className={bad ? "" : "muted"} style={bad ? { color: "var(--bad)" } : undefined}>
+              {bad
+                ? `${s.error} (${ago(s.error_at!)})`
+                : s.last
+                  ? `Last: ${s.last.what} (${ago(s.last.at)})`
+                  : s.ok_at
+                    ? `Working (${ago(s.ok_at)})`
+                    : ""}
+            </span>
+          </p>
+        );
+      })}
+      <p className="small" style={{ marginTop: 12 }}>
+        Webhook sources
+      </p>
+      {view.senses.hooks.map((h) => (
+        <div className="row" key={h.id}>
+          <span style={{ fontWeight: 500 }}>{h.name}</span>
+          <span className="muted small">
+            {h.last_at ? `last post ${ago(h.last_at)}` : "no posts yet"}
+            {h.refused_at ? ` · refused one ${ago(h.refused_at)}` : ""}
+          </span>
+          <span className="grow" />
+          <button className="btn sm" onClick={() => atlas.send({ type: "atlas.sense.hook.remove", id: h.id })}>
+            Remove
+          </button>
+        </div>
+      ))}
+      {made && view.senses.hooks.some((h) => h.id === made.id) && (
+        <div className="cell" style={{ marginTop: 8 }}>
+          <p className="small">
+            <b>{made.name}</b>'s address, shown once. Paste it where the service asks for a webhook or payload URL (for GitHub, content type
+            application/json). Anyone with it can post to Atlas, so keep it private.
+          </p>
+          <code className="small" style={{ wordBreak: "break-all", userSelect: "all" }}>
+            {made.url}
+          </code>
+        </div>
+      )}
+      <div className="row">
+        <label className="field" style={{ flex: 1 }}>
+          <input
+            aria-label="Name of the service"
+            placeholder="Like: GitHub, Linear, Home server"
+            value={name}
+            maxLength={60}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <button
+          className="btn sm"
+          disabled={!name.trim()}
+          onClick={() => {
+            atlas.send({ type: "atlas.sense.hook.add", name: name.trim() });
+            setName("");
+          }}
+        >
+          Add source
+        </button>
+      </div>
+    </>
+  );
+}
+
+/**
+ * Location (§10.1): OwnTracks on the phone posts to Atlas with its own user
+ * and password. Set up makes them (replacing any before) and a link that
+ * fills them into OwnTracks in one tap, with a QR code for the phone's camera.
+ * The switch stops it at once.
+ */
+function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const l = view.location;
+  const on = view.settings.location.on;
+  const setup = atlas.state.ownTracks;
+  const [asking, setAsking] = useState(false);
+  const fix = l.fix;
+  const where = l.place
+    ? `At ${l.place.name} since ${clock(l.place.since)}`
+    : l.near
+      ? `${(l.near.m / 1000).toFixed(1)} km from ${l.near.name}`
+      : fix
+        ? "Not at a saved place"
+        : null;
+  return (
+    <>
+      <State
+        on={on && l.set_up}
+        text={!on ? "Off" : !l.set_up ? "Not set up" : fix ? `Last fix ${dayTime(fix.at)}` : "Waiting for OwnTracks"}
+        what="OwnTracks on your phone tells Atlas where you are."
+      />
+      {on && fix && (
+        <p className="small">
+          {where}
+          <span className="muted">
+            {" "}
+            · accurate to {fix.acc} m{fix.batt != null ? ` · phone ${fix.batt}%${fix.charging ? ", charging" : ""}` : ""}
+            {fix.conn === "wifi" ? " · on Wi-Fi" : fix.conn === "mobile" ? " · on mobile data" : ""}
+          </span>
+        </p>
+      )}
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => atlas.send({ type: "atlas.settings.update", patch: { location: { on: e.target.checked } } })}
+        />
+        Take in my location. Off drops what the phone sends, and Atlas says it doesn't know where you are.
+      </label>
+      <p className="muted small">
+        {l.pins} saved {l.pins === 1 ? "place has" : "places have"} a pin, sent to OwnTracks as regions so arriving and leaving are noticed.
+        Say "this is my gym" somewhere, or "pin the dentist at 12 Main St", to add one.
+      </p>
+      {/* Only while it's the latest news: a good post since means the phone has the right password. */}
+      {l.refused && (
+        <p className="err small">
+          A post with the wrong password came {dayTime(l.refused.at)}. If that was your phone, set OwnTracks up again.
+        </p>
+      )}
+      {setup ? (
+        <div className="row" style={{ alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
+          <QrCode text={setup.link} size={240} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, maxWidth: 420 }}>
+            <p className="small">
+              Install OwnTracks on your phone, then scan this with the camera or tap Open in OwnTracks on the phone. It fills in Atlas's
+              address, a user and a password made for it alone, and your places.
+            </p>
+            <a className="btn primary" href={setup.link} style={{ textDecoration: "none", alignSelf: "flex-start" }}>
+              Open in OwnTracks
+            </a>
+            <p className="faint small mono" style={{ wordBreak: "break-all" }}>
+              {setup.url} · user <span style={{ whiteSpace: "nowrap" }}>{setup.user}</span> · password{" "}
+              <span style={{ wordBreak: "break-all" }}>{setup.password}</span>
+            </p>
+            <p className="muted small">
+              This is the only time the password is shown. Setting up again makes a new one, and the old one stops working.
+            </p>
+          </div>
+        </div>
+      ) : asking ? (
+        <div className="row">
+          <span className="small">
+            {l.set_up ? "This makes a new password; the phone stops reporting until it has it." : "Make OwnTracks' user and password?"}
+          </span>
+          <button
+            className="btn primary"
+            onClick={() => {
+              setAsking(false);
+              atlas.send({ type: "atlas.location.setup" });
+            }}
+          >
+            Set up
+          </button>
+          <button className="link" onClick={() => setAsking(false)}>
+            Not now
+          </button>
+        </div>
+      ) : (
+        <div className="row">
+          <button className="btn" onClick={() => setAsking(true)}>
+            {l.set_up ? "Set up OwnTracks again" : "Set up OwnTracks"}
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Maps and weather (§19.1): OpenStreetMap's free services, or Mapbox by key; units; a live test. */
+function Maps({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
+  const provider = draft.maps.provider;
+  const ready = provider === "osm" || view.secrets.mapbox_token;
+  return (
+    <>
+      <State
+        on={ready}
+        text={ready ? MAPS[provider].name : "Mapbox: no token yet"}
+        what="Routes, travel times, and places near you or on your way."
+      />
+      <label className="field">
+        <span>Maps from</span>
+        <select value={provider} onChange={(e) => edit({ maps: { provider: e.target.value as MapsProvider } })}>
+          <option value="osm">OpenStreetMap (free, nothing to set up)</option>
+          <option value="mapbox">Mapbox (free tier, needs a token)</option>
+        </select>
+      </label>
+      <p className="muted small">
+        {provider === "osm"
+          ? "OpenStreetMap's free, volunteer-run services: travel times are typical, without live traffic, and opening hours are often missing. Atlas asks them little and caches what it can."
+          : "Mapbox adds live traffic to travel times and better store search. Pins for your places still come from OpenStreetMap, since Mapbox's free answers can't be kept."}{" "}
+        Where you are and your saved addresses go only to the maps service; the weather (Open-Meteo, free) gets a rough area.
+      </p>
+      {provider === "mapbox" && (
+        <SecretField
+          label="Mapbox token"
+          set={view.secrets.mapbox_token}
+          onSave={(value) => atlas.send({ type: "atlas.secret.set", secret: { name: "mapbox_token", value: value?.trim() ?? null } })}
+        />
+      )}
+      <label className="field">
+        <span>Units</span>
+        <select value={draft.units} onChange={(e) => edit({ units: e.target.value as SettingsT["units"] })}>
+          <option value="auto">From the time zone</option>
+          <option value="us">°F and miles</option>
+          <option value="metric">°C and kilometres</option>
+        </select>
+      </label>
+      {view.settings.maps.provider === provider ? (
+        <TestRow
+          label="Test maps and weather"
+          k="maps"
+          atlas={atlas}
+          run={() => atlas.test("maps", { type: "atlas.test", what: "maps" })}
+        />
+      ) : (
+        <p className="muted small">Save to test it.</p>
+      )}
     </>
   );
 }

@@ -121,11 +121,49 @@ import { deletePage, getPage, listPages, pageSummaries, pageVersion, savePage, v
 import { noticeAsk, openSuggestions, settleSuggestion } from "./suggestions";
 import { deleteAutomation, getAutomation, listAutomations, matchPhrase, saveAutomation, setAutomationState } from "./automations";
 import { automationView } from "./agent/views";
-import type { BrowserApi, ExitApi, McpApi, RunResult, Tool, ToolContext, ToolResult, WebApi, WorkspaceApi } from "./tools/types";
+import type { BrowserApi, ExitApi, MapsApi, McpApi, RunResult, Tool, ToolContext, ToolResult, WebApi, WorkspaceApi } from "./tools/types";
+import { geocode, MAPS, nearby, reverse, route } from "./maps";
+import { fetchWeather, roughArea, temp, unitsFor } from "./weather";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
-import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from "./helper";
+import { HelperAgent, type HelperHost, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
 import type { Append } from "./store/log";
+import { type NudgeFrom, nudgeTool, SenseDesk, speakingUp } from "./agent/senses";
+import { addHook, hookAllowed, hookItem, hookSeen, noteSource, noticedTool, removeHook, senseHooks } from "./intake";
+import { placeLooks, placeTools, NO_DEADLINE } from "./tools/places";
+import { taskDone, taskTools } from "./tools/tasks";
+import { closeTask, fromErrands, getTaskOpen } from "./tasks";
+import {
+  type AtlasToNode,
+  allowedMap,
+  decidePairing,
+  logNode,
+  nodeItem,
+  NodeMessage,
+  type NodeKind,
+  nodeByToken,
+  nodes,
+  pairingFor,
+  pollPairing,
+  removeNode,
+  startPairing,
+  updateNode,
+} from "./nodes";
+import { deviceCall } from "./tools/nodes";
+import {
+  locationOff,
+  locationOn,
+  newOwnTracksLogin,
+  observe,
+  ownTracksAllowed,
+  ownTracksAnswer,
+  ownTracksConfig,
+  ownTracksLink,
+  readOwnTracks,
+  refused as ownTracksRefused,
+  allowedPost,
+} from "./location";
+import { forgetWhere } from "./situation";
 
 export { seams };
 
@@ -188,8 +226,26 @@ const TOOLS: Record<Actor, Tool[]> = {
     codeRun,
     ...skillTools,
     ...mcpToolset,
+    ...placeTools,
+    ...taskTools,
+    deviceCall,
+    speakingUp,
+    noticedTool,
   ],
-  atlas: [calendarRead, ...agendaTools, recall, ...webTools, fileRead, skillRead, mcpTools, mcpCall],
+  atlas: [
+    calendarRead,
+    ...agendaTools,
+    recall,
+    ...webTools,
+    fileRead,
+    skillRead,
+    mcpTools,
+    mcpCall,
+    ...placeLooks,
+    taskDone,
+    deviceCall,
+    noticedTool,
+  ],
   system: [],
 };
 
@@ -210,6 +266,7 @@ const AUTOMATION_TOOLS: Tool[] = [
   skillRead,
   mcpTools,
   mcpCall,
+  ...placeLooks,
 ];
 /** A test run only looks: it changes nothing, and webhooks and other services' tools only say what they'd do (§13.4). */
 const TEST_TOOLS: Tool[] = [
@@ -224,6 +281,7 @@ const TEST_TOOLS: Tool[] = [
   skillRead,
   mcpTools,
   mcpCall,
+  ...placeLooks,
 ];
 
 /**
@@ -254,15 +312,29 @@ interface ConverseOpts {
   emit: (e: LoopEvent) => void;
   /** The tools, when they aren't the actor's usual ones (an automation's step, a test run). */
   tools?: Tool[];
+  /** A note for this run's context only, such as a reaction to a nudge that just changed a setting. */
+  extra?: string;
+  /** Its last words are only a note for the log, so it may end without any (awareness's runs). */
+  silentOk?: boolean;
 }
 
 export class PersonAgent extends VoiceAgent implements HelperHost {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // The voice layer wraps onMessage and answers its own messages (a typed turn, a call) before Atlas sees them.
+    // A paired device speaks only the device protocol, so its socket goes around the voice layer entirely.
+    const voiced = this.onMessage;
+    this.onMessage = (connection: Connection, message: WSMessage) =>
+      (connection.state as SocketState | null)?.node ? this.#nodeRaw(connection, message) : voiced.call(this, connection, message);
+  }
+
   #router = new BrainRouter((c) => this.#makeBrain(c));
   #outbox!: Outbox;
   #calendar!: CalendarSense;
   #chatgpt!: ChatGPTSignIn;
   #helpers!: HelperDesk;
   #automations!: AutomationDesk;
+  #senses!: SenseDesk;
   /** Runs go one at a time, so each one sees the last one's answer. */
   #line: Promise<unknown> = Promise.resolve();
 
@@ -339,7 +411,28 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       fetch: (...args) => (seams.fetch ?? fetch)(...args),
       browser: () => this.#driver(),
       mcp: () => this.#mcpClient(),
+      node: (c) => this.#nodeCall(c),
+      later: async (c) => {
+        // A device removed since (a card approved after it was unpaired) gets nothing queued.
+        if (!nodes(this.#sql).some((n) => n.id === c.node)) return false;
+        const tool = c.tool.replace(/_/g, " ");
+        createItem(this.#sql, {
+          kind: "device",
+          title: `${tool[0]!.toUpperCase()}${tool.slice(1)} on ${c.device}`,
+          due_at: NO_DEADLINE,
+          source: {
+            via: "device",
+            ...(c.run_id ? { run_id: c.run_id } : {}),
+            detail: { node: c.node, tool: c.tool, input: c.input as never, by: c.by },
+          },
+        });
+        this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+        return true;
+      },
     });
+    // A restart drops every socket: devices count as offline until they connect again.
+    for (const n of nodes(this.#sql))
+      if (n.online && !this.#nodeSocket(n.id)) updateNode(this.#sql, n.id, (x) => ({ ...x, online: false }));
     // Connected servers (§9.2): the app's list follows every change, and a sign-in comes back to Settings.
     this.mcp.onServerStateChanged(() => this.#broadcast({ type: "atlas.mcp.servers", servers: this.#mcpView() }));
     this.mcp.configureOAuthCallback({ customHandler: (r) => this.#mcpSignedIn(r) });
@@ -347,9 +440,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       sql: this.#sql,
       outbox: this.#outbox,
       clock: this.#clock,
-      converse: ({ runId, note, test }) => {
+      converse: async ({ runId, note, test, worth }) => {
         const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
-        return this.#converse({
+        // Reporting when it's worth saying, it speaks the way awareness does: with nudge, or not at all.
+        const nudger = worth ? this.#nudger({ runId, trigger: `automation:${worth.id}`, from: "routine", ref: worth.id }) : null;
+        const res = await this.#converse({
           runId,
           actor: "atlas",
           sourceLogId: null,
@@ -361,20 +456,47 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           emit: (e) => {
             if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });
           },
-          tools: test ? TEST_TOOLS : AUTOMATION_TOOLS,
+          tools: test ? TEST_TOOLS : nudger ? [...AUTOMATION_TOOLS, nudger.tool] : AUTOMATION_TOOLS,
+          ...(nudger ? { silentOk: true } : {}),
         });
+        return { ...res, nudged: nudger?.said() ?? null };
       },
+      picture: () => this.#senses.picture(),
       decider: () => this.#decider(),
       calendar: () => this.#calendar.source(readSettings(this.#sql)),
       fetch: (...args) => (seams.fetch ?? fetch)(...args),
       changed: () => this.#automationsChanged(),
       rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
     });
+    this.#senses = new SenseDesk({
+      sql: this.#sql,
+      // Tests never reach a real service (CLAUDE.md): without a fake fetch, the background refresh has no maps.
+      maps: () => (this.env.ATLAS_TEST && !seams.fetch ? null : this.#maps),
+      calendar: () => this.#calendar.source(readSettings(this.#sql)),
+      clock: this.#clock,
+      decider: () => this.#decider(),
+      wake: (o) => this.#wake(o),
+      rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
+      automations: (rows) => this.#automations.sensed(rows),
+      background: (fn) => void this.keepAliveWhile(fn).catch(() => {}),
+      changed: () => this.#broadcast({ type: "atlas.situation" }),
+    });
+    void this.#senses.armTick().catch(() => {});
+    // Items a restart left half way are weighed again.
+    void this.keepAliveWhile(() => this.#senses.resume()).catch(() => {});
     // The default routines are made once; then every automation that's on has its next run on the clock (a missing one is put back).
     try {
       seedRoutines(this.#sql);
     } catch (err) {
       console.error(JSON.stringify({ at: "routines.seed", error: err instanceof Error ? err.message : String(err) }));
+    }
+    // Errands from before tasks become tasks, once (§5.1).
+    try {
+      const moved = fromErrands(this.#sql);
+      for (const e of moved.ended) void this.#clock.unschedule(e).catch(() => {});
+      for (const r of moved.reminders) void this.#clock.schedule(r).catch(() => {});
+    } catch (err) {
+      console.error(JSON.stringify({ at: "tasks.from_errands", error: err instanceof Error ? err.message : String(err) }));
     }
     for (const a of listAutomations(this.#sql)) void this.#automations.arm(a.id).catch(() => {});
     // The weekly pass over skills' checks, once there's a skill with one.
@@ -402,6 +524,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #inCall = new Set<string>();
 
   override onConnect(connection: Connection, ctx: ConnectionContext): void {
+    // A device's socket comes only through the Worker's device route, which checked its token and set the header.
+    const node = new URL(ctx.request.url).pathname === "/nodes/connect" ? ctx.request.headers.get(NODE_HEADER) : null;
+    if (node) {
+      connection.setState({ node } satisfies SocketState);
+      this.#nodeOnline(node, connection);
+      return;
+    }
     // Which sign-in opened this socket (the Worker sets it), kept on the socket so it survives hibernation.
     const session = ctx.request.headers.get(SESSION_HEADER);
     if (session) connection.setState({ session } satisfies SocketState);
@@ -413,6 +542,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** Closes the sockets opened by sessions that just ended; with no list, every socket. */
   #signOutSockets(ended?: Set<string>): void {
     for (const c of this.getConnections()) {
+      // Paired devices aren't signed in with a session; they're unpaired in Settings → Devices.
+      if ((c.state as SocketState | null)?.node) continue;
       const session = (c.state as SocketState | null)?.session;
       if (ended && !(session && ended.has(session))) continue;
       this.#send(c, { type: "atlas.signed_out" });
@@ -484,6 +615,85 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#refreshVoice();
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
+      case "atlas.node.pairing": {
+        const p = pairingFor(this.#sql, msg.code);
+        this.#send(connection, { type: "atlas.node.pairing", code: msg.code, pairing: p });
+        return;
+      }
+      case "atlas.node.pair": {
+        const n = await decidePairing(this.#sql, msg.code, msg.yes);
+        this.#send(connection, { type: "atlas.node.paired", code: msg.code, name: n?.name ?? null });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.node.allow": {
+        const n = updateNode(this.#sql, msg.id, (x) => ({ ...x, allowed: { ...x.allowed, [msg.capability]: msg.on } }));
+        if (n) {
+          append(this.#sql, {
+            actor: "owner",
+            kind: "settings.change",
+            body: { node: `${msg.capability} ${msg.on ? "on" : "off"}`, name: n.name },
+          });
+          const socket = this.#nodeSocket(n.id);
+          if (socket) this.#nodeSend(socket, { type: "node.allowed", allowed: allowedMap(n) });
+        }
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.node.remove": {
+        const gone = removeNode(this.#sql, msg.id);
+        const socket = this.#nodeSocket(msg.id);
+        if (socket) {
+          this.#nodeSend(socket, { type: "node.unpaired" });
+          socket.close(4003, "Unpaired.");
+        }
+        for (const i of upcoming(this.#sql, 200).filter((x) => x.kind === "device" && x.source.detail?.node === msg.id)) {
+          finish(this.#sql, i.id, "cancelled", null, { why: `${gone?.name ?? "The device"} was unpaired.` });
+        }
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.task.done": {
+        const out = closeTask(this.#sql, msg.id, msg.done ? "done" : "dropped", { via: "owner" });
+        if (!out) {
+          this.#send(connection, { type: "atlas.error", message: "That task isn't open any more." });
+          return;
+        }
+        for (const r of out.reminders) await this.#clock.unschedule(r);
+        this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.location.setup": {
+        const origin = getState<string>(this.#sql, "origin") ?? new URL(connection.uri ?? "https://atlas.invalid").origin;
+        const login = newOwnTracksLogin(this.#sql);
+        append(this.#sql, { actor: "owner", kind: "settings.change", body: { owntracks: "set up" } });
+        const config = ownTracksConfig(this.#sql, origin, login);
+        this.#send(connection, {
+          type: "atlas.location.setup",
+          url: config.url,
+          user: login.user,
+          password: login.password,
+          link: ownTracksLink(config),
+        });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.sense.hook.add": {
+        const origin = getState<string>(this.#sql, "origin") ?? new URL(connection.uri ?? "https://atlas.invalid").origin;
+        const { hook, key } = addHook(this.#sql, msg.name);
+        append(this.#sql, { actor: "owner", kind: "settings.change", body: { sense_hook: "added", name: hook.name } });
+        this.#send(connection, { type: "atlas.sense.hook", id: hook.id, name: hook.name, url: `${origin}/senses/${hook.id}?key=${key}` });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.sense.hook.remove": {
+        const h = senseHooks(this.#sql).find((x) => x.id === msg.id);
+        removeHook(this.#sql, msg.id);
+        if (h) append(this.#sql, { actor: "owner", kind: "settings.change", body: { sense_hook: "removed", name: h.name } });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
       case "atlas.chatgpt.start":
         await this.#chatgpt.start();
         return;
@@ -947,18 +1157,18 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** The owner's text runs that can still be stopped, waiting in line or under way. */
   #stops = new Map<string, AbortController>();
 
-  async #textTurn(text: string, clientId: string): Promise<void> {
+  async #textTurn(text: string, clientId: string, note?: string): Promise<void> {
     const runId = startRun(this.#sql, { actor: "owner", trigger: "message", surface: "app", role: "main" });
     const stop = new AbortController();
     this.#stops.set(runId, stop);
     try {
-      await this.#textRun(runId, text, clientId, stop.signal);
+      await this.#textRun(runId, text, clientId, stop.signal, note);
     } finally {
       this.#stops.delete(runId);
     }
   }
 
-  async #textRun(runId: string, text: string, clientId: string, signal: AbortSignal): Promise<void> {
+  async #textRun(runId: string, text: string, clientId: string, signal: AbortSignal, note?: string): Promise<void> {
     const inRow = append(this.#sql, {
       actor: "owner",
       kind: "message.in",
@@ -975,10 +1185,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       return;
     }
     if (noticeAsk(this.#sql, text)) this.#automationsChanged();
+    this.#ownerActive();
 
     await this.#inLine(
       async () => {
         const scrubber = new StreamScrubber(this.#outbox.secrets());
+        const extra = [note, (await this.#senses.reacted(text)) ?? ""].filter(Boolean).join("\n\n") || undefined;
         const res = await this.#converse({
           runId,
           actor: "owner",
@@ -989,11 +1201,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           beforeSeq: inRow.seq,
           budget: BUDGETS.chat,
           signal,
+          extra,
           emit: (e) => this.#relay(runId, e, scrubber),
         });
         const tail = scrubber.flush();
         if (tail) this.#broadcast({ type: "atlas.delta", run_id: runId, text: tail });
         await this.#finishRun(runId, "app", res, true);
+        if (res.state === "replied") this.#senses.seenBy(inRow.at);
       },
       { id: runId, surface: "app" },
     ).catch(() => {});
@@ -1015,6 +1229,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       return spoken;
     }
     if (noticeAsk(this.#sql, transcript)) this.#automationsChanged();
+    this.#ownerActive();
     const started = Date.now();
     let firstWordsMs: number | null = null;
     let statusMs: number | null = null;
@@ -1026,10 +1241,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
     void this.#inLine(
       async () => {
+        const extra = (await this.#senses.reacted(transcript)) ?? undefined;
         const res = await this.#converse({
           runId,
           actor: "owner",
           sourceLogId: inRow.id,
+          extra,
           surface: "voice",
           role: "voice",
           input: transcript,
@@ -1074,6 +1291,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           },
         });
         await this.#finishRun(runId, "voice", said, true);
+        if (said.state === "replied") this.#senses.seenBy(inRow.at);
       },
       { id: runId, surface: "voice" },
     ).catch(() => spoken.close());
@@ -1102,6 +1320,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     this.#inCall.delete(connection.id);
   }
 
+  /** The owner is using Atlas: the situation is brought up to date in the background, and kept current while they are. */
+  #ownerActive(): void {
+    void this.keepAliveWhile(() => this.#senses.refresh(true).then(() => this.#senses.armTick()));
+  }
+
   /** The voice run in progress, so a sentence that couldn't be spoken is noted against it. */
   #voiceRun: string | null = null;
 
@@ -1116,6 +1339,191 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       });
       this.#broadcast({ type: "atlas.rows", rows: [row] });
     });
+  }
+
+  // --- paired devices (§16.3) ---------------------------------------------------
+
+  /** Calls sent to devices, waiting for their answers, by call id. */
+  #nodeCalls = new Map<string, (r: { ok: boolean; text: string }) => void>();
+
+  #nodeSocket(id: string): Connection | null {
+    return [...this.getConnections()].find((c) => (c.state as SocketState | null)?.node === id) ?? null;
+  }
+
+  #nodeSend(c: Connection, msg: AtlasToNode): void {
+    c.send(JSON.stringify(msg));
+  }
+
+  #nodeOnline(id: string, connection: Connection): void {
+    // A device that reconnects (a Mac waking) can leave its old socket half open: the newest one is the device.
+    for (const c of this.getConnections()) {
+      if (c.id !== connection.id && (c.state as SocketState | null)?.node === id) c.close(4000, "Replaced by a newer connection.");
+    }
+    const n = updateNode(this.#sql, id, (x) => ({ ...x, online: true, last_seen: Date.now() }));
+    if (!n) {
+      this.#nodeSend(connection, { type: "node.unpaired" });
+      connection.close(4003, "Not paired.");
+      return;
+    }
+    this.#nodeSend(connection, { type: "node.welcome", node_id: n.id, allowed: allowedMap(n) });
+    this.#broadcast({ type: "atlas.rows", rows: [logNode(this.#sql, n, "online")] });
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  async #nodeRaw(connection: Connection, message: WSMessage): Promise<void> {
+    const id = (connection.state as SocketState | null)?.node;
+    if (!id || typeof message !== "string") return;
+    let data: unknown;
+    try {
+      data = JSON.parse(message);
+    } catch {
+      return;
+    }
+    await this.#nodeMessage(id, connection, data);
+  }
+
+  /** A paired device gets none of the SDK's own messages (identity, state, connected servers): only the device protocol. */
+  override shouldSendProtocolMessages(_connection: Connection, ctx: { request: Request }): boolean {
+    return new URL(ctx.request.url).pathname !== "/nodes/connect";
+  }
+
+  /** A call is for the owner's app; a device's socket can't start one. */
+  override beforeCallStart(connection: Connection): boolean {
+    return !(connection.state as SocketState | null)?.node;
+  }
+
+  override onClose(connection: Connection): void {
+    const id = (connection.state as SocketState | null)?.node;
+    if (!id) return;
+    // Another socket for the same device (a quick reconnect) keeps it online.
+    if ([...this.getConnections()].some((c) => c.id !== connection.id && (c.state as SocketState | null)?.node === id)) return;
+    const n = updateNode(this.#sql, id, (x) => ({ ...x, online: false, last_seen: Date.now() }));
+    if (!n) return;
+    this.#broadcast({ type: "atlas.rows", rows: [logNode(this.#sql, n, "offline")] });
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  async #nodeMessage(id: string, connection: Connection, data: unknown): Promise<void> {
+    const parsed = NodeMessage.safeParse(data);
+    if (!parsed.success) {
+      console.error(
+        JSON.stringify({
+          at: "node.message",
+          node: id,
+          error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+        }),
+      );
+      return;
+    }
+    const m = parsed.data;
+    if (m.type === "node.ping") {
+      updateNode(this.#sql, id, (x) => ({ ...x, last_seen: Date.now(), online: true }));
+      this.#nodeSend(connection, { type: "node.pong" });
+      return;
+    }
+    if (m.type === "node.result") {
+      const done = this.#nodeCalls.get(m.id);
+      if (done) {
+        this.#nodeCalls.delete(m.id);
+        const out = typeof m.output === "string" ? m.output : JSON.stringify(m.output ?? null);
+        done(m.ok ? { ok: true, text: out.slice(0, 8_000) } : { ok: false, text: (m.error ?? out).slice(0, 4_000) });
+      }
+      return;
+    }
+    if (m.type === "node.event") {
+      const n = updateNode(this.#sql, id, (x) => ({ ...x, last_seen: Date.now(), state: { ...x.state, [m.event]: summary(m.body) } }));
+      if (n) {
+        // A device's event is news for the senses, like a move.
+        this.#senses.take([nodeItem(n, m.event, m.body)]);
+      }
+      return;
+    }
+    // hello: what the device is and offers; anything it was asked while offline runs now.
+    const n = updateNode(this.#sql, id, (x) => ({
+      ...x,
+      kind: m.node.kind,
+      ...(m.node.platform ? { platform: m.node.platform } : {}),
+      ...(m.node.version ? { version: m.node.version } : {}),
+      capabilities: m.capabilities,
+      events: m.events,
+      last_seen: Date.now(),
+      online: true,
+    }));
+    if (!n) return;
+    this.#nodeSend(connection, { type: "node.allowed", allowed: allowedMap(n) });
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+    // Waiting calls, and any a restart cut off mid-run (their claim ran out).
+    const now = Date.now();
+    const waiting = upcoming(this.#sql, 200).filter(
+      (i) => i.kind === "device" && i.source.detail?.node === id && (i.state === "scheduled" || (i.lease_until ?? 0) < now),
+    );
+    if (waiting.length) void this.keepAliveWhile(() => this.#drainDevice(n.name, waiting));
+  }
+
+  /** Sends a call to a device and waits for its answer: offline when it isn't connected, failed after two minutes. */
+  #nodeCall(c: { node: string; tool: string; input: Record<string, unknown> }): Promise<{ ok: boolean; text: string; offline?: boolean }> {
+    const socket = this.#nodeSocket(c.node);
+    if (!socket) return Promise.resolve({ ok: false, text: "offline", offline: true });
+    const id = crypto.randomUUID();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.#nodeCalls.delete(id);
+        resolve({ ok: false, text: "The device didn't answer within two minutes." });
+      }, 120_000);
+      this.#nodeCalls.set(id, (r) => {
+        clearTimeout(timer);
+        resolve(r);
+      });
+      this.#nodeSend(socket, { type: "node.call", id, tool: c.tool, input: c.input });
+    });
+  }
+
+  /** Calls that waited for a device run once it's back, and the owner hears how they went. */
+  async #drainDevice(device: string, items: AgendaItem[]): Promise<void> {
+    const lines: string[] = [];
+    for (const item of items) {
+      // Claimed for three minutes: a call takes at most two, and a claim a restart cut off runs again on the next hello.
+      const claim = Date.now();
+      const took = this.#sql
+        .exec(
+          `UPDATE agenda SET state = 'running', lease_until = ?, updated_at = ? WHERE id = ? AND (state = 'scheduled' OR (state = 'running' AND lease_until < ?)) RETURNING id`,
+          claim + 3 * 60_000,
+          claim,
+          item.id,
+          claim,
+        )
+        .toArray();
+      if (!took.length) continue;
+      const d = item.source.detail ?? {};
+      const out = await this.#outbox.device(
+        { node: String(d.node), device, tool: String(d.tool), input: (d.input ?? {}) as Record<string, unknown> },
+        { run_id: item.source.run_id ?? null, by: String(d.by ?? "owner") },
+      );
+      finish(this.#sql, item.id, out.ok ? "done" : "failed", null, { result: out.text.slice(0, 500) });
+      lines.push(`- ${item.title}: ${out.ok ? "done" : "didn't work"}. ${out.text.slice(0, 1_000)}`);
+    }
+    if (!lines.length) return;
+    const note = `[Atlas's devices, not the owner] ${device} is back, and what you asked it for while it was away has run:\n${lines.join("\n")}\n\nTell the owner in a short message how it went.`;
+    await this.#inLine(() => this.#atlasSays(`device:${device}`, note, `${device} is back. ${lines.join(" ")}`, "normal"));
+  }
+
+  /** A device asks to pair (§16.3): a code to show, and a secret to poll with. */
+  async apiPairStart(o: { name: string; kind: NodeKind; platform?: string }): Promise<{ code: string; poll: string; expires: number }> {
+    return startPairing(this.#sql, o);
+  }
+
+  async apiPairPoll(poll: string): Promise<Awaited<ReturnType<typeof pollPairing>>> {
+    return pollPairing(this.#sql, poll);
+  }
+
+  /** A push was opened or dismissed: if it was a nudge, that's its reaction (§10.3). */
+  async apiReaction(id: string, how: "opened" | "dismissed"): Promise<void> {
+    this.#senses.pushed(id, how);
+  }
+
+  /** The node a device's token belongs to, for the Worker before it lets the socket in. */
+  async apiNodeAuth(token: string): Promise<string | null> {
+    return (await nodeByToken(this.#sql, token))?.id ?? null;
   }
 
   // --- the clock -------------------------------------------------------------
@@ -1153,18 +1561,47 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       await this.keepAliveWhile(() => this.#checkSkills(item));
       return;
     }
+    if (item.kind === "situation") {
+      await this.keepAliveWhile(() => this.#senses.tick(item));
+      return;
+    }
+    if (item.kind === "rhythm") {
+      // A wake for when the lease runs out, as for promises: a moment a restart cut off runs once more.
+      await this.schedule(new Date(item.lease_until ?? Date.now() + 5 * 60_000), "onAgendaDue", { id: item.id });
+      await this.keepAliveWhile(() => this.#senses.moment(item));
+      return;
+    }
+    // An errand from before tasks that slipped past the move: it's a task now, so its item just ends.
+    // A task's deadline whose task was closed or forgotten since doesn't remind.
+    if (item.kind === "errand" || (typeof item.source.detail?.task === "string" && !getTaskOpen(this.#sql, item.source.detail.task))) {
+      finish(this.#sql, item.id, "cancelled", null, {
+        why: item.kind === "errand" ? "Errands are tasks now." : "The task isn't open any more.",
+      });
+      this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+      return;
+    }
     // A wake for when the lease runs out: if a restart cuts this run off, the item fires again, once, instead of
     // staying stuck as running. A finished item isn't leased again, so the wake does nothing.
     await this.schedule(new Date(item.lease_until ?? Date.now() + 5 * 60_000), "onAgendaDue", { id: item.id });
     await this.keepAliveWhile(() => this.#inLine(() => (item.kind === "promise" ? this.#keep(item) : this.#remind(item))));
   }
 
-  async #remind(item: AgendaItem): Promise<void> {
+  async #remind(item: AgendaItem, done = true): Promise<void> {
     const tz = zoneOf(readSettings(this.#sql));
-    const note = `[Atlas's clock, not the owner] The reminder "${item.title}" is due now (set ${shortLocal(new Date(item.created_at), tz)}). Give it to the owner in one short message, as you'd say it. Don't ask follow-up questions unless it truly helps.`;
+    const what =
+      typeof item.source.detail?.task === "string"
+        ? `The task "${item.title}" is due now (its deadline; kept ${shortLocal(new Date(item.created_at), tz)}) and isn't done. It stays open until it is.`
+        : `The reminder "${item.title}" is due now (set ${shortLocal(new Date(item.created_at), tz)}).`;
+    const note = `[Atlas's clock, not the owner] ${what} Give it to the owner in one short message, as you'd say it. Don't ask follow-up questions unless it truly helps.`;
     // The promise is kept even when no brain can answer: the owner still gets the reminder.
     // The owner chose the time, so it doesn't wait for quiet hours to end.
-    const runId = await this.#atlasSays(`agenda:${item.id}`, note, `Reminder: ${item.title}`, "now");
+    const runId = await this.#atlasSays(
+      `agenda:${item.id}`,
+      note,
+      `${typeof item.source.detail?.task === "string" ? "Due" : "Reminder"}: ${item.title}`,
+      "now",
+    );
+    if (!done) return;
     finish(this.#sql, item.id, "done", runId);
     this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
   }
@@ -1234,6 +1671,82 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     // and make the file that was asked for (a spreadsheet), in the workspace if it isn't text.
     await this.#atlasSays(`job:${item.id}`, note, fallback, "normal", 8, [...TOOLS.atlas, show, ...fileTools, ...workspaceTools]);
     this.#helpers.reported(item.id);
+  }
+
+  /**
+   * A run of Atlas's own for awareness (§10.3): the note, the situation in
+   * context, looks at the map, and `nudge`, its one way to speak up. What it
+   * says at the end isn't sent: it's its note for the log. No nudge is
+   * silence, and the run still ends replied.
+   */
+  /**
+   * The one way a run of Atlas's own speaks up (§10.3, §13.1): `nudge`,
+   * once per run, through the outbox as something that can wait (quiet
+   * hours, focus, the day's budget), watched for the owner's reaction.
+   * `said()` is what it sent, if anything.
+   */
+  #nudger(o: { runId: string; trigger: string; from: NudgeFrom; ref?: string }): { tool: Tool; said: () => string | null } {
+    let said: string | null = null;
+    const tool = nudgeTool(async (text, about) => {
+      if (said != null) return { ok: false, text: "You've already nudged in this run; one is enough." };
+      said = text;
+      const row = await this.#outbox.deliver(
+        {
+          text,
+          run_id: o.runId,
+          channel: "app",
+          urgency: "normal",
+          trigger: o.trigger,
+          nudge: { from: o.from, about, ...(o.ref ? { ref: o.ref } : {}) },
+        },
+        { alreadyStreamed: false },
+      );
+      said = String(row.body.text ?? text);
+      this.#senses.sent({ id: row.id, from: o.from, about, ...(o.ref ? { ref: o.ref } : {}), at: row.at, text: said });
+      return { ok: true, text: row.surface === "voice" ? "said aloud in their call" : "sent" };
+    });
+    return { tool, said: () => said };
+  }
+
+  #wake(o: { trigger: string; note: string; from: NudgeFrom; ref?: string }): Promise<{ run_id: string; nudged: boolean; error?: string }> {
+    return this.#inLine(async () => {
+      const runId = startRun(this.#sql, { actor: "atlas", trigger: o.trigger, surface: "none", role: "main" });
+      const nudger = this.#nudger({ runId, ...o });
+      const nudge = nudger.tool;
+      const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
+      const res: LoopResult = await this.#converse({
+        runId,
+        actor: "atlas",
+        sourceLogId: null,
+        surface: "none",
+        role: "main",
+        input: o.note,
+        beforeSeq: lastSeq,
+        budget: { steps: 8, ms: 120_000 },
+        emit: (e) => {
+          if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });
+        },
+        tools: [...TOOLS.atlas, nudge],
+        silentOk: true,
+      }).catch((err: unknown) => ({
+        state: "failed" as const,
+        text: "",
+        steps: 0,
+        brain: null,
+        fallback: false,
+        interrupted: false,
+        usage: { input: 0, output: 0 },
+        error: err instanceof Error ? err.message : String(err),
+      }));
+      endRun(this.#sql, runId, res.state, res.steps, {
+        ...(res.error ? { error: res.error } : {}),
+        ...(res.brain ? { brain: brainKey(res.brain) } : {}),
+        usage: res.usage as never,
+        said: nudger.said() != null ? "nudged" : "silent",
+        ...(res.text.trim() ? { note: res.text.trim().slice(0, 500) } : {}),
+      });
+      return { run_id: runId, nudged: nudger.said() != null, ...(res.state === "failed" ? { error: res.error ?? "The run failed." } : {}) };
+    });
   }
 
   #tellJob(item: AgendaItem, result: { state: "done" | "failed"; text: string }): void {
@@ -1325,7 +1838,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const now = new Date();
     const tools = o.tools ?? TOOLS[o.actor];
     const mcp = tools.includes(mcpCall) ? await this.#mcpServers(3_000) : [];
-    const system = systemPrompt({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq, mcp });
+    const system = systemPrompt({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq, mcp, extra: o.extra });
     // Compaction keeps this well inside the window; the budget only matters if it hasn't caught up.
     // Voice reads less, so a spoken reply starts fast; recall still has the rest.
     const room = o.role === "voice" ? VOICE_HISTORY_TOKENS : Math.floor(this.#window * 0.85) - tokens(system);
@@ -1374,6 +1887,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         joiner: o.surface === "voice" ? " " : "\n\n",
         effort: o.role === "voice" ? "low" : "medium",
         firstEventMs: FIRST_EVENT_MS[o.role],
+        ...(o.silentOk ? { silentOk: true } : {}),
       },
       o.emit,
     );
@@ -1392,6 +1906,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       via,
       exit: this.#exit,
       web: this.#web,
+      maps: this.#maps,
+      devices: { call: (c, o) => this.#outbox.device(c, o) },
       files: this.#bucket(),
       workspace: this.#workspaceApi,
       browser: this.#browserApi,
@@ -1399,6 +1915,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       automations: {
         run: (a, o) => this.#automations.run(a, { why: o.why, inputs: o.inputs }),
         arm: (id) => this.#automations.arm(id),
+      },
+      speaking: async () => {
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
       },
       helpers: {
         start: async (o) => {
@@ -1823,6 +2342,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       this.#broadcast({ type: "atlas.status", run_id: runId, text: e.text });
     } else if (e.type === "row") {
       this.#broadcast({ type: "atlas.rows", rows: [e.row] });
+      // A task kept or closed changes Agenda's To do.
+      if (String(e.row.body.name ?? "").startsWith("task_")) this.#broadcast({ type: "atlas.view", view: this.#view() });
     }
   }
 
@@ -1881,6 +2402,74 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       .map((r) => getRow(this.#sql, r.id)!);
   }
 
+  /**
+   * A post from OwnTracks (§10.1), passed on by the Worker with its
+   * Authorization header. Only OwnTracks' own user and password are let in.
+   * With location off, what it sends is dropped. The answer is what OwnTracks
+   * should do next: usually nothing, or the saved places as regions.
+   */
+  async apiOwnTracks(authorization: string | null, text: string): Promise<{ status: number; body: unknown }> {
+    if (!ownTracksAllowed(this.#sql, authorization)) {
+      ownTracksRefused(this.#sql);
+      console.error(JSON.stringify({ at: "owntracks", error: authorization ? "wrong user or password" : "no user and password" }));
+      this.#broadcast({ type: "atlas.view", view: this.#view() });
+      return {
+        status: 401,
+        body: { error: "That isn't OwnTracks' user and password for this Atlas. Set it up again in Settings → Devices." },
+      };
+    }
+    allowedPost(this.#sql);
+    if (!readSettings(this.#sql).location.on) return { status: 200, body: [] };
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { status: 400, body: { error: "OwnTracks sent something that isn't JSON." } };
+    }
+    // Into the intake; it's weighed after the answer, so OwnTracks isn't kept waiting: the situation first, then each item.
+    this.#senses.take(
+      readOwnTracks(data).flatMap((o) => observe(this.#sql, o)),
+      { refresh: true },
+    );
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+    return { status: 200, body: ownTracksAnswer(this.#sql) };
+  }
+
+  /**
+   * A webhook source's post (§10.4): checked by its key or its signature,
+   * then into the intake as one item, with the post kept as raw content.
+   * The answer comes before it's weighed, so the service isn't kept waiting.
+   */
+  async apiSenseHook(
+    id: string,
+    key: string | null,
+    headers: Record<string, string>,
+    text: string,
+  ): Promise<{ status: number; body: unknown }> {
+    const hook = senseHooks(this.#sql).find((h) => h.id === id);
+    const h = new Headers(headers);
+    if (!hook || !(await hookAllowed(this.#sql, id, key, h, text))) {
+      if (hook) hookSeen(this.#sql, id, true);
+      console.error(JSON.stringify({ at: "senses.hook", hook: id, error: hook ? "wrong key or signature" : "no such source" }));
+      return {
+        status: 401,
+        body: { error: "That isn't this source's key or signature. Settings → Connections → Senses has its address." },
+      };
+    }
+    let payload: unknown = text;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      // Not JSON: the text itself is the post.
+    }
+    hookSeen(this.#sql, id, false);
+    noteSource(this.#sql, `webhook:${hook.name}`);
+    // GitHub's first post only says the hook works.
+    if (h.get("x-github-event") === "ping") return { status: 200, body: { ok: true, note: "Connected." } };
+    this.#senses.take([hookItem(hook, h, typeof payload === "string" ? { text: payload } : payload)], { raw: text });
+    return { status: 202, body: { ok: true } };
+  }
+
   async apiLastSeq(): Promise<number> {
     return this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) AS seq FROM log`).one().seq;
   }
@@ -1895,8 +2484,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       });
       return;
     }
+    const wasOn = readSettings(this.#sql).location.on;
     const keys = writeSettings(this.#sql, patch);
     if (keys.length) append(this.#sql, { actor: "owner", kind: "settings.change", body: { keys } });
+    const isOn = readSettings(this.#sql).location.on;
+    if (wasOn !== isOn) {
+      if (!isOn) forgetWhere(this.#sql);
+      this.#broadcast({ type: "atlas.rows", rows: isOn ? locationOn(this.#sql) : locationOff(this.#sql) });
+    }
     if (keys.includes("calendar") || keys.includes("timezone")) this.#calendar.reset();
     this.#refreshVoice();
     this.#broadcast({ type: "atlas.view", view: this.#view() });
@@ -1946,6 +2541,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     this.#broadcast({ type: "atlas.rows", rows: [out.row] });
     if (out.agenda) this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
     if (out.row.kind === "page.change") this.#broadcast({ type: "atlas.pages", pages: pageSummaries(this.#sql) });
+    if (out.row.kind === "settings.change") {
+      this.#broadcast({ type: "atlas.view", view: this.#view() });
+    }
   }
 
   /** The owner's hands on pages: Keep, an edit, bringing back a version, and delete (§21.7). */
@@ -2016,6 +2614,22 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             ? { ok: true, message: "Sent. It should show on this device in a moment." }
             : { ok: false, message: out.error ?? "It didn't go." };
         },
+        maps: async () => {
+          const provider = readSettings(this.#sql).maps.provider;
+          const a = await this.#maps.geocode("Times Square, New York", { run_id: null });
+          if (!a.ok) return { ok: false, message: a.error };
+          const b = await this.#maps.geocode("Grand Central Terminal, New York", { run_id: null });
+          if (!b.ok || !a.value[0] || !b.value[0])
+            return { ok: false, message: b.ok ? "OpenStreetMap's address search found nothing for a well-known place." : b.error };
+          const r = await this.#maps.route([a.value[0], b.value[0]], "drive", { run_id: null, label: "a test route in New York" });
+          if (!r.ok) return { ok: false, message: r.error };
+          const w = await this.#maps.weather(a.value[0], { run_id: null, label: "a test look at the weather" });
+          if (!w.ok) return { ok: false, message: w.error };
+          return {
+            ok: true,
+            message: `${MAPS[provider].name} works: a test route took ${Math.max(1, Math.round(r.value.s / 60))} min${r.value.traffic ? " with traffic" : ""}. Open-Meteo works: ${temp(w.value.now.temp_c, unitsFor(readSettings(this.#sql).units, zoneOf(readSettings(this.#sql))))} there now.`,
+          };
+        },
         systemFor: (character) => {
           const settings = readSettings(this.#sql);
           const s = character ? { ...settings, character } : settings;
@@ -2051,6 +2665,36 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       const out = await this.#outbox.look({ what: "fetch", text: url, to: hostOf(url), run_id: o.run_id }, (f) => fetchPage(f, url, o));
       return out.ok ? { ...out, value: this.#hide(out.value) } : out;
     },
+  };
+
+  /**
+   * Maps and weather (§19.1), each call through the outbox's look on its own channel. Pins come from
+   * OpenStreetMap whichever provider is picked, since Mapbox's free answers can't be kept.
+   */
+  #maps: MapsApi = {
+    provider: () => readSettings(this.#sql).maps.provider,
+    geocode: (q, o) =>
+      this.#outbox.look({ what: "geocode", text: q, to: MAPS.osm.name, run_id: o.run_id, channel: "maps" }, (f) => geocode(f, q, o.near)),
+    reverse: (p, o) =>
+      this.#outbox.look({ what: "reverse", text: "where you are", to: MAPS.osm.name, run_id: o.run_id, channel: "maps" }, (f) =>
+        reverse(f, p),
+      ),
+    route: (via, travel, o) => {
+      const provider = readSettings(this.#sql).maps.provider;
+      return this.#outbox.look({ what: "route", text: o.label, to: MAPS[provider].name, run_id: o.run_id, channel: "maps" }, (f) =>
+        route(f, { provider, key: getSecret<string>(this.#sql, "mapbox_token"), via, travel }),
+      );
+    },
+    nearby: (q, o) => {
+      const provider = readSettings(this.#sql).maps.provider;
+      return this.#outbox.look({ what: "nearby", text: o.label, to: MAPS[provider].name, run_id: o.run_id, channel: "maps" }, (f) =>
+        nearby(f, { provider, key: getSecret<string>(this.#sql, "mapbox_token"), ...q }),
+      );
+    },
+    weather: (p, o) =>
+      this.#outbox.look({ what: "weather", text: o.label, to: "Open-Meteo", run_id: o.run_id, channel: "weather" }, (f) =>
+        fetchWeather(f, roughArea(p)),
+      ),
   };
 
   /** Cloudflare's web search, on the Workers AI binding; tests use a fake (never the real one). */
@@ -2797,7 +3441,16 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     // a form, a service's tool or a webhook, Atlas finishes what it was doing, or says it's done.
     // Said by voice or in text, the yes is already part of a run that carries on by itself.
     if (o.by === "app" || o.by === "hold" || o.by === "push") {
-      void this.keepAliveWhile(() => this.#textTurn(`Yes to ${item.title}. Carry on.`, `approval-${id}`));
+      // What it did and gave back goes with the yes, so the run reports it instead of asking again for what's done.
+      const note = [
+        `[Atlas, not the owner] The owner said yes on the card, and it's done (don't ask for it or do it again):`,
+        ...actions.map(
+          (a, i) =>
+            `- ${"name" in a && typeof a.name === "string" ? a.name : a.kind}: ${results[i]!.ok ? "worked" : "didn't work"}. ${results[i]!.text.slice(0, 6_000)}`,
+        ),
+        "Carry on from there with what it gave back: finish what you were doing, or tell the owner how it went.",
+      ].join("\n");
+      void this.keepAliveWhile(() => this.#textTurn(`Yes to ${item.title}. Carry on.`, `approval-${id}`, note));
     }
     return { ok, text: results.map((r) => r.text).join(" ") };
   }
@@ -2854,7 +3507,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   }
 
   #broadcast(msg: ServerMessage): void {
-    this.broadcast(JSON.stringify(msg));
+    // Paired devices have their own protocol; the app's messages are for the app.
+    const devices = [...this.getConnections()].filter((c) => (c.state as SocketState | null)?.node).map((c) => c.id);
+    this.broadcast(JSON.stringify(msg), devices);
   }
 }
 
@@ -2897,6 +3552,18 @@ interface SocketState {
   session?: string;
   device?: string;
   visible?: boolean;
+  /** Set on a paired device's socket (§16.3): which node it is. The Worker sets it only after checking the node's token. */
+  node?: string;
+}
+
+/** The header the Worker puts on a paired device's socket, after checking its token. */
+export const NODE_HEADER = "x-atlas-node";
+
+/** A device's event in a few words, for its state in the situation. */
+function summary(body: Record<string, unknown>): string {
+  const v = body.value ?? body.state;
+  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return String(v);
+  return JSON.stringify(body).slice(0, 120);
 }
 
 /** Lets the agent take other work between batches of background upkeep. */

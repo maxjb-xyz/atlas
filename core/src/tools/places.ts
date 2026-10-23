@@ -1,0 +1,355 @@
+// Places, routes and weather (VISION §10, §19.1). Looking things up on a
+// map leaves Atlas, so each call goes through the outbox's look with a
+// receipt; pinning a place changes the owner's own things, so Atlas does it,
+// shows a receipt, and offers Undo (§12.1).
+
+import { z } from "zod";
+import { keepWeather } from "../situation";
+import { findPlace, here, homePin, metres, type Pin, pinOf, pins } from "../location";
+import { distance as say, unitsFor, sky, temp, type Units } from "../weather";
+import { kindWords, minutes, type Found, type Point, PLACE_KINDS, placeKind, type Travel } from "../maps";
+import { correctRecord, createRecord, type AtlasRecord } from "../store/records";
+import { setState } from "../store/state";
+import { clockLocal } from "../time";
+import { defineTool, fail, type ToolContext } from "./types";
+
+/** An item with no time (a device call queued for later) sits on the clock here, past anything that's due. */
+export const NO_DEADLINE = 8_640_000_000_000_000;
+
+const unitsOf = (ctx: ToolContext): Units => unitsFor(ctx.settings.units, ctx.tz);
+
+/** A saved place by id or name, loosely (location.ts), with or without a pin. */
+const savedPlace = (ctx: ToolContext, ref: string): AtlasRecord | null => findPlace(ctx.sql, ref);
+
+type Where = { ok: true; point: Point; name: string; pin?: Pin } | { ok: false; error: string };
+
+/** Where the owner is, when Atlas knows. */
+function hereNow(ctx: ToolContext): Where {
+  if (!ctx.settings.location.on)
+    return { ok: false, error: "Location is off, so Atlas doesn't know where the owner is. Ask them, or use a saved place or an address." };
+  const h = here(ctx.sql);
+  if (!h.fix)
+    return {
+      ok: false,
+      error:
+        "No location has come in yet (OwnTracks isn't set up in Settings → Devices, or hasn't reported). Ask where they are, or use a saved place or an address.",
+    };
+  return { ok: true, point: { lat: h.fix.lat, lon: h.fix.lon }, name: h.place?.name ?? "where you are" };
+}
+
+/**
+ * Where an address search should look first: where the owner is, else home,
+ * else the most recently changed saved place. Without it, "UCF Library" found a library two
+ * hours away.
+ */
+function searchNear(ctx: ToolContext): Point | null {
+  const h = hereNow(ctx);
+  if (h.ok) return h.point;
+  return homePin(ctx.sql) ?? pins(ctx.sql)[0] ?? null;
+}
+
+/** "here", "home", a saved place (by name or id), or an address, as a point. An address is looked up near the owner. */
+async function resolve(ctx: ToolContext, ref: string): Promise<Where> {
+  const t = ref.trim();
+  if (/^(here|me|my location|where i am|current location)$/i.test(t)) return hereNow(ctx);
+  if (/^(my )?(home|house|place|apartment)$/i.test(t)) {
+    const h = homePin(ctx.sql);
+    if (h) return { ok: true, point: h, name: "Home", pin: h };
+    // "Home" isn't an address: looking it up on the map finds somewhere else called Home.
+    return {
+      ok: false,
+      error:
+        "Home isn't a saved place with a pin yet. Ask where home is (an address), then save it with remember and pin it with place_pin, or say 'this is home' while there.",
+    };
+  }
+  const saved = savedPlace(ctx, t);
+  const pin = saved ? pinOf(saved) : null;
+  if (pin) return { ok: true, point: pin, name: pin.name, pin };
+  if (!ctx.maps) return { ok: false, error: "Maps aren't reachable from this run." };
+  const address = saved && typeof saved.fields.address === "string" ? saved.fields.address : t;
+  const near = searchNear(ctx);
+  const out = await ctx.maps.geocode(address, { run_id: ctx.run_id, ...(near ? { near } : {}) });
+  if (!out.ok) return { ok: false, error: out.error };
+  const best = out.value[0];
+  if (!best) {
+    return {
+      ok: false,
+      error: /^home$/i.test(t)
+        ? "Home isn't a saved place with a pin yet. Ask for the address, then place_pin it."
+        : `OpenStreetMap found nothing for "${address}". Try a fuller address, or the place's name and town.`,
+    };
+  }
+  return { ok: true, point: best, name: saved?.name ?? best.name };
+}
+
+export const placePin = defineTool({
+  name: "place_pin",
+  kind: "change_own",
+  description: [
+    "Pin a saved place on the map, so Atlas notices when the owner arrives or leaves, and can route to it.",
+    "Use at: here when the owner says they're there now ('this is my gym'), or at: address with its address (found with OpenStreetMap, and kept).",
+    "It makes the place if it isn't saved yet. Name the owner's home 'Home'. The owner sees a 'Pinned' chip with Undo.",
+  ].join(" "),
+  input: z.object({
+    place: z.string().min(1).max(120).describe("The saved place's name or id, or the name for a new one: 'Gym', 'Home', 'Dr. Patel'."),
+    at: z.enum(["here", "address"]),
+    address: z.string().max(300).optional().describe("With at: address, the address. Leave out to use the address the place already has."),
+    radius_m: z
+      .number()
+      .int()
+      .min(30)
+      .max(2000)
+      .optional()
+      .describe("How close counts as being there, in metres. About 120 by default; bigger for a campus or a park."),
+  }),
+  async run(input, ctx) {
+    const existing = savedPlace(ctx, input.place);
+    let point: Point;
+    let address = input.address ?? (typeof existing?.fields.address === "string" ? existing.fields.address : undefined);
+    if (input.at === "here") {
+      const h = hereNow(ctx);
+      if (!h.ok) return fail(h.error);
+      if ((here(ctx.sql).fix?.acc ?? 0) > 150) {
+        return fail(
+          `The phone's last fix is only accurate to ${Math.round(here(ctx.sql).fix!.acc)} m, too rough to pin a place. Try again in a minute, or give the address.`,
+        );
+      }
+      point = h.point;
+    } else {
+      if (!address) return fail(`${input.place} has no address yet. Ask the owner for it.`);
+      if (!ctx.maps) return fail("Maps aren't reachable from this run.");
+      const near = searchNear(ctx);
+      const out = await ctx.maps.geocode(address, { run_id: ctx.run_id, ...(near ? { near } : {}) });
+      if (!out.ok) return fail(out.error);
+      const best = out.value[0];
+      if (!best) return fail(`OpenStreetMap found nothing for "${address}". Ask for a fuller address.`);
+      point = best;
+      address = best.address || address;
+    }
+    const fields = {
+      lat: Math.round(point.lat * 1e6) / 1e6,
+      lon: Math.round(point.lon * 1e6) / 1e6,
+      ...(input.radius_m ? { radius_m: input.radius_m } : {}),
+      ...(address ? { address } : {}),
+      ...(input.place.trim().toLowerCase() === "home" ? { is_home: true } : {}),
+    };
+    const source = { via: ctx.via, run_id: ctx.run_id, ...(ctx.source_log_id ? { log_id: ctx.source_log_id } : {}) };
+    if (existing) {
+      const r = correctRecord(ctx.sql, existing.id, { fields }, "pinned on the map", source);
+      if (input.at === "here") hereAt(ctx, r.id, r.name);
+      return {
+        ok: true,
+        output: { id: r.id, pinned: r.name, ...(address ? { address } : {}) },
+        receipt: { text: `Pinned · ${r.name}`, undo: { kind: "record.revert", id: r.id, history: r.history_seq } },
+      };
+    }
+    const r = createRecord(ctx.sql, { type: "place", name: input.place.trim(), fields, source });
+    if (input.at === "here") hereAt(ctx, r.id, r.name);
+    return {
+      ok: true,
+      output: { id: r.id, pinned: r.name, made: true },
+      receipt: { text: `Pinned · ${r.name}`, undo: { kind: "record.forget", id: r.id } },
+    };
+  },
+});
+
+/** The owner said they're at a place now: Atlas knows it at once, without waiting for the phone's next report. */
+function hereAt(ctx: ToolContext, id: string, name: string): void {
+  const h = here(ctx.sql);
+  if (h.place?.id === id) return;
+  const at = ctx.now.getTime();
+  setState(ctx.sql, "location", {
+    ...h,
+    place: { id, name, since: at },
+    anchor: h.fix ? { lat: h.fix.lat, lon: h.fix.lon, at } : h.anchor,
+  });
+}
+
+export const placeFind = defineTool({
+  name: "place_find",
+  kind: "look",
+  status: "Looking at the map",
+  timeoutMs: 60_000,
+  description: [
+    "Find places on the map: a kind of place (a grocery store, a pharmacy) or one by name, near somewhere, or along the way to somewhere.",
+    "With on_the_way_to (often 'home'), it routes there from `near` and finds places just off the route, with how many minutes off the way each one is: that's how you suggest a stop for a task.",
+    "Results come from OpenStreetMap (or Mapbox when the owner picked it); opening hours are often missing, so don't promise a place is open unless the result says so.",
+  ].join(" "),
+  input: z.object({
+    kind: z
+      .string()
+      .max(60)
+      .optional()
+      .describe(
+        `A kind of place: ${PLACE_KINDS.join(", ")}, or any other as a word ('florist') or an OpenStreetMap tag ('leisure=park', 'amenity=library').`,
+      ),
+    name: z.string().max(80).optional().describe("A name to look for instead, like 'Publix' or 'Trader Joe's'."),
+    near: z.string().max(200).default("here").describe("'here', 'home', a saved place, or an address."),
+    on_the_way_to: z.string().max(200).optional().describe("'home', a saved place or an address, to find places along the way there."),
+    within_m: z
+      .number()
+      .int()
+      .min(100)
+      .max(10_000)
+      .optional()
+      .describe("How far counts: from `near`, or off the route. About 1500 near, 600 along a route."),
+    limit: z.number().int().min(1).max(10).default(5),
+  }),
+  async run(input, ctx) {
+    if (!ctx.maps) return fail("Maps aren't reachable from this run.");
+    if (!input.kind && !input.name) return fail("Give a kind of place or a name.");
+    const from = await resolve(ctx, input.near);
+    if (!from.ok) return fail(from.error);
+    const u = unitsOf(ctx);
+    if (input.kind && !placeKind(input.kind))
+      return fail(`"${input.kind}" isn't a kind of place a map can look for; try a plain word or a tag.`);
+    const what = input.kind ? kindWords(input.kind) : input.name!;
+    if (!input.on_the_way_to) {
+      const out = await ctx.maps.nearby(
+        {
+          ...(input.kind ? { kind: input.kind } : { name: input.name }),
+          near: from.point,
+          within: input.within_m ?? 1_500,
+          limit: input.limit,
+        },
+        { run_id: ctx.run_id, label: `${what} near ${from.name}` },
+      );
+      if (!out.ok) return fail(out.error);
+      return { ok: true, output: { near: from.name, places: out.value.map((p) => found(p, from.point, u)) } };
+    }
+    const to = await resolve(ctx, input.on_the_way_to);
+    if (!to.ok) return fail(to.error);
+    const direct = await ctx.maps.route([from.point, to.point], "drive", { run_id: ctx.run_id, label: `${from.name} to ${to.name}` });
+    if (!direct.ok) return fail(direct.error);
+    const out = await ctx.maps.nearby(
+      {
+        ...(input.kind ? { kind: input.kind } : { name: input.name }),
+        near: from.point,
+        along: direct.value.line,
+        within: input.within_m ?? 600,
+        limit: 8,
+      },
+      { run_id: ctx.run_id, label: `${what} on the way from ${from.name} to ${to.name}` },
+    );
+    if (!out.ok) return fail(out.error);
+    // The real detour for the closest few: the route through each, less the direct one.
+    const best = out.value.slice(0, 3);
+    const detours: Array<Found & { detour_min: number }> = [];
+    for (const p of best) {
+      const via = await ctx.maps.route([from.point, p, to.point], "drive", {
+        run_id: ctx.run_id,
+        label: `${from.name} to ${to.name} by ${p.name}`,
+      });
+      if (via.ok) detours.push({ ...p, detour_min: Math.max(0, Math.round((via.value.s - direct.value.s) / 60)) });
+    }
+    detours.sort((a, b) => a.detour_min - b.detour_min);
+    return {
+      ok: true,
+      output: {
+        from: from.name,
+        to: to.name,
+        trip: `${minutes(direct.value.s)} by car${direct.value.traffic ? " with traffic" : ""}`,
+        places: (detours.length ? detours : out.value.slice(0, input.limit)).slice(0, input.limit).map((p) => found(p, from.point, u)),
+      },
+    };
+  },
+});
+
+function found(p: Found, from: Point, u: Units) {
+  return {
+    name: p.name,
+    ...(p.address ? { address: p.address } : {}),
+    away: say(metres(from, p), u),
+    ...(p.detour_min != null ? { minutes_off_the_way: p.detour_min } : {}),
+    ...(p.hours ? { hours: p.hours } : {}),
+  };
+}
+
+export const routeTool = defineTool({
+  name: "route",
+  kind: "look",
+  status: "Checking the route",
+  description: [
+    "How long it takes to get somewhere, and the route: from 'here' by default, by car unless the owner walks or bikes.",
+    "The situation already has the travel time to the next event with a place; use this for anything else. OpenStreetMap has no live traffic, so say travel times are typical; Mapbox's include traffic.",
+    "show: true puts the route on a map on the stage.",
+  ].join(" "),
+  input: z.object({
+    to: z.string().min(1).max(200).describe("'home', a saved place, or an address."),
+    from: z.string().max(200).default("here"),
+    by: z.enum(["drive", "walk", "bike"]).default("drive"),
+    show: z.boolean().default(false),
+  }),
+  async run(input, ctx) {
+    if (!ctx.maps) return fail("Maps aren't reachable from this run.");
+    const a = await resolve(ctx, input.from);
+    if (!a.ok) return fail(a.error);
+    const b = await resolve(ctx, input.to);
+    if (!b.ok) return fail(b.error);
+    const r = await ctx.maps.route([a.point, b.point], input.by as Travel, { run_id: ctx.run_id, label: `${a.name} to ${b.name}` });
+    if (!r.ok) return fail(r.error);
+    const u = unitsOf(ctx);
+    const view = {
+      kind: "map" as const,
+      title: `${a.name.charAt(0).toUpperCase()}${a.name.slice(1)} to ${b.name}`,
+      markers: [
+        { name: a.name, lat: a.point.lat, lon: a.point.lon },
+        { name: b.name, lat: b.point.lat, lon: b.point.lon },
+      ],
+      route: { line: r.value.line, s: Math.round(r.value.s), m: Math.round(r.value.m), by: input.by, traffic: r.value.traffic, units: u },
+    };
+    return {
+      ok: true,
+      output: {
+        from: a.name,
+        to: b.name,
+        takes: `${minutes(r.value.s)}${r.value.traffic ? " with traffic" : " (typical, no live traffic)"}`,
+        distance: say(r.value.m, u),
+        arrive_if_you_leave_now: clockLocal(new Date(ctx.now.getTime() + r.value.s * 1000), ctx.tz),
+      },
+      ...(input.show ? { receipt: { text: `Route · ${a.name} to ${b.name} · ${minutes(r.value.s)}`, view } } : {}),
+    };
+  },
+});
+
+export const weatherTool = defineTool({
+  name: "weather",
+  kind: "look",
+  status: "Checking the weather",
+  description: [
+    "The forecast from Open-Meteo for the next seven days, for a rough area around a place ('here' by default).",
+    "Today's weather near the owner is already in the situation; use this for other days or other places. show: true (near here only) puts the weather on the stage.",
+  ].join(" "),
+  input: z.object({ near: z.string().max(200).default("here"), show: z.boolean().default(false) }),
+  async run(input, ctx) {
+    if (!ctx.maps) return fail("The weather isn't reachable from this run.");
+    const at = await resolve(ctx, input.near);
+    if (!at.ok) return fail(at.error);
+    const w = await ctx.maps.weather(at.point, { run_id: ctx.run_id, label: `the weather near ${at.name}` });
+    if (!w.ok) return fail(w.error);
+    // Near where the owner is, it's the situation's weather too: the view shows this look, not an older one.
+    if (/^here$/i.test(input.near.trim())) keepWeather(ctx.sql, w.value);
+    const u = unitsOf(ctx);
+    return {
+      ok: true,
+      output: {
+        near: at.name,
+        now: `${temp(w.value.now.temp_c, u)}, ${sky(w.value.now.code)}`,
+        next_hours: w.value.hours
+          .filter((_, i) => i % 3 === 0)
+          .map((h) => `${clockLocal(new Date(h.t), ctx.tz)}: ${temp(h.temp_c, u)}, ${sky(h.code)}${h.pop >= 20 ? `, ${h.pop}% rain` : ""}`),
+        days: w.value.days.map(
+          (d) => `${d.date}: ${temp(d.min_c, u)} to ${temp(d.max_c, u)}, ${sky(d.code)}${d.pop >= 20 ? `, ${d.pop}% rain` : ""}`,
+        ),
+      },
+      // The weather view is the weather near the owner, from the situation.
+      ...(input.show && /^here$/i.test(input.near.trim())
+        ? { receipt: { text: "Weather · near you", view: { kind: "weather" as const } } }
+        : {}),
+    };
+  },
+});
+
+export const placeTools = [placePin, placeFind, routeTool, weatherTool];
+export const placeLooks = [placeFind, routeTool, weatherTool];
+export { pins };

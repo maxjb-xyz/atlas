@@ -74,6 +74,26 @@ describe("ical", () => {
     expect(unfold("A:one\r\n two\r\n\tthree")).toEqual(["A:onetwothree"]);
   });
 
+  it("reads who an event is with: the organizer and attendees, once each, without rooms", () => {
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:lunch-1",
+      "DTSTART:20261023T160000Z",
+      "DTEND:20261023T170000Z",
+      "SUMMARY:Lunch",
+      'ORGANIZER;CN="Henderson, Doug":mailto:Doug@Acme.com',
+      "ATTENDEE;CN=Doug Henderson;PARTSTAT=ACCEPTED:mailto:doug@acme.com",
+      "ATTENDEE;PARTSTAT=NEEDS-ACTION:MAILTO:sam@example.org",
+      "ATTENDEE;CUTYPE=ROOM;CN=Room 4:mailto:room4@acme.com",
+      "ATTENDEE;CN=Priya:urn:uuid:1234",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const [ev] = parseEvents(ics, "Work");
+    expect(ev!.people).toEqual([{ name: "Henderson, Doug", email: "doug@acme.com" }, { email: "sam@example.org" }, { name: "Priya" }]);
+  });
+
   it("keeps each expanded instance of a recurring event apart", () => {
     const ics = find(multistatus(homeEventsXml)[0]!.props, "calendar-data")!.text;
     const evs = parseEvents(ics, "Home");

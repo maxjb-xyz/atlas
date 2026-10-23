@@ -79,13 +79,14 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
             {items.map((i) => {
               const on = i.id === current?.id;
               return (
-                <div
-                  key={i.id}
-                  className="r"
-                  style={{ flexDirection: "column", alignItems: "stretch", gap: 8, cursor: "pointer" }}
-                  {...pressable(() => setOpen(i.id))}
-                >
-                  <div className="row" style={{ flexWrap: "nowrap" }}>
+                <div key={i.id} className="r" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+                  {/* Only the header opens the item, so the card's own buttons aren't inside a button. */}
+                  <div
+                    className="row"
+                    style={{ flexWrap: "nowrap", cursor: "pointer" }}
+                    aria-expanded={on}
+                    {...pressable(() => setOpen(i.id))}
+                  >
                     <span className={`tag ${i.kind === "failed" || i.kind === "approval" ? "ac" : ""}`}>
                       {i.kind === "failed"
                         ? "Didn't finish"
@@ -192,7 +193,9 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
     ...s.agenda
       // Notifications held for quiet hours are the outbox's, and approvals wait in Inbox: neither is something on your clock.
       .filter(
-        (a) => (a.state === "scheduled" || a.state === "running") && a.kind !== "notify" && a.kind !== "approval" && a.kind !== "skills",
+        (a) =>
+          (a.state === "scheduled" || a.state === "running") &&
+          !["notify", "approval", "skills", "situation", "rhythm", "errand"].includes(a.kind),
       )
       .map((a): AgendaEntry => {
         const d = a.source.detail ?? {};
@@ -208,6 +211,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
         };
       }),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
+  const tasks = s.view?.tasks ?? [];
   const strip = Array.from({ length: 7 }, (_, i) => addDays(today, i));
   const key = (d: Date) => startOfDay(d).toDateString();
   const shown = day ? entries.filter((e) => key(e.at) === day) : entries;
@@ -267,7 +271,36 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                 })}
               </div>
               <CalendarNote atlas={atlas} cal={cal} />
-              {!shown.length && (
+              {tasks.length > 0 && !day && (
+                <div>
+                  <div className="section-rule">
+                    <span className="lab">To do · {tasks.length}</span>
+                  </div>
+                  <div className="rows">
+                    {tasks.map((t) => (
+                      <div key={t.id} className="r" style={{ flexWrap: "wrap", rowGap: 4 }}>
+                        <span className="tag ac" style={{ width: 84, flex: "none", justifyContent: "center" }}>
+                          ◆ To do
+                        </span>
+                        <span style={{ flex: "1 1 220px", minWidth: 0 }}>
+                          {t.title}
+                          <span className="faint small" style={{ display: "block", marginTop: 2 }}>
+                            {t.fits ? `${t.fits.charAt(0).toUpperCase()}${t.fits.slice(1)}: Atlas brings it up when it fits` : "Whenever"}
+                            {t.by ? ` · by ${shortDay(t.by)}` : ""}
+                          </span>
+                        </span>
+                        <button className="link small" onClick={() => atlas.send({ type: "atlas.task.done", id: t.id, done: true })}>
+                          Done
+                        </button>
+                        <button className="link small faint" onClick={() => atlas.send({ type: "atlas.task.done", id: t.id, done: false })}>
+                          Drop
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!shown.length && !tasks.length && (
                 <Empty title="Nothing on the clock">Events, reminders, what Atlas promised to do, and its background jobs show here.</Empty>
               )}
               {[...byDay].map(([d, list]) => (

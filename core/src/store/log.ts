@@ -36,7 +36,11 @@ export type LogKind =
   /** A file was made, replaced or deleted (§21.7). */
   | "file.change"
   /** A skill was learned, patched, archived or brought back (§9.3). */
-  | "skill.change";
+  | "skill.change"
+  /** Something a sense noticed (§10.1): arriving at or leaving a place, a real move, location turned off or on. */
+  | "sense"
+  /** What awareness made of a sense event or a rhythm moment (§10.3): stopped by a rule, decided not to matter, or woke Atlas, and what it chose; and the owner's reaction to a nudge. */
+  | "awareness";
 
 /** A receipt: the one-line chip the console shows for something Atlas did (§21.1). */
 export interface Receipt {
@@ -57,7 +61,30 @@ export type Undo =
   /** Undoes a page's version `version`: back to the one before, or no page when it was the first. */
   | { kind: "page.undo"; id: string; version: number }
   /** Undoes a skill's version `version`: back to the one before, or archived when it was the first. */
-  | { kind: "skill.undo"; id: string; version: number };
+  | { kind: "skill.undo"; id: string; version: number }
+  /** Puts Speaking up back the way it was before Atlas changed it. */
+  | { kind: "speaking.restore"; before: unknown };
+
+/** What a source says happened, as the intake keeps it in a `sense` row (§10.4). Sources add their own fields beside these (a place, a device, an event). */
+export interface SenseItem {
+  /** Where it came from: "location", "device", "calendar", "situation", "webhook". */
+  source: string;
+  event: string;
+  /** What happened, in a line, for History, `decide` and Atlas. */
+  what: string;
+  /** The same key again within a while is the same news (a place's edge, a device flickering, a webhook sent twice). */
+  key?: string;
+  /** The thing it belongs to: an event's id, a place, a device, an issue. */
+  thread?: string;
+  /** Who it's from, when it's from someone. */
+  from?: string;
+  /** Who else it's with or about, as lines ("Doug Henderson <doug@acme.com>"): an event's organizer and those invited. */
+  people?: string[];
+  /** The source's own signals, for cheap rules: "review_requested", "assigned", "newsletter". */
+  signals?: string[];
+  link?: string;
+  [field: string]: unknown;
+}
 
 export interface LogRow {
   seq: number;

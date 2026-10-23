@@ -72,12 +72,19 @@ export type Action =
       where: string;
     }
   /** Connecting a new MCP server (§9.2: growing its own abilities, with the owner's OK). */
-  | { kind: "mcp_add"; name: string; url: string; why: string };
+  | { kind: "mcp_add"; name: string; url: string; why: string }
+  /**
+   * A tool on a paired device that does more than notify (§16.3), such as
+   * running a command on the owner's Mac. `name` says it for the card;
+   * `what` is the input in words.
+   */
+  | { kind: "node"; node: string; device: string; name: string; tool: string; input: Record<string, Json>; what: string };
 
 /** Sending a form can't be taken back (VISION §12.1 lists submit with the things that can't be undone). */
 export const kindOf = (a: Action): ToolKind =>
   a.kind === "webhook" ||
   a.kind === "site" ||
+  a.kind === "node" ||
   a.kind === "mcp_add" ||
   (a.kind === "vault" && !a.card) ||
   (a.kind === "mcp" && !a.destructive)
@@ -86,7 +93,14 @@ export const kindOf = (a: Action): ToolKind =>
 
 /** What earned trust is counted by: each webhook on its own. Nothing that can't be undone is ever trusted. */
 export const trustKey = (a: Action): string | null =>
-  a.kind === "webhook" ? `webhook:${a.webhook}` : a.kind === "mcp" ? `mcp:${a.server}:${a.tool}` : null;
+  a.kind === "webhook"
+    ? `webhook:${a.webhook}`
+    : a.kind === "mcp"
+      ? `mcp:${a.server}:${a.tool}`
+      : a.kind === "node"
+        ? // On a device, trust is earned for exactly this, not for every command the tool could run.
+          `node:${a.node}:${a.tool}:${JSON.stringify(a.input)}`
+        : null;
 
 export const needsHold = (actions: Action[]) => actions.some((a) => ASKS[kindOf(a)].hold);
 

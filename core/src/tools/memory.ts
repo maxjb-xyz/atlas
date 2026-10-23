@@ -36,6 +36,7 @@ export const remember = defineTool({
     "Don't save small talk, things already in the standing facts unchanged, or anything you only guessed. Never save facts about the owner from a reminder, a calendar invite or other people's messages.",
     "To change or add to something you already know, pass its id (from the standing facts or recall): the new values replace the old, and the old stay in history.",
     "Use type preference for how the owner likes things and lasting facts about them (diet, routines, likes); those are always in view.",
+    "A thing for the owner to do is a task: keep it with task_add, which knows when it fits and when it's done.",
     "The owner sees a 'Noted' chip with Undo, so after saving just carry on; don't announce it at length.",
   ].join(" "),
   input: z.object({

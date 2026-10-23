@@ -21,6 +21,10 @@ import { type AtlasRecord, standingFacts } from "./store/records";
 import { get as getRow, type LogRow, type Surface } from "./store/log";
 import type { Settings } from "./store/settings";
 import { isoLocal, longLocal, shortLocal } from "./time";
+import { situationLines } from "./situation";
+import { openTasks, taskView } from "./tasks";
+import { pileLine, speakingLine } from "./agent/senses";
+import { nodesLine } from "./nodes";
 
 /**
  * The context window Atlas plans for, in tokens. Providers don't say what
@@ -87,11 +91,17 @@ export function systemPrompt(opts: {
     .map((i) => `- ${isoLocal(new Date(i.due_at), tz)}: ${i.kind === "promise" ? "your promise: " : ""}${i.title} (id ${i.id})`);
   const fresh = [
     `Now: ${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}.`,
+    situationLines(sql, settings, now.getTime()),
+    nodesLine(sql),
     focusLine(sql, tz),
     pagesLine(sql),
     skillsLine(sql),
     serversLine(opts.mcp ?? []),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
+    tasksLine(sql, tz),
+    speakingLine(settings),
+    // What could wait, for the owner's own turns; Atlas's own runs get it in their notes.
+    surface === "none" ? "" : pileLine(sql, settings),
     areaContext(sql, opts.beforeSeq),
     exitsContext(sql, tz, now),
     jobsLine(sql, now),
@@ -217,6 +227,18 @@ function skillsLine(sql: Sql): string {
         .map((s) => `- ${s.name}: ${s.description}${s.checked && !s.checked.ok ? " (its last check failed)" : ""}`)
         .join("\n")}`
     : "";
+}
+
+/** Open tasks (§5.1): what the owner has to do, with when each fits; Atlas brings one up when it fits. */
+function tasksLine(sql: Sql, tz: string): string {
+  const open = openTasks(sql).slice(0, 25);
+  if (!open.length) return "";
+  return `To do (open tasks; bring one up when it fits, task_done when it's done or not needed):\n${open
+    .map((r) => {
+      const v = taskView(r);
+      return `- ${v.title}${v.fits ? ` (${v.fits})` : ""}${v.by ? `, by ${shortLocal(new Date(v.by), tz)}` : ""} (id ${v.id})`;
+    })
+    .join("\n")}`;
 }
 
 function pagesLine(sql: Sql): string {
