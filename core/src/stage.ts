@@ -523,7 +523,16 @@ export interface SensesPage {
   funnel: { in: number; duplicate: number; never: number; later: number; now: number; failed: number; nudged: number };
   sources: import("./protocol").SensesView["sources"];
   later: Array<{ id: string; at: number; source: string; what: string }>;
-  recent: Array<{ id: string; at: number; source: string; what: string; outcome: string | null; why: string | null }>;
+  recent: Array<{
+    id: string;
+    at: number;
+    source: string;
+    what: string;
+    outcome: string | null;
+    why: string | null;
+    /** What the quarantined reader pulled from someone else's words in it, when it read any. */
+    facts?: Record<string, string | number | string[]>;
+  }>;
   /** How the last week's nudges landed (§10.4, measured): each nudge's latest reaction, and the misses the owner pointed out. */
   landed: Landed;
 }

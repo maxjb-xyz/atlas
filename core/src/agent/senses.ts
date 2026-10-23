@@ -17,6 +17,7 @@
 // owner: the character and the situation do (rule 1).
 
 import { type Decider } from "../brains/decide";
+import { type Extractor, factsLine, MESSAGE_FIELDS, sure } from "../brains/extract";
 import { personText, type Calendar } from "../calendar/types";
 import { fitsOf, fitsText, openTasks, personIn } from "../tasks";
 import { type AgendaItem, createItem, finish, rearm, upcoming } from "../store/agenda";
@@ -104,6 +105,8 @@ export interface SenseDeps {
   calendar(): Calendar | null;
   clock: ToolContext["clock"];
   decider(): Decider | null;
+  /** The `extract` role, for words from other people (§10.4 step 2); null where there isn't one. */
+  extractor(): Extractor | null;
   /** A run of Atlas's own, with the note, the nudge tool and looks. Resolves when the run ends. */
   wake(o: { trigger: string; note: string; from: NudgeFrom; ref?: string }): Promise<{ run_id: string; nudged: boolean; error?: string }>;
   rows(rows: LogRow[]): void;
@@ -281,7 +284,9 @@ export class SenseDesk {
   async #consider(row: LogRow): Promise<void> {
     const t0 = Date.now();
     const settings = readSettings(this.d.sql);
-    const event = describe(row);
+    // 2. Read (§10.4): words from other people go to the quarantined reader, which gives back facts, never instructions.
+    const facts = await this.#read(row);
+    const event = [describe(row), factsLine(facts)].filter(Boolean).join("\n");
     const settle = (outcome: "later" | "never", step: "rules" | "decide", why: string, scores?: Record<string, number>) => {
       mark(this.d.sql, row.id, { state: outcome === "never" ? "done" : "weighed", outcome, why, scores: scores ?? null });
       this.#log({
@@ -453,6 +458,32 @@ export class SenseDesk {
       },
       out.run_id,
     );
+  }
+
+  /**
+   * What someone else's words in an item say, as facts: the item's raw
+   * content (a mail's body, a post) read by the `extract` role. Kept on the
+   * item's row, so History and the Senses screen show what was read. Read
+   * once: an item weighed again after a restart keeps what it had.
+   */
+  async #read(row: LogRow): Promise<Record<string, string | number | string[]>> {
+    const kept = row.body.facts;
+    if (kept && typeof kept === "object" && !Array.isArray(kept)) return kept as Record<string, string | number | string[]>;
+    const extractor = this.d.extractor();
+    if (!extractor) return {};
+    const raw = this.d.sql.exec<{ raw: string | null }>(`SELECT raw FROM intake WHERE id = ?`, row.id).toArray()[0]?.raw;
+    if (!raw || raw.length < 20) return {};
+    try {
+      const facts = sure(await extractor.extract(raw.slice(0, 8_000), MESSAGE_FIELDS, AbortSignal.timeout(10_000)));
+      if (Object.keys(facts).length) {
+        this.d.sql.exec(`UPDATE log SET body = json_set(body, '$.facts', json(?)) WHERE id = ?`, JSON.stringify(facts), row.id);
+        row.body.facts = facts as never;
+      }
+      return facts;
+    } catch (err) {
+      console.error(JSON.stringify({ at: "intake.extract", item: row.id, error: err instanceof Error ? err.message : String(err) }));
+      return {};
+    }
   }
 
   /**

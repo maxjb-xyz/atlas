@@ -17,6 +17,8 @@ export const seams: {
   embed: Embedder | null | undefined;
   /** A smaller context window, so tests can reach compaction with a few messages. */
   contextWindow: number | null;
+  /** The `extract` role: undefined uses Workers AI's Clairic, null means none. */
+  extract: import("../brains/extract").Extractor | null | undefined;
   /** The `decide` role: undefined uses Workers AI's Clef, null means none. */
   decide: Decider | null | undefined;
   /** Cloudflare's web search: undefined uses the AI binding, null means none. */
@@ -48,6 +50,7 @@ export const seams: {
   embed: undefined,
   contextWindow: null,
   decide: undefined,
+  extract: undefined,
   websearch: undefined,
   browser: undefined,
   workspace: undefined,

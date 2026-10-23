@@ -12,6 +12,7 @@ import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup"
 import { history as logHistory, historyStats, inbox, inboxDone, listRecords, runDetail, stagePage } from "./agent/views";
 import { correctRecord, createRecord, findRecords, forgetRecord, getRecord } from "./store/records";
 import { type Decider, workersAIDecider } from "./brains/decide";
+import { type Extractor, workersAIExtractor } from "./brains/extract";
 import { createArea, getScope, listAreas, mergeAreas, setScope, type Tagged, updateArea } from "./store/areas";
 import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
 import { seams } from "./agent/seams";
@@ -487,6 +488,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       calendar: () => this.#calendar.source(readSettings(this.#sql)),
       clock: this.#clock,
       decider: () => this.#decider(),
+      extractor: () => this.#extractor(),
       wake: (o) => this.#wake(o),
       rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
       automations: (rows) => this.#automations.sensed(rows),
@@ -2359,6 +2361,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     } catch (err) {
       console.error(JSON.stringify({ at: "areas", error: err instanceof Error ? err.message : String(err) }));
     }
+  }
+
+  /** The `extract` role (§5.4): Clairic on Workers AI, or a fake in tests (never the real one). */
+  #extractor(): Extractor | null {
+    if (seams.extract !== undefined) return seams.extract;
+    if (this.env.ATLAS_TEST) return null;
+    return workersAIExtractor(this.env.AI as never);
   }
 
   #decider(): Decider | null {

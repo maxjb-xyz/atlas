@@ -363,14 +363,19 @@ export const yours = (what: string) => what.replace(/^The owner /, "You ");
 
 /** The Senses view (§10.4). */
 export function sensesPage(sql: Sql, settings: Settings): import("./stage").SensesPage {
-  const recent = sql.exec<RawItem>(`${SELECT} ORDER BY i.at DESC LIMIT 25`).toArray().map(toItem);
+  const rows = sql.exec<RawItem>(`${SELECT} ORDER BY i.at DESC LIMIT 25`).toArray();
+  const factsOf = (r: RawItem) => (parse(r.body, {}) as { facts?: Record<string, string | number | string[]> }).facts;
   return {
     kind: "senses",
     funnel: funnel(sql, settings),
     landed: landed(sql),
     sources: sensesView(sql).sources,
     later: laterPile(sql, 20).map((i) => ({ id: i.id, at: i.at, source: i.source, what: yours(i.what) })),
-    recent: recent.map((i) => ({ id: i.id, at: i.at, source: i.source, what: yours(i.what), outcome: i.outcome, why: i.why })),
+    recent: rows.map((r) => {
+      const i = toItem(r);
+      const facts = factsOf(r);
+      return { id: i.id, at: i.at, source: i.source, what: yours(i.what), outcome: i.outcome, why: i.why, ...(facts ? { facts } : {}) };
+    }),
   };
 }
 
