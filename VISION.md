@@ -427,11 +427,11 @@ Every event goes through the intake's steps (§10.4), which come down to three:
 2. **Decide,** using the `decide` role (Clef by default). Is this worth a thought now, later or not at all? Does it matter to anything open, such as a commitment, a task, an event, a project, an automation or a person you care about? Which area is it in, and how urgent is it? This takes tens of milliseconds and costs a fraction of a cent.
 3. **Atlas.** Only if step 2 says now does the main brain run, with the event and the records it touches; what can wait, it sees in a batch later. It decides whether to act, tell you, or stay quiet. What to make of an event is its own judgment, from the character and the situation, never a script per kind of event (rule 1).
 
-**Looks on the clock** are automations, not a second mechanism (decided 2026-10-23): the morning brief and the evening wrap-up are default routines (§13.4) that report only when something is worth saying. What awareness keeps is the look before leaving for an event with a place: it follows the trip's travel time, which moves with traffic and where you are, so it's news the intake notices, not a time of day.
+**Looks on the clock** are automations, not a second mechanism (decided 2026-10-23): the morning brief and the evening wrap-up are default routines (§13.4) that report only when something is worth saying. What the clock gives the senses is **the moment before each event** (decided 2026-10-23): shortly before something on your calendar starts, or before it's time to leave for one with a place, the intake gets an item for it, with who it's with. It's weighed like any other item. It matters when something open touches it, like a task to tell Doug something when you see him, or when it's time to leave, which follows the trip's travel time as it moves with traffic and where you are.
 
 **Example:**
 1. "Left the gym" arrives from your phone.
-2. It matches the open task "get oat milk", which fits at a grocery store. A task tied to a place is looked at whenever you leave somewhere or move; one tied to a person, whenever something comes in from or about them; others, when decide says the item fits.
+2. It matches the open task "get oat milk", which fits at a grocery store. A task tied to a place is looked at whenever you leave somewhere or move; one tied to a person, whenever something comes in from or about them, such as an event with them coming up (matched by what Atlas knows of them: their names and addresses); others, when decide says the item fits.
 3. Atlas checks your route home.
 4. It sends: "There's a Publix two minutes off your way home. Still need oat milk?", on your phone or in your ear.
 
