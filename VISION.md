@@ -124,7 +124,7 @@ These are all **agenda items**:
 - long jobs and follow-ups;
 - promises.
 
-Each item is a row with a kind, a next-run time or a trigger, a lease, and a link to where it came from. One scheduler, built on Durable Object alarms, wakes them all.
+Each item is a row with a kind, a next-run time or a trigger, a lease, and a link to where it came from. One scheduler, built on Durable Object alarms, wakes them all. Only what has a time or a trigger is on the clock: a thing to do with no time is a task (§5.1), not an agenda item.
 
 When Atlas says it will do something later, it creates an agenda item in the same step, and the console shows it as a receipt (§21.1). It also shows in Agenda as a promise.
 
@@ -152,6 +152,7 @@ Atlas shouldn't forget. It keeps everything and gets good at finding it.
 1. **The log** (§4.2): permanent and raw.
 2. **Records:** typed, curated knowledge.
    - **Built-in types:** person, place, organization, event, task, goal (a project is a goal), note, preference, commitment, document.
+   - **A task** is anything to do: open, done or dropped, with an optional deadline and an optional **when it fits**: a kind of place ("a pharmacy"), a place ("the office"), a person ("next time I talk to Sam"), or plain words ("when the new season's out"). Errands, to-dos at work and things to try for fun are all tasks (decided 2026-10-23). A deadline puts one reminder on the clock (§4.3); the task itself stays a record. The intake (§10.4) checks open tasks against what comes in, and Agenda lists them under To do.
    - **Collections** are types Atlas creates when it needs them ("assignments", "clients", "workouts", "festival deadlines"). Atlas can add fields later, and you can create and edit collections in the app like a spreadsheet.
    - **Links** connect records: works with, part of, lives at, about.
    - **Every record carries:**
@@ -423,14 +424,14 @@ It's rebuilt from the latest events in the intake, never guessed.
 
 Every event goes through the intake's steps (§10.4), which come down to three:
 1. **Rules,** which are cheap and fixed: duplicates, quiet hours, sources you've turned off.
-2. **Decide,** using the `decide` role (Clef by default). Is this worth a thought now, later or not at all? Does it matter to anything open, such as a commitment, an errand, an event, a project, an automation or a person you care about? Which area is it in, and how urgent is it? This takes tens of milliseconds and costs a fraction of a cent.
+2. **Decide,** using the `decide` role (Clef by default). Is this worth a thought now, later or not at all? Does it matter to anything open, such as a commitment, a task, an event, a project, an automation or a person you care about? Which area is it in, and how urgent is it? This takes tens of milliseconds and costs a fraction of a cent.
 3. **Atlas.** Only if step 2 says now does the main brain run, with the event and the records it touches; what can wait, it sees in a batch later. It decides whether to act, tell you, or stay quiet. What to make of an event is its own judgment, from the character and the situation, never a script per kind of event (rule 1).
 
 **Looks on the clock** are automations, not a second mechanism (decided 2026-10-23): the morning brief and the evening wrap-up are default routines (§13.4) that report only when something is worth saying. What awareness keeps is the look before leaving for an event with a place: it follows the trip's travel time, which moves with traffic and where you are, so it's news the intake notices, not a time of day.
 
 **Example:**
 1. "Left the gym" arrives from your phone.
-2. Decide matches it to the open errand "get oat milk".
+2. It matches the open task "get oat milk", which fits at a grocery store. A task tied to a place is looked at whenever you leave somewhere or move; one tied to a person, whenever something comes in from or about them; others, when decide says the item fits.
 3. Atlas checks your route home.
 4. It sends: "There's a Publix two minutes off your way home. Still need oat milk?", on your phone or in your ear.
 
@@ -1156,7 +1157,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 | M1 | **The companion:** the full loop (budgets, compaction, basic helpers), the log, records and recall, areas, the character, the UI v1 shell (§21: Home with the stage and console, Inbox, Agenda, Automations, Library, History, settings) with the first views, receipts, themes (Graphite and Daylight), and setup steps 1 to 5. | It feels like Atlas in conversation and knows your stuff. |
 | M2 | **Follow-through:** the stage's `show` tool first (§21.6), then the agenda, automations with all five triggers, approvals with earned trust, the outbox and notifications, and the default routines. | Everything Atlas says it'll do actually happens. |
 | M3 | **Hands:** the sandbox, browser, web, Code Mode, skills and learning, the vault, and finding a way. | It finishes unfamiliar tasks. |
-| M4 | **Senses:** nodes (phone, desktop), the situation, one intake (§10.4) with decide-then-wake awareness, the later pile and the Senses screen, and location-based errands. | The gym-to-store moment, and others like it. |
+| M4 | **Senses:** nodes (phone, desktop), the situation, one intake (§10.4) with decide-then-wake awareness, the later pile and the Senses screen, and tasks that come up when they fit, starting with places. | The gym-to-store moment, and others like it. |
 | M5 | **People:** contacts, faces (email, phone, chat), members and shared areas, and digests; the mail, messages, GitHub and Linear senses, with `extract` and open loops. | It deals with people for you. |
 | M6 | **Delegation:** coding jobs through ACP, Atlas as the middleman, and long research jobs. | It runs your projects while you're away. |
 | M7 | **Launch:** setup polish (steps 6 and 7), moving in, all themes, ambient mode, docs, the deploy button, and a public release. | Someone else can install it and love it. |
