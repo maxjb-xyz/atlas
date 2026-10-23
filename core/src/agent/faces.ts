@@ -46,8 +46,9 @@ export class FaceDesk {
       where: { kind: "chat", ext: o.ext.id, chat: m.chat },
       from,
       person: hit.person,
-      text: o.text || "(sent something with no words)",
-      note: o.note,
+      // What a helper read from a photo or voice note is part of what they sent, kept with it in the conversation.
+      text: [o.text, o.note].filter(Boolean).join("\n\n") || "(sent something with no words)",
+      note: null,
       channel: o.ext.name,
     });
     return true;
@@ -66,7 +67,9 @@ export class FaceDesk {
     const hit = faceFor(this.d.sql, "email", { kind: "email", value: o.address });
     if (!hit) return false;
     await this.#converse(hit.face, {
-      conv: o.thread,
+      // A mail conversation is its thread and its sender: someone else who knows the thread's first Message-ID
+      // (copied on it) gets a conversation of their own, not this one.
+      conv: `${o.thread}|${o.address}`,
       where: {
         kind: "mail",
         to: o.address,

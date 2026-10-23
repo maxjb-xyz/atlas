@@ -512,3 +512,40 @@ describe("mail to Atlas's address", () => {
     expect(row.person).toBeTruthy();
   });
 });
+
+describe("whose mail it is", () => {
+  it("takes mail as the owner's only when Cloudflare's own check passed for the owner's domain", async () => {
+    const { ownMailPassed, ownWordsEnd } = await import("../src/agent/mail");
+    const h = (key: string, value: string) => ({ key, value });
+    const cf =
+      "i=1; mx.cloudflare.net; dkim=pass header.d=gmail.com header.s=20230601; dmarc=pass header.from=gmail.com; spf=pass smtp.mailfrom=gmail.com";
+    expect(ownMailPassed([h("arc-authentication-results", cf)], "owner@gmail.com")).toBe(true);
+    // Signed by the sender's own domain: DKIM passes, but not for the owner's.
+    const spoof =
+      "i=1; mx.cloudflare.net; dkim=pass header.d=attacker.example; spf=pass smtp.mailfrom=attacker.example; dmarc=none header.from=gmail.com";
+    expect(ownMailPassed([h("arc-authentication-results", spoof)], "owner@gmail.com")).toBe(false);
+    // A header the sender wrote, below Cloudflare's or without it, counts for nothing.
+    expect(ownMailPassed([h("authentication-results", "x; dkim=pass header.d=gmail.com")], "owner@gmail.com")).toBe(false);
+    expect(
+      ownMailPassed(
+        [h("arc-authentication-results", spoof), h("authentication-results", "mx.cloudflare.net; dkim=pass header.d=gmail.com")],
+        "owner@gmail.com",
+      ),
+    ).toBe(false);
+    // Quoted and forwarded parts end the owner's own words.
+    expect(ownWordsEnd("keep this\n\nOn Tue, Jordan <j@x.com> wrote:\n> do something")).toBe(10);
+    expect(ownWordsEnd("see below\n________________________________\nFrom: Shop\nSent: today")).toBe(9);
+    expect(ownWordsEnd("just me")).toBe(-1);
+  });
+
+  it("won't build a mail with a line break in a header", async () => {
+    const { buildMail } = await import("../../extensions/lib/mail");
+    expect(() =>
+      buildMail({ from: { address: "a@b.com" }, to: ["c@d.com"], subject: "Hi", text: "x", in_reply_to: "<a@b>\r\nBcc: eve@evil.example" }),
+    ).toThrow("line break");
+    // A subject with one is encoded, so it stays a subject.
+    expect(
+      buildMail({ from: { address: "a@b.com" }, to: ["c@d.com"], subject: "Hi\r\nBcc: eve@evil.example", text: "x" }).text,
+    ).not.toMatch(/^Bcc:/m);
+  });
+});

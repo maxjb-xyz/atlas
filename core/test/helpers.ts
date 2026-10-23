@@ -273,20 +273,21 @@ export function runExtensionsHere(more: Record<string, Extension> = {}): void {
   seams.extension = async ({ id, method, args, ctx, secrets, hosts }) => {
     const ext = more[id] ?? EXTENSIONS[id];
     if (!ext) throw new Error(`The test has no extension called ${id}.`);
+    const nonce = "testnonce" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
     useFetch(async (input, init) => {
       const req = new Request(input as RequestInfo, init);
-      const url = fill(req.url, secrets, true);
+      const url = fill(req.url, secrets, nonce, { url: true });
       const host = new URL(url).hostname;
       if (!allowedHost(host, hosts))
         return new Response(`Atlas's gate refused ${host}: the ${ext.manifest.name} extension may reach only ${hosts.join(", ")}.`, {
           status: 403,
         });
       const headers = new Headers();
-      for (const [k, v] of req.headers) headers.set(k, fill(v, secrets));
+      for (const [k, v] of req.headers) headers.set(k, fill(v, secrets, nonce, { authorization: k === "authorization" }));
       // As at the gate: text bodies get their secrets put in; anything else (a file) goes as it is.
       const body = req.body
         ? textual(req.headers.get("content-type"))
-          ? fill(await req.text(), secrets)
+          ? fill(await req.text(), secrets, nonce)
           : await req.formData().catch(() => null)
         : undefined;
       const out: RequestInit = { method: req.method, headers, ...(body != null ? { body } : {}) };
@@ -300,8 +301,8 @@ export function runExtensionsHere(more: Record<string, Extension> = {}): void {
       ext,
       {
         ...ctx,
-        secret: (n: string) => `{{secret:${n}}}`,
-        basic: (u: string, n: string) => `Basic {{basic:${btoa(u)}:${n}}}`,
+        secret: (n: string) => `{{secret:${nonce}:${n}}}`,
+        basic: (u: string, n: string) => `Basic {{basic:${nonce}:${btoa(u)}:${n}}}`,
       },
       ...JSON.parse(JSON.stringify(args)),
     );
@@ -332,14 +333,15 @@ export async function runExt<T>(
   },
 ): Promise<T> {
   const secrets = o.secrets ?? {};
+  const nonce = "testnonce" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
   useFetch(async (input, init) => {
     const req = new Request(input as RequestInfo, init);
-    const url = fill(req.url, secrets, true);
+    const url = fill(req.url, secrets, nonce, { url: true });
     const host = new URL(url).hostname;
     if (!allowedHost(host, ext.manifest.hosts)) return new Response(`Atlas's gate refused ${host}.`, { status: 403 });
     const headers = new Headers();
-    for (const [k, v] of req.headers) headers.set(k, fill(v, secrets));
-    const body = req.body ? fill(await req.text(), secrets) : undefined;
+    for (const [k, v] of req.headers) headers.set(k, fill(v, secrets, nonce, { authorization: k === "authorization" }));
+    const body = req.body ? fill(await req.text(), secrets, nonce) : undefined;
     return o.fetch(url, { method: req.method, headers, ...(body !== undefined ? { body } : {}) });
   });
   const fn = (ext as unknown as Record<string, (...a: unknown[]) => Promise<T>>)[method]!;
@@ -353,8 +355,8 @@ export async function runExt<T>(
       tz: "America/New_York",
       ...(o.address ? { address: o.address } : {}),
       ...(o.data !== undefined ? { data: o.data } : {}),
-      secret: (n: string) => `{{secret:${n}}}`,
-      basic: (u: string, n: string) => `Basic {{basic:${btoa(u)}:${n}}}`,
+      secret: (n: string) => `{{secret:${nonce}:${n}}}`,
+      basic: (u: string, n: string) => `Basic {{basic:${nonce}:${btoa(u)}:${n}}}`,
     },
     ...args,
   );

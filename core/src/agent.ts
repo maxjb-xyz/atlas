@@ -21,7 +21,7 @@ import { undoReceipt } from "./agent/undo";
 import { MailDesk } from "./agent/mail";
 import { type ChatVia, ChannelDesk, links } from "./agent/channels";
 import { FaceDesk, type Where } from "./agent/faces";
-import { conversation, type Face, facePrompt, faces, getFace, removeFace, saveFace } from "./faces";
+import { conversation, type Face, faceFor, facePrompt, faces, getFace, removeFace, saveFace } from "./faces";
 import { faceTools } from "./tools/faces";
 import { sharedTools } from "./tools/shared";
 import { areaLook } from "./tools/digest";
@@ -316,6 +316,30 @@ const VOICE_HISTORY_TOKENS = 12_000;
 
 /** How long a brain gets to start answering before the next one is tried. */
 const FIRST_EVENT_MS = { main: 25_000, voice: 6_000 };
+/** Messages only the owner's Atlas takes in M5 (members get their own Atlas without these). */
+const OWNER_ONLY = new Set<string>([
+  "atlas.ext.install",
+  "atlas.ext.remove",
+  "atlas.ext.state",
+  "atlas.ext.secrets",
+  "atlas.ext.settings",
+  "atlas.ext.setup",
+  "atlas.ext.test",
+  "atlas.ext.signin",
+  "atlas.mail.setup",
+  "atlas.mail.remove",
+  "atlas.mail.test",
+  "atlas.face.save",
+  "atlas.face.remove",
+  "atlas.face.test",
+  "atlas.face.answer",
+  "atlas.channel.code",
+  "atlas.channel.unlink",
+  "atlas.workspace.keep",
+  "atlas.workspace.restart",
+  "atlas.workspace.site.remove",
+]);
+
 /** A chat run that takes longer than this sends a short note saying what it's doing (§16.1). */
 const CHAT_NOTE_MS = 6_000;
 
@@ -568,6 +592,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       owner: ({ text, note, via }) => this.#textTurn(text, `chat-${via.message}`, note ?? undefined, via),
       decide: (id, yes) => this.#decide(id, { yes, by: "chat" }),
       face: async (o) => this.#faces.take(o),
+      hasFace: (ext, msg) => faceFor(this.#sql, ext.id, { kind: "telegram", value: msg.from.handle ?? msg.from.id }) != null,
       changed,
     });
     this.#mail = new MailDesk({
@@ -666,6 +691,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         member: string,
         o: { name: string; role: "admin" | "member" },
       ): Promise<{ ok: boolean; text: string; link?: string; id?: string }>;
+      apiMemberSignOut(member: string): Promise<void>;
     }>;
   }
 
@@ -805,6 +831,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       return;
     }
     const msg = parsed.data;
+    // What connects Atlas to the outside (extensions, Atlas's email, chats, faces) and the workspace run in the
+    // owner's Atlas in M5: their addresses and sign-ins come back there (§7.1).
+    if (this.#member && OWNER_ONLY.has(msg.type)) {
+      this.#send(connection, {
+        type: "atlas.error",
+        message: "That's set up in the owner's Atlas for now: extensions, Atlas's email, chats, faces and the workspace.",
+      });
+      return;
+    }
     switch (msg.type) {
       case "atlas.hello": {
         const s = readSettings(this.#sql);
@@ -1122,9 +1157,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#removePasskey(msg.id);
         return;
       case "atlas.sessions.end":
-        // Signs out everywhere: every browser has to sign in again.
-        setState(this.#sql, "sessions", {});
-        append(this.#sql, { actor: "owner", kind: "settings.change", body: { sessions: "ended" } });
+        // Signs out everywhere: every browser has to sign in again. A member's sign-ins are kept with the owner's
+        // Atlas, so a member's Atlas asks it to end theirs; the owner's end only the owner's.
+        if (this.#member) await (await this.#ownerAgent()).apiMemberSignOut(this.#member).catch(() => {});
+        else {
+          setState(this.#sql, "sessions", Object.fromEntries(Object.entries(this.#sessions()).filter(([, x]) => x.member)));
+          append(this.#sql, { actor: "owner", kind: "settings.change", body: { sessions: "ended" } });
+        }
         this.#signOutSockets();
         return;
       case "atlas.records.list": {
@@ -1741,7 +1780,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const t = text.trim();
     try {
       if (/^\p{Extended_Pictographic}\uFE0F?$/u.test(t)) {
-        await this.#channels.send(via.ext, { chat: via.chat, react: { message: via.message, emoji: t } });
+        // A channel takes only some emoji as reactions; any other goes as the message itself, so it's never lost.
+        const reacted = await this.#channels
+          .send(via.ext, { chat: via.chat, react: { message: via.message, emoji: t.replace(/\uFE0F/g, "") } })
+          .then(() => true)
+          .catch(() => false);
+        if (reacted) return;
+        await this.#channels.send(via.ext, { chat: via.chat, text: t });
         return;
       }
       if (via.voice) {
@@ -2614,14 +2659,26 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return Object.fromEntries(Object.entries(all).filter(([, s]) => s.expires > now));
   }
 
-  async openSession(s: { kind: Session["kind"]; passkey_id?: string }): Promise<string> {
+  async openSession(s: { kind: Session["kind"]; passkey_id?: string; member?: string }): Promise<string> {
     const id = newSessionId();
     const now = Date.now();
-    const all = Object.entries(this.#sessions())
-      .sort(([, a], [, b]) => a.at - b.at)
-      .slice(-99);
-    setState(this.#sql, "sessions", Object.fromEntries([...all, [id, { ...s, at: now, expires: now + SESSION_DAYS * 86_400_000 }]]));
+    // Each person keeps their newest 100 sign-ins, so one signing in often never signs another out.
+    const who = s.member ?? "";
+    const all = Object.entries(this.#sessions()).sort(([, a], [, b]) => a.at - b.at);
+    const mine = all.filter(([, x]) => (x.member ?? "") === who).slice(-99);
+    const others = all.filter(([, x]) => (x.member ?? "") !== who);
+    setState(
+      this.#sql,
+      "sessions",
+      Object.fromEntries([...others, ...mine, [id, { ...s, at: now, expires: now + SESSION_DAYS * 86_400_000 }]]),
+    );
     return id;
+  }
+
+  /** A member ends their own sign-ins everywhere, from their own Atlas. */
+  async apiMemberSignOut(member: string): Promise<void> {
+    setState(this.#sql, "sessions", Object.fromEntries(Object.entries(this.#sessions()).filter(([, x]) => x.member !== member)));
+    append(this.#sql, { actor: "owner", kind: "settings.change", body: { sessions: "ended", member } });
   }
 
   async session(id: string): Promise<Session | null> {
@@ -3613,6 +3670,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** The owner's workspace: its Durable Object, or a fake in tests (never a real container). */
   #ws(): WorkspaceStub | null {
+    // The workspace is the owner's container; a member's Atlas has none in M5 (§7.1: nobody reaches another's things).
+    if (this.#member) return null;
     if (seams.workspace !== undefined) return seams.workspace;
     const ns = (this.env as { WORKSPACE?: Env["WORKSPACE"] }).WORKSPACE;
     return this.env.ATLAS_TEST || !ns ? null : (ns.getByName(OWNER) as unknown as WorkspaceStub);
@@ -4127,12 +4186,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       }
       // A mail: its words, subject and who it's to, as the owner left them. An address that doesn't read as one is kept as it was.
       if (a?.kind === "email") {
+        // What the card says is what goes: a To that isn't an address, or no words, is refused, not quietly replaced.
         const to = e.to != null ? addressesIn(e.to) : a.to;
+        if (!to.length) return { ok: false, text: `"${e.to}" isn't an email address. Put the address in To, then approve.` };
+        if (!e.message.trim()) return { ok: false, text: "The mail has no words. Write them, or decline it." };
+        const changedTo = to.join(",") !== a.to.join(",");
+        const { person: _p, ...rest } = a;
         const next = {
-          ...a,
+          ...(changedTo ? rest : a),
           text: e.message.slice(0, 20_000),
           ...(e.subject != null && e.subject.trim() ? { subject: e.subject.trim().slice(0, 300) } : {}),
-          ...(to.length ? { to } : {}),
+          to,
         };
         if (next.text !== a.text || next.subject !== a.subject || next.to.join(",") !== a.to.join(",")) {
           actions = actions.map((x, i) => (i === e.index ? (next as Action) : x));

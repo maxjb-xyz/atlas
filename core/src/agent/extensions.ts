@@ -218,7 +218,8 @@ export class ExtensionDesk {
       throw new Error(`The manifest isn't right: ${m.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
     if (BUNDLED[manifest.id]) throw new Error(`"${manifest.id}" is the id of an extension that ships with Atlas; pick another.`);
     const was = getExt(this.d.sql, manifest.id);
-    if (was && was.source === "bundled") throw new Error(`"${manifest.id}" is already installed.`);
+    // A draft never replaces an installed extension: it would take that one's keys for hosts nobody approved with them.
+    if (was && was.state !== "draft") throw new Error(`"${manifest.id}" is already installed; pick another id, or remove that one first.`);
     return install(this.d.sql, { id: manifest.id, source: by, code, manifest, methods, state: "draft" });
   }
 
@@ -343,8 +344,9 @@ export class ExtensionDesk {
   // --- the looks on the clock ------------------------------------------------------------------------
 
   /** Puts the extensions' look on the clock at the soonest one's time, or takes it off when none looks. */
-  async arm(): Promise<void> {
-    const { item, cancel } = armLooks(this.d.sql);
+  /** `ending` is the look itself, putting itself back when it's done; anything else leaves a look under way alone. */
+  async arm(ending = false): Promise<void> {
+    const { item, cancel } = armLooks(this.d.sql, Date.now(), ending);
     if (cancel) await this.d.clock.unschedule(cancel);
     if (item) await this.d.clock.schedule(item);
   }
@@ -354,7 +356,7 @@ export class ExtensionDesk {
     try {
       for (const e of nextLooks(this.d.sql).due) await this.#look(e);
     } finally {
-      await this.arm();
+      await this.arm(true);
     }
   }
 

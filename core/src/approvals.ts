@@ -79,11 +79,6 @@ export type Action =
    * `what` is the input in words.
    */
   | { kind: "node"; node: string; device: string; name: string; tool: string; input: Record<string, Json>; what: string }
-  /**
-   * A mail (§16.2): as the owner, from their own mail (`via` is the
-   * extension that sends it), or as Atlas, from Atlas's own address. The
-   * owner can change who it's to, the subject and the words in the card.
-   */
   /** A face's answer that goes out in the owner's name (§7.2: speaking as you asks each time, until trusted). */
   | {
       kind: "face_reply";
@@ -93,6 +88,11 @@ export type Action =
       where: Record<string, Json>;
       text: string;
     }
+  /**
+   * A mail (§16.2): as the owner, from their own mail (`via` is the
+   * extension that sends it), or as Atlas, from Atlas's own address. The
+   * owner can change who it's to, the subject and the words in the card.
+   */
   | {
       kind: "email";
       name: string;

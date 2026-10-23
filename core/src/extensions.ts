@@ -240,6 +240,11 @@ export interface GateProps {
   name: string;
   hosts: string[];
   secrets: Record<string, string>;
+  /**
+   * Only placeholders carrying this are filled: it's made from the extension's code and secrets, and only
+   * its sandbox knows it, so text from outside (a stranger's message the extension sends on) can't name a secret.
+   */
+  nonce: string;
 }
 
 export const allowedHost = (host: string, hosts: string[]) =>
@@ -248,8 +253,9 @@ export const allowedHost = (host: string, hosts: string[]) =>
     return host === want || host.endsWith(`.${want}`);
   });
 
-const PLACEHOLDER = /(?:\{|%7B){2}secret(?::|%3A)([a-z0-9_]+)(?:\}|%7D){2}/gi;
-const BASIC = /Basic \{\{basic:([A-Za-z0-9+/=]*):([a-z0-9_]+)\}\}/g;
+const esc = (s: string) => s.replace(/[^a-zA-Z0-9]/g, "");
+const placeholder = (nonce: string) => new RegExp(`(?:\\{|%7B){2}secret(?::|%3A)${esc(nonce)}(?::|%3A)([a-z0-9_]+)(?:\\}|%7D){2}`, "gi");
+const basicHeader = (nonce: string) => new RegExp(`^Basic \\{\\{basic:${esc(nonce)}:([A-Za-z0-9+/=]*):([a-z0-9_]+)\\}\\}$`);
 
 const b64 = (s: string) => {
   let bin = "";
@@ -258,15 +264,33 @@ const b64 = (s: string) => {
 };
 const unb64 = (s: string) => new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
 
-/** Puts secrets into a request's text where its placeholders are. In an address, values are encoded (keeping ":", which some tokens hold). */
-export function fill(text: string, secrets: Record<string, string>, inUrl = false): string {
-  return text
-    .replace(BASIC, (m, user: string, name: string) => (secrets[name] == null ? m : `Basic ${b64(`${unb64(user)}:${secrets[name]}`)}`))
-    .replace(PLACEHOLDER, (m, name: string) => {
-      const v = secrets[name];
-      if (v == null) return m;
-      return inUrl ? encodeURIComponent(v).replace(/%3A/gi, ":") : v;
-    });
+/**
+ * Puts secrets into a request's text where its sandbox's placeholders are. In an address, values are
+ * encoded (keeping ":", which some tokens hold). HTTP Basic sign-in is filled only as a whole
+ * Authorization header, so it can't be echoed into a message.
+ */
+export function fill(
+  text: string,
+  secrets: Record<string, string>,
+  nonce: string,
+  o: { url?: boolean; authorization?: boolean } = {},
+): string {
+  if (!nonce) return text;
+  let t = text;
+  if (o.authorization)
+    t = t.replace(basicHeader(nonce), (m, user: string, name: string) =>
+      secrets[name] == null ? m : `Basic ${b64(`${unb64(user)}:${secrets[name]}`)}`,
+    );
+  return t.replace(placeholder(nonce), (m, name: string) => {
+    const v = secrets[name];
+    if (v == null) return m;
+    return o.url ? encodeURIComponent(v).replace(/%3A/gi, ":") : v;
+  });
+}
+
+/** The nonce a sandbox's placeholders carry: from its code and secrets, so the same sandbox keeps it, and nobody outside can know it. */
+export async function nonceFor(code: string, secrets: Record<string, string>): Promise<string> {
+  return (await hash(`atlas-gate-nonce\n${code}\n${JSON.stringify(secrets)}`)).slice(0, 32);
 }
 
 export const textual = (type: string | null) => !type || /json|text|xml|x-www-form-urlencoded|javascript|graphql/i.test(type);
@@ -281,11 +305,16 @@ export const textual = (type: string | null) => !type || /json|text|xml|x-www-fo
 export class ExtensionGate extends WorkerEntrypoint<Env, GateProps> {
   override async fetch(req: Request): Promise<Response> {
     const p = this.ctx.props;
-    let url = fill(req.url, p.secrets, true);
+    let url = fill(req.url, p.secrets, p.nonce, { url: true });
     const headers = new Headers();
-    for (const [k, v] of req.headers) headers.set(k, fill(v, p.secrets));
-    const body =
-      req.body && textual(req.headers.get("content-type")) ? fill(await req.text(), p.secrets) : req.body ? await req.arrayBuffer() : null;
+    for (const [k, v] of req.headers) headers.set(k, fill(v, p.secrets, p.nonce, { authorization: k.toLowerCase() === "authorization" }));
+    let body: string | ArrayBuffer | null =
+      req.body && textual(req.headers.get("content-type"))
+        ? fill(await req.text(), p.secrets, p.nonce)
+        : req.body
+          ? await req.arrayBuffer()
+          : null;
+    let method = req.method;
     for (let hop = 0; hop < 6; hop++) {
       const host = new URL(url).hostname.toLowerCase();
       if (!allowedHost(host, p.hosts)) {
@@ -297,10 +326,22 @@ export class ExtensionGate extends WorkerEntrypoint<Env, GateProps> {
           headers: { "content-type": "text/plain", "x-atlas-gate": "refused" },
         });
       }
-      const res = await fetch(url, { method: req.method, headers, body, redirect: "manual" });
+      if (new URL(url).protocol !== "https:")
+        return new Response(`Atlas's gate refused ${url.split("?")[0]}: extensions reach services over https only.`, {
+          status: 403,
+          headers: { "content-type": "text/plain", "x-atlas-gate": "refused" },
+        });
+      const res = await fetch(url, { method, headers, body, redirect: "manual" });
       const to = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
       if (to) {
+        await res.body?.cancel().catch(() => {});
         url = new URL(to, url).toString();
+        // As browsers do: a 303, or a 301 or 302 after a POST, goes on as a GET without the body.
+        if (res.status === 303 || ((res.status === 301 || res.status === 302) && method === "POST")) {
+          method = "GET";
+          body = null;
+          headers.delete("content-type");
+        }
         continue;
       }
       const values = Object.values(p.secrets).filter((v) => v.length >= 8);
@@ -317,11 +358,11 @@ export class ExtensionGate extends WorkerEntrypoint<Env, GateProps> {
 
 /** What runs in the sandbox around an extension's module: one call in, its answer or its failure out. */
 const RUNNER = `import ext from "./ext.js";
-const secret = (name) => "{{secret:" + name + "}}";
-const basic = (user, name) => "Basic {{basic:" + btoa(String.fromCharCode(...new TextEncoder().encode(user))) + ":" + name + "}}";
 export default {
   async fetch(request) {
-    const { method, ctx, args } = await request.json();
+    const { method, ctx, args, nonce } = await request.json();
+    const secret = (name) => "{{secret:" + nonce + ":" + name + "}}";
+    const basic = (user, name) => "Basic {{basic:" + nonce + ":" + btoa(String.fromCharCode(...new TextEncoder().encode(user))) + ":" + name + "}}";
     if (method === "describe") {
       const methods = Object.keys(ext ?? {}).filter((k) => typeof ext[k] === "function");
       return Response.json({ ok: true, value: { manifest: ext?.manifest ?? null, methods } });
@@ -441,19 +482,20 @@ export class ExtensionHost {
     const loader = this.d.loader();
     if (!loader) throw new ExtensionError("This deployment can't run extensions (it has no Worker Loader binding).", "missing");
     const stamp = await hash(`${code}\n${JSON.stringify(secrets)}\n${e.manifest.hosts.join(",")}`);
+    const nonce = await nonceFor(code, secrets);
     const worker = loader.get(`ext:${e.id}:${stamp}`, () => ({
       compatibilityDate: "2026-10-01",
       compatibilityFlags: ["nodejs_compat"],
       mainModule: "run.js",
       modules: { "run.js": RUNNER, "ext.js": code },
-      globalOutbound: this.d.gate({ agent: this.d.agent, ext: e.id, name: e.name, hosts: e.manifest.hosts, secrets }),
+      globalOutbound: this.d.gate({ agent: this.d.agent, ext: e.id, name: e.name, hosts: e.manifest.hosts, secrets, nonce }),
       limits: { cpuMs: 10_000, subRequests: 200 },
     }));
     let res: Response;
     try {
       res = await worker.getEntrypoint().fetch("https://extension/", {
         method: "POST",
-        body: JSON.stringify({ method, ctx, args }),
+        body: JSON.stringify({ method, ctx, args, nonce }),
         signal: AbortSignal.timeout(o.ms ?? 30_000),
       });
     } catch (err) {
@@ -523,9 +565,10 @@ export class ExtensionHost {
     if (!origin) throw new Error("Open Atlas in the browser once first, so it knows its own address.");
     if (!e.settings.client_id) throw new Error(`${e.name} needs your client id first: ${s.help}`);
     const state = randomKey();
-    const pending = getState<Record<string, { id: string; at: number }>>(this.d.sql, "ext_signins") ?? {};
+    const pending = getState<Record<string, { id: string; at: number; redirect?: string }>>(this.d.sql, "ext_signins") ?? {};
     for (const [k, v] of Object.entries(pending)) if (Date.now() - v.at > 30 * 60_000) delete pending[k];
-    pending[state] = { id, at: Date.now() };
+    // The exchange must name the same redirect address the sign-in did, even if Atlas is opened elsewhere meanwhile.
+    pending[state] = { id, at: Date.now(), redirect: `${origin}/x/signin` };
     setState(this.d.sql, "ext_signins", pending);
     const u = new URL(s.authorize);
     u.searchParams.set("client_id", e.settings.client_id);
@@ -539,7 +582,7 @@ export class ExtensionHost {
 
   /** The sign-in page sent the owner back with a code: exchange it. Returns the extension it was for. */
   async signedIn(state: string, code: string): Promise<Installed> {
-    const pending = getState<Record<string, { id: string; at: number }>>(this.d.sql, "ext_signins") ?? {};
+    const pending = getState<Record<string, { id: string; at: number; redirect?: string }>>(this.d.sql, "ext_signins") ?? {};
     const p = pending[state];
     if (!p || Date.now() - p.at > 30 * 60_000)
       throw new Error("That sign-in wasn't started here, or it took longer than half an hour. Start it again in Settings.");
@@ -547,7 +590,7 @@ export class ExtensionHost {
     setState(this.d.sql, "ext_signins", pending);
     const e = getExt(this.d.sql, p.id);
     if (!e) throw new Error("That extension was removed since.");
-    await this.#token(e, { grant_type: "authorization_code", code, redirect_uri: `${this.d.origin()}/x/signin` });
+    await this.#token(e, { grant_type: "authorization_code", code, redirect_uri: p.redirect ?? `${this.d.origin()}/x/signin` });
     append(this.d.sql, { actor: "owner", kind: "settings.change", body: { extension: "signed in", name: e.name, id: e.id } });
     return e;
   }
@@ -623,13 +666,15 @@ export function nextLooks(sql: Sql, now = Date.now()): { due: Installed[]; next:
  * extension's time, while any installed extension looks; none otherwise,
  * so with nothing to ask nothing runs (§19.3).
  */
-export function armLooks(sql: Sql, now = Date.now()): { item: AgendaItem | null; cancel: AgendaItem | null } {
+export function armLooks(sql: Sql, now = Date.now(), ending = false): { item: AgendaItem | null; cancel: AgendaItem | null } {
   const open = upcoming(sql, 300).find((i) => i.kind === "looks");
   const { next } = nextLooks(sql, now);
   if (next == null) {
     if (open) finish(sql, open.id, "cancelled", null, { why: "No extension looks on the clock now." });
     return { item: null, cancel: open ?? null };
   }
+  // A look under way puts itself back on the clock when it ends; arming now would start a second one beside it.
+  if (open && open.state === "running" && !ending) return { item: null, cancel: null };
   if (open && open.state === "scheduled" && Math.abs(open.due_at - next) < 1_000) return { item: null, cancel: null };
   const item = open
     ? rearm(sql, open.id, next)

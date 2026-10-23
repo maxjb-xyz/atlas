@@ -54,6 +54,13 @@ interface TgMessage {
   photo?: Array<{ file_id: string; file_size?: number; width: number }>;
   document?: { file_id: string; file_name?: string; mime_type?: string };
   reply_to_message?: { message_id: number };
+  forward_origin?: {
+    type: string;
+    sender_user?: TgUser;
+    sender_user_name?: string;
+    chat?: { title?: string };
+    sender_chat?: { title?: string };
+  };
 }
 
 const nameOf = (u?: TgUser) => [u?.first_name, u?.last_name].filter(Boolean).join(" ") || u?.username || "";
@@ -120,6 +127,11 @@ const ext: Extension = {
         ...(m.text ? { text: m.text } : {}),
         ...(m.reply_to_message ? { reply_to: String(m.reply_to_message.message_id) } : {}),
       };
+      if (m.forward_origin) {
+        const o = m.forward_origin;
+        const who = o.sender_user ? nameOf(o.sender_user) : (o.sender_user_name ?? o.chat?.title ?? o.sender_chat?.title);
+        msg.forwarded = who ? { from: who } : {};
+      }
       const audio = m.voice ?? m.audio;
       if (audio) {
         const bytes = await download(ctx, audio.file_id, 20_000_000);
@@ -166,7 +178,12 @@ const ext: Extension = {
       form.set("chat_id", chat_id);
       if (out.text) form.set("caption", out.text.slice(0, 1024));
       if (markup) form.set("reply_markup", JSON.stringify(markup));
-      if (out.voice) form.set("voice", new Blob([bytesOf(out.voice.base64)], { type: out.voice.type }), "atlas.ogg");
+      if (out.voice)
+        form.set(
+          "voice",
+          new Blob([bytesOf(out.voice.base64)], { type: out.voice.type }),
+          out.voice.type.includes("mpeg") ? "atlas.mp3" : "atlas.ogg",
+        );
       else
         form.set(
           out.file!.type.startsWith("image/") ? "photo" : "document",

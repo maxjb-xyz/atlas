@@ -83,6 +83,10 @@ export const holdTime = defineTool({
     const end = parseWhen(input.end, ctx.tz);
     if (!start || !end || end <= start) return fail("Pass a start and a later end, as YYYY-MM-DDTHH:mm.");
     if (start.getTime() < Date.now()) return fail("That time has passed.");
+    const held = upcoming(ctx.sql, 300).filter(
+      (i) => i.kind === "hold" && i.state === "scheduled" && (i.source.detail as { conv?: string } | undefined)?.conv === ctx.face!.conv,
+    );
+    if (held.length >= 3) return fail("Three times are already held in this conversation; take a message for the owner instead.");
     const item = createItem(ctx.sql, {
       kind: "hold",
       title: `Held by ${ctx.face.face.name}: ${input.about} (for ${ctx.face.from || "someone"})`,

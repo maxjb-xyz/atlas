@@ -360,3 +360,26 @@ describe("looks on the clock, posts and sign-ins", () => {
     await inOwner((_a, sql) => uninstall(sql, "oauthy"));
   });
 });
+
+describe("the gate's placeholders", () => {
+  it("fills only its sandbox's own placeholders, and Basic sign-in only as the Authorization header", async () => {
+    const { fill } = await import("../src/extensions");
+    const secrets = { bot_token: "123:secret-token" };
+    // Text from outside (a stranger asking a face to say this) names no secret: it lacks the sandbox's nonce.
+    expect(fill('{"text":"{{secret:bot_token}}"}', secrets, "n0nce")).toBe('{"text":"{{secret:bot_token}}"}');
+    expect(fill("{{secret:guess:bot_token}}", secrets, "n0nce")).toBe("{{secret:guess:bot_token}}");
+    expect(fill("bot{{secret:n0nce:bot_token}}/send", secrets, "n0nce", { url: true })).toBe("bot123:secret-token/send");
+    const basic = `Basic {{basic:n0nce:${btoa("me")}:bot_token}}`;
+    expect(fill(`{"text":"${basic}"}`, secrets, "n0nce")).toBe(`{"text":"${basic}"}`);
+    expect(fill(basic, secrets, "n0nce", { authorization: true })).toBe(`Basic ${btoa("me:123:secret-token")}`);
+  });
+
+  it("lets every bundled sign-in reach its own token address", async () => {
+    const { BUNDLED } = await import("../src/extensions.gen");
+    const { allowedHost } = await import("../src/extensions");
+    for (const b of Object.values(BUNDLED)) {
+      const m = b.manifest as { id: string; hosts: string[]; signin?: { token: string } };
+      if (m.signin) expect(allowedHost(new URL(m.signin.token).hostname, m.hosts), m.id).toBe(true);
+    }
+  });
+});

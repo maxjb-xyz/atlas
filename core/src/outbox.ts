@@ -734,7 +734,7 @@ export class Outbox {
       by: o.by,
       ...(a.person ? { person: a.person } : {}),
     };
-    if ([a.subject, a.text, ...a.to].some((x) => scrub(x, this.secrets()) !== x)) {
+    if ([a.subject, a.text, ...a.to, ...(a.cc ?? [])].some((x) => scrub(x, this.secrets()) !== x)) {
       const text = `The mail to ${base.to} wasn't sent: it held one of your secrets.`;
       this.receipt(o.run_id, { ...base, text: scrub(a.subject, this.secrets()), ok: false, error: text, checks: { secrets: "failed" } });
       return { ok: false, text };

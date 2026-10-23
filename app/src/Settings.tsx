@@ -146,11 +146,14 @@ export function SettingsPage({
             {SECTIONS.map((g) => (
               <div key={g.group} style={{ display: "contents" }}>
                 <span className="lab">{g.group}</span>
-                {g.items.map(([id, name]) => (
-                  <button key={id} className={id === section ? "on" : ""} onClick={() => go(id)}>
-                    {name}
-                  </button>
-                ))}
+                {/* A member's own Atlas has no extensions or faces in M5: those are set up in the owner's (§7.1). */}
+                {g.items
+                  .filter(([id]) => !(view?.me && (id === "extensions" || id === "faces")))
+                  .map(([id, name]) => (
+                    <button key={id} className={id === section ? "on" : ""} onClick={() => go(id)}>
+                      {name}
+                    </button>
+                  ))}
               </div>
             ))}
           </nav>
@@ -572,16 +575,20 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
       <Row label="MCP servers">
         <McpServers atlas={atlas} />
       </Row>
-      <Row label="Mail">
-        <ProvidedBy atlas={atlas} view={view} what="mail" none="Atlas doesn't read your mail yet." />
-      </Row>
-      <Row label="Atlas's email">
-        <AtlasEmail atlas={atlas} view={view} />
-      </Row>
-      <Row label="Chat">
-        <ProvidedBy atlas={atlas} view={view} what="channel" none="No chat channel yet." />
-        <ChatLinks atlas={atlas} view={view} />
-      </Row>
+      {!view.me && (
+        <>
+          <Row label="Mail">
+            <ProvidedBy atlas={atlas} view={view} what="mail" none="Atlas doesn't read your mail yet." />
+          </Row>
+          <Row label="Atlas's email">
+            <AtlasEmail atlas={atlas} view={view} />
+          </Row>
+          <Row label="Chat">
+            <ProvidedBy atlas={atlas} view={view} what="channel" none="No chat channel yet." />
+            <ChatLinks atlas={atlas} view={view} />
+          </Row>
+        </>
+      )}
       <Row label="And more">
         <p className="muted small">
           The other services you want to hear from (GitHub, Linear, your own) are <a href="#/settings/extensions">extensions</a>.

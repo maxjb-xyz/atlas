@@ -70,6 +70,17 @@ export interface Outgoing {
 
 /** A plain-text mail as RFC 5322 text, its body in base64 so any language survives. */
 export function buildMail(m: Outgoing, now = Date.now()): { text: string; message_id: string } {
+  // A line break in a header would start another one (a hidden Bcc, a new body): nothing with one goes out.
+  const plain = [
+    m.from.address,
+    ...m.to,
+    ...(m.cc ?? []),
+    m.in_reply_to ?? "",
+    ...(m.references ?? []),
+    m.message_id ?? "",
+    ...Object.entries(m.headers ?? {}).flat(),
+  ];
+  if (plain.some((v) => /[\r\n]/.test(v))) throw new Error("A mail header held a line break, so the mail wasn't built.");
   const domain = m.from.address.split("@")[1] ?? "atlas.invalid";
   const message_id = m.message_id ?? `<${crypto.randomUUID()}@${domain}>`;
   const refs = [...new Set([...(m.references ?? []), ...(m.in_reply_to ? [m.in_reply_to] : [])])];

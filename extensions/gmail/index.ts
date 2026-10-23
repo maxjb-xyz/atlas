@@ -11,7 +11,7 @@ import { type Extension, type Item, type Json, get, http, json, tidy } from "../
 import { base64url, buildMail, decodeWords, fromBase64url, htmlText } from "../lib/mail";
 
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
-/** At most this many new messages are read in one look; the rest are counted, not read. */
+/** At most about this many new messages are read in one look; the rest wait for the next. */
 const MAX_PER_LOOK = 25;
 /** Threads the owner wrote on, remembered so a reply in one is marked as one. */
 const MAX_SENT = 300;
@@ -44,6 +44,7 @@ interface State {
 const auth = (ctx: { secret(n: string): string }) => ({ authorization: `Bearer ${ctx.secret("access_token")}` });
 const header = (m: GMessage, name: string) =>
   decodeWords(m.payload?.headers?.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? "").trim();
+const msgIds = (v: string) => v.match(/<[^<>\s]+>/g) ?? [];
 const addresses = (line: string) => (line.match(/[^\s<>",;:()]+@[^\s<>",;:()]+\.[^\s<>",;:()]+/g) ?? []).map((a) => a.toLowerCase());
 
 /** The readable text of a message: its plain-text part, or its HTML part as text. */
@@ -93,8 +94,9 @@ export function itemOf(m: GMessage, st: State): Item {
     signals,
     link: `https://mail.google.com/mail/u/0/#all/${m.threadId}`,
     subject: tidy(subject, 200),
-    ...(header(m, "Message-ID") ? { message_id: header(m, "Message-ID") } : {}),
-    ...(header(m, "References") ? { references: header(m, "References") } : {}),
+    // Only what reads as Message-IDs: an encoded line break in the header can't come along.
+    ...(msgIds(header(m, "Message-ID"))[0] ? { message_id: msgIds(header(m, "Message-ID"))[0]! } : {}),
+    ...(msgIds(header(m, "References")).length ? { references: msgIds(header(m, "References")).join(" ") } : {}),
     raw: [
       `From: ${from}`,
       `To: ${header(m, "To")}`,
@@ -131,7 +133,7 @@ const ext: Extension = {
     about:
       "Your Gmail inbox as something Atlas notices (new mail, replies you're waiting for), and mail sent as you, only after you say yes. Atlas reads mail and sends; it doesn't delete or archive.",
     provides: ["mail", "sense"],
-    hosts: ["gmail.googleapis.com"],
+    hosts: ["gmail.googleapis.com", "oauth2.googleapis.com"],
     signin: {
       authorize: "https://accounts.google.com/o/oauth2/v2/auth",
       token: "https://oauth2.googleapis.com/token",
@@ -156,9 +158,12 @@ const ext: Extension = {
       const p = await profile(ctx);
       return { items: [], cursor: { history: p.historyId }, state: { ...st, email: p.emailAddress.toLowerCase() } as Json };
     }
-    const added: Array<{ id: string; threadId: string; labelIds?: string[] }> = [];
+    // History records in order, each with the messages it added. The cursor moves only past what was read:
+    // to the mailbox's latest id when everything was, else to the last record taken, so nothing is skipped.
+    const records: Array<{ id: string; added: Array<{ id: string; threadId: string; labelIds?: string[] }> }> = [];
     let page: string | undefined;
     let latest = cursor.history;
+    let more = false;
     for (let i = 0; i < 5; i++) {
       const res = await get(
         `${API}/history?startHistoryId=${encodeURIComponent(cursor.history)}&historyTypes=messageAdded&maxResults=100${page ? `&pageToken=${encodeURIComponent(page)}` : ""}`,
@@ -170,22 +175,38 @@ const ext: Extension = {
         return { items: [], cursor: { history: p.historyId }, state: st as Json };
       }
       const h = await json<{
-        history?: Array<{ messagesAdded?: Array<{ message: { id: string; threadId: string; labelIds?: string[] } }> }>;
+        history?: Array<{ id: string; messagesAdded?: Array<{ message: { id: string; threadId: string; labelIds?: string[] } }> }>;
         historyId: string;
         nextPageToken?: string;
       }>(res, "Gmail");
-      for (const e of h.history ?? []) for (const a of e.messagesAdded ?? []) added.push(a.message);
+      for (const e of h.history ?? []) records.push({ id: e.id, added: (e.messagesAdded ?? []).map((a) => a.message) });
       latest = h.historyId;
       page = h.nextPageToken;
+      more = !!page;
       if (!page) break;
     }
     const seen = new Set<string>();
-    const fresh = added.filter((m) => !seen.has(m.id) && seen.add(m.id) && !(m.labelIds ?? []).includes("DRAFT"));
-    // What the owner sent: their threads, so a reply is known as one.
-    const sentThreads = fresh.filter((m) => (m.labelIds ?? []).includes("SENT")).map((m) => m.threadId);
+    const sentThreads: string[] = [];
+    const inbox: Array<{ id: string; threadId: string }> = [];
+    let upTo: string | null = null;
+    for (const r of records) {
+      for (const m of r.added) {
+        if (seen.has(m.id) || (m.labelIds ?? []).includes("DRAFT")) continue;
+        seen.add(m.id);
+        // What the owner sent: their threads, so a reply is known as one.
+        if ((m.labelIds ?? []).includes("SENT")) sentThreads.push(m.threadId);
+        else if ((m.labelIds ?? []).includes("INBOX")) inbox.push(m);
+      }
+      upTo = r.id;
+      // A flood (after a long time away) is read a part at a time: the next look starts after this record.
+      if (inbox.length >= MAX_PER_LOOK) {
+        more = true;
+        break;
+      }
+    }
+    if (more && upTo) latest = upTo;
     const sent = [...new Set([...sentThreads, ...(st.sent ?? [])])].slice(0, MAX_SENT);
     const next: State = { ...st, sent };
-    const inbox = fresh.filter((m) => (m.labelIds ?? []).includes("INBOX") && !(m.labelIds ?? []).includes("SENT")).slice(-MAX_PER_LOOK);
     const items: Item[] = [];
     for (const a of inbox) {
       const m = await message(ctx, a.id);

@@ -97,12 +97,16 @@ export type StateName =
   | "channel_seen"
   /** When a stranger was last told whose assistant this is, so it's said once a day. */
   | "channel_told"
+  /** Messages each stranger sent today on a chat, so a face's answers have a daily limit. */
+  | "channel_counts"
   /** The faces (§7.2): each one's settings. */
   | "faces"
   /** Members (§7.1): who shares this Atlas, their roles and invites. */
   | "members"
   /** In a member's own agent: who they are, and whose Atlas they share. */
-  | "member_of";
+  | "member_of"
+  /** Message-IDs of the owner's mail to Atlas's address already taken, so a mail relayed twice is said once. */
+  | "mail_seen";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

@@ -102,6 +102,10 @@ export const contactSave = defineTool({
     const channels: Channel[] = (input.add ?? []).map((c) => ({ ...c, via: "you" }));
     let r = input.id ? getRecord(ctx.sql, input.id) : null;
     if (input.id && (!r || r.type !== "person" || r.state !== "active")) return fail(`There's no person with id ${input.id}.`);
+    // The owner's own addresses decide whose mail is the owner speaking: only the owner changes them, in Library.
+    if (r?.fields.is_owner) return fail("The owner's own addresses are changed by the owner, in Library → People, not from here.");
+    const bad = (input.add ?? []).find((c) => c.kind === "email" && !/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(c.value.trim()));
+    if (bad) return fail(`"${bad.value}" isn't an email address.`);
     if (!r && !input.name) return fail("Say who: their id, or their name.");
     if (!r) {
       const known = whoIs(ctx.sql, input.name!);

@@ -189,6 +189,8 @@ export interface Message {
   button?: { data: string; message?: string };
   /** The message it replies to, when it's a reply. */
   reply_to?: string;
+  /** It was forwarded from someone else: their words, not the sender's. */
+  forwarded?: { from?: string };
 }
 
 /** What the core sends on a channel. */

@@ -5,7 +5,7 @@
 // writing to Atlas, kept with the conversation it answers.
 
 import PostalMime from "postal-mime";
-import { buildMail } from "../../../extensions/lib/mail";
+import { buildMail, htmlText } from "../../../extensions/lib/mail";
 import { type AtlasMail, atlasMail, cloudflareSend, relayAllowed, removeAtlasMail, setUpAtlasMail, TOKEN_PERMISSIONS } from "../atlasmail";
 import { normal, ownerAddresses, senderSeen } from "../contacts";
 import { type ExtensionHost, getExt, providing, setExtSettings } from "../extensions";
@@ -15,6 +15,7 @@ import type { Sql } from "../store/db";
 import { append } from "../store/log";
 import { ownerRecord } from "../store/records";
 import { getSecret, readSettings } from "../store/settings";
+import { getState, setState } from "../store/state";
 import { cf } from "../atlasmail";
 
 export interface MailDeps {
@@ -40,8 +41,49 @@ export interface MailDeps {
 }
 
 /** A sent or received mail's thread: the conversation's first Message-ID. */
-const threadOf = (messageId: string | undefined, refs: string[]) => `mail:${refs[0] ?? messageId ?? crypto.randomUUID()}`;
+const threadOf = (messageId: string | undefined, refs: string[]) => `mail:${refs[0] ?? ids(messageId)[0] ?? crypto.randomUUID()}`;
+/** Message-IDs in a header, as <...>: anything else in it (an encoded line break, a header smuggled in) is left out. */
 const ids = (v: string | undefined | null) => (v ?? "").match(/<[^<>\s]+>/g) ?? [];
+
+/**
+ * Whether a mail claiming to be from the owner passed their mail's own
+ * checks, as Cloudflare saw them: only the topmost authentication results,
+ * which Cloudflare adds above anything the sender wrote, from
+ * mx.cloudflare.net, with DMARC passing for the From domain, or DKIM passing
+ * for a domain the From address is on. SPF alone says nothing about From.
+ */
+export function ownMailPassed(headers: Array<{ key: string; value: string }>, from: string): boolean {
+  const top = headers.find((h) => /^(arc-)?authentication-results$/i.test(h.key));
+  if (!top) return false;
+  const v = top.value.toLowerCase().replace(/\s+/g, " ");
+  if (!/^(i=\d+; ?)?mx\.cloudflare\.net\b/.test(v)) return false;
+  const domain = from.split("@")[1] ?? "";
+  if (!domain) return false;
+  const aligned = (d: string) => domain === d || domain.endsWith(`.${d}`);
+  const dmarc = /\bdmarc=pass\b[^;]*?header\.from=([a-z0-9.-]+)/.exec(v);
+  if (dmarc && aligned(dmarc[1]!)) return true;
+  for (const m of v.matchAll(/\bdkim=pass\b[^;]*?header\.d=([a-z0-9.-]+)/g)) if (aligned(m[1]!)) return true;
+  return false;
+}
+
+/** Where the owner's own words end: before a forwarded mail, a quoted reply, or an earlier message's headers. */
+export function ownWordsEnd(text: string): number {
+  const marks = [
+    /\n-{2,}\s*Forwarded message\s*-{2,}/i,
+    /\nBegin forwarded message:/i,
+    /\n-{3,}\s*Original Message\s*-{3,}/i,
+    /\n_{10,}\s*\n\s*From:/i,
+    /\n\s*From: .*\n\s*(Sent|Date): /i,
+    /\nOn [^\n]{0,200}wrote:\s*\n/i,
+    /\n>/,
+  ];
+  let cut = -1;
+  for (const re of marks) {
+    const at = ("\n" + text).search(re);
+    if (at >= 0 && (cut < 0 || at - 1 < cut)) cut = Math.max(0, at - 1);
+  }
+  return cut;
+}
 
 export class MailDesk {
   constructor(private readonly d: MailDeps) {}
@@ -211,21 +253,18 @@ export class MailDesk {
       return { status: 400, text: `Atlas couldn't read that mail: ${err instanceof Error ? err.message : String(err)}` };
     }
     const from = mail.from?.address?.toLowerCase() ?? "";
-    const text =
-      (mail.text ?? "").trim() ||
-      (mail.html ?? "")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+    // HTML-only mail keeps its line breaks, so quoted and forwarded parts can still be found.
+    const text = (mail.text ?? "").trim() || htmlText(mail.html ?? "");
     const subject = (mail.subject ?? "").trim();
-    const auth = (mail.headers ?? [])
-      .filter((h) => /^(arc-)?authentication-results$/i.test(h.key) || /^received-spf$/i.test(h.key))
-      .map((h) => h.value.toLowerCase())
-      .join(" ");
-    const passed = /\bdkim=pass\b/.test(auth) || /\bspf=pass\b/.test(auth) || /^pass\b/.test(auth);
+    const passed = ownMailPassed(mail.headers ?? [], from);
+    const firstId = ids(mail.messageId)[0];
     if (from && ownerAddresses(this.d.sql).has(normal("email", from)) && passed) {
-      // The owner's own words come first; what they forwarded is someone else's, kept as information.
-      const cut = text.search(/\n-{2,}\s*Forwarded message\s*-{2,}|\nBegin forwarded message:|\n-----Original Message-----/i);
+      // The same mail relayed twice is said once.
+      const seen = getState<string[]>(this.d.sql, "mail_seen") ?? [];
+      if (firstId && seen.includes(firstId)) return { status: 202, text: "Already taken." };
+      if (firstId) setState(this.d.sql, "mail_seen", [firstId, ...seen].slice(0, 300));
+      // The owner's own words come first; what they forwarded or quoted is someone else's, kept as information.
+      const cut = ownWordsEnd(text);
       const said = (cut >= 0 ? text.slice(0, cut) : text).trim();
       const forwarded = cut >= 0 ? text.slice(cut).trim() : "";
       const files = (mail.attachments ?? []).map((a) => a.filename).filter(Boolean);
@@ -263,7 +302,7 @@ export class MailDesk {
         subject,
         text: text.slice(0, 12_000),
         thread,
-        ...(mail.messageId ? { message_id: mail.messageId } : {}),
+        ...(firstId ? { message_id: firstId } : {}),
         references: [...ids(mail.references), ...(mail.messageId ? [mail.messageId] : [])],
       }))
     )
@@ -272,11 +311,11 @@ export class MailDesk {
       source: "email",
       event: sent?.thread ? "reply" : "received",
       what: `Mail to Atlas from ${name || from || "someone"}${sent?.thread ? ", answering mail Atlas sent" : ""}: "${subject.slice(0, 160) || "(no subject)"}"`,
-      key: mail.messageId ?? `${from}:${subject}:${time}`,
+      key: firstId ?? `${from}:${subject}:${time}`,
       thread,
       from: name ? `${name} <${from}>` : from,
       signals: [...(sent?.thread ? ["reply"] : []), ...(passed ? [] : ["unverified"])],
-      ...(mail.messageId ? { message_id: mail.messageId } : {}),
+      ...(firstId ? { message_id: firstId } : {}),
       ...(refs.length ? { references: refs.join(" ") } : {}),
       subject: subject.slice(0, 200),
     } as SenseItem;

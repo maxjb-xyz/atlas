@@ -166,6 +166,19 @@ describe("Telegram", { timeout: 20_000 }, () => {
     expect(JSON.parse(row.body)).toMatchObject({ text: "anything today?", channel: "telegram" });
   });
 
+  it("voids the app's code after a few wrong guesses", async () => {
+    s.send({ type: "atlas.channel.code", ext: "telegram" });
+    const { code } = await s.next("atlas.channel.code");
+    const wrong = String((Number(code) + 1) % 1_000_000).padStart(6, "0");
+    for (let i = 0; i < 5; i++) await post(message(JORDAN, { text: wrong }));
+    await post(message(JORDAN, { text: code }));
+    await new Promise((r) => setTimeout(r, 200));
+    expect(said().some((x) => String(x.body.text).startsWith("That's you."))).toBe(false);
+    expect(
+      await inOwner((_a, sql) => sql.exec(`SELECT 1 FROM state WHERE key = 'channel_links' AND value != 'null'`).toArray().length),
+    ).toBe(0);
+  });
+
   it("hears a voice note and answers with one, and reads a photo", { timeout: 20_000 }, async () => {
     await link();
     const b = brain([say("You're free all day."), say("That's $42.10 at Corner Shop.")]);
