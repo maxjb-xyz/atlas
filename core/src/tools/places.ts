@@ -170,7 +170,7 @@ export const placeFind = defineTool({
   name: "place_find",
   kind: "look",
   status: "Looking at the map",
-  timeoutMs: 45_000,
+  timeoutMs: 60_000,
   description: [
     "Find places on the map: a kind of place (a grocery store, a pharmacy) or one by name, near somewhere, or along the way to somewhere.",
     "With on_the_way_to (often 'home'), it routes there from `near` and finds places just off the route, with how many minutes off the way each one is: that's how you suggest an errand stop.",

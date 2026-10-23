@@ -316,33 +316,12 @@ export async function nearby(
       .filter((x) => x.name && Number.isFinite(x.lat));
     return { ...out, value };
   }
-  // A place by name near a point is an address search, bounded to the area: lighter than Overpass, and it knows short names.
-  if (o.name && !kind && !o.along?.length) {
-    const d = o.within / 111_000;
-    const u = new URL("https://nominatim.openstreetmap.org/search");
-    u.searchParams.set("q", o.name);
-    u.searchParams.set("format", "jsonv2");
-    u.searchParams.set("limit", String(Math.min(10, o.limit)));
-    u.searchParams.set("bounded", "1");
-    u.searchParams.set("viewbox", `${o.near.lon - d},${o.near.lat + d},${o.near.lon + d},${o.near.lat - d}`);
-    const out = await getJson<Array<Record<string, unknown>>>(f, u.toString(), "OpenStreetMap's address search");
-    if (!out.ok) return out;
-    const value = out.value
-      .map((r) => {
-        const p = { lat: num(r.lat), lon: num(r.lon) };
-        return {
-          name: String(r.name || String(r.display_name ?? "").split(",")[0] || o.name),
-          address: String(r.display_name ?? ""),
-          ...p,
-          kind: String(r.type ?? ""),
-          m: Math.round(metresBetween(p, o.near)),
-        };
-      })
-      .filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon))
-      .sort((a, b) => a.m - b.m);
-    return { ...out, value };
-  }
   const pts = o.along?.length ? samples(o.along, Math.max(200, o.within)) : [o.near];
+  // Nominatim first, bounded to the area (around the point, or the route's box): it answers from Cloudflare, where
+  // Overpass's public servers have timed out (522, 524, 504), it knows short names, and a kind ("pharmacy") is one
+  // of its special phrases. Overpass is the fallback, for what Nominatim doesn't find.
+  const first = await nominatimIn(f, o, kind, pts);
+  if (first.ok && first.value.length) return first;
   const around = pts.map((p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join(",");
   const filters = kind
     ? kind.osm.map((t) => {
@@ -363,12 +342,17 @@ export async function nearby(
       method: "POST",
       body: new URLSearchParams({ data: query }).toString(),
       headers: { "content-type": "application/x-www-form-urlencoded" },
+      // Ten seconds each, so all three fit in place_find's time; a slow one is as good as down.
+      signal: AbortSignal.timeout(10_000),
     });
     // A busy or unreachable server (429, 5xx, no answer) means the next one; anything else is the answer.
     if (out.ok || (out.status !== 0 && out.status !== 429 && out.status < 500)) break;
     tried.push(out.error);
   }
-  if (!out.ok && tried.length === OVERPASS.length) return { ...out, error: `Every Overpass server failed: ${tried.join(" · ")}` };
+  if (!out.ok && tried.length === OVERPASS.length) {
+    const asked = first.ok ? "Nominatim found none" : first.error;
+    return { ...out, error: `${asked}, and every Overpass server failed: ${tried.join(" · ")}` };
+  }
   if (!out.ok) return out;
   if (!out.value.elements && out.value.remark)
     return { ok: false, status: out.status, error: `OpenStreetMap's place search: ${out.value.remark}` };
@@ -428,4 +412,43 @@ export function polyline(line: Array<[number, number]>, precision = 5): string {
 export function minutes(s: number): string {
   const m = Math.max(1, Math.round(s / 60));
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`;
+}
+
+/** A place search with Nominatim, bounded to the point's area or the route's box, filtered to the kind and to near the route. */
+async function nominatimIn(
+  f: typeof fetch,
+  o: { name?: string; near: Point; along?: Array<[number, number]>; within: number; limit: number },
+  kind: { osm: readonly string[]; words: string } | null,
+  pts: Point[],
+): Promise<LookOut<Found[]>> {
+  const values = kind ? kind.osm.map((t) => t.split("=")[1]!) : [];
+  const q = o.name ?? values[0]?.replace(/_/g, " ");
+  if (!q) return { ok: true, status: 0, value: [] };
+  const d = o.within / 111_000;
+  const lats = pts.map((p) => p.lat);
+  const lons = pts.map((p) => p.lon);
+  const u = new URL("https://nominatim.openstreetmap.org/search");
+  u.searchParams.set("q", q);
+  u.searchParams.set("format", "jsonv2");
+  u.searchParams.set("limit", "40");
+  u.searchParams.set("bounded", "1");
+  u.searchParams.set("viewbox", `${Math.min(...lons) - d},${Math.max(...lats) + d},${Math.max(...lons) + d},${Math.min(...lats) - d}`);
+  const out = await getJson<Array<Record<string, unknown>>>(f, u.toString(), "OpenStreetMap's address search");
+  if (!out.ok) return out;
+  const value = out.value
+    .filter((r) => !kind || values.includes(String(r.type ?? "")))
+    .map((r) => {
+      const p = { lat: num(r.lat), lon: num(r.lon) };
+      return {
+        name: String(r.name || String(r.display_name ?? "").split(",")[0] || q),
+        address: String(r.display_name ?? ""),
+        ...p,
+        kind: String(r.type ?? ""),
+        m: Math.round(o.along?.length ? offLine(p, pts) : metresBetween(p, o.near)),
+      };
+    })
+    .filter((x) => x.name && Number.isFinite(x.lat) && Number.isFinite(x.lon) && x.m <= o.within * 1.5)
+    .sort((a, b) => a.m - b.m)
+    .slice(0, Math.max(o.limit, 8));
+  return { ...out, value };
 }

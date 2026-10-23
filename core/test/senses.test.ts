@@ -90,6 +90,7 @@ function decider(o: { errand: number; now?: number; later?: number }): Decider &
       for (const [id, q] of Object.entries(questions)) {
         if (id === "worth_a_thought_now") out[id] = o.now ?? 0.01;
         else if (id === "worth_knowing_later") out[id] = o.later ?? 0.01;
+        else if (id === "about") out[id] = /unrelated/i.test(state.split("The owner replied:")[1] ?? "") ? 0.05 : 0.9;
         else if (id === "stop") out[id] = /"stop/i.test(state.split("The owner replied:")[1] ?? "") ? 0.95 : 0.05;
         else if (id === "thanks") out[id] = /thank/i.test(state.split("The owner replied:")[1] ?? "") ? 0.95 : 0.05;
         // Like Clef: an errand fits when they're leaving somewhere and heading on, not when they arrive.
@@ -353,15 +354,36 @@ describe("the gym-to-store moment", () => {
     expect(b.requests[0]!.system).toContain("Noticed since your last look");
     expect(b.requests[0]!.system).toContain("Lunch with Sam");
 
-    // When the oldest has waited an hour, a run of Atlas's own looks the pile over, and it's seen.
-    await inOwner((_a, sql) => sql.exec(`UPDATE intake SET at = at - 7200000 WHERE id = ?`, sense.id));
-    const r = brain([say("A lunch got added; nothing to say yet.")]);
+    // That turn saw it and replied, so the batch look won't tell the owner again.
+    const seenByTurn = await inOwner((_a, sql) =>
+      sql.exec<{ seen_at: number | null }>(`SELECT seen_at FROM intake WHERE id = ?`, sense.id).one(),
+    );
+    expect(seenByTurn.seen_at).not.toBeNull();
+
+    // Something new that can wait, unseen: when it has waited an hour, a run of Atlas's own looks the pile over, and it's seen.
+    const later = start.getTime() + 86_400_000;
+    events.push({
+      id: "ev_two",
+      title: "Dentist",
+      start: new Date(later).toISOString(),
+      end: new Date(later + 3_600_000).toISOString(),
+      all_day: false,
+      calendar: "Home",
+    } as never);
+    await tick();
+    const second = await waitFor("the second sense", async () =>
+      (await rowsSince(from, "sense")).find((r) => r.source === "calendar" && String(r.what).includes("Dentist")),
+    );
+    await waitFor("its decision", async () => (await rowsSince(from, "awareness")).find((r) => r.of === second.id));
+    await inOwner((_a, sql) => sql.exec(`UPDATE intake SET at = at - 7200000 WHERE id = ?`, second.id));
+    const r = brain([say("A dentist visit got added; nothing to say yet.")]);
     await tick();
     const review = await waitFor("the review", async () => (await rowsSince(from, "awareness")).find((x) => x.step === "review"));
     expect(review).toMatchObject({ outcome: "silent", count: 1 });
     expect(String(r.requests[0]!.messages.at(-1)!.content)).toContain("Since your last look, these came in");
+    expect(String(r.requests[0]!.messages.at(-1)!.content)).not.toContain("Lunch with Sam");
     const seen = await inOwner((_a, sql) =>
-      sql.exec<{ seen_at: number | null }>(`SELECT seen_at FROM intake WHERE id = ?`, sense.id).one(),
+      sql.exec<{ seen_at: number | null }>(`SELECT seen_at FROM intake WHERE id = ?`, second.id).one(),
     );
     expect(seen.seen_at).not.toBeNull();
   }, 20_000);
@@ -649,7 +671,9 @@ describe("weather and routes, read", () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.value.now.temp_c).toBe(27);
-    const matters = whatMatters(out.value, "America/New_York", "us", Date.now());
+    // As of the first rainy hour, so "today" still has it whatever the time of the run (late at night, the fake's rain is tomorrow).
+    const wet = out.value.hours.find((h) => h.pop >= 50)!;
+    const matters = whatMatters(out.value, "America/New_York", "us", wet.t + 60_000);
     expect(matters.join(" ")).toMatch(/rain likely .* \(70%\)/);
   });
 
@@ -685,7 +709,8 @@ describe("what changed in the situation", () => {
     const at = (h: number) => new Date(now + h * 3_600_000).toISOString();
     const ev = { id: "e1", title: "Dentist", start: at(2), end: at(3), all_day: false, location: "1 Main St" };
     const hour = (pop: number) => ({
-      t: now + 3_600_000,
+      // The hour under way, so it's today at any time of the run.
+      t: now,
       temp_c: 25,
       pop,
       precip_mm: pop > 50 ? 2 : 0,
@@ -767,5 +792,83 @@ describe("places, the way people say them", () => {
     await turn(s, "how long from the RWC to home?");
     expect(String(b.requests[1]!.messages.at(-1)!.content)).toContain("Home isn't a saved place with a pin yet");
     expect(world.asked.some((a) => a.includes("nominatim") && /q=home\b/i.test(a))).toBe(false);
+  });
+});
+
+describe("runs that end without words", () => {
+  it("a turn that shows a view and says nothing ends replied, and a look that nudges and says nothing too", async () => {
+    const b = brain([call("show", { view: { kind: "situation" } }), say("")]);
+    const t = await turn(s, "show me my situation");
+    const end = await inOwner((_a, sql) =>
+      sql.exec<{ body: string }>(`SELECT body FROM log WHERE run_id = ? AND kind = 'run.end'`, t.run).one(),
+    );
+    expect(JSON.parse(end.body)).toMatchObject({ state: "replied" });
+    expect(t.deliveries).toEqual([]);
+    expect(b.requests).toHaveLength(2);
+
+    seams.decide = decider({ errand: 0, now: 0.9 });
+    const from = await lastSeq();
+    brain([call("nudge", { text: "Your backup failed: the disk is full.", about: "home server backup" }), say("")]);
+    s.send({ type: "atlas.sense.hook.add", name: "Home server" });
+    const made = await s.next("atlas.sense.hook");
+    const local = made.url.replace(/^https?:\/\/[^/]+/, "https://atlas.test");
+    expect(
+      (await SELF.fetch(local, { method: "POST", body: JSON.stringify({ title: "Backup failed: disk full", id: "b9" }) })).status,
+    ).toBe(202);
+    const woke = await waitFor("the look", async () => (await rowsSince(from, "awareness")).find((r) => r.step === "woke"));
+    expect(woke).toMatchObject({ outcome: "nudged" });
+    s.send({ type: "atlas.sense.hook.remove", id: made.id });
+  });
+
+  it("doesn't count a message about something else as a reaction to the last nudge", async () => {
+    seams.decide = decider({ errand: 0 });
+    await inOwner((_a, sql) =>
+      sql.exec(
+        `INSERT OR REPLACE INTO state (key, value, updated_at) VALUES ('nudges', ?, 0)`,
+        JSON.stringify([
+          { id: "lg_other", from: "noticing", about: "a review", at: Date.now() - 60_000, text: "Sam asked for your review." },
+        ]),
+      ),
+    );
+    brain([say("Sure.")]);
+    await turn(s, "an unrelated question about dinner");
+    const n = await inOwner((_a, sql) =>
+      JSON.parse(sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = 'nudges'`).one().value),
+    );
+    expect(n[0].reaction).toBeUndefined();
+  });
+});
+
+describe("finding places from Cloudflare", () => {
+  it("asks Nominatim first for a kind of place, and needs no Overpass when it answers", async () => {
+    const { nearby } = await import("../src/maps");
+    const asked: string[] = [];
+    const f = (async (input: string) => {
+      asked.push(String(input));
+      if (String(input).startsWith("https://nominatim.openstreetmap.org/search"))
+        return Response.json([
+          {
+            lat: "28.601",
+            lon: "-81.204",
+            name: "CVS Pharmacy",
+            display_name: "CVS Pharmacy, Alafaya Trail",
+            category: "amenity",
+            type: "pharmacy",
+          },
+          { lat: "28.602", lon: "-81.203", name: "Some Bank", display_name: "Some Bank", category: "amenity", type: "bank" },
+        ]);
+      return new Response("not faked", { status: 404 });
+    }) as unknown as typeof fetch;
+    const out = await nearby(f, {
+      provider: "osm",
+      key: null,
+      kind: "pharmacy",
+      near: { lat: 28.6003, lon: -81.2015 },
+      within: 1_500,
+      limit: 5,
+    });
+    expect(out.ok && out.value.map((p) => p.name)).toEqual(["CVS Pharmacy"]);
+    expect(asked.some((u) => u.includes("overpass"))).toBe(false);
+    expect(new URL(asked[0]!).searchParams.get("q")).toBe("pharmacy");
   });
 });

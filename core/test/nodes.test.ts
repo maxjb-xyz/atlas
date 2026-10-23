@@ -187,13 +187,18 @@ describe("pairing and the device's socket", () => {
     const inbox = await s.next("atlas.inbox.items", (m) => m.items.some((i) => i.kind === "approval"));
     const card = inbox.items.find((i) => i.kind === "approval")!;
     expect(card.approval!.steps[0]).toMatchObject({ kind: "node", title: `run command on ${name}: du -sh ~`, where: name });
-    brain([say("Your home folder is 41 GB.")]);
+    const after = brain([say("Your home folder is 41 GB.")]);
     const ran = (async () => {
       const c = await node.next("node.call");
       node.send({ type: "node.result", id: c.id, ok: true, output: "41G\t/Users/max" });
     })();
     s.send({ type: "atlas.approval.decide", id: card.id, yes: true });
     await ran;
+    // The turn after the yes knows it's done, and what it gave back, so it reports instead of asking again.
+    const end = Date.now() + 5_000;
+    while (!after.requests.length && Date.now() < end) await new Promise((r) => setTimeout(r, 30));
+    expect(after.requests[0]!.system).toContain("it's done (don't ask for it or do it again)");
+    expect(after.requests[0]!.system).toContain("41G");
 
     // Offline: it waits, then runs when the device is back, and Atlas says how it went.
     node.ws.close();

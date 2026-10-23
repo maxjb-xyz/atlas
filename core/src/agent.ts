@@ -309,6 +309,8 @@ interface ConverseOpts {
   tools?: Tool[];
   /** A note for this run's context only, such as a reaction to a nudge that just changed a setting. */
   extra?: string;
+  /** Its last words are only a note for the log, so it may end without any (awareness's runs). */
+  silentOk?: boolean;
 }
 
 export class PersonAgent extends VoiceAgent implements HelperHost {
@@ -1138,18 +1140,18 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** The owner's text runs that can still be stopped, waiting in line or under way. */
   #stops = new Map<string, AbortController>();
 
-  async #textTurn(text: string, clientId: string): Promise<void> {
+  async #textTurn(text: string, clientId: string, note?: string): Promise<void> {
     const runId = startRun(this.#sql, { actor: "owner", trigger: "message", surface: "app", role: "main" });
     const stop = new AbortController();
     this.#stops.set(runId, stop);
     try {
-      await this.#textRun(runId, text, clientId, stop.signal);
+      await this.#textRun(runId, text, clientId, stop.signal, note);
     } finally {
       this.#stops.delete(runId);
     }
   }
 
-  async #textRun(runId: string, text: string, clientId: string, signal: AbortSignal): Promise<void> {
+  async #textRun(runId: string, text: string, clientId: string, signal: AbortSignal, note?: string): Promise<void> {
     const inRow = append(this.#sql, {
       actor: "owner",
       kind: "message.in",
@@ -1171,7 +1173,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     await this.#inLine(
       async () => {
         const scrubber = new StreamScrubber(this.#outbox.secrets());
-        const extra = (await this.#senses.reacted(text)) ?? undefined;
+        const extra = [note, (await this.#senses.reacted(text)) ?? ""].filter(Boolean).join("\n\n") || undefined;
         const res = await this.#converse({
           runId,
           actor: "owner",
@@ -1188,6 +1190,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         const tail = scrubber.flush();
         if (tail) this.#broadcast({ type: "atlas.delta", run_id: runId, text: tail });
         await this.#finishRun(runId, "app", res, true);
+        if (res.state === "replied") this.#senses.seenBy(inRow.at);
       },
       { id: runId, surface: "app" },
     ).catch(() => {});
@@ -1271,6 +1274,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           },
         });
         await this.#finishRun(runId, "voice", said, true);
+        if (said.state === "replied") this.#senses.seenBy(inRow.at);
       },
       { id: runId, surface: "voice" },
     ).catch(() => spoken.close());
@@ -1706,6 +1710,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });
         },
         tools: [...TOOLS.atlas, nudge],
+        silentOk: true,
       }).catch((err: unknown) => ({
         state: "failed" as const,
         text: "",
@@ -1865,6 +1870,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         joiner: o.surface === "voice" ? " " : "\n\n",
         effort: o.role === "voice" ? "low" : "medium",
         firstEventMs: FIRST_EVENT_MS[o.role],
+        ...(o.silentOk ? { silentOk: true } : {}),
       },
       o.emit,
     );
@@ -3415,7 +3421,16 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     // a form, a service's tool or a webhook, Atlas finishes what it was doing, or says it's done.
     // Said by voice or in text, the yes is already part of a run that carries on by itself.
     if (o.by === "app" || o.by === "hold" || o.by === "push") {
-      void this.keepAliveWhile(() => this.#textTurn(`Yes to ${item.title}. Carry on.`, `approval-${id}`));
+      // What it did and gave back goes with the yes, so the run reports it instead of asking again for what's done.
+      const note = [
+        `[Atlas, not the owner] The owner said yes on the card, and it's done (don't ask for it or do it again):`,
+        ...actions.map(
+          (a, i) =>
+            `- ${"name" in a && typeof a.name === "string" ? a.name : a.kind}: ${results[i]!.ok ? "worked" : "didn't work"}. ${results[i]!.text.slice(0, 6_000)}`,
+        ),
+        "Carry on from there with what it gave back: finish what you were doing, or tell the owner how it went.",
+      ].join("\n");
+      void this.keepAliveWhile(() => this.#textTurn(`Yes to ${item.title}. Carry on.`, `approval-${id}`, note));
     }
     return { ok, text: results.map((r) => r.text).join(" ") };
   }

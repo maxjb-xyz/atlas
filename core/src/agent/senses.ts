@@ -62,6 +62,13 @@ export const REACT_MS = 30 * 60_000;
 export const IGNORED_MS = 2 * 3_600_000;
 /** How sure `decide` must be that an event matters before Atlas wakes. */
 export const MATTERS = 0.5;
+/**
+ * For an errand, less sure is enough: Clef scored leaving the gym with an
+ * errand open between 0.39 and 0.57 on the owner's deployment, and a
+ * missed moment can't wait for a later look, while a look that finds
+ * nothing on the way stays silent.
+ */
+export const ERRAND_MATTERS = 0.35;
 /** The later pile is looked over when its oldest has waited this long, or it has this many, and at most this often. */
 export const REVIEW_AFTER_MS = 60 * 60_000;
 const REVIEW_COUNT = 8;
@@ -225,6 +232,20 @@ export class SenseDesk {
     return rows;
   }
 
+  /**
+   * An owner's turn that saw the later pile (its newest, in "noticed since
+   * your last look") and replied: those are looked at, so the batch look
+   * doesn't tell the owner again what this turn may have told them.
+   */
+  seenBy(before: number): void {
+    markSeen(
+      this.d.sql,
+      laterPile(this.d.sql, PILE_SHOWN)
+        .filter((i) => i.at < before)
+        .map((i) => i.id),
+    );
+  }
+
   /** After a restart: items left half way are weighed again. */
   async resume(): Promise<void> {
     const left = unfinished(this.d.sql);
@@ -268,7 +289,8 @@ export class SenseDesk {
       settle("never", "rules", "Speaking up about what Atlas notices is off.");
       return;
     }
-    const open = this.#openThings(settings);
+    // Errands are about where the owner is, so only a move or a place asks about them.
+    const open = this.#openThings(settings).filter((o) => o.kind !== "errand" || row.body.source === "location");
 
     // 2. Decide: now, later or never, and does it matter to anything open?
     const decider = this.d.decider();
@@ -286,7 +308,7 @@ export class SenseDesk {
       };
       try {
         scores = await decider.yesNo(state.slice(0, 4_000), questions, AbortSignal.timeout(8_000));
-        matched = open.filter((o) => (scores![o.id] ?? 0) >= MATTERS);
+        matched = open.filter((o) => (scores![o.id] ?? 0) >= (o.kind === "errand" ? ERRAND_MATTERS : MATTERS));
         now = (scores[NOW] ?? 0) >= MATTERS || matched.length > 0;
         later = (scores[LATER] ?? 0) >= MATTERS;
       } catch (err) {
@@ -629,11 +651,14 @@ export class SenseDesk {
         const p = await decider.yesNo(
           `Atlas sent the owner, on its own: "${n.text}"\n\nThe owner replied: "${text.slice(0, 600)}"`,
           {
+            about: { instructions: "Is the owner's reply about Atlas's message, rather than about something else?" },
             stop: { instructions: "Is the owner asking Atlas to stop sending messages like this one?" },
             thanks: { instructions: "Is the owner thanking Atlas, or saying the message was useful?" },
           },
           AbortSignal.timeout(3_000),
         );
+        // Something else entirely isn't a reaction to the nudge; it may still come.
+        if ((p.about ?? 1) < 0.4 && (p.stop ?? 0) < 0.6 && (p.thanks ?? 0) < 0.6) return null;
         reaction = (p.stop ?? 0) >= 0.6 ? "stop" : (p.thanks ?? 0) >= 0.6 ? "thanks" : "replied";
       } catch (err) {
         console.error(JSON.stringify({ at: "awareness.reaction", error: err instanceof Error ? err.message : String(err) }));
@@ -733,8 +758,11 @@ function listsLine(s: Settings): string {
 }
 
 /** What came in that could wait, for the owner's own turns: "since you last looked". */
+/** How much of the later pile an owner's turn sees. */
+const PILE_SHOWN = 8;
+
 export function pileLine(sql: Sql, settings: Settings): string {
-  const pile = laterPile(sql, 8);
+  const pile = laterPile(sql, PILE_SHOWN);
   if (!pile.length) return "";
   return `Noticed since your last look, and could wait (bring it up only if it fits; noticed has the rest):\n${pileList(pile, zoneOf(settings))}`;
 }

@@ -9,6 +9,9 @@ import { Markdown } from "../Markdown";
 import { Composer } from "../Shell";
 import { AreaChip, clock, dayName, Diamond, Empty, pressable, Sheet, Stage, startOfDay } from "../ui";
 
+/** A line written for Atlas ("The owner arrived at ...") as the owner reads it here. */
+const yours = (what: string) => what.replace(/^The owner /, "You ");
+
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : JSON.stringify(v));
 
 function describe(r: LogRow): { who: string; what: string; kind: string } {
@@ -121,7 +124,7 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
             : b.source === "webhook"
               ? str((b.hook as { name?: string } | undefined)?.name) || "Webhook"
               : ({ travel: "Traffic", weather: "Weather" }[str(b.event)] ?? "Situation");
-        return { who, what: str(b.what), kind: `sense.${str(b.source)}` };
+        return { who, what: `${str(b.what)}${b.repeat ? " (a repeat, set aside)" : ""}`, kind: `sense.${str(b.source)}` };
       }
       if (b.source === "node" || b.source === "device") {
         const device = str((b.node as { name?: string } | undefined)?.name);
@@ -162,16 +165,16 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
       }
       const what =
         b.outcome === "nudged"
-          ? `${str(b.event)}: it mattered, so Atlas spoke up`
+          ? `${yours(str(b.event))}: it mattered, so Atlas spoke up`
           : b.outcome === "silent"
-            ? `${str(b.event)}: Atlas looked and stayed quiet`
+            ? `${yours(str(b.event))}: Atlas looked and stayed quiet`
             : b.outcome === "failed"
-              ? `${str(b.event)}: the look didn't finish: ${str(b.why)}`
+              ? `${yours(str(b.event))}: the look didn't finish: ${str(b.why)}`
               : b.outcome === "later"
-                ? `${str(b.event)}: it can wait for a later look (${str(b.why)})`
+                ? `${yours(str(b.event))}: it can wait for a later look (${str(b.why)})`
                 : b.step === "rules"
-                  ? `${str(b.event)}: set aside by a rule (${str(b.why)})`
-                  : `${str(b.event)}: decided it doesn't matter (${str(b.why)})`;
+                  ? `${yours(str(b.event))}: set aside by a rule (${str(b.why)})`
+                  : `${yours(str(b.event))}: decided it doesn't matter (${str(b.why)})`;
       return {
         who: "Atlas",
         what: `${what}${typeof b.ms === "number" ? ` · ${(b.ms / 1000).toFixed(2)} s` : ""}`,

@@ -44,6 +44,8 @@ export interface RunSpec {
   resume?: Checkpoint;
   /** Called after each step that ran tools, so a durable run can save where it is. */
   checkpoint?: (c: Checkpoint) => void;
+  /** A run whose last words are only a note for the log (Atlas's own looks): ending without any is fine. */
+  silentOk?: boolean;
 }
 
 /** Where a run stands between steps: enough to carry on after a restart. */
@@ -93,6 +95,8 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
   let lastBrain: LoopResult["brain"] = null;
   let fellBack = false;
 
+  /** Whether the last step's tools all worked, with something the owner sees. */
+  let done = false;
   const say = (t: string) => {
     if (!t) return;
     text += t;
@@ -142,8 +146,9 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
       const tools = Promise.all(step.calls.map((call) => runTool(deps, spec, call, emit)));
       const outputs = spec.signal ? await Promise.race([tools, stopped(spec.signal)]) : await tools;
       for (const [i, call] of step.calls.entries()) {
-        messages.push({ role: "tool", callId: call.id, name: call.name, content: outputs[i]! });
+        messages.push({ role: "tool", callId: call.id, name: call.name, content: outputs[i]!.content });
       }
+      done = outputs.every((o) => o.ok) && outputs.some((o) => o.receipt);
       emit({ type: "status", text: null, speakable: false });
       emit({ type: "tools", names: step.calls.map((c) => c.name) });
       spec.checkpoint?.({ messages: [...messages], steps, text });
@@ -163,7 +168,9 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
   }
 
   emit({ type: "status", text: null, speakable: false });
-  if (!text.trim()) return result("failed", { error: "The brain gave an empty answer." });
+  // No words after the last tools all worked and the owner saw it (a view on the stage, a nudge sent, a
+  // receipt for a change): the run did what was asked, and its receipts are the answer.
+  if (!text.trim()) return done || spec.silentOk ? result("replied") : result("failed", { error: "The brain gave an empty answer." });
   return result("replied");
 }
 
@@ -271,7 +278,12 @@ async function firstEvent(it: AsyncIterator<BrainEvent>, ms: number, attempt: Ab
   }
 }
 
-async function runTool(deps: LoopDeps, spec: RunSpec, call: ToolCall, emit: (e: LoopEvent) => void): Promise<string> {
+async function runTool(
+  deps: LoopDeps,
+  spec: RunSpec,
+  call: ToolCall,
+  emit: (e: LoopEvent) => void,
+): Promise<{ content: string; ok: boolean; receipt: boolean }> {
   const tool = spec.tools.find((t) => t.name === call.name);
   await deps.log({
     actor: "atlas",
@@ -312,7 +324,7 @@ async function runTool(deps: LoopDeps, spec: RunSpec, call: ToolCall, emit: (e: 
     },
   });
   if (res.receipt) emit({ type: "row", row });
-  return content;
+  return { content, ok: res.ok, receipt: Boolean(res.receipt) };
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {

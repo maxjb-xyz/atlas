@@ -18,6 +18,7 @@ export const deviceCall = defineTool({
     "Tools marked off are turned off by the owner: say so, and that Settings → Devices turns them on. Tools that act on the device ask the owner first, on a card in Atlas (Inbox, and a notification), not on the device itself.",
     "When the device is offline, the call waits and runs when it's back; tell the owner it isn't connected and that you'll do it when it is, without guessing why (asleep, closed, off the network).",
     "Give `input` exactly as the tool's schema in your context says: its field names, nothing else.",
+    "A command runs with no terminal and no one to type a password, so never use sudo or anything that waits for input.",
   ].join(" "),
   input: z.object({
     device: z.string().min(1).max(80).describe("The device's name, as in your context."),
