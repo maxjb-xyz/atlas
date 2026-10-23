@@ -360,3 +360,50 @@ export function lastTouch(sql: Sql, r: AtlasRecord): { at: number; what: string 
   }
   return null;
 }
+
+/**
+ * Someone writing in on mail or a chat (§7.1): the person Atlas knows by
+ * that address, or a new one with trust unknown, marked as learned from
+ * what they sent. Bulk mail and the owner's own addresses make nobody. A
+ * new address under the name of someone Atlas knows isn't joined to them
+ * by itself (anyone can write a name): the item says so, and Atlas or the
+ * owner joins them with contact_save. Returns what to add to the item.
+ */
+export function senderSeen(
+  sql: Sql,
+  item: { from?: unknown; signals?: unknown },
+  via: string,
+  kind: "email" | "telegram" = "email",
+): { person?: string; same_name?: { id: string; name: string } } {
+  const from = typeof item.from === "string" ? item.from : "";
+  if (!from) return {};
+  const signals = Array.isArray(item.signals) ? item.signals : [];
+  if (signals.includes("newsletter") || signals.includes("automated")) return {};
+  let name = from;
+  let value = from.trim();
+  if (kind === "email") {
+    const a = splitAddress(from);
+    if (!a || ownerAddresses(sql).has(normal("email", a.email))) return {};
+    if (/^(no-?reply|do-?not-?reply|mailer-daemon|notifications?|bounce)/i.test(a.email.split("@")[0]!)) return {};
+    name = a.name;
+    value = a.email;
+  }
+  const known = findPerson(sql, kind, value);
+  if (known) return { person: known.id };
+  const same =
+    name && /\S\s+\S/.test(name)
+      ? sql
+          .exec<{ id: string; name: string }>(
+            `SELECT id, name FROM records WHERE type = 'person' AND state = 'active' AND lower(name) = lower(?) AND json_extract(fields, '$.is_owner') IS NULL LIMIT 2`,
+            name.trim(),
+          )
+          .toArray()
+      : [];
+  const { record } = upsertPerson(
+    sql,
+    { ...(name && name !== value ? { name } : {}), channels: [{ kind, value, via }], trust: "unknown" },
+    { via },
+    { confidence: 0.6 },
+  );
+  return { person: record.id, ...(same.length === 1 ? { same_name: same[0]! } : {}) };
+}

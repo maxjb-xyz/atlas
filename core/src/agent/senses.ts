@@ -25,7 +25,8 @@ import { parse, type Sql } from "../store/db";
 import { append, type LogRow } from "../store/log";
 import { calendarLook, describe, laterPile, mark, markSeen, take as collect, unfinished, type IntakeItem, type SenseItem } from "../intake";
 import { answered, dueItem, detailOf } from "../loops";
-import { findRecords } from "../store/records";
+import { findRecords, getRecord } from "../store/records";
+import { trustOf } from "../contacts";
 import { readSettings, type Settings, writeSettings } from "../store/settings";
 import { getState, setState } from "../store/state";
 import {
@@ -286,7 +287,7 @@ export class SenseDesk {
     const settings = readSettings(this.d.sql);
     // 2. Read (§10.4): words from other people go to the quarantined reader, which gives back facts, never instructions.
     const facts = await this.#read(row);
-    const event = [describe(row), factsLine(facts)].filter(Boolean).join("\n");
+    const event = [describe(row), this.#who(row), signalsLine(row.body.signals), factsLine(facts)].filter(Boolean).join("\n");
     const settle = (outcome: "later" | "never", step: "rules" | "decide", why: string, scores?: Record<string, number>) => {
       mark(this.d.sql, row.id, { state: outcome === "never" ? "done" : "weighed", outcome, why, scores: scores ?? null });
       this.#log({
@@ -458,6 +459,18 @@ export class SenseDesk {
       },
       out.run_id,
     );
+  }
+
+  /** Who an item is from, as Atlas knows them (§7.1): their name and how much the owner trusts them, or that they're new. */
+  #who(row: LogRow): string {
+    const id = row.body.person;
+    if (typeof id !== "string") return "";
+    const r = getRecord(this.d.sql, id);
+    if (!r) return "";
+    const t = trustOf(r);
+    return t === "unknown"
+      ? `From ${r.name}, someone the owner hasn't said how they know${r.source.via?.startsWith("mail") && Date.now() - r.learned_at < 3_600_000 ? " (first seen just now)" : ""}.`
+      : `From ${r.name}, ${t === "family" ? "family" : `a ${t}`} of the owner's.`;
   }
 
   /**
@@ -1002,3 +1015,9 @@ export const speakingUp = defineTool({
     };
   },
 });
+
+/** The source's own signals ("newsletter", "reply"), as a line for decide and Atlas. */
+function signalsLine(signals: unknown): string {
+  const list = Array.isArray(signals) ? signals.filter((x): x is string => typeof x === "string").slice(0, 8) : [];
+  return list.length ? `The source marks it: ${list.join(", ").replace(/_/g, " ")}.` : "";
+}

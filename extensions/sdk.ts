@@ -360,7 +360,8 @@ export interface Extension {
   look?(ctx: Ctx): Promise<{ items: Item[]; cursor: Json; state?: Json }>;
   receive?(ctx: Ctx, req: Request): Promise<Received>;
   send?(ctx: Ctx, out: Out): Promise<{ id?: string }>;
-  mail?(ctx: Ctx, mail: Mail): Promise<{ id: string; thread?: string; link?: string }>;
+  /** Sends mail; `message_id` is the Message-ID it went with, so replies can be matched to it. */
+  mail?(ctx: Ctx, mail: Mail): Promise<{ id: string; thread?: string; link?: string; message_id?: string; state?: Json }>;
   calendar?(
     ctx: Ctx,
     range: { start: string; end: string; hidden: string[]; held?: boolean },

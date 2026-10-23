@@ -26,7 +26,7 @@ import {
   setExtSecrets,
 } from "../extensions";
 import { noteSource, type SenseItem } from "../intake";
-import { ownerLearned, parseVCards, importCards } from "../contacts";
+import { ownerLearned, parseVCards, importCards, senderSeen } from "../contacts";
 import { allowedPost, here, observations, type Observation, pins, refused } from "../location";
 import type { AgendaItem } from "../store/agenda";
 import type { Sql } from "../store/db";
@@ -117,6 +117,7 @@ export class ExtensionDesk {
               help: m.signin.help,
               redirect: origin ? `${origin}/x/signin` : null,
               signed_in: Boolean(secrets.refresh_token || secrets.access_token),
+              secret_set: Boolean(secrets.client_secret),
             }
           : null,
         every: m.every ?? null,
@@ -321,7 +322,20 @@ export class ExtensionDesk {
       const { raw, ...rest } = it;
       // A post to a webhook source stays that source's, read by the extension that claimed it.
       const by = { ext: e.id, ext_name: e.manifest.name };
-      const item = (hook ? { ...rest, source: "webhook", hook, ...by } : { ...rest, source, ...by }) as unknown as SenseItem;
+      // Who wrote: someone Atlas knows, or a new person learned from it (§7.1). Only mail and chats are people writing.
+      const writer = e.manifest.provides.includes("mail")
+        ? senderSeen(this.d.sql, rest, `mail via ${e.manifest.name}`)
+        : e.manifest.provides.includes("channel")
+          ? senderSeen(this.d.sql, rest, e.manifest.name, "telegram")
+          : {};
+      const said = writer.same_name
+        ? {
+            what: `${rest.what} (from an address not on the record of ${writer.same_name.name}, whom you know; contact_save joins them if it's them)`,
+          }
+        : {};
+      const item = (hook
+        ? { ...rest, ...said, source: "webhook", hook, ...by }
+        : { ...rest, ...said, source, ...by, ...writer }) as unknown as SenseItem;
       this.d.take([item], raw ? { raw } : {});
     }
   }

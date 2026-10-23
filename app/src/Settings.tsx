@@ -566,11 +566,33 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
       <Row label="MCP servers">
         <McpServers atlas={atlas} />
       </Row>
-      <Row label="Mail, chat and more">
+      <Row label="Mail">
+        <ProvidedBy atlas={atlas} view={view} what="mail" none="Atlas doesn't read your mail yet." />
+      </Row>
+      <Row label="Chat">
+        <ProvidedBy atlas={atlas} view={view} what="channel" none="No chat channel yet." />
+      </Row>
+      <Row label="And more">
         <p className="muted small">
-          Your mail, chat channels and the services you want to hear from are <a href="#/settings/extensions">extensions</a>.
+          The other services you want to hear from (GitHub, Linear, your own) are <a href="#/settings/extensions">extensions</a>.
         </p>
       </Row>
+    </>
+  );
+}
+
+/** The extensions that give `what` (mail, a chat), installed or shipped with Atlas, each with its card. */
+function ProvidedBy({ atlas, view, what, none }: { atlas: Atlas; view: SettingsView; what: string; none: string }) {
+  const all = view.extensions.filter((e) => e.provides.includes(what));
+  const on = all.filter((e) => e.state === "on");
+  return (
+    <>
+      {!on.length && <p className="muted small">{none}</p>}
+      <div className="rows">
+        {all.map((e) => (
+          <ExtensionCard key={e.id} atlas={atlas} e={e} />
+        ))}
+      </div>
     </>
   );
 }
@@ -2572,7 +2594,7 @@ export function ExtensionCard({ atlas, e, open: startOpen = false }: { atlas: At
                   )}
                   <SecretField
                     label="Client secret"
-                    set={e.secrets.some((x) => x.name === "client_secret" && x.set) || false}
+                    set={e.signin.secret_set}
                     onSave={(value) =>
                       atlas.send({ type: "atlas.ext.secrets", id: e.id, secrets: { client_secret: value?.trim() ?? null } })
                     }
@@ -2581,7 +2603,23 @@ export function ExtensionCard({ atlas, e, open: startOpen = false }: { atlas: At
                     <button className="btn primary" onClick={() => atlas.send({ type: "atlas.ext.signin", id: e.id })}>
                       {e.signin.signed_in ? "Sign in again" : "Sign in"}
                     </button>
-                    {e.signin.signed_in && <span className="ok small">Signed in</span>}
+                    {e.signin.signed_in && (
+                      <>
+                        <span className="ok small">Signed in</span>
+                        <button
+                          className="btn"
+                          onClick={() =>
+                            atlas.send({
+                              type: "atlas.ext.secrets",
+                              id: e.id,
+                              secrets: { access_token: null, refresh_token: null, expires_at: null },
+                            })
+                          }
+                        >
+                          Disconnect
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}

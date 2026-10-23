@@ -143,7 +143,7 @@ export const loopOpen = defineTool({
   name: "loop_open",
   kind: "change_own",
   description: [
-    "Keep an open loop: something to hear by a time, so silence becomes news. Use it when the owner asks ('tell me if the landlord hasn't replied by Friday'), and after you send something that asks a question, so you notice if no answer comes.",
+    "Keep an open loop: something to hear by a time, so silence becomes news. Use it when the owner asks ('tell me if the landlord hasn't replied by Friday'), after you send something that asks a question, so you notice if no answer comes, and when someone is waiting on the owner (a review requested of them, a question they were asked), so it comes back if it's still open.",
     "waiting_on is who it waits on (their name or address), or 'owner' for something someone is waiting on the owner for. Mail or a message from them (or in `thread`) closes it by itself; if nothing comes by `by`, it comes back to you then, once.",
     "The owner sees it in Agenda, with a receipt and Undo.",
   ].join(" "),

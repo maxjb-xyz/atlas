@@ -24,8 +24,6 @@ export interface LoopDetail {
   thread?: string;
   /** Who opened it: the owner asked, or Atlas did after sending something that asks. */
   opened_by: "owner" | "atlas";
-  /** A fact to check before raising it (a review on GitHub), since the answer may not come as an item. */
-  check?: { github_review?: { repo: string; number: number } };
 }
 
 export const detailOf = (i: AgendaItem): LoopDetail => (i.source.detail ?? {}) as unknown as LoopDetail;
@@ -44,7 +42,6 @@ export function openLoop(
     opened_by: o.opened_by,
     ...(o.person || who ? { person: o.person ?? who!.id } : {}),
     ...(o.thread ? { thread: o.thread } : {}),
-    ...(o.check ? { check: o.check } : {}),
   };
   return createItem(sql, {
     kind: "loop",

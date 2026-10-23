@@ -533,7 +533,7 @@ export interface ExtensionView {
   state: "on" | "off" | "draft" | "available";
   secrets: Array<{ name: string; label: string; help: string; optional: boolean; set: boolean }>;
   settings: Array<{ name: string; label: string; help: string; optional: boolean; value: string }>;
-  signin: { help: string; redirect: string | null; signed_in: boolean } | null;
+  signin: { help: string; redirect: string | null; signed_in: boolean; secret_set: boolean } | null;
   /** Minutes between looks, when it looks on the clock. */
   every: number | null;
   /** Its address for posts, when it takes them and is installed. */

@@ -239,6 +239,7 @@ import { type Extension, useFetch } from "../../extensions/sdk";
 import brave from "../../extensions/brave";
 import exa from "../../extensions/exa";
 import github from "../../extensions/github";
+import gmail from "../../extensions/gmail";
 import icloud from "../../extensions/icloud";
 import linear from "../../extensions/linear";
 import mapbox from "../../extensions/mapbox";
@@ -251,6 +252,7 @@ export const EXTENSIONS: Record<string, Extension> = {
   brave,
   exa,
   github,
+  gmail,
   icloud,
   linear,
   mapbox,
