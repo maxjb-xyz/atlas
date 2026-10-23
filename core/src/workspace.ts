@@ -205,7 +205,43 @@ export class WorkspaceEgress extends WorkerEntrypoint<Env, Gate> {
         .catch(() => {});
       return new Response(`Atlas's workspace can't reach ${out.refused}: the owner hasn't allowed it yet.\n`, { status: 403 });
     }
-    return fetch(out.request);
+    const res = await fetch(out.request);
+    // A refusal of Atlas's own command (or of a keyed request) is kept with the site's own words, for its error.
+    if (res.status >= 400 && (out.keyed || out.nonce)) {
+      const url = new URL(out.request.url);
+      const keep = [
+        "retry-after",
+        "x-ratelimit-limit",
+        "x-ratelimit-remaining",
+        "x-ratelimit-reset",
+        "x-ratelimit-resource",
+        "x-github-request-id",
+        "www-authenticate",
+        "server",
+      ];
+      const note: GateNote = {
+        host: url.hostname,
+        path: url.pathname,
+        keyed: out.keyed,
+        nonce: out.nonce,
+        status: res.status,
+        words: (
+          await res
+            .clone()
+            .text()
+            .catch(() => "")
+        )
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 400),
+        headers: Object.fromEntries(keep.map((h) => [h, res.headers.get(h)]).filter((x): x is [string, string] => x[1] != null)),
+      };
+      console.error(JSON.stringify({ at: "workspace.gate", ...note }));
+      await this.env.WORKSPACE.getByName(this.ctx.props.ws)
+        .noteGate(note)
+        .catch(() => {});
+    }
+    return res;
   }
 }
 
@@ -214,7 +250,10 @@ export class WorkspaceEgress extends WorkerEntrypoint<Env, Gate> {
  * lets it out with its keys put in. A key behind a nonce goes only with a
  * request carrying that nonce, and the nonce never leaves the gate.
  */
-export function throughGate(req: Request, gate: Omit<Gate, "ws">): { refused: string } | { request: Request } {
+export function throughGate(
+  req: Request,
+  gate: Omit<Gate, "ws">,
+): { refused: string } | { request: Request; keyed: boolean; nonce: boolean } {
   const host = new URL(req.url).hostname.toLowerCase();
   if (!allowed(host, gate.allow)) return { refused: host };
   const nonce = req.headers.get(NONCE_HEADER);
@@ -223,12 +262,26 @@ export function throughGate(req: Request, gate: Omit<Gate, "ws">): { refused: st
     (r) => (r.path ? host === r.host && path.startsWith(r.path) : covers(host, r.host)) && (!r.nonce || r.nonce === nonce),
   );
   const key = Object.entries(gate.inject).find(([h]) => covers(host, h))?.[1];
-  if (!key && !rules.length && nonce == null) return { request: req };
+  if (!key && !rules.length && nonce == null) return { request: req, keyed: false, nonce: false };
   const r = new Request(req);
   r.headers.delete(NONCE_HEADER);
   if (key) r.headers.set("authorization", key);
   for (const rule of rules) r.headers.set(rule.header, rule.value);
-  return { request: r };
+  return { request: r, keyed: Boolean(key || rules.length), nonce: nonce != null };
+}
+
+/** What the gate saw of a request Atlas's own command made that the site refused: so the failure can say what happened. */
+export interface GateNote {
+  host: string;
+  path: string;
+  /** A key was added to it. */
+  keyed: boolean;
+  /** It carried a nonce (Atlas's own command), matching or not. */
+  nonce: boolean;
+  status: number;
+  /** What the site said: its words, and its rate-limit headers. */
+  words: string;
+  headers: Record<string, string>;
 }
 
 interface Saved {
@@ -290,6 +343,24 @@ export class Workspace extends DurableObject<Env> {
   /** A site the gate refused during a command. */
   async noteBlocked(host: string): Promise<void> {
     this.#blocked.add(host);
+  }
+
+  /** A site refused one of Atlas's own or keyed requests: kept for the command's error. */
+  async noteGate(note: GateNote): Promise<void> {
+    this.#gateNotes = [...this.#gateNotes, note].slice(-10);
+  }
+
+  #gateNotes: GateNote[] = [];
+
+  /** The gate's notes since `since`, in words: what it added and what the site said. */
+  #gateSaid(since: number): string {
+    const notes = this.#gateNotes.slice(since);
+    if (!notes.length) return "";
+    const n = notes.at(-1)!;
+    const headers = Object.entries(n.headers)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(", ");
+    return ` (the gate ${n.keyed ? "added git's key" : n.nonce ? "had a nonce but no key matched it" : "added no key"}; ${n.host} answered ${n.status} to ${n.path}${n.words ? `, saying "${n.words}"` : ""}${headers ? `; ${headers}` : ""})`;
   }
 
   /** Whether the container is up now. */
@@ -843,6 +914,7 @@ export class Workspace extends DurableObject<Env> {
     if (!/^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9_./-]+$/.test(o.url)) throw new Error(`"${o.url}" isn't a git address Atlas pushes to.`);
     await this.jobStop(id);
     const d = `${PUSH}/${id}-${crypto.randomUUID().slice(0, 8)}`;
+    const since = this.#gateNotes.length;
     const git = jobDir(id) + "/repo/.git";
     const key = `push:${d}`;
     this.#extra.set(key, carrying(o.rules));
@@ -864,7 +936,8 @@ export class Workspace extends DurableObject<Env> {
         { env: { ...ENV, ...o.env }, cwd: "/", stderr: "combined" },
       );
       const r = await p.output();
-      return { exit: r.exitCode, out: new TextDecoder().decode(r.stdout).slice(-2_000) };
+      const out = new TextDecoder().decode(r.stdout).slice(-2_000);
+      return { exit: r.exitCode, out: r.exitCode === 0 ? out : `${out.trim()}${this.#gateSaid(since)}` };
     } finally {
       this.#extra.delete(key);
       await this.#gate().catch(() => {});
@@ -895,12 +968,37 @@ export class Workspace extends DurableObject<Env> {
     await this.#up(async () => {});
     await this.jobStop(id);
     const user = await this.#jobUser(id);
-    const dir = jobDir(id);
-    const stage = `${PUSH}/clone-${id}-${crypto.randomUUID().slice(0, 8)}`;
-    const key = `clone:${stage}`;
+    const key = `clone:${id}`;
     this.#extra.set(key, carrying(o.rules));
     try {
       await this.#gate();
+      for (let attempt = 0; ; attempt++) {
+        const since = this.#gateNotes.length;
+        const r = await this.#cloneOnce(id, o, user);
+        if (r.exit === 0) return r;
+        const last = this.#gateNotes.at(-1);
+        const wait = Number(last?.headers["retry-after"] ?? 0);
+        // Asked to wait a little: once, as asked.
+        if (attempt === 0 && last?.status === 429 && this.#gateNotes.length > since && wait > 0 && wait <= 60) {
+          await new Promise((res) => setTimeout(res, wait * 1000));
+          continue;
+        }
+        return { exit: r.exit, out: `${r.out.trim()}${this.#gateSaid(since)}` };
+      }
+    } finally {
+      this.#extra.delete(key);
+      await this.#gate().catch(() => {});
+    }
+  }
+
+  async #cloneOnce(
+    id: string,
+    o: { url: string; what: string; branch: string; name: string; email: string; env: Record<string, string> },
+    user: { uid: number; gid: number },
+  ): Promise<{ exit: number; out: string }> {
+    const dir = jobDir(id);
+    const stage = `${PUSH}/clone-${id}-${crypto.randomUUID().slice(0, 8)}`;
+    {
       const p = await this.#c.exec(
         [
           "bash",
@@ -922,9 +1020,6 @@ export class Workspace extends DurableObject<Env> {
       const r = await p.output();
       if (r.exitCode !== 0) await this.#exec(`rm -rf ${sh(stage)}`).catch(() => {});
       return { exit: r.exitCode, out: new TextDecoder().decode(r.stdout).slice(-2_000) };
-    } finally {
-      this.#extra.delete(key);
-      await this.#gate().catch(() => {});
     }
   }
 

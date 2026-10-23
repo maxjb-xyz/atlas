@@ -533,6 +533,8 @@ describe("coding jobs", { timeout: 30_000 }, () => {
       expect(failed.error).toContain("reached this job's cap of $5.00 ($6.25 spent)");
       expect(st.methods).toContain("session/cancel");
       expect(getItem(sql, id)!.state).toBe("failed");
+      // The owner is told, here and not in the next test (the report runs in the background).
+      await until(() => rows(sql, "message.out").some((r) => String(r.text).includes("cap")), "the report");
     });
   });
 
