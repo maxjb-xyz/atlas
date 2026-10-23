@@ -78,6 +78,8 @@ export interface SenseItem {
   thread?: string;
   /** Who it's from, when it's from someone. */
   from?: string;
+  /** Who else it's with or about, as lines ("Doug Henderson <doug@acme.com>"): an event's organizer and those invited. */
+  people?: string[];
   /** The source's own signals, for cheap rules: "review_requested", "assigned", "newsletter". */
   signals?: string[];
   link?: string;

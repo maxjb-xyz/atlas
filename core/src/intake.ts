@@ -13,7 +13,7 @@
 // A new source only has to make `SenseItem`s.
 
 import { z } from "zod";
-import type { Calendar, CalendarEvent } from "./calendar/types";
+import { personText, type Calendar, type CalendarEvent } from "./calendar/types";
 import { minutes } from "./maps";
 import { ownTracksLogin } from "./location";
 import { nodes } from "./nodes";
@@ -373,6 +373,8 @@ interface Seen {
   l?: string;
   n?: string;
   d?: boolean;
+  /** Who it's with, as lines ("Doug Henderson <doug@acme.com>"). */
+  p?: string[];
 }
 
 const seenOf = (e: CalendarEvent): Seen => ({
@@ -382,10 +384,12 @@ const seenOf = (e: CalendarEvent): Seen => ({
   ...(e.location ? { l: e.location } : {}),
   ...(e.notes ? { n: e.notes.slice(0, 200) } : {}),
   ...(e.all_day ? { d: true } : {}),
+  ...(e.people?.length ? { p: e.people.slice(0, 12).map(personText) } : {}),
 });
 
 const whenOf = (e: Seen, tz: string) => (e.d ? `${e.s} (all day)` : shortLocal(new Date(e.s), tz));
-const eventText = (e: Seen, tz: string) => `"${e.t}", ${whenOf(e, tz)}${e.l ? `, at ${e.l}` : ""}`;
+const eventText = (e: Seen, tz: string) =>
+  `"${e.t}", ${whenOf(e, tz)}${e.l ? `, at ${e.l}` : ""}${e.p?.length ? `, with ${e.p.slice(0, 6).join(", ")}${e.p.length > 6 ? ` and ${e.p.length - 6} more` : ""}` : ""}`;
 
 /**
  * The calendar's look (§10.4): the next 14 days, compared with the last
@@ -424,6 +428,7 @@ export async function calendarLook(sql: Sql, cal: Calendar, settings: Settings, 
     title: e.t,
     start: e.s,
     ...(e.l ? { location: e.l } : {}),
+    ...(e.p?.length ? { people: e.p } : {}),
     // For an automation's words to match: the title, place and the start of the notes.
     text: `${e.t} ${e.l ?? ""} ${e.n ?? ""}`.slice(0, 400),
   });

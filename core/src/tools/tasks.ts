@@ -13,8 +13,8 @@ export const taskAdd = defineTool({
   name: "task_add",
   kind: "change_own",
   description: [
-    "Keep a thing to do for the owner, from any part of life: 'I need oat milk', 'grab the charger at the office', 'ask Sam about the budget next time we talk', 'try Bern's next time I'm in Tampa'.",
-    "Say when it fits, if it does: a kind of place, a place, a person, or plain words. You'll keep it in mind and bring it up when it fits (passing a store, Sam emailing them); with only a deadline, it reminds them once then.",
+    "Keep a thing to do for the owner, from any part of life: 'tell Doug about the offsite when I see him', 'ask Sam about the budget next time we talk', 'when the release ships, update the changelog', 'grab the charger at the office', 'I need oat milk', 'try Bern's next time I'm in Tampa'.",
+    "Say when it fits, if it does: a kind of place, a place, a person, or plain words. You'll keep it in mind and bring it up when it fits (passing a store, a meeting with Doug coming up, Sam emailing them); with only a deadline, it reminds them once then.",
     "For something at a set time with nothing to do but be reminded, use reminder_create instead. The owner sees a 'To do' chip with Undo, and the task in Agenda.",
   ].join(" "),
   input: z.object({
@@ -31,7 +31,13 @@ export const taskAdd = defineTool({
           .max(120)
           .optional()
           .describe("A particular place, when it has to be that one: a saved place's name or an address."),
-        person: z.string().max(80).optional().describe("A person: next time the owner is in touch with them."),
+        person: z
+          .string()
+          .max(80)
+          .optional()
+          .describe(
+            "A person, by the name the owner uses ('Doug'): it fits next time they're in touch, such as an event with them coming up or something from them. Keep what you know of them (an email, other names) on their person record with remember, so an invite with only their address still counts.",
+          ),
         words: z
           .string()
           .max(160)

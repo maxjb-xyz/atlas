@@ -5,9 +5,10 @@
 // Atlas's own, which works out what would help and speaks up with `nudge`,
 // does what's its to do, or stays silent. Later goes on the later pile,
 // which a run of Atlas's own looks over in a batch on the clock, as do the
-// start of day and the evening, and which the owner's next turn sees.
-// Rhythm moments (start of day, evening, a look before leaving for an
-// event) are agenda items on the one clock. Each step leaves an
+// routines that look at the day, and which the owner's next turn sees.
+// The moment before each event (with who it's with, and the trip to it)
+// is an agenda item on the one clock that becomes an item for the intake,
+// so a task for a person meets the meeting with them. Each step leaves an
 // `awareness` row, so History says what was decided and why; each item's
 // place is kept in the intake, so a restart picks up where it stopped.
 // The owner's reactions to nudges are logged with what each was about.
@@ -16,16 +17,25 @@
 // owner: the character and the situation do (rule 1).
 
 import { type Decider } from "../brains/decide";
-import type { Calendar } from "../calendar/types";
-import { fitsOf, fitsText, openTasks } from "../tasks";
-import { type AgendaItem, createItem, finish, getItem, rearm, upcoming } from "../store/agenda";
+import { personText, type Calendar } from "../calendar/types";
+import { fitsOf, fitsText, openTasks, personIn } from "../tasks";
+import { type AgendaItem, createItem, finish, rearm, upcoming } from "../store/agenda";
 import { parse, type Sql } from "../store/db";
 import { append, type LogRow } from "../store/log";
 import { calendarLook, describe, laterPile, mark, markSeen, take as collect, unfinished, type IntakeItem, type SenseItem } from "../intake";
 import { findRecords } from "../store/records";
 import { readSettings, type Settings, writeSettings } from "../store/settings";
 import { getState, setState } from "../store/state";
-import { cache, changes, placeOf, refresh as refreshCache, situationLines, TRAVEL_AHEAD_MS } from "../situation";
+import {
+  cache,
+  changes,
+  placeOf,
+  refresh as refreshCache,
+  type SituationEvent,
+  situationLines,
+  TRAVEL_AHEAD_MS,
+  withText,
+} from "../situation";
 import { clockLocal, shortLocal, startOfLocalDay, zoneOf } from "../time";
 import { minutes } from "../maps";
 import { z } from "zod";
@@ -61,7 +71,7 @@ export const IGNORED_MS = 2 * 3_600_000;
 /** What an item may matter to: a task at a place (always looked at for a location item), another task, the agenda, a commitment or goal. */
 type OpenKind = "place" | "task" | "agenda" | "commitment";
 /** Something open an item could matter to, with the question decide is asked about it (none for a place task). */
-type OpenThing = { id: string; kind: OpenKind; title: string; text: string; question: string; place?: string };
+type OpenThing = { id: string; kind: OpenKind; title: string; text: string; question: string; place?: string; person?: string };
 
 /** How sure `decide` must be that an event matters before Atlas wakes. */
 export const MATTERS = 0.5;
@@ -70,8 +80,10 @@ export const REVIEW_AFTER_MS = 60 * 60_000;
 const REVIEW_COUNT = 8;
 /** On the move, the most often a move wakes Atlas. */
 export const MOVE_COOLDOWN_MS = 20 * 60_000;
-/** The leave look comes this long before the leave-by time. */
+/** The moment before an event with a trip comes this long before leave-by. */
 export const LEAVE_LEAD_MS = 10 * 60_000;
+/** An event's moment comes this long before it starts (or before leave-by, when there's a trip). */
+export const SOON_MS = 10 * 60_000;
 /** The owner counts as using Atlas when they've said something this recently: the weather and travel are kept current then. */
 const ACTIVE_MS = 2 * 3_600_000;
 
@@ -143,7 +155,7 @@ export class SenseDesk {
           maps: this.d.maps(),
           full: full && this.#needed(settings),
         });
-        await this.#armLeave(settings);
+        await this.#armSoon(settings);
         // What changed is news for the senses, like a move: the trip to the next event, the weather.
         this.take(changes(before, after, settings));
       } while (this.#again);
@@ -280,55 +292,74 @@ export class SenseDesk {
     };
 
     // 1. Rules: cheap and fixed. Duplicates were already set aside when the item came in.
-    if (!isOn(settings, "noticing")) {
+    const b = row.body as SenseItem & { place?: { name?: string }; leave_by?: number };
+    // An event coming up (§10.3): with a trip, it's nearly time to leave, which is always a look while that switch is on.
+    const soon = b.source === "calendar" && b.event === "soon";
+    const leaving = soon && typeof b.leave_by === "number" && isOn(settings, "leave");
+    const noticing = isOn(settings, "noticing");
+    if (!noticing && !leaving) {
       settle("never", "rules", "Speaking up about what Atlas notices is off.");
       return;
     }
-    const all = this.#openThings(settings);
+    const all = noticing ? this.#openThings(settings) : [];
     // A task that fits at a place is about where the owner is: leaving a place or moving is always worth a look for
     // it, and so is arriving at the task's own place (a rule, since decide scored leaving the gym with one open either
     // side of any bar). Nothing else asks about it.
-    const b = row.body as SenseItem & { place?: { name?: string } };
     const here = b.event === "arrived" ? (b.place?.name ?? "").toLowerCase() : "";
     const placed =
       b.source !== "location"
         ? []
         : all.filter((o) => o.kind === "place" && (b.event === "left" || b.event === "moved" || (here && o.place?.toLowerCase() === here)));
-    const open = all.filter((o) => o.kind !== "place");
+    // A task for a person is about whoever an item is from or with: when that's someone Atlas knows as them (by a
+    // name or an address), it matters, with no score in the way. Anyone else is for decide to judge.
+    const who = [b.from, ...(Array.isArray(b.people) ? b.people : [])].filter((x): x is string => typeof x === "string" && !!x);
+    const personal = who.length ? all.filter((o) => o.kind === "task" && o.person && personIn(this.d.sql, o.person, who)) : [];
+    const open = all.filter((o) => o.kind !== "place" && !personal.includes(o));
 
-    // 2. Decide: now, later or never, and does it matter to anything open?
-    const decider = this.d.decider();
-    let matched = open;
-    let now = true;
-    let later = true;
+    // 2. Decide: now, later or never, and does it matter to anything open? An event coming up is something the
+    // owner's calendar already tells them, so for it decide is only asked what's open that it touches.
+    const decider = noticing ? this.d.decider() : null;
+    let matched = noticing && !(soon && decider) ? open : [];
+    let now = noticing && !soon;
+    let later = !soon;
     let scores: Record<string, number> | null = null;
     let why = "";
-    if (decider) {
+    if (decider && (!soon || open.length)) {
       const state = `${event}\n\n${situationLines(this.d.sql, settings)}`;
       const questions = {
-        [NOW]: { instructions: nowQuestion(settings) },
-        [LATER]: { instructions: laterQuestion(settings) },
+        ...(soon ? {} : { [NOW]: { instructions: nowQuestion(settings) }, [LATER]: { instructions: laterQuestion(settings) } }),
         ...Object.fromEntries(open.slice(0, 30).map((o) => [o.id, { instructions: o.question }])),
       };
       try {
         scores = await decider.yesNo(state.slice(0, 4_000), questions, AbortSignal.timeout(8_000));
         matched = open.filter((o) => (scores![o.id] ?? 0) >= MATTERS);
-        now = (scores[NOW] ?? 0) >= MATTERS || matched.length > 0;
-        later = (scores[LATER] ?? 0) >= MATTERS;
+        now = (!soon && (scores[NOW] ?? 0) >= MATTERS) || matched.length > 0;
+        later = !soon && (scores[LATER] ?? 0) >= MATTERS;
       } catch (err) {
         why = `decide didn't answer (${err instanceof Error ? err.message : String(err)})`;
+        matched = open;
         now = open.length > 0;
       }
-    } else {
+    } else if (noticing && !decider) {
       // Without decide, the main brain looks now only when something is open; the rest waits for the batch.
       why = "there's no decide role here";
       now = open.length > 0;
     }
     if (placed.length) {
-      matched = [...placed, ...(scores ? matched : [])];
+      matched = [...placed, ...matched];
       now = true;
       const fits = `where the owner is changed, and ${placed.length === 1 ? "a task fits" : "tasks fit"} at a place: ${placed.map((o) => o.title).join(", ")}`;
       why = why ? `${why}; ${fits}.` : `${fits[0]!.toUpperCase()}${fits.slice(1)}.`;
+    }
+    if (personal.length) {
+      matched = [...personal, ...matched];
+      now = true;
+      const fits = `it's from or with someone ${personal.length === 1 ? "a task is" : "tasks are"} for: ${personal.map((o) => `${o.title} (${o.person})`).join(", ")}`;
+      why = why ? `${why}; ${fits}.` : `${fits[0]!.toUpperCase()}${fits.slice(1)}.`;
+    }
+    if (leaving) {
+      now = true;
+      why = why ? `${why}; it's nearly time to leave.` : "It's nearly time to leave.";
     }
     const top = scores
       ? Object.fromEntries(
@@ -356,19 +387,30 @@ export class SenseDesk {
         return;
       }
     }
+    if (!now && soon) {
+      settle(
+        "never",
+        scores ? "decide" : "rules",
+        "Nothing open touches it, and the owner's calendar already tells them it's coming.",
+        top,
+      );
+      return;
+    }
     if (!now) {
       if (later || !scores)
         settle("later", "decide", why ? `${why}, so it waits for the next look.` : "It can wait for the next look.", top);
       else settle("never", "decide", "It isn't worth a thought, now or later, and doesn't matter to anything open.", top);
       return;
     }
-    if (!scores) matched = open;
     mark(this.d.sql, row.id, { state: "weighed", outcome: "now", why: why || "It's worth a thought now.", scores: top ?? null });
 
     // 3. Atlas, only now, with the event and what it may matter to. What to make of it is Atlas's own judgment.
     const note = [
       `[Atlas's senses, not the owner] ${event}.`,
       matched.length ? `It may matter to: ${matched.map((m) => m.text).join("; ")}.` : "",
+      leaving
+        ? "It's nearly time to leave for it. If they're already there or on their way (see the situation), or it clearly doesn't need them to go, don't nudge about leaving. Otherwise say when to leave and how long it takes, and anything else that would help on the way (traffic, the weather, something to bring or pick up)."
+        : "",
       AWARE,
       listsLine(settings),
       reactionsLine(this.d.sql),
@@ -376,7 +418,12 @@ export class SenseDesk {
       .filter(Boolean)
       .join("\n\n");
     const ref = matched.find((m) => m.kind === "place" || m.kind === "task");
-    const out = await this.d.wake({ trigger: `sense:${row.id}`, note, from: "noticing", ...(ref ? { ref: ref.id } : {}) });
+    const out = await this.d.wake({
+      trigger: `sense:${row.id}`,
+      note,
+      from: leaving ? "leave" : "noticing",
+      ...(ref ? { ref: ref.id } : {}),
+    });
     mark(this.d.sql, row.id, { state: out.error ? "failed" : "done", run_id: out.run_id, ...(out.error ? { why: out.error } : {}) });
     this.#log(
       {
@@ -461,6 +508,7 @@ export class SenseDesk {
         kind: "task",
         title: t.name,
         text,
+        ...(f.person ? { person: f.person } : {}),
         question: f.person
           ? `The owner wants to "${t.name}" next time they're in touch with ${f.person}. Is this item from, with or about ${f.person}?`
           : `The owner wants to "${t.name}" ${f.words}. Does this item mean now is that time?`,
@@ -501,90 +549,108 @@ export class SenseDesk {
     return out;
   }
 
-  // --- the look before leaving ---------------------------------------------------------------------
+  // --- the moment before each event ---------------------------------------------------------------
 
-  /** A look before leaving for the next event with a place, ten minutes before leave-by, once per event. */
-  async #armLeave(settings: Settings): Promise<void> {
-    const t = cache(this.d.sql).travel;
-    // A look that's running is the moment's own to finish.
-    const open = upcoming(this.d.sql, 200).filter(
-      (i) => i.kind === "rhythm" && i.source.detail?.moment === "leave" && i.state === "scheduled",
-    );
-    for (const o of open) {
-      // A leave look for an event that's no longer next (moved, cancelled) is dropped.
-      if (!t || o.source.detail?.event_id !== t.event_id || !isOn(settings, "leave")) {
-        await this.d.clock.unschedule(o);
-        finish(this.d.sql, o.id, "cancelled", null, { why: "The event isn't next any more." });
-      }
+  /**
+   * The moment before each event in the next day (§10.3): ten minutes
+   * before it starts, or before leave-by when there's a trip to it and that
+   * look is on, an item goes to the intake. One per event and start time:
+   * a moved event gets a new one, and one that's gone ends.
+   */
+  async #armSoon(settings: Settings, now = Date.now()): Promise<void> {
+    const c = cache(this.d.sql);
+    const want = new Map<string, { at: number; e: SituationEvent; start: number }>();
+    for (const e of c.events) {
+      const start = Date.parse(e.start);
+      if (e.all_day || !(start > now) || start - now > 86_400_000) continue;
+      const trip = c.travel && c.travel.event_id === e.id && isOn(settings, "leave") ? c.travel.leave_by - LEAVE_LEAD_MS : Infinity;
+      const at = Math.max(now + 60_000, Math.min(start - SOON_MS, trip));
+      if (at < start) want.set(`${e.id}|${start}`, { at, e, start });
     }
-    if (!t || !isOn(settings, "leave") || t.start <= Date.now()) return;
-    // Once per event: one that already ran isn't made again.
-    const ran = this.d.sql
-      .exec(
-        `SELECT 1 FROM agenda WHERE kind = 'rhythm' AND json_extract(source, '$.detail.event_id') = ? AND state IN ('done', 'running') LIMIT 1`,
-        t.event_id,
-      )
-      .toArray().length;
-    if (ran) return;
-    const at = Math.max(Date.now() + 60_000, t.leave_by - LEAVE_LEAD_MS);
-    const mine = open.find(
-      (o) => o.source.detail?.event_id === t.event_id && o.state === "scheduled" && getItem(this.d.sql, o.id)?.state === "scheduled",
+    const open = upcoming(this.d.sql, 500).filter(
+      (i) => i.kind === "rhythm" && i.state === "scheduled" && (i.source.detail?.moment === "soon" || i.source.detail?.moment === "leave"),
     );
-    if (mine && Math.abs(mine.due_at - at) < 60_000) return;
-    const item = mine
-      ? rearm(this.d.sql, mine.id, at)!
-      : createItem(this.d.sql, {
-          kind: "rhythm",
-          title: `Leave for ${t.title}`,
-          due_at: at,
-          source: { via: "senses", detail: { moment: "leave", event_id: t.event_id, start: t.start } },
-        });
-    await this.d.clock.schedule(item);
+    const kept = new Map<string, AgendaItem>();
+    for (const o of open) {
+      const key = `${String(o.source.detail?.event_id)}|${Number(o.source.detail?.start)}`;
+      if (o.source.detail?.moment === "soon" && want.has(key) && !kept.has(key)) {
+        kept.set(key, o);
+        continue;
+      }
+      await this.d.clock.unschedule(o);
+      finish(this.d.sql, o.id, "cancelled", null, { why: "The event moved or is gone." });
+    }
+    for (const [key, w] of want) {
+      // Once per event and start: one that already ran isn't made again.
+      const ran = this.d.sql
+        .exec(
+          `SELECT 1 FROM agenda WHERE kind = 'rhythm' AND json_extract(source, '$.detail.event_id') = ? AND json_extract(source, '$.detail.start') = ? AND state IN ('done', 'running') LIMIT 1`,
+          w.e.id,
+          w.start,
+        )
+        .toArray().length;
+      if (ran) continue;
+      const mine = kept.get(key);
+      if (mine && Math.abs(mine.due_at - w.at) < 60_000) continue;
+      const item = mine
+        ? rearm(this.d.sql, mine.id, w.at)!
+        : createItem(this.d.sql, {
+            kind: "rhythm",
+            title: `Coming up: ${w.e.title}`,
+            due_at: w.at,
+            source: { via: "senses", detail: { moment: "soon", event_id: w.e.id, start: w.start } },
+          });
+      await this.d.clock.schedule(item);
+    }
   }
 
   /**
-   * The look before leaving came due (the item is already leased): Atlas
-   * looks, and may stay silent. The start of day and the evening were
-   * looks like this one before they became the routines (§13.4); an item
-   * left from then is ended.
+   * The moment before an event came due (the item is already leased): the
+   * event, who it's with and the trip to it, if any, go to the intake as an
+   * item, weighed like any other. The look before leaving and the daily
+   * looks were moments of their own before; an item left from then ends.
    */
   async moment(item: AgendaItem): Promise<void> {
-    const t0 = Date.now();
     const moment = String(item.source.detail?.moment ?? "");
-    if (moment !== "leave") {
-      finish(this.d.sql, item.id, "cancelled", null, { why: "The daily looks are the morning brief and evening wrap-up now." });
+    if (moment !== "soon") {
+      finish(this.d.sql, item.id, "cancelled", null, {
+        why:
+          moment === "leave"
+            ? "The look before leaving is the moment before each event now."
+            : "The daily looks are the morning brief and evening wrap-up now.",
+      });
       return;
     }
     await this.refresh(true);
-    const settings = readSettings(this.d.sql);
-    const tz = zoneOf(settings);
-    const t = cache(this.d.sql).travel;
-    if (!t || t.event_id !== item.source.detail?.event_id) {
-      finish(this.d.sql, item.id, "cancelled", null, { why: "The event isn't next any more." });
-      this.#log({ moment, event: item.title, step: "rules", outcome: "quiet", why: "The event isn't next any more.", ms: Date.now() - t0 });
+    const tz = zoneOf(readSettings(this.d.sql));
+    const c = cache(this.d.sql);
+    const e = c.events.find((x) => x.id === item.source.detail?.event_id);
+    const start = e ? Date.parse(e.start) : NaN;
+    if (!e || start !== item.source.detail?.start) {
+      finish(this.d.sql, item.id, "cancelled", null, { why: "The event moved or is gone." });
       return;
     }
-    const note = [
-      `[Atlas's clock, not the owner] It's nearly time to leave for "${t.title}" at ${clockLocal(new Date(t.start), tz)} (${t.location}): about ${minutes(t.s)} by car from ${t.from_what === "here" ? "where they are" : "home"}${t.traffic ? " with traffic" : ", typical time with no live traffic"}, so leave by ${clockLocal(new Date(t.leave_by), tz)}.`,
-      "If they're already there or on their way (see the situation), or it clearly doesn't need them to go, don't nudge. Otherwise nudge once, short: when to leave and how long it takes, and anything else that would help on the way (traffic, the weather, something to bring or pick up).",
-      listsLine(settings),
-      reactionsLine(this.d.sql),
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-    const out = await this.d.wake({ trigger: `rhythm:${item.id}`, note, from: "leave" });
-    this.#log(
+    const t = c.travel && c.travel.event_id === e.id ? c.travel : null;
+    const place = placeOf(e);
+    const trip = t
+      ? `. About ${minutes(t.s)} by car from ${t.from_what === "here" ? "where they are" : "home"}${t.traffic ? " with traffic" : ", typical time with no live traffic"}: leave by ${clockLocal(new Date(t.leave_by), tz)}`
+      : "";
+    this.take([
       {
-        moment,
-        event: item.title,
-        step: "woke",
-        outcome: out.error ? "failed" : out.nudged ? "nudged" : "silent",
-        why: out.error ?? "",
-        ms: Date.now() - t0,
+        source: "calendar",
+        event: "soon",
+        what: `Coming up at ${clockLocal(new Date(start), tz)}: "${e.title}"${place ? `, at ${place}` : ""}${withText(e)}${trip}`,
+        key: `soon:${e.id}:${start}`,
+        thread: e.id,
+        title: e.title,
+        start: e.start,
+        ...(e.location ? { location: e.location } : {}),
+        ...(e.people?.length ? { people: e.people.map(personText) } : {}),
+        ...(t ? { leave_by: t.leave_by } : {}),
+        text: `${e.title} ${e.location ?? ""}`.slice(0, 400),
       },
-      out.run_id,
-    );
-    finish(this.d.sql, item.id, out.error ? "failed" : "done", out.run_id);
+    ]);
+    finish(this.d.sql, item.id, "done", null);
   }
 
   /**

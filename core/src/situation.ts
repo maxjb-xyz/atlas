@@ -8,7 +8,7 @@
 // next event with a place). A prompt reads the cache and never waits on a
 // network call, so voice stays fast.
 
-import type { Calendar, CalendarEvent } from "./calendar/types";
+import { personText, type Calendar, type CalendarEvent } from "./calendar/types";
 import type { SenseItem } from "./store/log";
 import { openTasks, taskView } from "./tasks";
 import { focusNow } from "./outbox";
@@ -24,7 +24,7 @@ import type { MapsApi } from "./tools/types";
 import { distance, roughArea, unitsFor, type Units, type Weather, weatherLine, whatMatters } from "./weather";
 
 /** An event as the situation keeps it: no notes. */
-export type SituationEvent = Pick<CalendarEvent, "id" | "title" | "start" | "end" | "all_day" | "location">;
+export type SituationEvent = Pick<CalendarEvent, "id" | "title" | "start" | "end" | "all_day" | "location" | "people">;
 
 /** The travel time to an event with a place, from where the owner was when it was worked out. */
 export interface TravelTime {
@@ -98,6 +98,13 @@ export function nextEvent(c: SituationCache, now: number): SituationEvent | null
   );
 }
 
+/** Who an event is with, for a line: ", with Doug Henderson <doug@acme.com>, Sam" (the first six). */
+export const withText = (e: Pick<CalendarEvent, "people">): string => {
+  const p = e.people ?? [];
+  if (!p.length) return "";
+  return `, with ${p.slice(0, 6).map(personText).join(", ")}${p.length > 6 ? ` and ${p.length - 6} more` : ""}`;
+};
+
 /** An event's place, when it reads as somewhere to go (not a video call). */
 export const placeOf = (e: SituationEvent): string | null => {
   const l = e.location?.trim();
@@ -132,13 +139,14 @@ export async function refresh(d: RefreshDeps): Promise<SituationCache> {
     try {
       const start = startOfLocalDay(new Date(now), tz);
       const read = await d.calendar.read({ start, end: addLocalDays(start, 2, tz) });
-      c.events = read.events.map(({ id, title, start, end, all_day, location }) => ({
+      c.events = read.events.map(({ id, title, start, end, all_day, location, people }) => ({
         id,
         title,
         start,
         end,
         all_day,
         ...(location ? { location } : {}),
+        ...(people?.length ? { people: people.slice(0, 12) } : {}),
       }));
       c.events_at = read.stale?.as_of ?? now;
       delete c.events_error;
@@ -315,7 +323,7 @@ export function situationLines(sql: Sql, settings: Settings, now = Date.now()): 
 
   // Doing (focus has its own line in the prompt).
   const e = underway(c, now);
-  if (e) lines.push(`Doing: in "${e.title}" until ${clockLocal(new Date(endOf(e)), tz)}.`);
+  if (e) lines.push(`Doing: in "${e.title}" until ${clockLocal(new Date(endOf(e)), tz)}${withText(e)}.`);
 
   // Next.
   const next = nextEvent(c, now);
@@ -327,7 +335,7 @@ export function situationLines(sql: Sql, settings: Settings, now = Date.now()): 
         ? ` Travel time unknown: ${c.travel_error}`
         : "";
     lines.push(
-      `Next: "${next.title}" at ${clockLocal(new Date(startOf(next)), tz)}${placeOf(next) ? `, at ${placeOf(next)}` : ""}.${trip}`,
+      `Next: "${next.title}" at ${clockLocal(new Date(startOf(next)), tz)}${placeOf(next) ? `, at ${placeOf(next)}` : ""}${withText(next)}.${trip}`,
     );
   } else if (c.events_error) {
     lines.push(`Next: the calendar couldn't be read (${c.events_error}).`);

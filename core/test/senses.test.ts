@@ -8,7 +8,7 @@ import { seams } from "../src/agent";
 import type { Decider } from "../src/brains/decide";
 import { parse, type Sql } from "../src/store/db";
 import { createRecord } from "../src/store/records";
-import { readSettings } from "../src/store/settings";
+import { readSettings, writeSettings } from "../src/store/settings";
 import { fetchWeather, whatMatters } from "../src/weather";
 import { polyline, samples } from "../src/maps";
 import { call, fakeCalendar, fakeEmbedder, say, SECRET } from "./helpers";
@@ -151,8 +151,9 @@ beforeEach(async () => {
     sql.exec(`DELETE FROM state WHERE key IN ('location', 'situation', 'nudges')`);
     sql.exec(`DELETE FROM settings WHERE key IN ('location', 'speaking', 'maps')`);
     sql.exec(
-      `UPDATE agenda SET state = 'cancelled' WHERE (kind = 'errand' OR (kind = 'rhythm' AND json_extract(source, '$.detail.moment') = 'leave')) AND state = 'scheduled'`,
+      `UPDATE agenda SET state = 'cancelled' WHERE (kind = 'errand' OR (kind = 'rhythm' AND json_extract(source, '$.detail.moment') IN ('leave', 'soon'))) AND state = 'scheduled'`,
     );
+    sql.exec(`DELETE FROM records WHERE type = 'person' AND json_extract(fields, '$.is_owner') IS NULL AND name LIKE 'Doug%'`);
     createRecord(sql, { type: "place", name: "Gym", fields: { ...GYM, radius_m: 100 }, source: { via: "chat" } });
     createRecord(sql, { type: "place", name: "Home", fields: { ...HOME, is_home: true }, source: { via: "chat" } });
   });
@@ -563,6 +564,156 @@ describe("ignored nudges", () => {
       expect(st.find((n) => n.id === "lg_held")!.reaction).toBeUndefined();
       expect(st.find((n) => n.id === "lg_seen")!.reaction).toBe("ignored");
     });
+  });
+});
+
+/** The moments on the clock before events (§10.3), waited for and made due now, one at a time, in start order. */
+async function moments(n: number): Promise<Array<{ id: string; event: string; due_at: number }>> {
+  return waitFor(`${n} moments before events`, async () => {
+    const rows = await inOwner((_a, sql) =>
+      sql
+        .exec<{ id: string; event: string; due_at: number }>(
+          `SELECT id, json_extract(source, '$.detail.event_id') AS event, due_at FROM agenda WHERE kind = 'rhythm' AND state = 'scheduled' AND json_extract(source, '$.detail.moment') = 'soon' ORDER BY due_at`,
+        )
+        .toArray(),
+    );
+    return rows.length >= n ? rows : null;
+  });
+}
+const due = (id: string) =>
+  inOwner(async (agent, sql) => {
+    sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1000, id);
+    await agent.onAgendaDue({ id });
+  });
+
+describe("people", () => {
+  it("are matched by an address Atlas knows for them or every word of a name, and anything looser is left to decide", () =>
+    inOwner(async (_a, sql) => {
+      const { personIn } = await import("../src/tasks");
+      createRecord(sql, {
+        type: "person",
+        name: "Doug Henderson",
+        fields: { fact: "Works with the owner", email: "doug@acme.com", nickname: "Hendo" },
+        source: { via: "chat" },
+      });
+      expect(personIn(sql, "Doug", ["sam@example.org", "doug@acme.com"])).toBe("doug@acme.com");
+      expect(personIn(sql, "Doug", ["Doug Henderson <dh@other.com>"])).toBe("Doug Henderson <dh@other.com>");
+      expect(personIn(sql, "Doug", ["doug-h"])).toBe("doug-h");
+      expect(personIn(sql, "Doug", ["Hendo"])).toBe("Hendo");
+      expect(personIn(sql, "Doug", ["Douglas Fir <df@trees.org>", "D. Henderson"])).toBeNull();
+      expect(personIn(sql, "Sam", ["Samantha Lee"])).toBeNull();
+    }));
+});
+
+describe("the moment before an event", () => {
+  it("brings up a task for a person when an event with them is coming up, matched by what Atlas knows of them", async () => {
+    const d = decider({ errand: 0 });
+    seams.decide = d;
+    const at = (min: number) => new Date(Date.now() + min * 60_000).toISOString();
+    seams.calendar = fakeCalendar([
+      { id: "standup", calendar: "Work", title: "Standup", start: at(6), end: at(20), all_day: false },
+      // The invite has only an address; the person record knows it's Doug's.
+      { id: "lunch", calendar: "Work", title: "Lunch", start: at(9), end: at(60), all_day: false, people: [{ email: "doug@acme.com" }] },
+    ]);
+    await inOwner((_a, sql) => {
+      createRecord(sql, {
+        type: "person",
+        name: "Doug Henderson",
+        fields: { fact: "Works with the owner", email: "doug@acme.com" },
+        source: { via: "chat" },
+      });
+    });
+    const b = brain([
+      call("task_add", { what: "Tell Doug about the offsite", fits: { person: "Doug" } }),
+      say("I'll bring it up when you see him."),
+      // The wake run, before lunch.
+      call("nudge", { text: "Lunch with Doug in a few minutes: tell him about the offsite.", about: "telling Doug about the offsite" }),
+      say("Nudged."),
+    ]);
+    const t = await turn(s, "remind me to tell Doug about the offsite when I see him");
+    expect(t.results[0]!.body.receipt).toMatchObject({ text: "To do · Tell Doug about the offsite · next time you're in touch with Doug" });
+    const [standup, lunch] = await moments(2);
+    expect(standup!.event).toBe("standup");
+    // Ten minutes before, or as soon as it can be.
+    expect(lunch!.due_at).toBeLessThanOrEqual(Date.now() + 61_000);
+
+    const from = await lastSeq();
+    await due(standup!.id);
+    const quiet = await waitFor("standup's decision", async () =>
+      (await rowsSince(from, "awareness")).find((r) => String(r.event).includes("Standup")),
+    );
+    // Nothing open touches it: decide was asked only about the task, and said no.
+    expect(quiet).toMatchObject({ outcome: "not relevant", why: expect.stringContaining("Nothing open touches it") });
+    expect(Object.keys(d.asked.at(-1)!)).not.toContain("worth_a_thought_now");
+
+    const asked = d.asked.length;
+    await due(lunch!.id);
+    const nudge = await waitFor("the nudge", async () =>
+      (await rowsSince(from, "message.out")).find((r) => (r.nudge as { from?: string } | undefined)?.from === "noticing"),
+    );
+    expect(nudge.text).toContain("offsite");
+    const woke = await waitFor("lunch's look", async () => (await rowsSince(from, "awareness")).find((r) => r.step === "woke"));
+    expect(woke).toMatchObject({
+      outcome: "nudged",
+      event: expect.stringMatching(/^Coming up at .*: "Lunch", with doug@acme\.com/),
+      why: expect.stringContaining("Tell Doug about the offsite (Doug)"),
+    });
+    // A rule, not a score: decide wasn't asked.
+    expect(d.asked.length).toBe(asked);
+    expect(
+      b.requests[2]!.messages.some(
+        (m) => m.role === "user" && String(m.content).includes('It may matter to: the task "Tell Doug about the offsite"'),
+      ),
+    ).toBe(true);
+  });
+
+  it("looks before it's time to leave for an event with a place, even with what Atlas notices off", async () => {
+    const d = decider({ errand: 0 });
+    seams.decide = d;
+    seams.calendar = fakeCalendar([
+      {
+        id: "dentist",
+        calendar: "Home",
+        title: "Dentist",
+        start: new Date(Date.now() + 20 * 60_000).toISOString(),
+        end: new Date(Date.now() + 80 * 60_000).toISOString(),
+        all_day: false,
+        location: "Dr. Patel Dental, Orlando",
+      },
+    ]);
+    await inOwner((_a, sql) => {
+      const before = readSettings(sql).speaking;
+      writeSettings(sql, { speaking: { ...before, noticing: false } });
+    });
+    await post(fixAt(GYM), auth);
+    brain([say("You're at the gym.")]);
+    await turn(s, "what's next?");
+    await waitFor("travel time", async () =>
+      (
+        await inOwner((_a, sql) => sql.exec(`SELECT value FROM state WHERE key = 'situation'`).toArray()[0]?.value as string | undefined)
+      )?.includes('"travel":{'),
+    );
+    // A turn's refresh puts the moment before leave-by, once the trip is known.
+    brain([say("ok")]);
+    await turn(s, "thanks");
+    const [m] = await moments(1);
+    const b = brain([
+      call("nudge", { text: "Leave in a few minutes for the dentist: about 10 minutes by car.", about: "leaving for the dentist" }),
+      say("Nudged."),
+    ]);
+    const from = await lastSeq();
+    const asked = d.asked.length;
+    await due(m!.id);
+    const nudge = await waitFor("the nudge", async () =>
+      (await rowsSince(from, "message.out")).find((r) => (r.nudge as { from?: string } | undefined)?.from === "leave"),
+    );
+    expect(nudge.text).toContain("dentist");
+    const woke = await waitFor("the look", async () => (await rowsSince(from, "awareness")).find((r) => r.step === "woke"));
+    expect(woke).toMatchObject({ event: expect.stringContaining("leave by"), why: "It's nearly time to leave." });
+    expect(d.asked.length).toBe(asked);
+    expect(b.requests[0]!.messages.some((m) => m.role === "user" && String(m.content).includes("It's nearly time to leave for it."))).toBe(
+      true,
+    );
   });
 });
 

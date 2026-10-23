@@ -428,7 +428,8 @@ export class AutomationDesk {
    * intake's look is the one place calendar changes are noticed.
    */
   async sensed(rows: LogRow[]): Promise<void> {
-    const changes = rows.filter((r) => r.body.source === "calendar");
+    // An event coming up isn't a change to the calendar.
+    const changes = rows.filter((r) => r.body.source === "calendar" && r.body.event !== "soon");
     if (!changes.length) return;
     for (const a of listAutomations(this.d.sql)) {
       if (a.state !== "on" || a.when.kind !== "event" || a.when.on !== "calendar") continue;
@@ -451,7 +452,7 @@ export class AutomationDesk {
     const about = t.about?.trim().toLowerCase();
     const found = this.d.sql
       .exec<{ body: string }>(
-        `SELECT body FROM log WHERE kind = 'sense' AND json_extract(body, '$.source') = 'calendar' AND at > ? ORDER BY seq DESC LIMIT 100`,
+        `SELECT body FROM log WHERE kind = 'sense' AND json_extract(body, '$.source') = 'calendar' AND json_extract(body, '$.event') != 'soon' AND at > ? ORDER BY seq DESC LIMIT 100`,
         Date.now() - 14 * 86_400_000,
       )
       .toArray()

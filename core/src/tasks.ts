@@ -116,6 +116,56 @@ export function closeTask(
   return { task: getRecord(sql, id)!, history: h.history_seq, reminders };
 }
 
+const words = (t: string): string[] =>
+  t
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+const EMAIL = /[^@\s<>"]+@[^@\s<>"]+\.[^@\s<>"]+/g;
+
+/**
+ * Who a person is, as far as Atlas knows: the task's own words for them,
+ * and the names and addresses on the person records that go by them
+ * ("Doug" finds "Doug Henderson", with doug@acme.com in its details).
+ */
+export function personKeys(sql: Sql, person: string): { names: string[][]; emails: Set<string> } {
+  const asked = words(person);
+  const names: string[][] = asked.length ? [asked] : [];
+  const emails = new Set<string>((person.match(EMAIL) ?? []).map((e) => e.toLowerCase()));
+  if (!asked.length) return { names, emails };
+  for (const r of findRecords(sql, "person")) {
+    const own = words(r.name);
+    if (r.fields.is_owner || !asked.every((w) => own.includes(w))) continue;
+    names.push(own);
+    // Its details: an email anywhere, and other names it goes by.
+    for (const [k, v] of Object.entries(r.fields)) {
+      for (const x of Array.isArray(v) ? v : [v]) {
+        if (typeof x !== "string") continue;
+        for (const e of x.match(EMAIL) ?? []) emails.add(e.toLowerCase());
+        if (/name|alias|aka|nick|goes_by|called/i.test(k) && !x.includes("@")) names.push(words(x));
+      }
+    }
+  }
+  return { names: names.filter((n) => n.length), emails };
+}
+
+/**
+ * The first of `who` (lines like "Doug Henderson <doug@acme.com>", an
+ * address, or a handle) that is this person, by an address Atlas knows for
+ * them, or by every word of one of their names. Null when none is: then
+ * it's for `decide` to judge ("D. Henderson" may still be Doug).
+ */
+export function personIn(sql: Sql, person: string, who: string[]): string | null {
+  const keys = personKeys(sql, person);
+  for (const line of who) {
+    const addresses = (line.match(EMAIL) ?? []).map((e) => e.toLowerCase());
+    if (addresses.some((e) => keys.emails.has(e))) return line;
+    const have = new Set(words(line.replace(/@[^\s>]+/g, " ")));
+    if (keys.names.some((n) => n.every((w) => have.has(w)))) return line;
+  }
+  return null;
+}
+
 /** A task's deadline reminders still on the clock. */
 export const remindersOf = (sql: Sql, id: string): AgendaItem[] =>
   upcoming(sql, 200).filter((i) => i.kind === "reminder" && i.state === "scheduled" && i.source.detail?.task === id);
