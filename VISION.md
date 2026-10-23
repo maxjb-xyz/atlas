@@ -637,13 +637,13 @@ In the app, Atlas settings → Notifications shows channels per urgency, quiet h
 ### 16.1 Channels
 
 Channels are the text surfaces where people reach Atlas or a face:
-- SMS and calls (the provider is still open, §26);
+- SMS and calls (later, §26);
 - email;
 - Telegram, Discord, WhatsApp, Signal and Slack;
 - iMessage, through a Mac node;
 - the website widget.
 
-**Discord comes first** (decided 2026-10-23, for M5): it has an official bot API, needs no phone number, and runs on Cloudflare alone, with one small Durable Object holding Discord's connection, so the owner and other people can message Atlas there. Signal has no official bot API that we've found; signal-cli, the unofficial client, needs a process that's always on and a number of its own, so Signal would come through a node (§16.3), like iMessage through a Mac, unless Signal opens one.
+**Telegram comes first** (decided 2026-10-23, for M5): it has an official bot API, needs no phone number, and Telegram calls Atlas only when a message arrives, so it costs nothing while idle and nothing runs until the owner adds a bot token (§19.3). Its voice notes, in and out, and a button that opens a voice call in the app stand in for a phone. Discord needs a connection held open all month to receive messages, so it waits. Signal has no official bot API that we've found; signal-cli, the unofficial client, needs a process that's always on and a number of its own, so Signal would come through a node (§16.3), like iMessage through a Mac, unless Signal opens one.
 
 Each channel is an adapter (§17). In a messaging thread Atlas texts like a person who has things to show you, the way messaging-native agents such as Instinct do: it sends what the channel can carry, not a link to everything.
 - **Rich where the channel allows.** An adapter says what its channel carries (images, files, reactions, effects, buttons, voice notes, formatting, length), and each stage view goes out in the richest form that fits:
@@ -660,7 +660,9 @@ Each channel is an adapter (§17). In a messaging thread Atlas texts like a pers
 
 ### 16.2 Atlas's own email
 
-Atlas can have its own addresses through Cloudflare Email Service. This needs a domain on Cloudflare, in any Cloudflare account, not only Atlas's own (decided 2026-10-23, for M5). The owner gives Atlas an API token for the domain's account; Atlas onboards the domain for sending there, and puts a small relay Worker and a routing rule there that pass mail for its address on to Atlas, signed. It sends through Email Service's API with the same token. It's the same path when the domain is in Atlas's own account, so every owner sets it up the same way, from Settings. Sending to anyone, not only your own verified addresses, needs Workers Paid on the domain's account.
+Atlas can have its own addresses on a domain on Cloudflare, in any Cloudflare account, not only Atlas's own (decided 2026-10-23, for M5). Setup in Settings is the same for everyone:
+- **Receiving.** The owner gives Atlas an API token for the domain's account. Atlas puts a small relay Worker and a routing rule there (Email Routing, free on any plan), which pass mail for its address on to Atlas, signed. When the domain's mail goes to another provider, Atlas's address is on a subdomain instead, so the owner's own mail isn't touched.
+- **Sending,** picked in Settings: Cloudflare Email Service, through its API with the same token, which needs Workers Paid on the domain's account to send to anyone; or Resend by key, whose free tier covers a personal Atlas (Atlas adds Resend's DNS records with the token).
 
 What Atlas's own address is for:
 - CC Atlas to find a meeting time;
@@ -790,6 +792,7 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
   - The core stays plain TypeScript behind small interfaces (storage, scheduler, sandbox, browser, models, speech), so a self-hosted build is possible later.
   - It isn't promised for version 1.
 - **Local things need a node:** anything on your home network or your Mac.
+- **Nothing optional costs until it's used** (decided 2026-10-23). An optional part (a channel, a sense, a provider, a surface) deploys nothing that bills and runs nothing until the owner turns it on, and then costs only while it's in use: answering a webhook rather than holding a connection open, a container that sleeps. Anything that must stay on to work says what it costs in Settings before it's turned on.
 
 ### 19.4 Stack
 
@@ -1160,7 +1163,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 | M2 | **Follow-through:** the stage's `show` tool first (§21.6), then the agenda, automations with all five triggers, approvals with earned trust, the outbox and notifications, and the default routines. | Everything Atlas says it'll do actually happens. |
 | M3 | **Hands:** the sandbox, browser, web, Code Mode, skills and learning, the vault, and finding a way. | It finishes unfamiliar tasks. |
 | M4 | **Senses:** nodes (phone, desktop), the situation, one intake (§10.4) with decide-then-wake awareness, the later pile and the Senses screen, and tasks that come up when they fit, starting with places. | The gym-to-store moment, and others like it. |
-| M5 | **People:** contacts, faces (email, phone, chat), members and shared areas, and digests; the mail, messages, GitHub and Linear senses, with `extract` and open loops. | It deals with people for you. |
+| M5 | **People:** contacts, faces (email and chat; the phone later, §26), members and shared areas, and digests; the mail, messages, GitHub and Linear senses, with `extract` and open loops. | It deals with people for you. |
 | M6 | **Delegation:** coding jobs through ACP, Atlas as the middleman, and long research jobs. | It runs your projects while you're away. |
 | M7 | **Launch:** setup polish (steps 6 and 7), moving in, all themes, ambient mode, docs, the deploy button, and a public release. | Someone else can install it and love it. |
 
@@ -1181,7 +1184,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 2. **Shape (§19.2).** A person agent plus a home agent, to be validated in M0.
 3. **Default assistant name.** The product is Atlas. Proposed: a new user's assistant is called "Atlas" by default, and they can rename it.
 4. **License.** MIT, like Hermes and OpenClaw, or Apache-2.0.
-5. **Default phone provider.** Telnyx (what old Atlas used) or Twilio, both of which gave the owner trouble, so it's open again. What we found on 2026-10-23 is in [M5.md §4](docs/M5.md#4-the-phone-still-open): Signal and WhatsApp reach only their own users, not a phone number, and US texting needs the same registration on every carrier, while calls don't.
+5. **The phone.** Telnyx and Twilio both gave the owner trouble: hard to set up, and identity checks they'd rather not do. Every carrier with a real number does those checks now, and US texting needs registration on top. So the phone is out of M5 (decided 2026-10-23): the owner talks to Atlas by voice in the app and with Telegram's voice notes, and Atlas calling a business waits for a later milestone. What we found is in [M5.md §4](docs/M5.md#4-the-phone-later).
 6. **Name.** OpenAI ships a browser called "ChatGPT Atlas" (October 2025). Decide before the public launch whether that matters.
 7. **Files (§21.7):** office formats, how polished they need to be, and sharing outside Atlas. Living pages were decided on 2026-10-22.
 

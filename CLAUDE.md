@@ -24,6 +24,7 @@ A milestone is done when its smoke test passes on the owner's real deployment (V
 - One of everything: one loop (`core/src/loop.ts`), one log (`core/src/store/log.ts`), one clock (`core/src/store/agenda.ts`), one way out (`core/src/outbox.ts`). A new mechanism must replace one.
 - Every run ends in exactly one saved state: replied, deferred or failed.
 - No behavior flags. Settings are for people, and each one has a place in the app.
+- Nothing optional costs until it's used (VISION §19.3): a channel, sense, provider or surface deploys nothing that bills and runs nothing until the owner turns it on, then costs only while in use (a webhook, not a held connection; a container that sleeps). If it must stay on, Settings says what it costs before it's turned on.
 - Tests use fake brains and calendars through `seams` in `core/src/agent.ts`; never call a real provider from tests.
 - Make failures explain themselves: keep the HTTP status, the host and the provider's own words in errors and Worker logs. Most bugs only show on the real deployment, and a generic message costs a round trip with the owner.
 - House style for docs, comments and UI copy: plain sentences, sentence case, no em dashes, they/them for people whose pronouns we don't know.
