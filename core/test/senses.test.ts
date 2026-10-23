@@ -593,13 +593,14 @@ describe("people", () => {
       createRecord(sql, {
         type: "person",
         name: "Doug Henderson",
-        fields: { fact: "Works with the owner", email: "doug@acme.com", nickname: "Hendo" },
+        fields: { fact: "Works with the owner", email: "doug@acme.com", nickname: "Hendo", github: "dhend" },
         source: { via: "chat" },
       });
       expect(personIn(sql, "Doug", ["sam@example.org", "doug@acme.com"])).toBe("doug@acme.com");
       expect(personIn(sql, "Doug", ["Doug Henderson <dh@other.com>"])).toBe("Doug Henderson <dh@other.com>");
       expect(personIn(sql, "Doug", ["doug-h"])).toBe("doug-h");
       expect(personIn(sql, "Doug", ["Hendo"])).toBe("Hendo");
+      expect(personIn(sql, "Doug", ["dhend"])).toBe("dhend");
       expect(personIn(sql, "Doug", ["Douglas Fir <df@trees.org>", "D. Henderson"])).toBeNull();
       expect(personIn(sql, "Sam", ["Samantha Lee"])).toBeNull();
     }));

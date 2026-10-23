@@ -142,7 +142,9 @@ export function personKeys(sql: Sql, person: string): { names: string[][]; email
       for (const x of Array.isArray(v) ? v : [v]) {
         if (typeof x !== "string") continue;
         for (const e of x.match(EMAIL) ?? []) emails.add(e.toLowerCase());
-        if (/name|alias|aka|nick|goes_by|called/i.test(k) && !x.includes("@")) names.push(words(x));
+        // Names and handles it goes by: "nickname", "github", "slack_handle" ("doug-h" is the words doug and h).
+        if (/name|alias|aka|nick|goes_by|called|handle|login|user|github|gitlab|slack|discord|twitter|linear/i.test(k) && !x.includes("@"))
+          names.push(words(x));
       }
     }
   }
