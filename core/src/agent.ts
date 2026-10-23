@@ -21,7 +21,6 @@ import { type Embedder, embedPending, workersAIEmbedder } from "./brains/embed";
 import { BrainRouter } from "./brains/router";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
-import { cleanCredentials } from "./calendar/caldav";
 import { runCharacterCheck, summary as characterSummary } from "./character-check";
 import { newSessionId, type Session, SESSION_DAYS, SESSION_HEADER } from "./auth";
 import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
@@ -116,14 +115,18 @@ import { type BrowserDriver, type BrowserPage, BrowserRunDriver } from "./browse
 import { fillsOn, findEntry, hiddenValues, removeEntry, saveEntry, siteFor, touchEntry, vault } from "./vault";
 import { scrub } from "./outbox";
 import type { BrowserStagePage, StageView, WorkspaceStagePage } from "./stage";
-import { fetchPage, hostOf, PROVIDERS, search, type WebSearchBinding } from "./web";
+import { cloudflareSearch, CLOUDFLARE_SEARCH, fetchPage, hostOf, type WebSearchBinding } from "./web";
 import { deletePage, getPage, listPages, pageSummaries, pageVersion, savePage, viewBlock } from "./pages";
 import { noticeAsk, openSuggestions, settleSuggestion } from "./suggestions";
 import { deleteAutomation, getAutomation, listAutomations, matchPhrase, saveAutomation, setAutomationState } from "./automations";
 import { automationView } from "./agent/views";
 import type { BrowserApi, ExitApi, MapsApi, McpApi, RunResult, Tool, ToolContext, ToolResult, WebApi, WorkspaceApi } from "./tools/types";
-import { geocode, MAPS, nearby, reverse, route } from "./maps";
-import { fetchWeather, roughArea, temp, unitsFor } from "./weather";
+import { roughArea, temp, unitsFor, type Weather } from "./weather";
+import { placeKind, type Found, type Route } from "./maps";
+import type { SearchResult } from "../../extensions/sdk";
+import { ExtensionHost, type GateProps, setExtSecrets, setExtSettings, setExtState, uninstall } from "./extensions";
+import { ExtensionDesk } from "./agent/extensions";
+import { nameFor, provide } from "./providers";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HelperAgent, type HelperHost, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
@@ -150,19 +153,8 @@ import {
   updateNode,
 } from "./nodes";
 import { deviceCall } from "./tools/nodes";
-import {
-  locationOff,
-  locationOn,
-  newOwnTracksLogin,
-  observe,
-  ownTracksAllowed,
-  ownTracksAnswer,
-  ownTracksConfig,
-  ownTracksLink,
-  readOwnTracks,
-  refused as ownTracksRefused,
-  allowedPost,
-} from "./location";
+import { extensionDraft } from "./tools/extensions";
+import { locationOff, locationOn, observe } from "./location";
 import { forgetWhere } from "./situation";
 
 export { seams };
@@ -231,6 +223,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     deviceCall,
     speakingUp,
     noticedTool,
+    extensionDraft,
   ],
   atlas: [
     calendarRead,
@@ -335,6 +328,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #helpers!: HelperDesk;
   #automations!: AutomationDesk;
   #senses!: SenseDesk;
+  /** Extensions (§17): the host that runs them sandboxed, and the desk that hands what they bring to the core. */
+  #ext!: ExtensionHost;
+  #extensions!: ExtensionDesk;
   /** Runs go one at a time, so each one sees the last one's answer. */
   #line: Promise<unknown> = Promise.resolve();
 
@@ -348,7 +344,16 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     migrate(this.#sql);
     sweepStaleRuns(this.#sql, 0);
     const changed = () => this.#broadcast({ type: "atlas.view", view: this.#view() });
-    this.#calendar = new CalendarSense(this.#sql, changed);
+    this.#ext = new ExtensionHost({
+      sql: this.#sql,
+      loader: () => (this.env as { LOADER?: WorkerLoader }).LOADER ?? null,
+      gate: (props) => (this.ctx.exports as unknown as { ExtensionGate(o: { props: GateProps }): Fetcher }).ExtensionGate({ props }),
+      agent: this.name,
+      fetch: (...args) => (seams.fetch ?? fetch)(...args),
+      origin: () => getState<string>(this.#sql, "origin"),
+      tz: () => zoneOf(readSettings(this.#sql)),
+    });
+    this.#calendar = new CalendarSense(this.#sql, changed, this.#ext);
     this.#helpers = new HelperDesk({
       sql: this.#sql,
       router: this.#router,
@@ -363,6 +368,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           browser: null,
           workspace: null,
           mcp: null,
+          extensions: null,
           run_id: runId,
         };
       },
@@ -482,6 +488,24 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       changed: () => this.#broadcast({ type: "atlas.situation" }),
     });
     void this.#senses.armTick().catch(() => {});
+    this.#extensions = new ExtensionDesk({
+      sql: this.#sql,
+      host: this.#ext,
+      clock: this.#clock,
+      take: (items, o) => void this.#senses.take(items, o ?? {}),
+      location: (obs) =>
+        void this.#senses.take(
+          obs.flatMap((o) => observe(this.#sql, o)),
+          { refresh: true },
+        ),
+      messages: async (e, msgs) => this.#channelIn(e, msgs),
+      changed,
+      origin: () => getState<string>(this.#sql, "origin"),
+    });
+    // What M4 kept in the core moves to bundled extensions once; then the extensions' looks are on the clock.
+    void this.keepAliveWhile(() => this.#extensions.upgrade().then(() => this.#extensions.arm())).catch((err: unknown) =>
+      console.error(JSON.stringify({ at: "extensions.upgrade", error: err instanceof Error ? err.message : String(err) })),
+    );
     // Items a restart left half way are weighed again.
     void this.keepAliveWhile(() => this.#senses.resume()).catch(() => {});
     // The default routines are made once; then every automation that's on has its next run on the clock (a missing one is put back).
@@ -605,13 +629,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#updateSettings(msg.patch);
         return;
       case "atlas.secret.set":
-        setSecret(
-          this.#sql,
-          msg.secret.name,
-          msg.secret.name === "icloud" && msg.secret.value ? cleanCredentials(msg.secret.value) : msg.secret.value,
-        );
+        setSecret(this.#sql, msg.secret.name, msg.secret.value);
         append(this.#sql, { actor: "owner", kind: "settings.change", body: { secret: msg.secret.name, set: msg.secret.value !== null } });
-        if (msg.secret.name === "icloud") this.#calendar.reconnect();
         this.#refreshVoice();
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
@@ -664,19 +683,49 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       }
-      case "atlas.location.setup": {
-        const origin = getState<string>(this.#sql, "origin") ?? new URL(connection.uri ?? "https://atlas.invalid").origin;
-        const login = newOwnTracksLogin(this.#sql);
-        append(this.#sql, { actor: "owner", kind: "settings.change", body: { owntracks: "set up" } });
-        const config = ownTracksConfig(this.#sql, origin, login);
-        this.#send(connection, {
-          type: "atlas.location.setup",
-          url: config.url,
-          user: login.user,
-          password: login.password,
-          link: ownTracksLink(config),
-        });
-        this.#broadcast({ type: "atlas.view", view: this.#view() });
+      case "atlas.ext.install":
+      case "atlas.ext.remove":
+      case "atlas.ext.state":
+      case "atlas.ext.secrets":
+      case "atlas.ext.settings": {
+        try {
+          if (msg.type === "atlas.ext.install") await this.#extensions.install(msg.id);
+          else if (msg.type === "atlas.ext.remove") uninstall(this.#sql, msg.id);
+          else if (msg.type === "atlas.ext.state") setExtState(this.#sql, msg.id, msg.on ? "on" : "off");
+          else if (msg.type === "atlas.ext.secrets") setExtSecrets(this.#sql, msg.id, msg.secrets);
+          else setExtSettings(this.#sql, msg.id, msg.settings);
+          // A provider whose sign-in changed is asked fresh, without waiting out an earlier refusal.
+          if (msg.type !== "atlas.ext.install" && this.#calendar.provider()?.id === msg.id) this.#calendar.reconnect();
+          if (msg.type === "atlas.ext.remove" || msg.type === "atlas.ext.state") this.#calendar.reset();
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
+        await this.#extensions.afterChange();
+        return;
+      }
+      case "atlas.ext.setup": {
+        const out = await this.#extensions.setup(msg.id);
+        this.#send(connection, { type: "atlas.ext.setup", id: msg.id, ...out });
+        return;
+      }
+      case "atlas.ext.test": {
+        const out = await this.#extensions.test(msg.id);
+        if (this.#calendar.provider()?.id === msg.id && out.ok) this.#calendar.reconnect();
+        this.#send(connection, { type: "atlas.ext.test", id: msg.id, ...out });
+        return;
+      }
+      case "atlas.ext.signin": {
+        try {
+          this.#send(connection, { type: "atlas.ext.signin", id: msg.id, url: this.#ext.signinUrl(msg.id) });
+        } catch (err) {
+          this.#send(connection, { type: "atlas.ext.signin", id: msg.id, error: err instanceof Error ? err.message : String(err) });
+        }
+        return;
+      }
+      case "atlas.contacts.import": {
+        const out = await this.#extensions.importContacts(msg.vcards != null ? { vcards: msg.vcards } : { from: msg.from ?? "" });
+        this.#send(connection, { type: "atlas.contacts.imported", ...out });
+        void this.#tendMemory();
         return;
       }
       case "atlas.sense.hook.add": {
@@ -1341,6 +1390,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     });
   }
 
+  // --- channels (§16.1) -----------------------------------------------------------
+
+  /** Messages that came in on a channel extension. */
+  async #channelIn(e: import("./extensions").Installed, msgs: import("../../extensions/sdk").Message[]): Promise<void> {
+    console.log(JSON.stringify({ at: `ext.${e.id}.messages`, count: msgs.length }));
+  }
+
   // --- paired devices (§16.3) ---------------------------------------------------
 
   /** Calls sent to devices, waiting for their answers, by call id. */
@@ -1563,6 +1619,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
     if (item.kind === "situation") {
       await this.keepAliveWhile(() => this.#senses.tick(item));
+      return;
+    }
+    if (item.kind === "looks") {
+      await this.keepAliveWhile(() => this.#extensions.looks(item));
       return;
     }
     if (item.kind === "rhythm") {
@@ -1918,6 +1978,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       },
       speaking: async () => {
         this.#broadcast({ type: "atlas.view", view: this.#view() });
+      },
+      extensions: {
+        draft: async (code) => {
+          const e = await this.#extensions.draft(code, "atlas");
+          this.#broadcast({ type: "atlas.view", view: this.#view() });
+          return { id: e.id, name: e.name, hosts: e.manifest.hosts };
+        },
       },
       helpers: {
         start: async (o) => {
@@ -2403,42 +2470,61 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   }
 
   /**
-   * A post from OwnTracks (§10.1), passed on by the Worker with its
-   * Authorization header. Only OwnTracks' own user and password are let in.
-   * With location off, what it sends is dropped. The answer is what OwnTracks
-   * should do next: usually nothing, or the saved places as regions.
+   * A post to the location app's address from before it was an extension
+   * (/owntracks), passed on by the Worker with its Authorization header: the
+   * location extension reads it as it reads posts to its own address.
    */
-  async apiOwnTracks(authorization: string | null, text: string): Promise<{ status: number; body: unknown }> {
-    if (!ownTracksAllowed(this.#sql, authorization)) {
-      ownTracksRefused(this.#sql);
-      console.error(JSON.stringify({ at: "owntracks", error: authorization ? "wrong user or password" : "no user and password" }));
-      this.#broadcast({ type: "atlas.view", view: this.#view() });
-      return {
-        status: 401,
-        body: { error: "That isn't OwnTracks' user and password for this Atlas. Set it up again in Settings → Devices." },
-      };
-    }
-    allowedPost(this.#sql);
-    if (!readSettings(this.#sql).location.on) return { status: 200, body: [] };
-    let data: unknown;
+  async apiOwnTracks(
+    authorization: string | null,
+    text: string,
+  ): Promise<{ status: number; body: string; headers: Record<string, string> }> {
+    return this.#extensions.legacyLocation({ method: "POST", headers: authorization ? { authorization } : {}, body: text, query: {} });
+  }
+
+  /** A post to an extension's own address (/x/<id>/<key>), checked by its key and the service's signature (§17). */
+  async apiExtPost(
+    id: string,
+    key: string,
+    req: { method: string; headers: Record<string, string>; body: string; query: Record<string, string> },
+  ): Promise<{ status: number; body: string; headers: Record<string, string> }> {
+    return this.keepAliveWhile(() => this.#extensions.post(id, key, req));
+  }
+
+  /** A sign-in page sent the owner back (/x/signin): the code is exchanged, and the app's Settings opens again. */
+  async apiExtSignin(state: string, code: string | null, error: string | null): Promise<{ ok: boolean; text: string }> {
+    if (error || !code) return { ok: false, text: `The sign-in didn't finish: ${error ?? "no code came back"}.` };
     try {
-      data = JSON.parse(text);
-    } catch {
-      return { status: 400, body: { error: "OwnTracks sent something that isn't JSON." } };
+      const e = await this.#ext.signedIn(state, code);
+      const tested = await this.#extensions.test(e.id);
+      await this.#extensions.afterChange();
+      return { ok: true, text: `Signed in to ${e.name}. ${tested.message}` };
+    } catch (err) {
+      return { ok: false, text: err instanceof Error ? err.message : String(err) };
     }
-    // Into the intake; it's weighed after the answer, so OwnTracks isn't kept waiting: the situation first, then each item.
-    this.#senses.take(
-      readOwnTracks(data).flatMap((o) => observe(this.#sql, o)),
-      { refresh: true },
-    );
-    this.#broadcast({ type: "atlas.view", view: this.#view() });
-    return { status: 200, body: ownTracksAnswer(this.#sql) };
+  }
+
+  /** The gate refused a host an extension tried to reach (§17): a receipt says which, so it shows in History. */
+  async apiGateRefused(ext: string, host: string): Promise<void> {
+    const row = append(this.#sql, {
+      actor: "system",
+      kind: "delivery",
+      body: {
+        channel: "extension",
+        to: host,
+        text: ext,
+        ok: false,
+        error: `The ${ext} extension tried to reach ${host}, which its manifest doesn't name, so the gate refused it.`,
+      },
+    });
+    this.#broadcast({ type: "atlas.rows", rows: [row] });
   }
 
   /**
    * A webhook source's post (§10.4): checked by its key or its signature,
    * then into the intake as one item, with the post kept as raw content.
-   * The answer comes before it's weighed, so the service isn't kept waiting.
+   * A post an extension claims by its headers (GitHub's, Linear's) is read
+   * by that extension. The answer comes before it's weighed, so the service
+   * isn't kept waiting.
    */
   async apiSenseHook(
     id: string,
@@ -2456,17 +2542,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         body: { error: "That isn't this source's key or signature. Settings → Connections → Senses has its address." },
       };
     }
+    hookSeen(this.#sql, id, false);
+    noteSource(this.#sql, `webhook:${hook.name}`);
+    if (await this.#extensions.claimed({ method: "POST", headers, body: text, query: {} }, { id: hook.id, name: hook.name }))
+      return { status: 202, body: { ok: true } };
     let payload: unknown = text;
     try {
       payload = JSON.parse(text);
     } catch {
       // Not JSON: the text itself is the post.
     }
-    hookSeen(this.#sql, id, false);
-    noteSource(this.#sql, `webhook:${hook.name}`);
-    // GitHub's first post only says the hook works.
-    if (h.get("x-github-event") === "ping") return { status: 200, body: { ok: true, note: "Connected." } };
-    this.#senses.take([hookItem(hook, h, typeof payload === "string" ? { text: payload } : payload)], { raw: text });
+    this.#senses.take([hookItem(hook, typeof payload === "string" ? { text: payload } : payload)], { raw: text });
     return { status: 202, body: { ok: true } };
   }
 
@@ -2527,7 +2613,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   }
 
   #view(): SettingsView {
-    return settingsView(this.#sql, { chatgpt: this.#chatgpt, calendar: this.#calendar, router: this.#router });
+    return settingsView(this.#sql, {
+      chatgpt: this.#chatgpt,
+      calendar: this.#calendar,
+      router: this.#router,
+      extensions: this.#extensions,
+    });
   }
 
   // --- undo and live checks ---------------------------------------------------
@@ -2591,7 +2682,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           return { ok: true, message: `${(this.tts as { label?: string }).label ?? "voice"} spoke in ${Date.now() - t0} ms.` };
         },
         search: async () => {
-          const name = PROVIDERS[readSettings(this.#sql).web.search].name;
+          const chosen = readSettings(this.#sql).web.search;
+          const name = chosen === "cloudflare" ? CLOUDFLARE_SEARCH.name : nameFor(this.#sql, "search", "search", chosen);
           const out = await this.#web.search("Cloudflare Workers", { run_id: null, count: 3 });
           return out.ok
             ? { ok: true, message: `${name} works: ${out.value.length} results, the first ${out.value[0]?.title ?? "untitled"}.` }
@@ -2627,7 +2719,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           if (!w.ok) return { ok: false, message: w.error };
           return {
             ok: true,
-            message: `${MAPS[provider].name} works: a test route took ${Math.max(1, Math.round(r.value.s / 60))} min${r.value.traffic ? " with traffic" : ""}. Open-Meteo works: ${temp(w.value.now.temp_c, unitsFor(readSettings(this.#sql).units, zoneOf(readSettings(this.#sql))))} there now.`,
+            message: `${nameFor(this.#sql, "maps", "route", provider)} works: a test route took ${Math.max(1, Math.round(r.value.s / 60))} min${r.value.traffic ? " with traffic" : ""}. ${nameFor(this.#sql, "weather", "weather")} works: ${temp(w.value.now.temp_c, unitsFor(readSettings(this.#sql).units, zoneOf(readSettings(this.#sql))))} there now.`,
           };
         },
         systemFor: (character) => {
@@ -2646,19 +2738,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** Searching and reading the web, each through the outbox's checks with a receipt (§4.4). */
   #web: WebApi = {
-    search: (query, o) => {
-      const provider = readSettings(this.#sql).web.search;
-      const p = PROVIDERS[provider];
-      return this.#outbox.look({ what: "search", text: query, to: p.name, run_id: o.run_id }, (f) =>
-        search(
-          provider,
-          { query, count: o.count, ...(o.fresh ? { fresh: o.fresh } : {}) },
-          {
-            fetch: f,
-            key: p.key ? getSecret<string>(this.#sql, `${provider as "tavily" | "brave" | "exa"}_api_key`) : null,
-            binding: this.#websearch(),
-          },
-        ),
+    search: async (query, o) => {
+      const chosen = readSettings(this.#sql).web.search;
+      const q = { query, count: Math.min(Math.max(o.count, 1), 20), ...(o.fresh ? { fresh: o.fresh } : {}) };
+      // Cloudflare's search is the platform's (§17); any other is a search extension.
+      if (chosen === "cloudflare") {
+        return this.#outbox.look({ what: "search", text: query, to: CLOUDFLARE_SEARCH.name, run_id: o.run_id }, () =>
+          cloudflareSearch(this.#websearch(), q),
+        );
+      }
+      return this.#outbox.look({ what: "search", text: query, to: nameFor(this.#sql, "search", "search", chosen), run_id: o.run_id }, () =>
+        provide<SearchResult[]>(this.#ext, this.#sql, { kind: "search", method: "search", args: [q], chosen, what: "web search" }),
       );
     },
     fetch: async (url, o) => {
@@ -2673,27 +2763,59 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    */
   #maps: MapsApi = {
     provider: () => readSettings(this.#sql).maps.provider,
+    // Pins come from a maps extension whose answers may be kept (OpenStreetMap's), whichever one routes.
     geocode: (q, o) =>
-      this.#outbox.look({ what: "geocode", text: q, to: MAPS.osm.name, run_id: o.run_id, channel: "maps" }, (f) => geocode(f, q, o.near)),
+      this.#outbox.look(
+        { what: "geocode", text: q, to: nameFor(this.#sql, "maps", "geocode", "osm"), run_id: o.run_id, channel: "maps" },
+        () =>
+          provide<Found[]>(this.#ext, this.#sql, {
+            kind: "maps",
+            method: "geocode",
+            args: [{ q, ...(o.near ? { near: o.near } : {}) }],
+            chosen: "osm",
+            what: "address search",
+          }),
+      ),
     reverse: (p, o) =>
-      this.#outbox.look({ what: "reverse", text: "where you are", to: MAPS.osm.name, run_id: o.run_id, channel: "maps" }, (f) =>
-        reverse(f, p),
+      this.#outbox.look(
+        { what: "reverse", text: "where you are", to: nameFor(this.#sql, "maps", "reverse", "osm"), run_id: o.run_id, channel: "maps" },
+        () => provide<Found>(this.#ext, this.#sql, { kind: "maps", method: "reverse", args: [p], chosen: "osm", what: "address search" }),
       ),
     route: (via, travel, o) => {
-      const provider = readSettings(this.#sql).maps.provider;
-      return this.#outbox.look({ what: "route", text: o.label, to: MAPS[provider].name, run_id: o.run_id, channel: "maps" }, (f) =>
-        route(f, { provider, key: getSecret<string>(this.#sql, "mapbox_token"), via, travel }),
+      const chosen = readSettings(this.#sql).maps.provider;
+      return this.#outbox.look(
+        { what: "route", text: o.label, to: nameFor(this.#sql, "maps", "route", chosen), run_id: o.run_id, channel: "maps" },
+        () => provide<Route>(this.#ext, this.#sql, { kind: "maps", method: "route", args: [{ via, travel }], chosen, what: "routes" }),
       );
     },
     nearby: (q, o) => {
-      const provider = readSettings(this.#sql).maps.provider;
-      return this.#outbox.look({ what: "nearby", text: o.label, to: MAPS[provider].name, run_id: o.run_id, channel: "maps" }, (f) =>
-        nearby(f, { provider, key: getSecret<string>(this.#sql, "mapbox_token"), ...q }),
+      const chosen = readSettings(this.#sql).maps.provider;
+      const { kind, ...rest } = q;
+      const k = kind ? placeKind(kind) : null;
+      if (kind && !k)
+        return Promise.resolve({
+          ok: false as const,
+          status: 0,
+          error: `"${kind}" isn't a kind of place a map can look for; try a word like "florist" or a tag like "leisure=park".`,
+        });
+      // A search by name goes to a provider that searches by name.
+      const pickFrom = k ? chosen : "osm";
+      return this.#outbox.look(
+        { what: "nearby", text: o.label, to: nameFor(this.#sql, "maps", "nearby", pickFrom), run_id: o.run_id, channel: "maps" },
+        () =>
+          provide<Found[]>(this.#ext, this.#sql, {
+            kind: "maps",
+            method: "nearby",
+            args: [{ ...rest, ...(k ? { kind: k } : {}) }],
+            chosen: pickFrom,
+            what: "place search",
+          }),
       );
     },
     weather: (p, o) =>
-      this.#outbox.look({ what: "weather", text: o.label, to: "Open-Meteo", run_id: o.run_id, channel: "weather" }, (f) =>
-        fetchWeather(f, roughArea(p)),
+      this.#outbox.look(
+        { what: "weather", text: o.label, to: nameFor(this.#sql, "weather", "weather"), run_id: o.run_id, channel: "weather" },
+        () => provide<Weather>(this.#ext, this.#sql, { kind: "weather", method: "weather", args: [roughArea(p)], what: "the weather" }),
       ),
   };
 

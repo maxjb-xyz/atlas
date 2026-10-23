@@ -1,4 +1,4 @@
-// iCloud Calendar over CalDAV (RFC 4791), read only. Discovery goes
+// iCloud Calendar over CalDAV (RFC 4791), read only, in the iCloud extension. Discovery goes
 // principal -> calendar home -> calendars. iCloud lists everything from
 // caldav.icloud.com but serves the home from a pNN-caldav.icloud.com host,
 // so every href is resolved against the URL that returned it. The server
@@ -24,6 +24,11 @@ const DAY_MS = 86_400_000;
 
 export interface CalDavOptions {
   fetch?: typeof fetch;
+  /**
+   * The Authorization header to send, when it isn't built from the password:
+   * in the sandbox it's the gate's placeholder, so the password never reaches this code.
+   */
+  auth?: string;
   /** Calendar display names to leave out (case and surrounding spaces ignored). */
   hidden?: string[];
   baseUrl?: string;
@@ -138,11 +143,11 @@ class CalDavClient {
   /** Where discovery starts, so a refusal can say whether it came at the first server or a later one. */
   #start: string;
 
-  constructor(creds: ICloudCredentials, fetchFn: typeof fetch, start: string) {
+  constructor(creds: ICloudCredentials, fetchFn: typeof fetch, start: string, auth?: string) {
     this.#start = start;
     // Called as a plain function: the Workers runtime's fetch throws "Illegal invocation" if called as a method of another object.
     this.#fetch = (input, init) => fetchFn(input, init);
-    this.#auth = basicAuth(creds);
+    this.#auth = auth ?? basicAuth(creds);
   }
 
   /** One WebDAV request, following redirects by hand so the auth header survives a host change. */
@@ -283,7 +288,7 @@ function overlaps(ev: CalendarEvent, range: CalendarRange): boolean {
 
 export function icloudCalendar(creds: ICloudCredentials, opts: CalDavOptions = {}): CalendarSource {
   const base = opts.baseUrl ?? ICLOUD_CALDAV;
-  const client = new CalDavClient(creds, opts.fetch ?? fetch, base);
+  const client = new CalDavClient(creds, opts.fetch ?? ((i, init) => fetch(i, init)), base, opts.auth);
   const hidden = new Set((opts.hidden ?? []).map((n) => n.trim().toLowerCase()));
   const tz = opts.timezone ?? "UTC";
   let copy = usable(opts.store?.load() ?? null);

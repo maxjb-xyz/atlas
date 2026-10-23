@@ -82,7 +82,11 @@ export type StateName =
   /** Webhook sources the owner added (§10.4): their names; their keys are secrets. */
   | "sense_hooks"
   /** When the errands from before tasks were moved over (once). */
-  | "tasks_from_errands";
+  | "tasks_from_errands"
+  /** Extensions' sign-ins in flight (§17): each one's state, for which extension, and when it started. */
+  | "ext_signins"
+  /** When the M4 providers were moved out of the core into bundled extensions (once, §17). */
+  | "extensions_moved";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type CalendarCopy, calendarQuery, cleanCredentials, copySpan, davTime, FRESH_MS, icloudCalendar } from "../src/calendar/caldav";
-import { parseDuration, parseEvents, resolveZone, unfold, zonedToUtc } from "../src/calendar/ical";
-import { CalendarError } from "../src/calendar/types";
-import { multistatus, parseXml, find } from "../src/calendar/xml";
+import {
+  type CalendarCopy,
+  calendarQuery,
+  cleanCredentials,
+  copySpan,
+  davTime,
+  FRESH_MS,
+  icloudCalendar,
+} from "../../extensions/icloud/caldav";
+import { parseDuration, parseEvents, resolveZone, unfold, zonedToUtc } from "../../extensions/icloud/ical";
+import { CalendarError } from "../../extensions/icloud/types";
+import { multistatus, parseXml, find } from "../../extensions/icloud/xml";
 import principalXml from "./fixtures/caldav/principal.xml?raw";
 import homeXml from "./fixtures/caldav/home.xml?raw";
 import calendarsXml from "./fixtures/caldav/calendars.xml?raw";

@@ -329,36 +329,20 @@ describe("the thread", () => {
     s.ws.close();
   });
 
-  it("tells the owner what Atlas holds for iCloud when it's refused, without the password", async () => {
+  it("sets iCloud up as an extension: the Apple ID as a setting, the password as a secret Settings never shows", async () => {
     brains([]);
-    seams.calendar = {
-      list: async () => [],
-      check: async () => {
-        throw new CalendarError("iCloud didn't accept the Apple ID and app-specific password.", "auth");
-      },
-    };
     const s = await connect();
-    s.send({
-      type: "atlas.secret.set",
-      secret: { name: "icloud", value: { username: " owner@icloud.com ", app_password: "abcd efgh ijkl mnop" } },
-    });
-    expect((await s.next("atlas.view")).view.secrets.icloud).toEqual({ username: "owner@icloud.com", refused: null });
-    s.send({ type: "atlas.test", what: "calendar", ref: "cal" });
-    const res = await s.next("atlas.test.result", (m) => m.ref === "cal");
-    expect(res.ok).toBe(false);
-    expect(res.message).toContain("signing in as owner@icloud.com with an app-specific password in Apple's xxxx-xxxx-xxxx-xxxx form");
-    expect(res.message).not.toContain("abcd");
-
-    // The Apple ID's own password pasted by mistake is named as the likely cause.
-    s.send({
-      type: "atlas.secret.set",
-      secret: { name: "icloud", value: { username: "owner@icloud.com", app_password: "Hunter2-secret" } },
-    });
-    await s.next("atlas.view", (m) => m.view.secrets.icloud?.refused === null);
-    s.send({ type: "atlas.test", what: "calendar", ref: "cal2" });
-    const res2 = await s.next("atlas.test.result", (m) => m.ref === "cal2");
-    expect(res2.message).toContain("a 14-character password that isn't in Apple's xxxx-xxxx-xxxx-xxxx form");
-    expect(res2.message).not.toContain("Hunter2");
+    s.send({ type: "atlas.ext.install", id: "icloud" });
+    s.send({ type: "atlas.ext.settings", id: "icloud", settings: { username: " owner@icloud.com " } });
+    s.send({ type: "atlas.ext.secrets", id: "icloud", secrets: { app_password: "abcd-efgh-ijkl-mnop" } });
+    const v = await s.next("atlas.view", (m) => m.view.extensions.some((e) => e.id === "icloud" && e.secrets.some((x) => x.set)));
+    const ext = v.view.extensions.find((e) => e.id === "icloud")!;
+    expect(ext).toMatchObject({ state: "on", provides: ["calendar", "contacts"], hosts: ["icloud.com"] });
+    expect(ext.settings.find((x) => x.name === "username")!.value).toBe("owner@icloud.com");
+    expect(JSON.stringify(v.view)).not.toContain("abcd-efgh");
+    expect(v.view.calendar.provider).toEqual({ id: "icloud", name: "iCloud" });
+    s.send({ type: "atlas.ext.remove", id: "icloud" });
+    await s.next("atlas.view", (m) => !m.view.extensions.some((e) => e.id === "icloud" && e.state !== "available"));
     s.ws.close();
   });
 
@@ -376,19 +360,14 @@ describe("the thread", () => {
           throw new CalendarError("iCloud didn't accept the Apple ID and app-specific password (HTTP 401 at caldav.icloud.com)", "auth");
         return held;
       },
-      held: () => ({ events: held, as_of: copyAt }),
+      held: async () => ({ events: held, as_of: copyAt }),
       check: async () => ({ calendars: [], events_next_30_days: 0 }),
     };
     brains([call("calendar_read", {}, "c1"), call("calendar_read", {}, "c2"), say("You have the dentist.")]);
     const s = await connect();
-    s.send({
-      type: "atlas.secret.set",
-      secret: { name: "icloud", value: { username: "owner@icloud.com", app_password: "abcd-efgh-ijkl-mnop" } },
-    });
-    await s.next("atlas.view", (m) => m.view.secrets.icloud != null);
     s.send({ type: "atlas.say", text: "what's on today?", client_id: "c9" });
-    const refused = await s.next("atlas.view", (m) => Boolean(m.view.secrets.icloud?.refused));
-    const r = refused.view.secrets.icloud!.refused!;
+    const refused = await s.next("atlas.view", (m) => Boolean(m.view.calendar.refused));
+    const r = refused.view.calendar.refused!;
     expect(r.message).toContain("didn't accept");
     expect(r.next_try - r.at).toBe(30 * 60_000);
     await s.next("atlas.run", (m) => m.state === "replied");
@@ -419,11 +398,7 @@ describe("the thread", () => {
     const ok = await s.next("atlas.calendar.events", (m) => m.ref === "now");
     expect(ok.stale).toBeUndefined();
     expect(asked).toBe(2);
-    await s.next("atlas.view", (m) => m.view.secrets.icloud?.refused === null);
-
-    // New credentials always let Atlas ask at once.
-    s.send({ type: "atlas.secret.set", secret: { name: "icloud", value: null } });
-    await s.next("atlas.view");
+    await s.next("atlas.view", (m) => m.view.calendar.refused === null);
     s.ws.close();
   });
 
@@ -432,11 +407,6 @@ describe("the thread", () => {
     await runInDurableObject(owner(), async (_a: PersonAgent, state) => {
       const sql = state.storage.sql;
       migrate(sql);
-      sql.exec(
-        `INSERT OR REPLACE INTO secrets (name, value, updated_at) VALUES ('icloud', ?, ?)`,
-        JSON.stringify({ username: "owner@icloud.com", app_password: "abcd-efgh-ijkl-mnop" }),
-        Date.now(),
-      );
       // M0's shape: no tries, no next_try.
       sql.exec(
         `INSERT OR REPLACE INTO state (key, value, updated_at) VALUES ('icloud_refused', ?, ?)`,
@@ -447,12 +417,13 @@ describe("the thread", () => {
     const s = await connect();
     s.send({ type: "atlas.hello", tz: "America/New_York" });
     const snap = await s.next("atlas.snapshot");
-    const r = snap.view.secrets.icloud!.refused!;
+    const r = snap.view.calendar.refused!;
     expect(r.tries).toBe(1);
     expect(r.next_try - r.at).toBe(30 * 60_000);
     expect(r.note).toContain("Atlas will try again by itself after");
-    s.send({ type: "atlas.secret.set", secret: { name: "icloud", value: null } });
-    await s.next("atlas.view");
+    await runInDurableObject(owner(), async (_a: PersonAgent, state) =>
+      state.storage.sql.exec(`DELETE FROM state WHERE key = 'icloud_refused'`),
+    );
     s.ws.close();
   });
 
@@ -522,12 +493,14 @@ describe("setup", () => {
       notes: ["Two clashes Thursday."],
     });
     s.send({ type: "atlas.setup.people", people: [{ name: "Dana", why: "producer" }] });
-    s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: null } });
-    // The view from this change, not one an earlier step left unread: that one can come before the people are saved.
-    await s.next("atlas.view", (m) => !m.view.secrets.elevenlabs_api_key);
-    const people = await runInDurableObject(owner(), (_i: PersonAgent, state) =>
-      state.storage.sql.exec<{ name: string }>(`SELECT name FROM records WHERE type = 'person'`).toArray(),
-    );
+    // Saved as it's taken in; any view that comes meanwhile says nothing about it, so the records are asked until they have it.
+    let people: Array<{ name: string }> = [];
+    for (let i = 0; i < 50 && !people.some((p) => p.name === "Dana"); i++) {
+      people = await runInDurableObject(owner(), (_i: PersonAgent, state) =>
+        state.storage.sql.exec<{ name: string }>(`SELECT name FROM records WHERE type = 'person'`).toArray(),
+      );
+      if (!people.some((p) => p.name === "Dana")) await new Promise((r) => setTimeout(r, 40));
+    }
     expect(people.map((p) => p.name)).toContain("Dana");
     s.ws.close();
   });

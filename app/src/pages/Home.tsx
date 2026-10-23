@@ -169,7 +169,7 @@ export function Home({
   const shownTab = views.find((v) => tab === `view:${v.id}`);
   const meta =
     tab === "week"
-      ? `Calendar · ${s.view?.secrets.icloud ? "iCloud" : "not connected"}`
+      ? `Calendar · ${s.view?.calendar.provider ? s.view.calendar.provider.name : "not connected"}`
       : shownTab
         ? shownTab.view.kind === "area" || shownTab.view.kind === "person"
           ? "Live from what Atlas knows"
@@ -272,7 +272,7 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
       ? `Now: ${next.title}, until ${clock(eventEnd(next))}.`
       : next
         ? `Nothing on the calendar until ${dayName(eventStart(next))}${next.all_day ? "" : ` at ${clock(eventStart(next))}`}.`
-        : s.view?.secrets.icloud
+        : s.view?.calendar.provider
           ? "Nothing on the calendar this week."
           : "Connect a calendar in Settings and I'll keep an eye on your week.";
   const where = sit && sit.where.known ? whereLine(sit, nowMs) : null;

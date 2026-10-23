@@ -1,27 +1,9 @@
-// The calendar sense, as the reminders and calendar tools see it. M0 has one
-// adapter, iCloud over CalDAV (caldav.ts). Google and others come later
-// behind this same interface.
+// The calendar sense, as the reminders and calendar tools see it. Which
+// calendar answers is an extension (VISION §17): iCloud over CalDAV by
+// default, Google or others behind this same interface.
 
-export interface CalendarEvent {
-  /** Stable for one occurrence: the event UID, plus the RECURRENCE-ID for repeats. */
-  id: string;
-  calendar: string;
-  title: string;
-  /** UTC ISO time ("2026-10-22T14:00:00.000Z"), or a plain date ("2026-10-22") when all_day. */
-  start: string;
-  /** Exclusive end, in the same form as `start`. */
-  end: string;
-  all_day: boolean;
-  location?: string;
-  notes?: string;
-  /** Who it's with: the organizer and those invited, as the invite names them (not rooms or other resources). */
-  people?: EventPerson[];
-}
-
-export interface EventPerson {
-  name?: string;
-  email?: string;
-}
+export type { CalendarEvent, EventPerson } from "../../../extensions/sdk";
+import type { CalendarEvent, EventPerson } from "../../../extensions/sdk";
 
 /** A person on an event as one line: "Doug Henderson <doug@acme.com>", or whichever of the two the invite has. */
 export const personText = (p: EventPerson): string => (p.name && p.email ? `${p.name} <${p.email}>` : (p.name ?? p.email ?? ""));
@@ -32,16 +14,18 @@ export interface CalendarRange {
 }
 
 export interface CalendarCheck {
-  calendars: string[];
+  calendars?: string[];
   /** Events found from today through the next 30 days, across visible calendars. */
-  events_next_30_days: number;
+  events_next_30_days?: number;
+  /** What the provider said about itself, when it says it in words. */
+  text?: string;
 }
 
 export interface CalendarSource {
   /** Events overlapping the range, sorted by start, recurring events expanded. Asks the provider when what it holds is old. */
   list(range: CalendarRange): Promise<CalendarEvent[]>;
   /** What it already holds for the range, without asking the provider, and when that was current. Null if it holds nothing for it. */
-  held?(range: CalendarRange): { events: CalendarEvent[]; as_of: number } | null;
+  held?(range: CalendarRange): Promise<{ events: CalendarEvent[]; as_of: number } | null>;
   /** A live check for Settings: signs in and counts what it found. */
   check(): Promise<CalendarCheck>;
 }
@@ -56,13 +40,6 @@ export interface CalendarRead {
 export interface Calendar {
   read(range: CalendarRange): Promise<CalendarRead>;
   check(): Promise<CalendarCheck>;
-}
-
-export interface ICloudCredentials {
-  /** The Apple ID email. */
-  username: string;
-  /** An app-specific password from account.apple.com, never the account password. */
-  app_password: string;
 }
 
 /** Thrown with a plain reason the owner can act on (§22: no dead ends). */

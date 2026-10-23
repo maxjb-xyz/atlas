@@ -18,7 +18,7 @@ export function weekStart(d: Date): Date {
 
 /** Asks for the calendar in a range under `ref`, again whenever the calendar might have changed. */
 export function useCalendar(atlas: Atlas, ref: string, start: Date, end: Date): CalendarState | undefined {
-  const connected = Boolean(atlas.state.view?.secrets.icloud);
+  const connected = Boolean(atlas.state.view?.calendar.provider);
   const key = `${localDate(start)}|${localDate(end)}`;
   useEffect(() => {
     if (!atlas.voice.connected) return;
@@ -31,7 +31,7 @@ export function useCalendar(atlas: Atlas, ref: string, start: Date, end: Date): 
 export function CalendarNote({ atlas, cal }: { atlas: Atlas; cal: CalendarState | undefined }) {
   if (cal?.error) {
     return (
-      <p className={`small ${atlas.state.view?.secrets.icloud ? "err" : "muted"}`} style={{ marginBottom: 10 }}>
+      <p className={`small ${atlas.state.view?.calendar.provider ? "err" : "muted"}`} style={{ marginBottom: 10 }}>
         {cal.error}
       </p>
     );

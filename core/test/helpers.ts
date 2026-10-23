@@ -220,3 +220,124 @@ export function fakeDecider(
     },
   };
 }
+
+// --- extensions, run in-process ---------------------------------------------------------------------
+// A Dynamic Worker's gate would reach the real service, which tests never do (CLAUDE.md). So the tests run
+// each extension's module here, with the same rules as the gate: placeholders filled with the secrets, and
+// only the manifest's hosts, over the test's fake network (`seams.fetch`).
+
+import { seams } from "../src/agent/seams";
+import { allowedHost, fill } from "../src/extensions";
+import { type Extension, useFetch } from "../../extensions/sdk";
+import brave from "../../extensions/brave";
+import exa from "../../extensions/exa";
+import github from "../../extensions/github";
+import icloud from "../../extensions/icloud";
+import linear from "../../extensions/linear";
+import mapbox from "../../extensions/mapbox";
+import openMeteo from "../../extensions/open-meteo";
+import osm from "../../extensions/osm";
+import owntracks from "../../extensions/owntracks";
+import tavily from "../../extensions/tavily";
+
+export const EXTENSIONS: Record<string, Extension> = {
+  brave,
+  exa,
+  github,
+  icloud,
+  linear,
+  mapbox,
+  "open-meteo": openMeteo,
+  osm,
+  owntracks,
+  tavily,
+};
+
+/** The requests extensions made in this test, as the gate let them out (secrets filled in). */
+export const extensionRequests: Array<{ ext: string; url: string; init: RequestInit }> = [];
+
+export function runExtensionsHere(more: Record<string, Extension> = {}): void {
+  seams.extension = async ({ id, method, args, ctx, secrets, hosts }) => {
+    const ext = more[id] ?? EXTENSIONS[id];
+    if (!ext) throw new Error(`The test has no extension called ${id}.`);
+    useFetch(async (input, init) => {
+      const req = new Request(input as RequestInfo, init);
+      const url = fill(req.url, secrets, true);
+      const host = new URL(url).hostname;
+      if (!allowedHost(host, hosts))
+        return new Response(`Atlas's gate refused ${host}: the ${ext.manifest.name} extension may reach only ${hosts.join(", ")}.`, {
+          status: 403,
+        });
+      const headers = new Headers();
+      for (const [k, v] of req.headers) headers.set(k, fill(v, secrets));
+      const body = req.body ? fill(await req.text(), secrets) : undefined;
+      const out: RequestInit = { method: req.method, headers, ...(body !== undefined ? { body } : {}) };
+      extensionRequests.push({ ext: id, url, init: out });
+      if (!seams.fetch) throw new Error(`An extension (${id}) reached for ${host}, and this test has no fake network.`);
+      return seams.fetch(url, out);
+    });
+    const fn = (ext as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[method];
+    if (typeof fn !== "function") throw new Error(`${ext.manifest.name} has no ${method} call.`);
+    const value = await fn.call(
+      ext,
+      {
+        ...ctx,
+        secret: (n: string) => `{{secret:${n}}}`,
+        basic: (u: string, n: string) => `Basic {{basic:${btoa(u)}:${n}}}`,
+      },
+      ...JSON.parse(JSON.stringify(args)),
+    );
+    // What crosses the sandbox's edge is JSON.
+    return value === undefined ? null : JSON.parse(JSON.stringify(value));
+  };
+}
+
+runExtensionsHere();
+
+/**
+ * One call to an extension's module, outside any agent: with the gate's rules (its placeholders filled with
+ * `secrets`, only its hosts) over `fetch`. Throws the extension's Failure as it would come back.
+ */
+export async function runExt<T>(
+  ext: Extension,
+  method: string,
+  args: unknown[],
+  o: {
+    fetch: typeof fetch;
+    secrets?: Record<string, string>;
+    settings?: Record<string, string>;
+    state?: unknown;
+    cursor?: unknown;
+    data?: unknown;
+    address?: string;
+    now?: number;
+  },
+): Promise<T> {
+  const secrets = o.secrets ?? {};
+  useFetch(async (input, init) => {
+    const req = new Request(input as RequestInfo, init);
+    const url = fill(req.url, secrets, true);
+    const host = new URL(url).hostname;
+    if (!allowedHost(host, ext.manifest.hosts)) return new Response(`Atlas's gate refused ${host}.`, { status: 403 });
+    const headers = new Headers();
+    for (const [k, v] of req.headers) headers.set(k, fill(v, secrets));
+    const body = req.body ? fill(await req.text(), secrets) : undefined;
+    return o.fetch(url, { method: req.method, headers, ...(body !== undefined ? { body } : {}) });
+  });
+  const fn = (ext as unknown as Record<string, (...a: unknown[]) => Promise<T>>)[method]!;
+  return fn.call(
+    ext,
+    {
+      cursor: o.cursor ?? null,
+      state: o.state ?? null,
+      settings: o.settings ?? {},
+      now: o.now ?? Date.now(),
+      tz: "America/New_York",
+      ...(o.address ? { address: o.address } : {}),
+      ...(o.data !== undefined ? { data: o.data } : {}),
+      secret: (n: string) => `{{secret:${n}}}`,
+      basic: (u: string, n: string) => `Basic {{basic:${btoa(u)}:${n}}}`,
+    },
+    ...args,
+  );
+}

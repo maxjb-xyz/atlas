@@ -3,7 +3,7 @@
 // there is no RRULE logic here; a master event that still carries an RRULE
 // only yields its first occurrence.
 
-import { isValidZone, zonedToUtc as wallToUtc } from "../time";
+import { isValidZone, zonedToUtc as wallToUtc } from "../lib/time";
 import type { CalendarEvent, EventPerson } from "./types";
 
 interface Prop {

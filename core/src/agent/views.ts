@@ -10,7 +10,7 @@ import type { AgendaItem } from "../store/agenda";
 import { scrub } from "../outbox";
 import { readSettings, secretValues } from "../store/settings";
 import { here, pinOf } from "../location";
-import { MAPS } from "../maps";
+import { mapsCredit } from "../providers";
 import { situationPage, weatherPage } from "../situation";
 import { sensesPage } from "../intake";
 import { webhooks, webhookView } from "../webhooks";
@@ -133,7 +133,7 @@ export function placePage(sql: Sql, id: string): PlacePage | { kind: "missing"; 
     pin: pin ? { lat: pin.lat, lon: pin.lon, radius_m: pin.radius_m } : null,
     visits: visits.slice(0, 50),
     here: here(sql).place?.id === r.id,
-    credit: MAPS[readSettings(sql).maps.provider].credit,
+    credit: mapsCredit(sql, readSettings(sql).maps.provider),
   };
 }
 

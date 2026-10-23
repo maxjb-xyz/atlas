@@ -70,8 +70,8 @@ export const Settings = z.object({
       hidden: z.array(z.string().max(200)).max(50).default([]),
     })
     .default({ hidden: [] }),
-  /** The web (§9.1): which search Atlas uses. Each one but Cloudflare's needs its key, kept with the secrets. */
-  web: z.object({ search: z.enum(["cloudflare", "tavily", "brave", "exa"]).default("cloudflare") }).default({ search: "cloudflare" }),
+  /** The web (§9.1): which search Atlas uses: Cloudflare's, built in, or a search extension's id (§17). */
+  web: z.object({ search: z.string().min(1).max(40).default("cloudflare") }).default({ search: "cloudflare" }),
   /** How messages reach the owner when the app isn't in view (§14). */
   notifications: z
     .object({
@@ -97,8 +97,8 @@ export const Settings = z.object({
     .default({ push: true, quiet: { on: false, from: "22:00", to: "07:00" }, budget: 10 }),
   /** Location (§10.1): whether Atlas takes in what the phone sends. Off drops it, and Atlas says it doesn't know where you are. */
   location: z.object({ on: z.boolean().default(true) }).default({ on: true }),
-  /** Maps (§19.1): OpenStreetMap's free services, or Mapbox by key (its token is kept with the secrets). */
-  maps: z.object({ provider: z.enum(["osm", "mapbox"]).default("osm") }).default({ provider: "osm" }),
+  /** Maps (§19.1): which maps extension answers (§17): OpenStreetMap's by default, Mapbox's by key, or another. */
+  maps: z.object({ provider: z.string().min(1).max(40).default("osm") }).default({ provider: "osm" }),
   /**
    * Speaking up (§10.3): whether Atlas may tell the owner things on its own.
    * `noticing` covers whatever its senses notice (a move, a change on the
@@ -197,7 +197,9 @@ export type SecretName =
   /** A Mapbox token, when the owner picks Mapbox for maps (§19.1). */
   | "mapbox_token"
   /** Each webhook source's key (§10.4), by its id. */
-  | "sense_hooks";
+  | "sense_hooks"
+  /** An extension's secrets (§17), by name: what the owner pasted, and the tokens of a sign-in the core ran for it. */
+  | `ext:${string}`;
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];
@@ -236,6 +238,10 @@ export function secretValues(sql: Sql): string[] {
     if (typeof v === "string" && v.length >= 8) out.push(v);
   }
   for (const h of hooks) if (typeof h.url === "string" && h.url.length >= 8) out.push(h.url);
+  // Extensions' secrets (§17): keys, passwords and sign-in tokens never leave either.
+  for (const r of sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name LIKE 'ext:%'`).toArray()) {
+    for (const v of Object.values(parse<Record<string, unknown>>(r.value, {}))) if (typeof v === "string" && v.length >= 8) out.push(v);
+  }
   // The vault's secret values (§15): passwords, card numbers and codes, keys and seeds never leave.
   for (const e of getSecret<Array<{ values?: Record<string, unknown>; totp?: unknown }>>(sql, "vault") ?? []) {
     for (const k of ["password", "number", "cvc", "key"]) {

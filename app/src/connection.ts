@@ -92,7 +92,8 @@ export interface State {
   /** Bumped when the situation changes, so Now and the situation, weather and place views ask again. */
   situationVersion: number;
   /** OwnTracks' setup, shown once in Settings → Devices. */
-  ownTracks: { url: string; user: string; password: string; link: string } | null;
+  /** An extension's setup, shown once (a link and its QR code, a password), by the extension's id. */
+  extSetup: Record<string, { ok: boolean; text: string; link?: string; fields?: Array<{ label: string; value: string }> }>;
   /** A webhook source just added: its address with its key, shown once. */
   senseHook: { id: string; name: string; url: string } | null;
   /** Pairing codes looked up (null: not waiting), and the answer to Pair (the device's name, or null), by code. */
@@ -132,7 +133,7 @@ const initial: State = {
   mcpServers: null,
   kept: null,
   situationVersion: 0,
-  ownTracks: null,
+  extSetup: {},
   senseHook: null,
   pairing: {},
   paired: {},
@@ -298,8 +299,22 @@ function reduce(s: State, a: Action): State {
       return { ...s, paired: { ...s.paired, [m.code]: m.name } };
     case "atlas.situation":
       return { ...s, situationVersion: s.situationVersion + 1 };
-    case "atlas.location.setup":
-      return { ...s, ownTracks: { url: m.url, user: m.user, password: m.password, link: m.link } };
+    case "atlas.ext.setup":
+      return {
+        ...s,
+        extSetup: {
+          ...s.extSetup,
+          [m.id]: { ok: m.ok, text: m.text, ...(m.link ? { link: m.link } : {}), ...(m.fields ? { fields: m.fields } : {}) },
+        },
+      };
+    case "atlas.ext.test":
+      return { ...s, tests: { ...s.tests, [`ext:${m.id}`]: { ok: m.ok, message: m.message } } };
+    case "atlas.ext.signin":
+      // The sign-in page, in this tab: it sends the owner back to Settings when it's done.
+      if (m.url) window.location.assign(m.url);
+      return m.error ? { ...s, tests: { ...s.tests, [`ext:${m.id}`]: { ok: false, message: m.error } } } : s;
+    case "atlas.contacts.imported":
+      return { ...s, tests: { ...s.tests, contacts: { ok: m.ok, message: m.text } } };
     case "atlas.sense.hook":
       return { ...s, senseHook: { id: m.id, name: m.name, url: m.url } };
   }

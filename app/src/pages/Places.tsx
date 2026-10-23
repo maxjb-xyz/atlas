@@ -227,7 +227,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
       ]}
       tab={tab}
       onTab={setTab}
-      meta={s.view?.secrets.icloud ? "Calendar · iCloud" : "Calendar not connected"}
+      meta={s.view?.calendar.provider ? `Calendar · ${s.view.calendar.provider.name}` : "Calendar not connected"}
       dock={
         <div className="dock slim">
           <Composer atlas={atlas} placeholder="Move it, add a reminder, or ask what's coming" />

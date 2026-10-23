@@ -151,14 +151,6 @@ export const ClientMessage = z.discriminatedUnion("type", [
     type: z.literal("atlas.secret.set"),
     secret: z.discriminatedUnion("name", [
       z.object({ name: z.literal("elevenlabs_api_key"), value: z.string().min(8).max(200).nullable() }),
-      z.object({ name: z.literal("tavily_api_key"), value: z.string().min(8).max(200).nullable() }),
-      z.object({ name: z.literal("brave_api_key"), value: z.string().min(8).max(200).nullable() }),
-      z.object({ name: z.literal("exa_api_key"), value: z.string().min(8).max(200).nullable() }),
-      z.object({ name: z.literal("mapbox_token"), value: z.string().min(20).max(400).nullable() }),
-      z.object({
-        name: z.literal("icloud"),
-        value: z.object({ username: z.string().min(3).max(200), app_password: z.string().min(4).max(64) }).nullable(),
-      }),
     ]),
   }),
   /** Whether this device has Atlas in view, sent on connect and whenever it changes, so a message goes to one channel (§14). */
@@ -241,8 +233,23 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.node.remove"), id: z.string().max(64) }),
   /** Agenda's Done or Drop on a task (§5.1). */
   z.object({ type: z.literal("atlas.task.done"), id: z.string().max(64), done: z.boolean() }),
-  /** Settings → Devices → Set up OwnTracks: makes OwnTracks' own user and password (replacing any before) and its setup link. */
-  z.object({ type: z.literal("atlas.location.setup") }),
+  /** Settings → Extensions (§17): install a bundled one or a draft, remove one, or turn one on or off. */
+  z.object({ type: z.literal("atlas.ext.install"), id: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.ext.remove"), id: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.ext.state"), id: z.string().max(40), on: z.boolean() }),
+  /** An extension's secrets (an empty or null value removes one) and settings, as its manifest names them. */
+  z.object({
+    type: z.literal("atlas.ext.secrets"),
+    id: z.string().max(40),
+    secrets: z.record(z.string().max(40), z.string().max(4_000).nullable()),
+  }),
+  z.object({ type: z.literal("atlas.ext.settings"), id: z.string().max(40), settings: z.record(z.string().max(40), z.string().max(400)) }),
+  /** Run its setup (shown once), its live test, or start its sign-in. */
+  z.object({ type: z.literal("atlas.ext.setup"), id: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.ext.test"), id: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.ext.signin"), id: z.string().max(40) }),
+  /** Library → People → Import: from an extension that provides contacts, or a vCard file's text. */
+  z.object({ type: z.literal("atlas.contacts.import"), from: z.string().max(40).optional(), vcards: z.string().max(5_000_000).optional() }),
   /** Settings → Connections → Senses: a webhook source with its own address and key, or removing one. */
   z.object({ type: z.literal("atlas.sense.hook.add"), name: z.string().min(1).max(60) }),
   z.object({ type: z.literal("atlas.sense.hook.remove"), id: z.string().max(64) }),
@@ -448,19 +455,18 @@ export interface SettingsView {
   settings: import("./store/settings").Settings;
   secrets: {
     elevenlabs_api_key: boolean;
-    tavily_api_key: boolean;
-    brave_api_key: boolean;
-    exa_api_key: boolean;
-    mapbox_token: boolean;
-    /**
-     * `refused` says when and why iCloud last refused the sign-in, how many times in a row, and when Atlas tries
-     * again by itself; `note` says all that in a sentence. Meanwhile Atlas answers from its copy of the calendar.
-     */
-    icloud: {
-      username: string;
-      refused: { at: number; message: string; tries: number; next_try: number; note: string } | null;
-    } | null;
   };
+  /**
+   * The calendar (§10.1): which extension provides it, and `refused` when it last refused the sign-in, how many
+   * times in a row, and when Atlas tries again by itself; `note` says all that in a sentence. Meanwhile Atlas
+   * answers from its copy of the calendar.
+   */
+  calendar: {
+    provider: { id: string; name: string } | null;
+    refused: { at: number; message: string; tries: number; next_try: number; note: string } | null;
+  };
+  /** Extensions (§17): the installed ones, drafts, and the bundled ones not installed. */
+  extensions: ExtensionView[];
   chatgpt: ChatGPTView;
   /** Provider health, by "provider:model". */
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
@@ -505,6 +511,35 @@ export interface SensesView {
     error: string | null;
     error_at: number | null;
   }>;
+}
+
+/** One extension as Settings shows it (§17). */
+export interface ExtensionView {
+  id: string;
+  name: string;
+  version: string;
+  about: string;
+  provides: string[];
+  hosts: string[];
+  credit: string | null;
+  costs: string | null;
+  source: "bundled" | "atlas" | "owner";
+  /** "available" is a bundled one that isn't installed. */
+  state: "on" | "off" | "draft" | "available";
+  secrets: Array<{ name: string; label: string; help: string; optional: boolean; set: boolean }>;
+  settings: Array<{ name: string; label: string; help: string; optional: boolean; value: string }>;
+  signin: { help: string; redirect: string | null; signed_in: boolean } | null;
+  /** Minutes between looks, when it looks on the clock. */
+  every: number | null;
+  /** Its address for posts, when it takes them and is installed. */
+  address: string | null;
+  ok_at: number | null;
+  error: string | null;
+  error_at: number | null;
+  last_look: number | null;
+  methods: string[];
+  /** The code, for one Atlas or the owner wrote, so it can be read before it's installed. */
+  code: string | null;
 }
 
 export interface LocationView {
@@ -594,8 +629,12 @@ export type ServerMessage =
     }
   /** The answer to Pair: the device's name, or null when it didn't pair. */
   | { type: "atlas.node.paired"; code: string; name: string | null }
-  /** OwnTracks' setup, shown once: where it posts, its user and password, and the link that fills them in. */
-  | { type: "atlas.location.setup"; url: string; user: string; password: string; link: string }
+  /** An extension's setup, shown once: what to do, a link (shown as a QR code too), and values like a password. */
+  | { type: "atlas.ext.setup"; id: string; ok: boolean; text: string; link?: string; fields?: Array<{ label: string; value: string }> }
+  | { type: "atlas.ext.test"; id: string; ok: boolean; message: string }
+  /** Where to sign in for an extension, or why it can't start. */
+  | { type: "atlas.ext.signin"; id: string; url?: string; error?: string }
+  | { type: "atlas.contacts.imported"; ok: boolean; text: string }
   /** A new webhook source's address, with its key in it, shown once. */
   | { type: "atlas.sense.hook"; id: string; name: string; url: string }
   | { type: "atlas.test.result"; what: string; ref?: string; ok: boolean; message: string; detail?: unknown }

@@ -27,6 +27,20 @@ export const seams: {
   workspace: import("../agent").WorkspaceStub | null | undefined;
   /** Connected MCP servers: undefined uses the Agents SDK's client, null means none. */
   mcp: import("../mcp").McpClient | null | undefined;
+  /**
+   * Runs an extension's call outside its sandbox, for tests (a Dynamic Worker's gate would reach the real
+   * service). Null uses the sandbox.
+   */
+  extension:
+    | ((o: {
+        id: string;
+        method: string;
+        args: unknown[];
+        ctx: Record<string, unknown>;
+        secrets: Record<string, string>;
+        hosts: string[];
+      }) => Promise<unknown>)
+    | null;
 } = {
   makeBrain: null,
   calendar: undefined,
@@ -38,4 +52,5 @@ export const seams: {
   browser: undefined,
   workspace: undefined,
   mcp: undefined,
+  extension: null,
 };

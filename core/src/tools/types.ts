@@ -67,6 +67,8 @@ export interface ToolContext {
   devices?: DevicesApi | null;
   /** Automations, for owner runs; null elsewhere. */
   automations: AutomationsApi | null;
+  /** Extensions (§17): keeps one Atlas wrote as a draft, for the owner to install. Owner runs only. */
+  extensions?: { draft(code: string): Promise<{ id: string; name: string; hosts: string[] }> } | null;
   /** Speaking up changed (`speaking_up`): the moments are put on the clock again. */
   speaking?: () => Promise<void>;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
