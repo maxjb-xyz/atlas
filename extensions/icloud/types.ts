@@ -19,6 +19,7 @@ export interface CalendarSource {
   list(range: CalendarRange): Promise<CalendarEvent[]>;
   held?(range: CalendarRange): { events: CalendarEvent[]; as_of: number } | null;
   check(): Promise<CalendarCheck>;
+  move?(id: string, to: { start: string; end: string }): Promise<{ before: CalendarEvent; event: CalendarEvent }>;
 }
 
 export interface ICloudCredentials {

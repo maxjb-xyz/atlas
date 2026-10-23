@@ -48,7 +48,7 @@ import { getState, setState } from "./store/state";
 import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
 import { type BrainChoice, getSecret, readSettings, type Settings, setSecret, writeSettings } from "./store/settings";
 import { isoLocal, isValidZone, longLocal, parseWhen, shortLocal, zoneOf } from "./time";
-import { calendarRead } from "./tools/calendar";
+import { calendarMove, calendarRead } from "./tools/calendar";
 import { delegate } from "./tools/delegate";
 import { memoryTools, recall } from "./tools/memory";
 import { agendaList, agendaTools } from "./tools/agenda";
@@ -203,6 +203,7 @@ const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
 const TOOLS: Record<Actor, Tool[]> = {
   owner: [
     calendarRead,
+    calendarMove,
     ...agendaTools,
     ...memoryTools,
     delegate,
@@ -231,6 +232,7 @@ const TOOLS: Record<Actor, Tool[]> = {
   ],
   atlas: [
     calendarRead,
+    calendarMove,
     ...agendaTools,
     recall,
     ...webTools,
@@ -2650,7 +2652,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   // --- undo and live checks ---------------------------------------------------
 
   async #undo(logId: string, connection: Connection): Promise<void> {
-    const out = await undoReceipt(this.#sql, logId, this.#clock);
+    const out = await undoReceipt(this.#sql, logId, this.#clock, this.#calendar.source(readSettings(this.#sql)));
     if (!out.ok) {
       this.#send(connection, { type: "atlas.error", message: out.message });
       return;

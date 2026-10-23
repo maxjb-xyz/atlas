@@ -28,6 +28,8 @@ export interface CalendarSource {
   held?(range: CalendarRange): Promise<{ events: CalendarEvent[]; as_of: number } | null>;
   /** A live check for Settings: signs in and counts what it found. */
   check(): Promise<CalendarCheck>;
+  /** Moves an event to a new start and end; what it was before, and after. Absent when the provider can't change events. */
+  move?(id: string, to: { start: string; end: string }): Promise<{ before: CalendarEvent; event: CalendarEvent }>;
 }
 
 /** What a read gives the tools and the app: the events, and, when the provider couldn't be asked, how old they are and why. */
@@ -40,6 +42,7 @@ export interface CalendarRead {
 export interface Calendar {
   read(range: CalendarRange): Promise<CalendarRead>;
   check(): Promise<CalendarCheck>;
+  move?(id: string, to: { start: string; end: string }): Promise<{ before: CalendarEvent; event: CalendarEvent }>;
 }
 
 /** Thrown with a plain reason the owner can act on (§22: no dead ends). */

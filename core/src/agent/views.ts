@@ -326,6 +326,7 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
     "brain.fallback",
     "context.summary",
     "settings.change",
+    "calendar.change",
     "delivery",
     "automation.run",
     "automation.change",
@@ -337,6 +338,7 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
   ],
   actions: [
     "tool.result",
+    "calendar.change",
     "record.change",
     "agenda.change",
     "area.change",

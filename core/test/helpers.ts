@@ -3,7 +3,7 @@ import type { Decider } from "../src/brains/decide";
 import type { Embedder } from "../src/brains/embed";
 import type { Brain, BrainEvent, BrainRequest } from "../src/brains/types";
 import { BrainError } from "../src/brains/types";
-import type { Calendar, CalendarEvent, CalendarRange, CalendarSource } from "../src/calendar/types";
+import { type Calendar, type CalendarEvent, CalendarError, type CalendarRange, type CalendarSource } from "../src/calendar/types";
 import { normalize } from "../src/store/memory";
 
 export const env = testEnv as unknown as Env;
@@ -63,6 +63,13 @@ export function fakeCalendar(events: CalendarEvent[]): CalendarSource & Calendar
     },
     async check() {
       return { calendars: ["Home", "Work"], events_next_30_days: events.length };
+    },
+    async move(id, to) {
+      const i = events.findIndex((e) => e.id === id);
+      if (i < 0) throw new CalendarError("That event isn't on the calendar.", "protocol");
+      const before = events[i]!;
+      events[i] = { ...before, ...to };
+      return { before, event: events[i]! };
     },
   };
 }

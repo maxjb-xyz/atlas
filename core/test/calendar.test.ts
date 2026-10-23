@@ -8,7 +8,7 @@ import {
   FRESH_MS,
   icloudCalendar,
 } from "../../extensions/icloud/caldav";
-import { parseDuration, parseEvents, resolveZone, unfold, zonedToUtc } from "../../extensions/icloud/ical";
+import { moveIn, parseDuration, parseEvents, resolveZone, unfold, zonedToUtc } from "../../extensions/icloud/ical";
 import { CalendarError } from "../../extensions/icloud/types";
 import { multistatus, parseXml, find } from "../../extensions/icloud/xml";
 import principalXml from "./fixtures/caldav/principal.xml?raw";
@@ -152,6 +152,61 @@ describe("ical", () => {
     const ics = "BEGIN:VEVENT\nUID:g\nDTSTART:20261021T070000\nEND:VEVENT";
     expect(parseEvents(ics, "W")[0]!.start).toBe("2026-10-21T07:00:00.000Z");
     expect(parseEvents(ics, "W", "America/Los_Angeles")[0]!.start).toBe("2026-10-21T14:00:00.000Z");
+  });
+});
+
+describe("moving an event", () => {
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    "UID:dentist-2",
+    "DTSTAMP:20261001T000000Z",
+    "DTSTART;TZID=America/New_York:20261022T110000",
+    "DURATION:PT1H",
+    "SEQUENCE:2",
+    "SUMMARY:Dentist",
+    "BEGIN:VALARM",
+    "TRIGGER:-PT15M",
+    "DURATION:PT5M",
+    "END:VALARM",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:other",
+    "DTSTART:20261023T150000Z",
+    "SUMMARY:Other",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  it("changes only that event's start and end, counts the change, and leaves alarms and other events alone", () => {
+    const out = moveIn(
+      ics,
+      "dentist-2",
+      { start: "2026-10-23T19:00:00.000Z", end: "2026-10-23T20:00:00.000Z", all_day: false },
+      Date.parse("2026-10-21T09:00:00Z"),
+    );
+    expect(typeof out).toBe("string");
+    const lines = unfold(out as string);
+    expect(lines).toContain("DTSTART:20261023T190000Z");
+    expect(lines).toContain("DTEND:20261023T200000Z");
+    expect(lines).toContain("SEQUENCE:3");
+    expect(lines).toContain("DTSTAMP:20261021T090000Z");
+    expect(lines.filter((l) => l.startsWith("SEQUENCE"))).toHaveLength(1);
+    // The alarm keeps its own DURATION; the other event keeps its time.
+    expect(lines).toContain("DURATION:PT5M");
+    expect(lines).not.toContain("DURATION:PT1H");
+    expect(lines).toContain("DTSTART:20261023T150000Z");
+    const ev = parseEvents(out as string, "Home").find((e) => e.id === "dentist-2")!;
+    expect(ev).toMatchObject({ start: "2026-10-23T19:00:00.000Z", end: "2026-10-23T20:00:00.000Z", title: "Dentist" });
+  });
+
+  it("won't move a repeating event, and says when the event isn't there", () => {
+    const repeats = ics.replace("SEQUENCE:2", "RRULE:FREQ=WEEKLY");
+    expect(moveIn(repeats, "dentist-2", { start: "2026-10-23", end: "2026-10-24", all_day: true })).toBe("repeats");
+    expect(moveIn(ics, "nope", { start: "2026-10-23", end: "2026-10-24", all_day: true })).toBeNull();
+    const allDay = moveIn(ics, "other", { start: "2026-10-30", end: "2026-10-31", all_day: true }) as string;
+    expect(unfold(allDay)).toContain("DTSTART;VALUE=DATE:20261030");
   });
 });
 
@@ -367,5 +422,57 @@ describe("icloudCalendar", () => {
     expect(seen.map((r) => r.method)).toEqual(["REPORT", "REPORT", "REPORT"]);
     expect(seen[0]!.body).toContain('<c:expand start="20270601T000000Z" end="20270608T000000Z"/>');
     expect(cal.held!(later)).toBeNull();
+  });
+
+  it("moves an event: finds it by UID, writes it back only if unchanged, and keeps the new time in the copy", async () => {
+    const { fetchFn, seen } = fakeICloud();
+    let etag = '"e-5797"';
+    const put: Array<{ url: string; ifMatch: string | null; body: string }> = [];
+    const f = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = String(init?.body ?? "");
+      if (init?.method === "REPORT" && body.includes("text-match")) {
+        expect(body).toContain(">dentist-2</c:text-match>");
+        const one = homeEventsXml.slice(homeEventsXml.indexOf("<response>", homeEventsXml.indexOf("gone.ics")));
+        return new Response(
+          `<?xml version="1.0"?><multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">${one.replace('"e-5797"', etag)}`,
+          {
+            status: 207,
+          },
+        );
+      }
+      if (init?.method === "PUT") {
+        const ifMatch = new Headers(init.headers).get("If-Match");
+        put.push({ url: String(input), ifMatch, body });
+        return new Response(null, { status: ifMatch === etag ? 204 : 412 });
+      }
+      return fetchFn(input, init);
+    }) as typeof fetch;
+    const cal = icloudCalendar(CREDS, { fetch: f });
+    await cal.list(WEEK);
+    const out = await cal.move!("dentist-2", { start: "2026-10-23T19:00:00.000Z", end: "2026-10-23T20:00:00.000Z" });
+    expect(out.before).toMatchObject({ title: "Dentist", start: "2026-10-22T15:00:00.000Z" });
+    expect(out.event).toMatchObject({ title: "Dentist", start: "2026-10-23T19:00:00.000Z", end: "2026-10-23T20:00:00.000Z" });
+    expect(put[0]!.url).toBe("https://p42-caldav.icloud.com/123456789/calendars/home/dentist.ics");
+    expect(put[0]!.ifMatch).toBe('"e-5797"');
+    expect(put[0]!.body).toContain("DTSTART:20261023T190000Z");
+    expect(put[0]!.body).toContain("BEGIN:VALARM");
+    // The copy answers with the new time, without asking iCloud.
+    const before = seen.length;
+    const held = cal.held!(WEEK)!.events.find((e) => e.id === "dentist-2" && e.calendar === "Home")!;
+    expect(held.start).toBe("2026-10-23T19:00:00.000Z");
+    expect(seen.length).toBe(before);
+    // Changed in another app meanwhile: nothing is overwritten.
+    etag = '"e-9999"';
+    const f2 = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "PUT" ? new Response(null, { status: 412 }) : f(input, init)) as typeof fetch;
+    const cal2 = icloudCalendar(CREDS, { fetch: f2 });
+    await cal2.list(WEEK);
+    const e = await failure(cal2.move!("dentist-2", { start: "2026-10-24T19:00:00.000Z", end: "2026-10-24T20:00:00.000Z" }));
+    expect(e.message).toContain("changed in iCloud since Atlas read it");
+    // One occurrence of a repeating event isn't moved.
+    const r = await failure(
+      cal.move!("standup-1@icloud.com::20261026T140000Z", { start: "2026-10-26T15:00:00.000Z", end: "2026-10-26T15:30:00.000Z" }),
+    );
+    expect(r.message).toContain("repeats");
   });
 });

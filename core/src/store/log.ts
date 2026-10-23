@@ -37,6 +37,8 @@ export type LogKind =
   | "file.change"
   /** A skill was learned, patched, archived or brought back (§9.3). */
   | "skill.change"
+  /** An event on the owner's calendar was changed from Atlas: moved back by Undo (§12.1). */
+  | "calendar.change"
   /** Something a sense noticed (§10.1): arriving at or leaving a place, a real move, location turned off or on. */
   | "sense"
   /** What awareness made of a sense event or a rhythm moment (§10.3): stopped by a rule, decided not to matter, or woke Atlas, and what it chose; and the owner's reaction to a nudge. */
@@ -62,6 +64,8 @@ export type Undo =
   | { kind: "page.undo"; id: string; version: number }
   /** Undoes a skill's version `version`: back to the one before, or archived when it was the first. */
   | { kind: "skill.undo"; id: string; version: number }
+  /** Moves a calendar event back to where it was. */
+  | { kind: "calendar.move"; id: string; title: string; start: string; end: string }
   /** Puts Speaking up back the way it was before Atlas changed it. */
   | { kind: "speaking.restore"; before: unknown };
 

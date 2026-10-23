@@ -88,6 +88,8 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         what: `${{ made: "Made", changed: "Changed", on: "Turned on", paused: "Paused", deleted: "Deleted" }[str(b.change)] ?? "Changed"} the automation ${str(b.name)}${b.why ? `: ${str(b.why)}` : ""}`,
         kind: `automation.${str(b.change)}`,
       };
+    case "calendar.change":
+      return { who: "You", what: `Moved ${str(b.title)} back`, kind: "calendar.moved" };
     case "page.change":
       return {
         who: r.actor === "owner" ? "You" : "Atlas",
@@ -117,14 +119,30 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         kind: `file.${str(b.change)}`,
       };
     case "sense": {
-      if (b.source === "situation" || b.source === "calendar" || b.source === "webhook") {
+      if (b.source !== "location" && b.source !== "node" && b.source !== "device") {
+        // The calendar, the situation, a webhook, an open loop's time, or an extension's item (§17).
         const who =
           b.source === "calendar"
             ? "Calendar"
             : b.source === "webhook"
               ? str((b.hook as { name?: string } | undefined)?.name) || "Webhook"
-              : ({ travel: "Traffic", weather: "Weather" }[str(b.event)] ?? "Situation");
-        return { who, what: `${str(b.what)}${b.repeat ? " (a repeat, set aside)" : ""}`, kind: `sense.${str(b.source)}` };
+              : b.source === "situation"
+                ? ({ travel: "Traffic", weather: "Weather" }[str(b.event)] ?? "Situation")
+                : b.source === "loop"
+                  ? "Waiting"
+                  : str(b.ext_name) || str(b.source);
+        // What the quarantined reader pulled from someone else's words (§10.4 step 2).
+        const facts =
+          b.facts && typeof b.facts === "object"
+            ? Object.entries(b.facts as Record<string, unknown>)
+                .map(([k, v]) => `${k.replace(/_/g, " ")} ${Array.isArray(v) ? v.join(", ") : String(v)}`)
+                .join(" · ")
+            : "";
+        return {
+          who,
+          what: `${str(b.what)}${b.repeat ? " (a repeat, set aside)" : ""}${facts ? `. Read: ${facts}` : ""}`,
+          kind: `sense.${str(b.source)}`,
+        };
       }
       if (b.source === "node" || b.source === "device") {
         const device = str((b.node as { name?: string } | undefined)?.name);

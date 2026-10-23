@@ -1,6 +1,6 @@
 // iCloud (VISION §10.1, §7.1): the owner's calendar over CalDAV and their
-// contacts over CardDAV, read with their Apple ID and an app-specific
-// password. Every request to iCloud carries the sign-in, so each counts as
+// contacts over CardDAV, with their Apple ID and an app-specific password.
+// Atlas reads both, and moves an event when the owner's words call for it. Every request to iCloud carries the sign-in, so each counts as
 // one: the calendar is kept as a copy (the extension's state) and only
 // calendars that changed are read again. A refusal comes back as an "auth"
 // failure, and the core waits before trying again so the account isn't locked.
@@ -28,8 +28,9 @@ const ext: Extension = {
   manifest: {
     id: "icloud",
     name: "iCloud",
-    version: "1.0.0",
-    about: "Your iCloud calendar and contacts, read with your Apple ID and an app-specific password. Atlas only reads them.",
+    version: "1.1.0",
+    about:
+      "Your iCloud calendar and contacts, read with your Apple ID and an app-specific password. Atlas reads them, and moves an event when you ask, with Undo.",
     provides: ["calendar", "contacts"],
     hosts: ["icloud.com"],
     settings: [{ name: "username", label: "Apple ID", help: "The email you sign in to iCloud with." }],
@@ -51,6 +52,12 @@ const ext: Extension = {
     }
     const events: CalendarEvent[] = await cal.list(range);
     return { events, ...(state !== undefined ? { state: state as never } : {}) };
+  },
+  async move(ctx, m) {
+    let state: CalendarCopy | null | undefined;
+    const cal = source(ctx, [], (c) => (state = c));
+    const out = await cal.move!(m.id, { start: m.start, end: m.end });
+    return { ...out, ...(state !== undefined ? { state: state as never } : {}) };
   },
   async test(ctx) {
     let state: CalendarCopy | null | undefined;

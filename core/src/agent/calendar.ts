@@ -74,6 +74,14 @@ export class CalendarSense {
         const r = await ask(range, true).catch(() => null);
         return r?.as_of ? { events: r.events, as_of: r.as_of } : null;
       },
+      move: async (eventId, to) => {
+        try {
+          return await this.host.call<{ before: CalendarEvent; event: CalendarEvent }>(id, "move", [{ id: eventId, ...to }]);
+        } catch (err) {
+          const code = err instanceof ExtensionError && (err.code === "auth" || err.code === "network") ? err.code : "protocol";
+          throw new CalendarError(err instanceof Error ? err.message : String(err), code);
+        }
+      },
       check: async () => {
         try {
           return { text: (await this.host.call<{ text: string }>(id, "test")).text };
@@ -170,6 +178,24 @@ export class CalendarSense {
           return fallback(range, err.message, err.code);
         }
       },
+      // A change is never made from the copy: it waits out a refusal like a read, then asks the provider.
+      ...(source.move
+        ? {
+            move: async (eventId: string, to: { start: string; end: string }) => {
+              const waiting = this.refusal();
+              if (waiting && waiting.next_try > Date.now()) throw new CalendarError(this.note(waiting, settings), "auth");
+              try {
+                const out = await source.move!(eventId, to);
+                this.#accepted();
+                return out;
+              } catch (err) {
+                if (err instanceof CalendarError && err.code === "auth")
+                  throw new CalendarError(this.note(this.#refused(err), settings), "auth");
+                throw err;
+              }
+            },
+          }
+        : {}),
       // The owner pressing Test is always one fresh try.
       check: async () => {
         try {

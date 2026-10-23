@@ -320,7 +320,8 @@ export class ExtensionDesk {
     for (const it of items.slice(0, 50)) {
       const { raw, ...rest } = it;
       // A post to a webhook source stays that source's, read by the extension that claimed it.
-      const item = (hook ? { ...rest, source: "webhook", hook, ext: e.id } : { ...rest, source, ext: e.id }) as unknown as SenseItem;
+      const by = { ext: e.id, ext_name: e.manifest.name };
+      const item = (hook ? { ...rest, source: "webhook", hook, ...by } : { ...rest, source, ...by }) as unknown as SenseItem;
       this.d.take([item], raw ? { raw } : {});
     }
   }

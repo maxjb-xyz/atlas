@@ -193,6 +193,50 @@ describe("contacts", () => {
   });
 });
 
+describe("an appointment that moved", () => {
+  it("moves the event with a receipt, and Undo puts it back", async () => {
+    const at = (h: number) => new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 + h * 3_600_000).toISOString();
+    const cal = fakeCalendar([{ id: "dentist-2", calendar: "Home", title: "Dentist", start: at(24), end: at(25), all_day: false }]);
+    seams.calendar = cal;
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "UTC" });
+    await s.next("atlas.snapshot");
+    const to = at(50).slice(0, 16);
+    const b = brain([
+      call("calendar_read", { start: at(0).slice(0, 10), end: at(72).slice(0, 10) }),
+      (req) => {
+        expect(String(req.messages.at(-1)!.content)).toContain('"id":"dentist-2"');
+        return call("calendar_move", { id: "dentist-2", start: to, why: "the dentist's office moved it" });
+      },
+      say("Moved."),
+    ]);
+    s.send({ type: "atlas.say", text: "the dentist moved me to the day after", client_id: "m1" });
+    const receiptMsg = await s.next("atlas.rows", (m) => m.rows.some((r) => r.kind === "tool.result" && r.body.receipt));
+    const receipt = receiptMsg.rows.find((r) => r.kind === "tool.result" && r.body.receipt)!;
+    await s.next("atlas.run", (m) => m.state === "replied");
+    expect(b.requests).toHaveLength(3);
+    expect((receipt.body.receipt as { text: string }).text).toMatch(/^Moved · Dentist · .+ → .+ · the dentist's office moved it$/);
+    const moved = (await cal.list({ start: new Date(0), end: new Date(Date.now() + 1e10) }))[0]!;
+    // The new start is the local time asked for, in the owner's zone.
+    expect(String(receipt.body.output)).toContain(`"to":"${to}`);
+    expect(moved.start).not.toBe(at(24));
+    // The length stayed an hour.
+    expect(Date.parse(moved.end) - Date.parse(moved.start)).toBe(3_600_000);
+
+    s.send({ type: "atlas.undo", log_id: receipt.id });
+    const undone = await s.next("atlas.rows", (m) => m.rows.some((r) => r.kind === "calendar.change"));
+    expect(undone.rows.find((r) => r.kind === "calendar.change")!.body).toMatchObject({
+      change: "moved",
+      undo_of: receipt.id,
+      title: "Dentist",
+    });
+    const back = (await cal.list({ start: new Date(0), end: new Date(Date.now() + 1e10) }))[0]!;
+    expect(back.start).toBe(at(24));
+    s.send({ type: "atlas.undo", log_id: receipt.id });
+    expect((await s.next("atlas.error")).message).toContain("already undone");
+  });
+});
+
 describe("open loops", () => {
   it("closes a loop when the answer comes in, and says nothing more", async () => {
     await inOwner((_a, sql) => importCards(sql, parseVCards(VCF), "iCloud contacts"));
