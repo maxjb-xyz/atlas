@@ -1197,6 +1197,7 @@ The owner's list of things Atlas should grow into. None of it is in M0 to M7, bu
 | **An animated avatar** | A humanoid presence that appears on a display when it helps, and points at or works with what's on screen. | The same: views render anywhere, and the voice stream carries timing (ElevenLabs returns alignment) so lip-sync is possible later. |
 | **Debrief** | On a schedule or on request, you talk freely about your day while Atlas mostly listens, then shows what it took away: records, commitments, a journal entry, follow-ups, each one to confirm. | An automation template (§13) plus a voice "listen" mode with backchannels. Extraction (§5.4) already does the rest. |
 | **Cloudflare Sandboxes** | Already in the plan: the workspace (§9.1). | Nothing extra. |
+| **A heartbeat** (to consider, 2026-10-23) | Atlas itself glances at everything every 30 to 60 minutes while the owner is awake, even when nothing came in, and usually stays quiet. It catches what no event announces ("it's 5:40, you haven't left, and your 6:00 is across town"). Today the heartbeat only refreshes the calendar, weather and traffic and looks over the later pile; Atlas's own looks come from events (§10.4) and the routines (§13.4). | It costs a main-brain run per beat, so it needs the cost on the Brains page and a reason the events and routines don't cover. A look on the clock is already one agenda item (the senses' tick), so it would be a step in that tick, not a new mechanism. |
 
 ---
 
