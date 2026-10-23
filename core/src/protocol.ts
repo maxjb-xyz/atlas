@@ -42,6 +42,9 @@ export interface RecordView {
   corrections: number;
   /** The value before the latest correction. */
   was: { name: string; fact: string; at: number } | null;
+  /** For a person (§7.1): how to reach them, each with where it came from, and how much the owner trusts them. */
+  channels?: Array<{ kind: string; value: string; via: string }>;
+  trust?: string;
 }
 
 export type HistoryFilter = "everything" | "actions" | "conversations" | "jobs";
@@ -231,6 +234,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.node.allow"), id: z.string().max(64), capability: z.string().max(40), on: z.boolean() }),
   /** Unpairs a device at once. */
   z.object({ type: z.literal("atlas.node.remove"), id: z.string().max(64) }),
+  /** Agenda's Close on an open loop (§10.4). */
+  z.object({ type: z.literal("atlas.loop.close"), id: z.string().max(64) }),
   /** Agenda's Done or Drop on a task (§5.1). */
   z.object({ type: z.literal("atlas.task.done"), id: z.string().max(64), done: z.boolean() }),
   /** Settings → Extensions (§17): install a bundled one or a draft, remove one, or turn one on or off. */

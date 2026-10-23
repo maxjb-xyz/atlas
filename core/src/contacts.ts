@@ -313,3 +313,50 @@ export function importCards(sql: Sql, cards: Card[], via: string): { added: numb
   }
   return out;
 }
+
+/** The person an item is from, by the address or handle in its `from`: "Doug <doug@acme.com>", "doug-h". */
+export function personFrom(sql: Sql, from: string): AtlasRecord | null {
+  const email = addressesIn(from)[0];
+  if (email) return findPerson(sql, "email", email);
+  const handle = from.trim();
+  if (!handle || /\s/.test(handle)) return null;
+  for (const kind of ["telegram", "github", "linear", "handle"] as const) {
+    const r = findPerson(sql, kind, handle);
+    if (r) return r;
+  }
+  return null;
+}
+
+/**
+ * The last time the owner was in touch with someone: the newest item from
+ * or with them, or anything sent to them, that names them. Older items,
+ * from before items said who they were from, are matched by an address on
+ * their record.
+ */
+export function lastTouch(sql: Sql, r: AtlasRecord): { at: number; what: string } | null {
+  const said = (body: string) => {
+    const b = JSON.parse(body) as { what?: unknown; text?: unknown; to?: unknown };
+    return String(b.what ?? b.text ?? (b.to ? `Sent to ${String(b.to)}` : "")).slice(0, 200);
+  };
+  const row = sql
+    .exec<{ at: number; body: string }>(
+      `SELECT at, body FROM log WHERE kind IN ('sense', 'delivery', 'face.in', 'face.out') AND json_extract(body, '$.person') = ? ORDER BY seq DESC LIMIT 1`,
+      r.id,
+    )
+    .toArray()[0];
+  if (row) return { at: row.at, what: said(row.body) };
+  const mine = new Set(
+    channelsOf(r)
+      .filter((c) => c.kind === "email")
+      .map((c) => normal("email", c.value)),
+  );
+  if (!mine.size) return null;
+  for (const x of sql
+    .exec<{ at: number; body: string; from: string }>(
+      `SELECT at, body, json_extract(body, '$.from') AS "from" FROM log WHERE kind = 'sense' AND json_extract(body, '$.from') LIKE '%@%' ORDER BY seq DESC LIMIT 500`,
+    )
+    .toArray()) {
+    if (addressesIn(x.from).some((a) => mine.has(a))) return { at: x.at, what: said(x.body) };
+  }
+  return null;
+}

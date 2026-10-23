@@ -23,6 +23,7 @@ import { type AgendaItem, createItem, finish, rearm, upcoming } from "../store/a
 import { parse, type Sql } from "../store/db";
 import { append, type LogRow } from "../store/log";
 import { calendarLook, describe, laterPile, mark, markSeen, take as collect, unfinished, type IntakeItem, type SenseItem } from "../intake";
+import { answered, dueItem, detailOf } from "../loops";
 import { findRecords } from "../store/records";
 import { readSettings, type Settings, writeSettings } from "../store/settings";
 import { getState, setState } from "../store/state";
@@ -225,6 +226,9 @@ export class SenseDesk {
   take(items: Array<Omit<SenseItem, "what"> & { what?: string }>, o: { raw?: string; refresh?: boolean } = {}): LogRow[] {
     if (!items.length) return [];
     const { rows, fresh } = collect(this.d.sql, items, o.raw ? { raw: o.raw } : {});
+    // An item from someone a loop waits on, or in its thread, closes it as it comes in (§10.4).
+    const closed = fresh.flatMap((r) => answered(this.d.sql, r.body as SenseItem, r.id, describe(r)));
+    for (const loop of closed) void this.d.clock.unschedule(loop).catch(() => {});
     this.d.rows(rows);
     this.d.background(async () => {
       // A move changes the situation, so it's brought up to date before the move is weighed.
@@ -296,8 +300,10 @@ export class SenseDesk {
     // An event coming up (§10.3): with a trip, it's nearly time to leave, which is always a look while that switch is on.
     const soon = b.source === "calendar" && b.event === "soon";
     const leaving = soon && typeof b.leave_by === "number" && isOn(settings, "leave");
+    // An open loop's time came with nothing heard (§10.4): the owner asked to be told, or Atlas promised itself a look.
+    const loop = b.source === "loop";
     const noticing = isOn(settings, "noticing");
-    if (!noticing && !leaving) {
+    if (!noticing && !leaving && !loop) {
       settle("never", "rules", "Speaking up about what Atlas notices is off.");
       return;
     }
@@ -361,6 +367,10 @@ export class SenseDesk {
       now = true;
       why = why ? `${why}; it's nearly time to leave.` : "It's nearly time to leave.";
     }
+    if (loop) {
+      now = true;
+      why = "An open loop's time came, and nothing was heard.";
+    }
     const top = scores
       ? Object.fromEntries(
           Object.entries(scores).map(([k, v]) => [
@@ -387,7 +397,7 @@ export class SenseDesk {
         return;
       }
     }
-    if (!now && soon) {
+    if (!now && soon && !loop) {
       settle(
         "never",
         scores ? "decide" : "rules",
@@ -408,6 +418,9 @@ export class SenseDesk {
     const note = [
       `[Atlas's senses, not the owner] ${event}.`,
       matched.length ? `It may matter to: ${matched.map((m) => m.text).join("; ")}.` : "",
+      loop
+        ? "Nothing came by the time this loop set. If the owner asked to be told, tell them in a sentence, with what they might do (a nudge to the person, a call). If you opened it after asking someone something, decide whether a follow-up would help, and offer it; don't send anything to anyone without the owner."
+        : "",
       leaving
         ? "It's nearly time to leave for it. If they're already there or on their way (see the situation), or it clearly doesn't need them to go, don't nudge about leaving. Otherwise say when to leave and how long it takes, and anything else that would help on the way (traffic, the weather, something to bring or pick up)."
         : "",
@@ -422,6 +435,7 @@ export class SenseDesk {
       trigger: `sense:${row.id}`,
       note,
       from: leaving ? "leave" : "noticing",
+      ...(loop && typeof b.ref === "string" ? { ref: b.ref } : {}),
       ...(ref ? { ref: ref.id } : {}),
     });
     mark(this.d.sql, row.id, { state: out.error ? "failed" : "done", run_id: out.run_id, ...(out.error ? { why: out.error } : {}) });
@@ -651,6 +665,13 @@ export class SenseDesk {
       },
     ]);
     finish(this.d.sql, item.id, "done", null);
+  }
+
+  /** An open loop came due (the item is leased): if it's still open, it goes to the intake as an item, and the loop is done. */
+  async loopDue(item: AgendaItem): Promise<void> {
+    const tz = zoneOf(readSettings(this.d.sql));
+    this.take([dueItem(item, tz)]);
+    finish(this.d.sql, item.id, "done", null, { why: `Nothing was heard by then: ${detailOf(item).about}.` });
   }
 
   /**

@@ -400,6 +400,22 @@ function PersonView({
         {r.fact || "Atlas knows their name, and not much else yet."}
       </p>
       <div className="kv">
+        {r.trust && (
+          <>
+            <span className="lab">Trust</span>
+            <span>{r.trust === "unknown" ? "Not set" : r.trust.charAt(0).toUpperCase() + r.trust.slice(1)}</span>
+          </>
+        )}
+        {(r.channels ?? []).map((c) => (
+          <span key={`${c.kind}:${c.value}`} style={{ display: "contents" }}>
+            <span className="lab">{c.kind}</span>
+            <span style={{ overflowWrap: "anywhere" }}>
+              {c.value} <span className="faint small">· from {c.via}</span>
+            </span>
+          </span>
+        ))}
+        <span className="lab">Last in touch</span>
+        <span>{p.last ? `${shortDay(p.last.at)}: ${p.last.what}` : "Not that Atlas has seen"}</span>
         {details.map(([k, v]) => (
           <span key={k} style={{ display: "contents" }}>
             <span className="lab">{k.replace(/_/g, " ")}</span>
@@ -438,6 +454,24 @@ function PersonView({
                 </div>
               );
             })}
+          </div>
+        </>
+      )}
+      {p.open.length > 0 && (
+        <>
+          <div className="section-rule">
+            <span className="lab">Open with them</span>
+          </div>
+          <div className="rows">
+            {p.open.map((o) => (
+              <div className="r small" key={`${o.kind}:${o.title}`}>
+                <span className="tag ac" style={{ width: 84, flex: "none", justifyContent: "center" }}>
+                  {o.kind === "task" ? "◆ To do" : "◆ Waiting"}
+                </span>
+                <span className="grow">{o.title}</span>
+                {o.by && <span className="mono faint">{shortDay(o.by)}</span>}
+              </div>
+            ))}
           </div>
         </>
       )}

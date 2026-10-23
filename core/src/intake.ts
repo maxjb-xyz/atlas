@@ -15,6 +15,7 @@
 import { z } from "zod";
 import { personText, type Calendar, type CalendarEvent } from "./calendar/types";
 import { minutes } from "./maps";
+import { personFrom } from "./contacts";
 import { providing } from "./extensions";
 import { nodes } from "./nodes";
 import { cache } from "./situation";
@@ -109,6 +110,11 @@ export function take(
   const fresh: LogRow[] = [];
   for (const it of items) {
     const item = { ...it, what: it.what || describe({ body: it as Record<string, unknown> }) } as SenseItem;
+    // Who it's from, as a person Atlas knows (§7.1): kept on the row, so "the last time we were in touch" is a lookup.
+    if (!item.person && typeof item.from === "string" && item.from) {
+      const p = personFrom(sql, item.from);
+      if (p && !p.fields.is_owner) item.person = p.id;
+    }
     const key = keyOf(item);
     const dup =
       key != null &&

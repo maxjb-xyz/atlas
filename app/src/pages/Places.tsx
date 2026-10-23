@@ -167,7 +167,7 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
 interface AgendaEntry {
   at: Date;
   allDay: boolean;
-  kind: "Event" | "Reminder" | "Promise" | "Job" | "Automation";
+  kind: "Event" | "Reminder" | "Promise" | "Job" | "Automation" | "Waiting";
   title: string;
   source: string;
   id: string;
@@ -175,6 +175,8 @@ interface AgendaEntry {
   said?: { text: string; at: number };
   /** Can be cancelled from here. */
   cancel?: boolean;
+  /** An open loop (§10.4), closed from here. */
+  close?: boolean;
 }
 
 export function Agenda({ atlas }: { atlas: Atlas }) {
@@ -195,19 +197,29 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
       .filter(
         (a) =>
           (a.state === "scheduled" || a.state === "running") &&
-          !["notify", "approval", "skills", "situation", "rhythm", "errand"].includes(a.kind),
+          !["notify", "approval", "skills", "situation", "rhythm", "errand", "looks", "device"].includes(a.kind),
       )
       .map((a): AgendaEntry => {
         const d = a.source.detail ?? {};
         return {
           at: new Date(a.due_at),
           allDay: false,
-          kind: a.kind === "job" ? "Job" : a.kind === "promise" ? "Promise" : a.kind === "automation" ? "Automation" : "Reminder",
+          kind:
+            a.kind === "job"
+              ? "Job"
+              : a.kind === "promise"
+                ? "Promise"
+                : a.kind === "automation"
+                  ? "Automation"
+                  : a.kind === "loop"
+                    ? "Waiting"
+                    : "Reminder",
           title: a.title,
           source: a.kind === "job" ? "Helper" : a.kind === "automation" ? "Automations" : "Atlas",
           id: a.id,
           ...(typeof d.said === "string" ? { said: { text: d.said, at: typeof d.said_at === "number" ? d.said_at : a.created_at } } : {}),
           cancel: (a.kind === "reminder" || a.kind === "promise") && a.state === "scheduled",
+          close: a.kind === "loop" && a.state === "scheduled",
         };
       }),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
@@ -310,7 +322,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                   </div>
                   <div className="rows">
                     {list.map((e) => {
-                      const atlasOwn = e.kind === "Reminder" || e.kind === "Promise";
+                      const atlasOwn = e.kind === "Reminder" || e.kind === "Promise" || e.kind === "Waiting";
                       return (
                         <div key={`${e.kind}:${e.id}`} className="r" style={{ alignItems: "flex-start", flexWrap: "wrap", rowGap: 4 }}>
                           <span className="mono faint small" style={{ width: 70, flex: "none", paddingTop: 2 }}>
@@ -332,6 +344,11 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                           {e.cancel && (
                             <button className="link small" onClick={() => atlas.send({ type: "atlas.agenda.cancel", id: e.id })}>
                               Cancel
+                            </button>
+                          )}
+                          {e.close && (
+                            <button className="link small" onClick={() => atlas.send({ type: "atlas.loop.close", id: e.id })}>
+                              Close
                             </button>
                           )}
                         </div>

@@ -82,7 +82,12 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
         />
       )}
       {!page && tab === "overview" && <Overview atlas={atlas} records={all?.records ?? []} counts={counts} go={go} />}
-      {!page && tab === "people" && <Records atlas={atlas} type="person" title="People" go={go} />}
+      {!page && tab === "people" && (
+        <>
+          <ImportContacts atlas={atlas} />
+          <Records atlas={atlas} type="person" title="People" go={go} />
+        </>
+      )}
       {tab === "places" && <Records atlas={atlas} type="place" title="Places" go={go} />}
       {tab === "memory" && <Records atlas={atlas} title="Everything Atlas knows" focus={detail.split(":")[1]} search go={go} />}
       {!page && tab === "areas" && <Areas atlas={atlas} go={go} />}
@@ -293,6 +298,12 @@ function RecordRow({ atlas, r, go }: { atlas: Atlas; r: RecordView; go: (d: stri
         )}
         <p className="faint small" style={{ marginTop: 2 }}>
           <span className="lab">{r.type}</span> · {sourceText(r)}
+          {r.type === "person" && (r.channels?.length || (r.trust && r.trust !== "unknown")) ? (
+            <span>
+              {" "}
+              · {[...(r.trust && r.trust !== "unknown" ? [r.trust] : []), ...(r.channels ?? []).map((c) => c.value)].join(" · ")}
+            </span>
+          ) : null}
           {(r.type === "place" || r.type === "organization") && (
             <span>
               {" "}
@@ -657,5 +668,38 @@ function Pages({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
         )}
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * Library → People → Bring in contacts (§7.1): from a contacts extension
+ * (iCloud), or a vCard file. People Atlas knows are merged by an address,
+ * a number or a handle, not made twice.
+ */
+function ImportContacts({ atlas }: { atlas: Atlas }) {
+  const r = atlas.state.tests.contacts;
+  const from = (atlas.state.view?.extensions ?? []).filter((e) => e.state === "on" && e.provides.includes("contacts"));
+  return (
+    <div className="row" style={{ flexWrap: "wrap", gap: 10, margin: "0 0 12px" }}>
+      {from.map((e) => (
+        <button key={e.id} className="btn" onClick={() => atlas.send({ type: "atlas.contacts.import", from: e.id })}>
+          Bring in contacts from {e.name}
+        </button>
+      ))}
+      <label className="btn">
+        Bring in a vCard file
+        <input
+          type="file"
+          accept=".vcf,text/vcard,text/x-vcard"
+          style={{ display: "none" }}
+          onChange={async (ev) => {
+            const f = ev.target.files?.[0];
+            if (f) atlas.send({ type: "atlas.contacts.import", vcards: await f.text() });
+            ev.target.value = "";
+          }}
+        />
+      </label>
+      {r && <span className={`small ${r.ok ? "ok" : "err"}`}>{r.message}</span>}
+    </div>
   );
 }

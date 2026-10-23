@@ -154,6 +154,8 @@ import {
 } from "./nodes";
 import { deviceCall } from "./tools/nodes";
 import { extensionDraft } from "./tools/extensions";
+import { loopClose, loopOpen, person, peopleTools } from "./tools/people";
+import { closeLoop } from "./loops";
 import { locationOff, locationOn, observe } from "./location";
 import { forgetWhere } from "./situation";
 
@@ -224,6 +226,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     speakingUp,
     noticedTool,
     extensionDraft,
+    ...peopleTools,
   ],
   atlas: [
     calendarRead,
@@ -238,6 +241,9 @@ const TOOLS: Record<Actor, Tool[]> = {
     taskDone,
     deviceCall,
     noticedTool,
+    person,
+    loopOpen,
+    loopClose,
   ],
   system: [],
 };
@@ -1037,6 +1043,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         );
         return;
       }
+      case "atlas.loop.close": {
+        const closed = closeLoop(this.#sql, msg.id, "Closed by the owner.", { by: "owner" });
+        if (closed) await this.#clock.unschedule(closed);
+        else this.#send(connection, { type: "atlas.error", message: "That loop isn't open any more." });
+        this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
+        return;
+      }
       case "atlas.agenda.cancel": {
         const item = getItem(this.#sql, msg.id);
         if (!item || !["reminder", "promise"].includes(item.kind) || item.state !== "scheduled") {
@@ -1623,6 +1636,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
     if (item.kind === "looks") {
       await this.keepAliveWhile(() => this.#extensions.looks(item));
+      return;
+    }
+    if (item.kind === "loop") {
+      await this.keepAliveWhile(() => this.#senses.loopDue(item));
       return;
     }
     if (item.kind === "rhythm") {

@@ -22,11 +22,16 @@ import { get as getRow, type LogKind, type LogRow } from "../store/log";
 import { indexNewMessages, keywordSearch } from "../store/memory";
 import { type AtlasRecord, getRecord, linked, RECORD_TYPES, type RecordType, recordHistory } from "../store/records";
 import { getState, setState } from "../store/state";
+import { channelsOf, lastTouch, trustOf } from "../contacts";
+import { personInfo } from "../tools/people";
+import { openTasks } from "../tasks";
+import { openLoops } from "../loops";
+import { zoneOf } from "../time";
 
 // --- Library -----------------------------------------------------------------------------
 
 export function recordView(sql: Sql, r: AtlasRecord): RecordView {
-  const { fact, is_owner: _o, ...details } = r.fields;
+  const { fact, is_owner: _o, channels: _c, trust: _t, ...details } = r.fields;
   const from = r.source.log_id ? getRow(sql, r.source.log_id) : null;
   const history = recordHistory(sql, r.id);
   const last = history[history.length - 1];
@@ -45,6 +50,9 @@ export function recordView(sql: Sql, r: AtlasRecord): RecordView {
       : { via: r.source.via },
     corrections: history.length,
     was: last ? { name: last.name ?? r.name, fact: typeof last.fields.fact === "string" ? last.fields.fact : "", at: last.at } : null,
+    ...(r.type === "person"
+      ? { channels: channelsOf(r).map((c) => ({ kind: c.kind, value: c.value, via: c.via })), trust: trustOf(r) }
+      : {}),
   };
 }
 
@@ -269,9 +277,19 @@ export function personPage(sql: Sql, id: string): StagePage {
     .sort((x, y) => y.seq - x.seq)
     .slice(0, 6)
     .map(stageMessage);
+  const info = personInfo(sql, r, zoneOf(readSettings(sql)));
   const page: PersonPage = {
     kind: "person",
     person: recordView(sql, r),
+    open: [
+      ...openTasks(sql)
+        .filter((t) => info.open.some((o) => o.id === t.id))
+        .map((t) => ({ kind: "task" as const, title: t.name, by: typeof t.fields.by === "number" ? t.fields.by : null })),
+      ...openLoops(sql)
+        .filter((l) => info.open.some((o) => o.id === l.id))
+        .map((l) => ({ kind: "loop" as const, title: l.title, by: l.due_at })),
+    ],
+    last: lastTouch(sql, r),
     links: linked(sql, r.id).map((l) => ({ kind: l.kind, record: recordView(sql, l.record) })),
     mentions,
     history: recordHistory(sql, r.id).map((h) => ({

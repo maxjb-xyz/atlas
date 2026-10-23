@@ -334,6 +334,9 @@ export interface AreaPage {
 export interface PersonPage {
   kind: "person";
   person: RecordView;
+  /** What's open with them (tasks for them, loops waiting on them), and the last time the owner was in touch (§7.1). */
+  open: Array<{ kind: "task" | "loop"; title: string; by: number | null }>;
+  last: { at: number; what: string } | null;
   links: Array<{ kind: string; record: RecordView }>;
   mentions: StageMessage[];
   history: Array<{ at: number; name: string | null; fact: string; reason: string }>;
