@@ -146,6 +146,53 @@ describe("helpers", () => {
     });
   });
 
+  it("that research for a long while land as a research view and a page with their sources", async () => {
+    const view = {
+      kind: "research",
+      title: "Syncing SQLite across devices",
+      answer: "Use a CRDT layer such as cr-sqlite [1]; replication tools suit one writer [2].",
+      sources: [
+        { title: "cr-sqlite", url: "https://vlcn.io/docs/cr-sqlite/intro" },
+        { title: "Litestream", url: "https://litestream.io/" },
+      ],
+    };
+    const b = brain([
+      call("delegate", { title: "SQLite sync", task: "Research the best way to sync a SQLite database across devices.", research: true }),
+      say("I'll take my time on it and tell you what I find."),
+      call("recall", { query: "SQLite" }),
+      say(
+        "Use cr-sqlite for many writers [1]; Litestream for one writer [2].\nSources: [1] cr-sqlite https://vlcn.io/docs/cr-sqlite/intro [2] Litestream https://litestream.io/",
+      ),
+      call("show", { view }),
+      call(
+        "page_save",
+        { name: "SQLite sync", note: "The research's findings", body: `Use cr-sqlite.\n\n\`\`\`view\n${JSON.stringify(view)}\n\`\`\`` },
+        "call_page",
+      ),
+      say("cr-sqlite is the way for several devices; the write-up is in Library."),
+    ]);
+    await runInDurableObject(fresh(), async (agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      const out = await agent.apiTurn("research the best way to sync a SQLite database across devices; take your time");
+      expect(out.reply).toBe("I'll take my time on it and tell you what I find.");
+      // The helper was told it has hours, and to hand back its sources.
+      await until(() => b.requests[2], "the helper's first call");
+      expect(b.requests[2]!.system).toContain("This is a long research job: you have hours");
+      const report = await until(
+        () => rowsOf(sql, "message.out").find((r) => String(r.body.trigger ?? "").startsWith("job:")),
+        "the job's report",
+      );
+      expect(report.body.text).toContain("in Library");
+      expect(rowsOf(sql, "tool.result").find((r) => r.body.name === "show" && r.run_id === report.run_id)!.body.receipt).toMatchObject({
+        view,
+      });
+      expect(rowsOf(sql, "page.change")[0]!.body).toMatchObject({ name: "SQLite sync" });
+      const job = sql.exec<{ source: string }>(`SELECT source FROM agenda WHERE kind = 'job'`).one();
+      expect(JSON.parse(job.source).detail).toMatchObject({ research: true });
+    });
+  });
+
   it("are in the context while they work, so Atlas can say how it's going", async () => {
     await runInDurableObject(fresh(), async (_agent: PersonAgent, state) => {
       const sql = state.storage.sql;

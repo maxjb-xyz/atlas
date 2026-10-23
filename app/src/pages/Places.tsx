@@ -137,7 +137,8 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                     </div>
                   )}
                   {on && i.face && <FaceHandoff atlas={atlas} item={i} />}
-                  {on && !i.approval && !i.question && !i.face && (
+                  {on && i.job && <JobQuestion atlas={atlas} item={i} />}
+                  {on && !i.approval && !i.question && !i.face && !i.job && (
                     <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       <div className="panel">{i.text ? <Markdown text={i.text} /> : "No details."}</div>
                       <div className="chain">
@@ -164,6 +165,48 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
         </div>
       </Sheet>
     </Stage>
+  );
+}
+
+/** A coding job's question (§8.2): pick one of its choices, or answer in your own words; the answer goes back to its agent. */
+function JobQuestion({ atlas, item }: { atlas: Atlas; item: InboxItem }) {
+  const q = item.job!;
+  const [text, setText] = useState("");
+  const answer = (t: string) => atlas.send({ type: "atlas.job.say", id: q.id, text: t });
+  return (
+    <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }} onClick={(e) => e.stopPropagation()}>
+      <p style={{ fontSize: 15 }}>{q.question}</p>
+      {q.why && <p className="muted">{q.why}</p>}
+      {q.options.length > 0 && (
+        <div className="row">
+          {q.options.map((o, n) => (
+            <button key={o} className={`btn ${n === 0 ? "primary" : ""}`} onClick={() => answer(o)}>
+              {o}
+            </button>
+          ))}
+        </div>
+      )}
+      <form
+        className="row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (text.trim()) answer(text.trim());
+        }}
+      >
+        <input
+          className="grow"
+          placeholder={q.options.length ? "Or say it in your words" : "Your answer, for the job"}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+        <button className="btn" type="submit" disabled={!text.trim()}>
+          Answer
+        </button>
+        <a className="btn" href={`#/home/${encodeURIComponent(`jobs:${q.id}`)}`}>
+          Open the job
+        </a>
+      </form>
+    </div>
   );
 }
 

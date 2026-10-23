@@ -7,7 +7,7 @@ import { Agent, type Connection, type ConnectionContext, getAgentByName, type WS
 import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } from "agents/voice";
 import { CalendarSense } from "./agent/calendar";
 import { correctAreas, discoveryPrompt, readyToDiscover, startDiscovered, tagPending, triedDiscovery, unfiled } from "./agent/areas";
-import { HelperDesk, helperBrain } from "./agent/helpers";
+import { HelperDesk, helperBrain, RESEARCH_BUDGET } from "./agent/helpers";
 import { CodingDesk, getJob, type JobWorkspace, type PullRequest } from "./agent/coding";
 import { codingTools } from "./tools/coding";
 import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup";
@@ -2321,15 +2321,24 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** A helper's job ended while nobody was waiting for it: tell the owner what it found. */
   async #reportJob(item: AgendaItem, result: { state: "done" | "failed"; text: string }): Promise<void> {
+    const research = item.source.detail?.research === true;
     const note =
-      result.state === "done"
-        ? `[Atlas's helper, not the owner] The job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nFinish what the owner asked for with it: if they wanted to see something (a chart, a table, a comparison), show it; if they wanted a file (a spreadsheet, a document), make it. Then tell them what it found, the way you'd say it, as short as it can be while complete.`
-        : `[Atlas's helper, not the owner] The job "${item.title}" you started didn't finish: ${result.text}. Tell the owner in one or two sentences, with what you'd need to try again.`;
+      result.state === "done" && research
+        ? `[Atlas's helper, not the owner] The research job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nLand it: show it as a research view (show, kind research, with the sources it read), and save it as a page with page_save, the answer in Markdown with the same research view in a \`view\` block, so the owner keeps it. Then tell them the finding in a sentence or two and that the page is in Library.`
+        : result.state === "done"
+          ? `[Atlas's helper, not the owner] The job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nFinish what the owner asked for with it: if they wanted to see something (a chart, a table, a comparison), show it; if they wanted a file (a spreadsheet, a document), make it. Then tell them what it found, the way you'd say it, as short as it can be while complete.`
+          : `[Atlas's helper, not the owner] The job "${item.title}" you started didn't finish: ${result.text}. Tell the owner in one or two sentences, with what you'd need to try again.`;
     const fallback =
       result.state === "done" ? `Finished: ${item.title}.\n\n${result.text}` : `"${item.title}" didn't finish: ${result.text}`;
     // The report finishes the owner's task, so it can put a view on the stage (a chart from the helper's numbers)
     // and make the file that was asked for (a spreadsheet), in the workspace if it isn't text.
-    await this.#atlasSays(`job:${item.id}`, note, fallback, "normal", 8, [...TOOLS.atlas, show, ...fileTools, ...workspaceTools]);
+    await this.#atlasSays(`job:${item.id}`, note, fallback, "normal", 8, [
+      ...TOOLS.atlas,
+      show,
+      ...pageTools,
+      ...fileTools,
+      ...workspaceTools,
+    ]);
     this.#helpers.reported(item.id);
   }
 
@@ -2603,9 +2612,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         start: async (o) => {
           const job = await this.#helpers.start({
             ...o,
-            system: helperSystem(settings, now),
+            system: o.research ? `${helperSystem(settings, now)}\n\n${RESEARCH_BRIEF}` : helperSystem(settings, now),
             chain: settings.brains.main,
             askedIn: o.asked_in,
+            ...(o.research ? { budget: RESEARCH_BUDGET } : {}),
           });
           return { id: job.id };
         },
@@ -4625,6 +4635,10 @@ function summary(body: Record<string, unknown>): string {
 const yieldNow = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 /** A helper's instructions: no personality, one job, hand back the result (§8.1). */
+/** What a long research job's helper is told besides a helper's usual brief. */
+const RESEARCH_BRIEF =
+  "This is a long research job: you have hours, so take them. Search from several angles, read the sources themselves rather than their snippets, compare them, and notice where they disagree. Hand back a full answer: the finding or the pick first, then why, with each claim marked with its source's number, and the list of sources you read (title, address, and what each one adds, in a line).";
+
 function helperSystem(settings: Settings, now: Date): string {
   const name = settings.assistant_name;
   const owner = settings.owner_name.trim() || "the owner";

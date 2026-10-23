@@ -18,6 +18,8 @@ import { fail, type ToolContext, type ToolResult } from "../tools/types";
 
 /** A helper's budget: room for real work, still bounded (§4.1, §8.1). */
 export const HELPER_BUDGET: Budget = { steps: 40, ms: 10 * 60_000 };
+/** A long research job's: hours to read and compare (§8.1, M6). */
+export const RESEARCH_BUDGET: Budget = { steps: 160, ms: 3 * 3600_000 };
 
 /**
  * A job that makes no progress for this long is counted as lost. Every call a
@@ -80,6 +82,8 @@ export class HelperDesk {
     askedIn: string;
     /** Its own budget (§8.1); a quick lookup's by default. */
     budget?: Budget;
+    /** A long research job: its result lands as a research view and a page. */
+    research?: boolean;
   }): Promise<AgendaItem> {
     const { sql } = this.host;
     await this.#discardFinished();
@@ -91,7 +95,11 @@ export class HelperDesk {
       title: o.title,
       due_at: now,
       state: "running",
-      source: { run_id: o.askedIn, via: "chat", detail: { brief: o.brief, helper_run: run_id, tools, chain: o.chain as never } },
+      source: {
+        run_id: o.askedIn,
+        via: "chat",
+        detail: { brief: o.brief, helper_run: run_id, tools, chain: o.chain as never, ...(o.research ? { research: true } : {}) },
+      },
     });
     // The helper holds the job's lease; if it runs out before the job ends, the clock counts the job as lost.
     sql.exec(`UPDATE agenda SET lease_until = ? WHERE id = ?`, now + LOST_AFTER_MS, created.id);
@@ -308,14 +316,15 @@ export class HelperDesk {
       )
       .toArray()
       .map((r) => {
-        const detail = (JSON.parse(r.source) as { detail?: { helper_run?: string; brief?: string } }).detail;
+        const detail = (JSON.parse(r.source) as { detail?: { helper_run?: string; brief?: string; research?: boolean } }).detail;
         const run = detail?.helper_run;
         const out = r.state === "running" ? null : this.#outcomeOf(r.id);
         return {
           id: r.id,
           title: r.title,
           state: r.state === "scheduled" ? "running" : (r.state as JobView["state"]),
-          status: this.#status.get(r.id) ?? null,
+          status:
+            (detail?.research && run && r.state === "running" ? lookedAt(this.host.sql, run) : null) ?? this.#status.get(r.id) ?? null,
           steps: run
             ? this.host.sql.exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE run_id = ? AND kind = 'tool.call'`, run).one().n
             : 0,
@@ -339,6 +348,25 @@ export class HelperDesk {
   #changed(): void {
     this.host.jobsChanged(this.list());
   }
+}
+
+/** How far a research job has read: "Searched 4 times, read 9 pages". Null before it has. */
+export function lookedAt(sql: Sql, run: string): string | null {
+  const n = (name: string) =>
+    sql
+      .exec<{ n: number }>(
+        `SELECT count(*) AS n FROM log WHERE run_id = ? AND kind = 'tool.call' AND json_extract(body, '$.name') = ?`,
+        run,
+        name,
+      )
+      .one().n;
+  const searched = n("web_search");
+  const read = n("web_fetch");
+  if (!searched && !read) return null;
+  return [searched ? `searched ${searched} time${searched === 1 ? "" : "s"}` : "", read ? `read ${read} page${read === 1 ? "" : "s"}` : ""]
+    .filter(Boolean)
+    .join(", ")
+    .replace(/^./, (c) => c.toUpperCase());
 }
 
 /** A helper's brain call, through the parent's router, for a brain in its chain. */

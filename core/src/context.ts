@@ -5,6 +5,7 @@
 // that last part in bounds; recall finds the rest, on demand.
 
 import { codingLines } from "./agent/coding";
+import { lookedAt } from "./agent/helpers";
 import { type McpServer, serversLine } from "./mcp";
 import { listPages } from "./pages";
 import { listFiles } from "./files";
@@ -325,10 +326,12 @@ function jobsLine(sql: Sql, now: Date): string {
     : "";
   if (!running.length) return codingText;
   const lines = running.map((j) => {
-    const run = parse<{ detail?: { helper_run?: string } }>(j.source, {}).detail?.helper_run;
+    const detail = parse<{ detail?: { helper_run?: string; research?: boolean } }>(j.source, {}).detail;
+    const run = detail?.helper_run;
     const steps = run ? sql.exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE run_id = ? AND kind = 'tool.call'`, run).one().n : 0;
     const mins = Math.max(0, Math.round((now.getTime() - j.created_at) / 60_000));
-    return `- ${j.title} (id ${j.id}): started ${mins ? `${mins} min` : "under a minute"} ago, ${steps} lookup${steps === 1 ? "" : "s"} so far`;
+    const read = detail?.research && run ? lookedAt(sql, run) : null;
+    return `- ${j.title} (id ${j.id}${detail?.research ? ", a long research job" : ""}): started ${mins ? `${mins} min` : "under a minute"} ago, ${steps} lookup${steps === 1 ? "" : "s"} so far${read ? ` (${read.toLowerCase()})` : ""}`;
   });
   return [`Helpers working now (you get each one's result when it's done, and finish the task then):\n${lines.join("\n")}`, codingText]
     .filter(Boolean)

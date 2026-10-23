@@ -643,7 +643,7 @@ export class Workspace extends DurableObject<Env> {
       [
         `cd ${sh(`${dir}/repo`)}`,
         `cat > /tmp/atlas-${id}.bundle`,
-        `git fetch -q /tmp/atlas-${id}.bundle 'refs/heads/*:refs/heads/*' 'refs/atlas/wip:refs/atlas/wip' 2>&1 | tail -5`,
+        `git fetch -q --update-head-ok /tmp/atlas-${id}.bundle 'refs/heads/*:refs/heads/*' 'refs/atlas/wip:refs/atlas/wip' 2>&1 | tail -5`,
         `git checkout -q -B ${sh(o.branch)} refs/heads/${sh(o.branch)}`,
         `git checkout -q refs/atlas/wip -- . && git reset -q`,
         `rm -f /tmp/atlas-${id}.bundle`,
