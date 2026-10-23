@@ -86,7 +86,9 @@ export type StateName =
   /** Extensions' sign-ins in flight (§17): each one's state, for which extension, and when it started. */
   | "ext_signins"
   /** When the M4 providers were moved out of the core into bundled extensions (once, §17). */
-  | "extensions_moved";
+  | "extensions_moved"
+  /** Atlas's own address (§16.2): its domain, the relay and rule in the domain's account, and who sends. */
+  | "atlas_mail";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

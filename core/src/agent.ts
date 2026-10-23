@@ -18,6 +18,8 @@ import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
 import { seams } from "./agent/seams";
 import { liveTest, settingsView } from "./agent/settings";
 import { undoReceipt } from "./agent/undo";
+import { MailDesk } from "./agent/mail";
+import { addressesIn, ownerAddresses } from "./contacts";
 import { type Embedder, embedPending, workersAIEmbedder } from "./brains/embed";
 import { BrainRouter } from "./brains/router";
 import { type Brain, brainKey } from "./brains/types";
@@ -49,6 +51,7 @@ import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
 import { type BrainChoice, getSecret, readSettings, type Settings, setSecret, writeSettings } from "./store/settings";
 import { isoLocal, isValidZone, longLocal, parseWhen, shortLocal, zoneOf } from "./time";
 import { calendarMove, calendarRead } from "./tools/calendar";
+import { emailSend } from "./tools/mail";
 import { delegate } from "./tools/delegate";
 import { memoryTools, recall } from "./tools/memory";
 import { agendaList, agendaTools } from "./tools/agenda";
@@ -125,7 +128,7 @@ import type { BrowserApi, ExitApi, MapsApi, McpApi, RunResult, Tool, ToolContext
 import { roughArea, temp, unitsFor, type Weather } from "./weather";
 import { placeKind, type Found, type Route } from "./maps";
 import type { SearchResult } from "../../extensions/sdk";
-import { ExtensionHost, type GateProps, setExtSecrets, setExtSettings, setExtState, uninstall } from "./extensions";
+import { ExtensionHost, type GateProps, getExt, setExtSecrets, setExtSettings, setExtState, uninstall } from "./extensions";
 import { ExtensionDesk } from "./agent/extensions";
 import { nameFor, provide } from "./providers";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
@@ -156,7 +159,7 @@ import {
 import { deviceCall } from "./tools/nodes";
 import { extensionDraft } from "./tools/extensions";
 import { loopClose, loopOpen, person, peopleTools } from "./tools/people";
-import { closeLoop } from "./loops";
+import { closeLoop, detailOf, openLoops } from "./loops";
 import { locationOff, locationOn, observe } from "./location";
 import { forgetWhere } from "./situation";
 
@@ -229,6 +232,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     noticedTool,
     extensionDraft,
     ...peopleTools,
+    emailSend,
   ],
   atlas: [
     calendarRead,
@@ -340,6 +344,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** Extensions (§17): the host that runs them sandboxed, and the desk that hands what they bring to the core. */
   #ext!: ExtensionHost;
   #extensions!: ExtensionDesk;
+  #mail!: MailDesk;
   /** Runs go one at a time, so each one sees the last one's answer. */
   #line: Promise<unknown> = Promise.resolve();
 
@@ -427,6 +432,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       browser: () => this.#driver(),
       mcp: () => this.#mcpClient(),
       node: (c) => this.#nodeCall(c),
+      mail: (a) => this.#sendMail(a),
       later: async (c) => {
         // A device removed since (a card approved after it was unpaired) gets nothing queued.
         if (!nodes(this.#sql).some((n) => n.id === c.node)) return false;
@@ -511,6 +517,18 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       messages: async (e, msgs) => this.#channelIn(e, msgs),
       changed,
       origin: () => getState<string>(this.#sql, "origin"),
+    });
+    this.#mail = new MailDesk({
+      sql: this.#sql,
+      host: this.#ext,
+      fetch:
+        () =>
+        (...args) =>
+          (seams.fetch ?? fetch)(...args),
+      origin: () => getState<string>(this.#sql, "origin"),
+      owner: (text, note) => this.keepAliveWhile(() => this.#textTurn(text, `mail-${Date.now()}`, note ?? undefined)),
+      take: (items, o) => void this.#senses.take(items, o),
+      changed,
     });
     // What M4 kept in the core moves to bundled extensions once; then the extensions' looks are on the clock.
     void this.keepAliveWhile(() => this.#extensions.upgrade().then(() => this.#extensions.arm())).catch((err: unknown) =>
@@ -730,6 +748,19 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         } catch (err) {
           this.#send(connection, { type: "atlas.ext.signin", id: msg.id, error: err instanceof Error ? err.message : String(err) });
         }
+        return;
+      }
+      case "atlas.mail.setup":
+      case "atlas.mail.remove":
+      case "atlas.mail.test": {
+        const out =
+          msg.type === "atlas.mail.setup"
+            ? await this.#mail.setup({ domain: msg.domain, sending: msg.sending, ...(msg.token ? { token: msg.token } : {}) })
+            : msg.type === "atlas.mail.remove"
+              ? await this.#mail.remove()
+              : await this.#mailTest();
+        this.#send(connection, { type: "atlas.mail", ...out });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       }
       case "atlas.contacts.import": {
@@ -2518,6 +2549,32 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return this.keepAliveWhile(() => this.#extensions.post(id, key, req));
   }
 
+  /** Settings' test of Atlas's address: a mail from it to the owner, whose reply comes back as the owner speaking. */
+  async #mailTest(): Promise<{ ok: boolean; text: string }> {
+    const to = [...ownerAddresses(this.#sql)][0];
+    if (!to)
+      return {
+        ok: false,
+        text: "Atlas doesn't know your own email address yet. Add it to your record in Library → People, or connect Gmail.",
+      };
+    try {
+      const out = await this.#mail.send({
+        from: "",
+        to: [to],
+        subject: "Atlas's address works",
+        text: "This is a test from Settings. Reply to it, and your reply comes back to Atlas as you.",
+      });
+      return { ok: true, text: `Sent a test to ${to} with ${out.via}. Reply to it, and your reply shows in your thread.` };
+    } catch (err) {
+      return { ok: false, text: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** A mail to Atlas's own address, posted by its relay (/mail/in), checked by the relay's signature (§16.2). */
+  async apiMailIn(time: string | null, signature: string | null, body: Uint8Array): Promise<{ status: number; text: string }> {
+    return this.keepAliveWhile(() => this.#mail.receive(time, signature, body));
+  }
+
   /** A sign-in page sent the owner back (/x/signin): the code is exchanged, and the app's Settings opens again. */
   async apiExtSignin(state: string, code: string | null, error: string | null): Promise<{ ok: boolean; text: string }> {
     if (error || !code) return { ok: false, text: `The sign-in didn't finish: ${error ?? "no code came back"}.` };
@@ -2646,6 +2703,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       calendar: this.#calendar,
       router: this.#router,
       extensions: this.#extensions,
+      mail: this.#mail,
     });
   }
 
@@ -3535,7 +3593,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    */
   async #decide(
     id: string,
-    o: { yes: boolean; by: "app" | "hold" | "push" | "voice" | "chat"; edits?: Array<{ index: number; message: string }> },
+    o: {
+      yes: boolean;
+      by: "app" | "hold" | "push" | "voice" | "chat";
+      edits?: Array<{ index: number; message: string; subject?: string; to?: string }>;
+    },
   ): Promise<{ ok: boolean; text: string }> {
     const item = getItem(this.#sql, id);
     if (!item || item.kind !== "approval") return { ok: false, text: "That approval isn't there." };
@@ -3568,6 +3630,20 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       if (a?.kind === "webhook" && (a.message ?? "") !== e.message) {
         actions = actions.map((x, i) => (i === e.index ? ({ ...a, message: e.message.slice(0, 1_000) } as Action) : x));
         edited = true;
+      }
+      // A mail: its words, subject and who it's to, as the owner left them. An address that doesn't read as one is kept as it was.
+      if (a?.kind === "email") {
+        const to = e.to != null ? addressesIn(e.to) : a.to;
+        const next = {
+          ...a,
+          text: e.message.slice(0, 20_000),
+          ...(e.subject != null && e.subject.trim() ? { subject: e.subject.trim().slice(0, 300) } : {}),
+          ...(to.length ? { to } : {}),
+        };
+        if (next.text !== a.text || next.subject !== a.subject || next.to.join(",") !== a.to.join(",")) {
+          actions = actions.map((x, i) => (i === e.index ? (next as Action) : x));
+          edited = true;
+        }
       }
       // A tool's arguments, edited as JSON in the card; what doesn't read as an object is left as it was.
       if (a?.kind === "mcp") {
@@ -3617,6 +3693,53 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         "normal",
       );
     }
+  }
+
+  /**
+   * A mail out, once its OK is given (§16.2): as the owner through the
+   * extension that holds their mail, or as Atlas from its own address.
+   * Sending in a thread settles what someone was waiting on the owner for there.
+   */
+  async #sendMail(
+    a: Extract<Action, { kind: "email" }>,
+  ): Promise<
+    { ok: true; id: string; thread?: string; link?: string; message_id?: string; via: string } | { ok: false; error: string; via: string }
+  > {
+    const mail = {
+      to: a.to,
+      ...(a.cc?.length ? { cc: a.cc } : {}),
+      subject: a.subject,
+      text: a.text,
+      ...(a.thread ? { thread: a.thread } : {}),
+      ...(a.in_reply_to ? { in_reply_to: a.in_reply_to } : {}),
+      ...(a.references?.length ? { references: a.references } : {}),
+    };
+    let out: { id: string; thread?: string; link?: string; message_id?: string };
+    let via = a.via;
+    try {
+      if (a.as === "atlas") {
+        const sent = await this.#mail.send({ ...mail, from: a.from });
+        via = sent.via;
+        out = sent;
+      } else {
+        const e = getExt(this.#sql, a.via);
+        if (!e || e.state !== "on") return { ok: false, error: `${e?.name ?? a.via} isn't on, so it can't send as you.`, via };
+        via = e.name;
+        out = await this.#ext.call<{ id: string; thread?: string; link?: string; message_id?: string }>(a.via, "mail", [mail]);
+      }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err), via };
+    }
+    const thread = out.thread ?? a.thread;
+    if (thread)
+      for (const loop of openLoops(this.#sql)) {
+        const d = detailOf(loop);
+        if (d.waiting_on === "owner" && d.thread === thread) {
+          const closed = closeLoop(this.#sql, loop.id, `Answered: "${a.subject}"`, { by: "owner" });
+          if (closed) await this.#clock.unschedule(closed);
+        }
+      }
+    return { ok: true, ...out, ...(thread ? { thread } : {}), via };
   }
 
   /** Tells every app an approval was settled: its line in the thread, Inbox and the agenda. */

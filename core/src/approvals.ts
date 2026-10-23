@@ -78,7 +78,29 @@ export type Action =
    * running a command on the owner's Mac. `name` says it for the card;
    * `what` is the input in words.
    */
-  | { kind: "node"; node: string; device: string; name: string; tool: string; input: Record<string, Json>; what: string };
+  | { kind: "node"; node: string; device: string; name: string; tool: string; input: Record<string, Json>; what: string }
+  /**
+   * A mail (§16.2): as the owner, from their own mail (`via` is the
+   * extension that sends it), or as Atlas, from Atlas's own address. The
+   * owner can change who it's to, the subject and the words in the card.
+   */
+  | {
+      kind: "email";
+      name: string;
+      as: "owner" | "atlas";
+      via: string;
+      from: string;
+      to: string[];
+      cc?: string[];
+      subject: string;
+      text: string;
+      /** The service's thread, a Message-ID it answers and the ones before, to keep a reply in its conversation. */
+      thread?: string;
+      in_reply_to?: string;
+      references?: string[];
+      /** The person it's to, when it's one person Atlas knows. */
+      person?: string;
+    };
 
 /** Sending a form can't be taken back (VISION §12.1 lists submit with the things that can't be undone). */
 export const kindOf = (a: Action): ToolKind =>
@@ -86,6 +108,7 @@ export const kindOf = (a: Action): ToolKind =>
   a.kind === "site" ||
   a.kind === "node" ||
   a.kind === "mcp_add" ||
+  a.kind === "email" ||
   (a.kind === "vault" && !a.card) ||
   (a.kind === "mcp" && !a.destructive)
     ? "outside"
@@ -100,7 +123,13 @@ export const trustKey = (a: Action): string | null =>
       : a.kind === "node"
         ? // On a device, trust is earned for exactly this, not for every command the tool could run.
           `node:${a.node}:${a.tool}:${JSON.stringify(a.input)}`
-        : null;
+        : a.kind === "email"
+          ? // Mail is trusted by who it's to and whose name it's in: "mail to Doug as you".
+            `email:${a.as}:${[...a.to, ...(a.cc ?? [])]
+              .map((x) => x.toLowerCase())
+              .sort()
+              .join(",")}`
+          : null;
 
 export const needsHold = (actions: Action[]) => actions.some((a) => ASKS[kindOf(a)].hold);
 

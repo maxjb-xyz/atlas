@@ -70,7 +70,7 @@ export interface CalendarEventView {
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "node";
+  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "node" | "email";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -78,8 +78,10 @@ export interface ApprovalStep {
   where: string;
   /** Whether and how it can be undone. */
   undo: string;
-  /** The text a webhook gets, which the owner can edit in the card. */
+  /** The text a webhook gets, or a mail's words, which the owner can edit in the card. */
   message?: string;
+  /** A mail's envelope: who it's from (fixed), and who it's to and its subject (editable). */
+  mail?: { from: string; to: string; cc?: string; subject: string };
 }
 
 /** An approval card: every step of the plan, why it needs the OK, and the checks it passed. */
@@ -176,7 +178,15 @@ export const ClientMessage = z.discriminatedUnion("type", [
     yes: z.boolean(),
     hold: z.boolean().optional(),
     edits: z
-      .array(z.object({ index: z.number().int().min(0).max(20), message: z.string().max(4_000) }))
+      .array(
+        z.object({
+          index: z.number().int().min(0).max(20),
+          message: z.string().max(20_000),
+          /** A mail's subject and who it's to, as the owner changed them in the card. */
+          subject: z.string().max(300).optional(),
+          to: z.string().max(1_000).optional(),
+        }),
+      )
       .max(20)
       .optional(),
   }),
@@ -253,6 +263,15 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.ext.setup"), id: z.string().max(40) }),
   z.object({ type: z.literal("atlas.ext.test"), id: z.string().max(40) }),
   z.object({ type: z.literal("atlas.ext.signin"), id: z.string().max(40) }),
+  /** Atlas's own address (§16.2): set it up on a domain with a token for the domain's account, take it down, or test it. */
+  z.object({
+    type: z.literal("atlas.mail.setup"),
+    domain: z.string().trim().min(3).max(200),
+    token: z.string().trim().max(200).optional(),
+    sending: z.string().max(40),
+  }),
+  z.object({ type: z.literal("atlas.mail.remove") }),
+  z.object({ type: z.literal("atlas.mail.test") }),
   /** Library → People → Import: from an extension that provides contacts, or a vCard file's text. */
   z.object({ type: z.literal("atlas.contacts.import"), from: z.string().max(40).optional(), vcards: z.string().max(5_000_000).optional() }),
   /** Settings → Connections → Senses: a webhook source with its own address and key, or removing one. */
@@ -472,6 +491,8 @@ export interface SettingsView {
   };
   /** Extensions (§17): the installed ones, drafts, and the bundled ones not installed. */
   extensions: ExtensionView[];
+  /** Atlas's own address (§16.2). */
+  mail: MailView;
   chatgpt: ChatGPTView;
   /** Provider health, by "provider:model". */
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
@@ -519,6 +540,20 @@ export interface SensesView {
 }
 
 /** One extension as Settings shows it (§17). */
+/** Atlas's own address as Settings shows it (§16.2). */
+export interface MailView {
+  address: string | null;
+  domain: string | null;
+  on_subdomain: boolean;
+  sending: string | null;
+  sending_ok: boolean;
+  sending_note: string | null;
+  /** What the domain's account token needs. */
+  permissions: string[];
+  /** Extensions that can send from Atlas's address. */
+  senders: Array<{ id: string; name: string }>;
+}
+
 export interface ExtensionView {
   id: string;
   name: string;
@@ -639,6 +674,8 @@ export type ServerMessage =
   | { type: "atlas.ext.test"; id: string; ok: boolean; message: string }
   /** Where to sign in for an extension, or why it can't start. */
   | { type: "atlas.ext.signin"; id: string; url?: string; error?: string }
+  /** How setting up, taking down or testing Atlas's address went, in the provider's words when it didn't. */
+  | { type: "atlas.mail"; ok: boolean; text: string }
   | { type: "atlas.contacts.imported"; ok: boolean; text: string }
   /** A new webhook source's address, with its key in it, shown once. */
   | { type: "atlas.sense.hook"; id: string; name: string; url: string }

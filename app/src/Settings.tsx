@@ -569,6 +569,9 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
       <Row label="Mail">
         <ProvidedBy atlas={atlas} view={view} what="mail" none="Atlas doesn't read your mail yet." />
       </Row>
+      <Row label="Atlas's email">
+        <AtlasEmail atlas={atlas} view={view} />
+      </Row>
       <Row label="Chat">
         <ProvidedBy atlas={atlas} view={view} what="channel" none="No chat channel yet." />
       </Row>
@@ -593,6 +596,98 @@ function ProvidedBy({ atlas, view, what, none }: { atlas: Atlas; view: SettingsV
           <ExtensionCard key={e.id} atlas={atlas} e={e} />
         ))}
       </div>
+    </>
+  );
+}
+
+/**
+ * Atlas's own address (§16.2): atlas@ your domain, which can be in another
+ * Cloudflare account. Atlas takes a token for that account and puts a relay
+ * Worker and a routing rule there; sending is Cloudflare Email Service or
+ * an extension (Resend).
+ */
+function AtlasEmail({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const m = view.mail;
+  const [domain, setDomain] = useState(m.domain ?? "");
+  const [token, setToken] = useState("");
+  const [sending, setSending] = useState(m.sending ?? "cloudflare");
+  const [busy, setBusy] = useState(false);
+  const note = atlas.state.tests.mail;
+  useEffect(() => setBusy(false), [note]);
+  const go = (msg: Parameters<Atlas["send"]>[0]) => {
+    setBusy(true);
+    atlas.send(msg);
+  };
+  return (
+    <>
+      <State
+        on={!!m.address && m.sending_ok}
+        bad={!!m.address && !m.sending_ok}
+        text={m.address ? `${m.address}${m.sending_ok ? "" : ": can't send yet"}` : "Not set up"}
+        what="An address of Atlas's own, on your domain, for mail it sends and receives as itself."
+      />
+      {m.on_subdomain && <p className="muted small">It's on a subdomain, since your domain's own mail goes to another provider.</p>}
+      {m.sending_note && <p className="err small">{m.sending_note}</p>}
+      <label className="field">
+        <span>Your domain, on Cloudflare (in this account or another)</span>
+        <input value={domain} placeholder="example.com" onChange={(e) => setDomain(e.target.value)} />
+      </label>
+      <label className="field">
+        <span>
+          {m.address
+            ? "A new API token for the domain's account (leave empty to keep the one Atlas has)"
+            : "An API token for the domain's account"}
+        </span>
+        <input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} />
+      </label>
+      <details className="small">
+        <summary>What the token needs</summary>
+        <p className="muted small">
+          At dash.cloudflare.com, in the account your domain is in: My Profile → API Tokens → Create Token → Custom token, with:
+        </p>
+        <ul className="small">
+          {m.permissions.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+        <p className="muted small">Atlas adds its relay Worker and one routing rule there, and nothing else.</p>
+      </details>
+      <label className="field">
+        <span>Send with</span>
+        <select value={sending} onChange={(e) => setSending(e.target.value)}>
+          <option value="cloudflare">Cloudflare Email Service (Workers Paid on the domain's account)</option>
+          {m.senders.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {!m.senders.length && (
+        <p className="muted small">
+          Resend sends for free (3,000 mails a month): install it in <a href="#/settings/extensions">Extensions</a> and add its key.
+        </p>
+      )}
+      <div className="row">
+        <button
+          className="btn primary"
+          disabled={busy || domain.trim().length < 3 || (!m.address && !token.trim())}
+          onClick={() => go({ type: "atlas.mail.setup", domain: domain.trim(), sending, ...(token.trim() ? { token: token.trim() } : {}) })}
+        >
+          {m.address ? "Set up again" : "Set up"}
+        </button>
+        {m.address && (
+          <>
+            <button className="btn" disabled={busy} onClick={() => go({ type: "atlas.mail.test" })}>
+              Send a test
+            </button>
+            <button className="btn" disabled={busy} onClick={() => go({ type: "atlas.mail.remove" })}>
+              Take it down
+            </button>
+          </>
+        )}
+      </div>
+      {note && <p className={`small ${note.ok ? "ok" : "err"}`}>{note.message}</p>}
     </>
   );
 }

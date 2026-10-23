@@ -247,6 +247,7 @@ import openMeteo from "../../extensions/open-meteo";
 import osm from "../../extensions/osm";
 import owntracks from "../../extensions/owntracks";
 import tavily from "../../extensions/tavily";
+import resend from "../../extensions/resend";
 
 export const EXTENSIONS: Record<string, Extension> = {
   brave,
@@ -260,6 +261,7 @@ export const EXTENSIONS: Record<string, Extension> = {
   osm,
   owntracks,
   tavily,
+  resend,
 };
 
 /** The requests extensions made in this test, as the gate let them out (secrets filled in). */

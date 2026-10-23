@@ -34,6 +34,7 @@ interface SenseApi {
     req: { method: string; headers: Record<string, string>; body: string; query: Record<string, string> },
   ): Promise<{ status: number; body: string; headers: Record<string, string> }>;
   apiExtSignin(state: string, code: string | null, error: string | null): Promise<{ ok: boolean; text: string }>;
+  apiMailIn(time: string | null, signature: string | null, body: Uint8Array): Promise<{ status: number; text: string }>;
   apiPairStart(o: {
     name: string;
     kind: (typeof NODE_KINDS)[number];
@@ -91,6 +92,15 @@ export default {
       );
       const back = `${url.origin}/#/settings/extensions?signin=${out.ok ? "ok" : "failed"}&note=${encodeURIComponent(out.text)}`;
       return Response.redirect(back, 302);
+    }
+
+    // Atlas's own address (§16.2): its relay Worker, in the domain's account, posts each mail here, signed.
+    if (path === "/mail/in" && request.method === "POST") {
+      const agent = (await getAgentByName(env.PersonAgent, OWNER)) as unknown as SenseApi;
+      const body = new Uint8Array(await request.arrayBuffer());
+      if (body.length > 30_000_000) return json({ error: "That mail is too big: 30 MB at most." }, 413);
+      const out = await agent.apiMailIn(request.headers.get("x-atlas-time"), request.headers.get("x-atlas-signature"), body);
+      return new Response(out.text, { status: out.status });
     }
 
     // An extension's own address (§17): a service posts here, checked by the address's key and the service's signature.

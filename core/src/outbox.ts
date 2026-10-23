@@ -206,6 +206,16 @@ export interface Channels {
   mcp(): McpClient | null;
   /** Sends a call to a paired device (§16.3) and waits for its answer; `offline` when it isn't connected. */
   node?(c: { node: string; tool: string; input: Record<string, unknown> }): Promise<{ ok: boolean; text: string; offline?: boolean }>;
+  /**
+   * Sends a mail (§16.2): as the owner through the extension that holds
+   * their mail, or as Atlas from its own address. The provider's own words
+   * come back when it fails.
+   */
+  mail?(
+    a: Extract<Action, { kind: "email" }>,
+  ): Promise<
+    { ok: true; id: string; thread?: string; link?: string; message_id?: string; via: string } | { ok: false; error: string; via: string }
+  >;
   /** Puts a call to an offline device on the clock, to run when it's back. */
   later?(c: {
     node: string;
@@ -431,6 +441,7 @@ export class Outbox {
       };
     }
     if (a.kind === "mcp_add") return this.#connect(a, o);
+    if (a.kind === "email") return this.#mail(a, o);
     if (a.kind === "node") return this.device({ node: a.node, device: a.device, tool: a.tool, input: a.input }, o);
     if (a.kind === "vault") return this.#fill(a, o);
     if (a.kind === "site") {
@@ -678,6 +689,57 @@ export class Outbox {
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /**
+   * A mail out (§16.2). Nothing with one of the owner's secrets in it
+   * leaves; the receipt names who it went to, as whom, and links to the
+   * sent mail, and keeps the person and thread so replies and "last in
+   * touch" find it.
+   */
+  async #mail(a: Extract<Action, { kind: "email" }>, o: { run_id: string | null; by: string }): Promise<{ ok: boolean; text: string }> {
+    const base = {
+      channel: "email",
+      as: a.as,
+      from: a.from,
+      to: [...a.to, ...(a.cc ?? [])].join(", "),
+      text: a.subject,
+      by: o.by,
+      ...(a.person ? { person: a.person } : {}),
+    };
+    if ([a.subject, a.text, ...a.to].some((x) => scrub(x, this.secrets()) !== x)) {
+      const text = `The mail to ${base.to} wasn't sent: it held one of your secrets.`;
+      this.receipt(o.run_id, { ...base, text: scrub(a.subject, this.secrets()), ok: false, error: text, checks: { secrets: "failed" } });
+      return { ok: false, text };
+    }
+    if (!this.channels.mail) {
+      const text = "Mail can't be sent from here.";
+      this.receipt(o.run_id, { ...base, ok: false, error: text });
+      return { ok: false, text };
+    }
+    const out = await this.channels.mail(a).catch((err: unknown) => ({
+      ok: false as const,
+      error: err instanceof Error ? err.message : String(err),
+      via: a.via,
+    }));
+    if (!out.ok) {
+      this.receipt(o.run_id, { ...base, via: out.via, ok: false, error: out.error, checks: { secrets: "passed", ok: o.by } });
+      console.error(JSON.stringify({ at: "mail.send", via: out.via, to: base.to, error: out.error }));
+      return { ok: false, text: `The mail to ${base.to} didn't go: ${out.error}` };
+    }
+    this.receipt(o.run_id, {
+      ...base,
+      via: out.via,
+      ok: true,
+      ...(out.thread ? { thread: out.thread } : {}),
+      ...(out.link ? { link: out.link } : {}),
+      ...(out.message_id ? { message_id: out.message_id } : {}),
+      checks: { secrets: "passed", ok: o.by },
+    });
+    return {
+      ok: true,
+      text: `Sent "${a.subject}" to ${base.to}${a.as === "atlas" ? ` from ${a.from}` : ""}.${out.link ? ` ${out.link}` : ""}`,
+    };
   }
 
   /** A delivery receipt in the log (§4.2), shown in History. */

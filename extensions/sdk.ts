@@ -203,6 +203,8 @@ export interface Mail {
   /** The Message-ID it answers, and the ones before it. */
   in_reply_to?: string;
   references?: string[];
+  /** The Message-ID to send it with, when the core made one. */
+  message_id?: string;
 }
 
 export interface EventPerson {
@@ -355,7 +357,14 @@ export interface Extension {
   /** A live check for Settings: signs in and says what it found. `owner` names the owner's own addresses it learned. */
   test?(ctx: Ctx): Promise<{ text: string; owner?: { emails?: string[] }; state?: Json }>;
   /** After its secrets are set: anything it must do once, like telling a service its address. What it says is shown once. */
-  setup?(ctx: Ctx): Promise<{ text: string; link?: string; fields?: Array<{ label: string; value: string }>; state?: Json }>;
+  setup?(ctx: Ctx): Promise<{
+    text: string;
+    link?: string;
+    fields?: Array<{ label: string; value: string }>;
+    /** DNS records the service needs on the owner's domain, which the core adds when it holds the domain's token. */
+    records?: Array<{ type: string; name: string; content: string; priority?: number }>;
+    state?: Json;
+  }>;
   /** What's new since the cursor. */
   look?(ctx: Ctx): Promise<{ items: Item[]; cursor: Json; state?: Json }>;
   receive?(ctx: Ctx, req: Request): Promise<Received>;

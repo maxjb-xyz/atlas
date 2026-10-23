@@ -196,6 +196,10 @@ export type SecretName =
   | "owntracks"
   /** A Mapbox token, when the owner picks Mapbox for maps (§19.1). */
   | "mapbox_token"
+  /** A Cloudflare API token for the account Atlas's own address is in (§16.2). */
+  | "cf_mail_token"
+  /** The key Atlas's mail relay signs each mail with. */
+  | "mail_relay"
   /** Each webhook source's key (§10.4), by its id. */
   | "sense_hooks"
   /** An extension's secrets (§17), by name: what the owner pasted, and the tokens of a sign-in the core ran for it. */
@@ -230,6 +234,8 @@ export function secretValues(sql: Sql): string[] {
     ["push_vapid", ["private_jwk", "d"]],
     ["owntracks", ["password"]],
     ["mapbox_token", []],
+    ["cf_mail_token", []],
+    ["mail_relay", []],
   ];
   const hooks = getSecret<Array<{ url?: unknown }>>(sql, "webhooks") ?? [];
   const out: string[] = [];

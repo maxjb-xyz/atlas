@@ -313,6 +313,8 @@ function reduce(s: State, a: Action): State {
       // The sign-in page, in this tab: it sends the owner back to Settings when it's done.
       if (m.url) window.location.assign(m.url);
       return m.error ? { ...s, tests: { ...s.tests, [`ext:${m.id}`]: { ok: false, message: m.error } } } : s;
+    case "atlas.mail":
+      return { ...s, tests: { ...s.tests, mail: { ok: m.ok, message: m.text } } };
     case "atlas.contacts.imported":
       return { ...s, tests: { ...s.tests, contacts: { ok: m.ok, message: m.text } } };
     case "atlas.sense.hook":

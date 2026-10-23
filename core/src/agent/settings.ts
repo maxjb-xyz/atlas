@@ -23,12 +23,13 @@ import type { ChatGPTSignIn } from "./chatgpt";
 import { here, nearest, pins } from "../location";
 import { installed } from "../extensions";
 import type { ExtensionDesk } from "./extensions";
+import type { MailDesk } from "./mail";
 import { nodes, nodeView } from "../nodes";
 import type { LocationView } from "../protocol";
 
 export function settingsView(
   sql: Sql,
-  parts: { chatgpt: ChatGPTSignIn; calendar: CalendarSense; router: BrainRouter; extensions: ExtensionDesk },
+  parts: { chatgpt: ChatGPTSignIn; calendar: CalendarSense; router: BrainRouter; extensions: ExtensionDesk; mail?: MailDesk },
 ): SettingsView {
   const passkeys = (getState<StoredPasskey[]>(sql, "passkeys") ?? []).map((p) => ({
     id: p.id,
@@ -49,6 +50,16 @@ export function settingsView(
       refused: refusal ? { ...refusal, note: parts.calendar.note(refusal, settings) } : null,
     },
     extensions: parts.extensions?.views() ?? [],
+    mail: parts.mail?.view() ?? {
+      address: null,
+      domain: null,
+      on_subdomain: false,
+      sending: null,
+      sending_ok: false,
+      sending_note: null,
+      permissions: [],
+      senders: [],
+    },
     webhooks: webhooks(sql).map(webhookView),
     vault: vault(sql).map(vaultView),
     permissions: {

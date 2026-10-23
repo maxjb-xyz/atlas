@@ -479,7 +479,9 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
         ? clean(JSON.stringify(a.arguments))
         : a.kind === "node"
           ? clean(JSON.stringify(a.input))
-          : true,
+          : a.kind === "email"
+            ? clean(`${a.subject}\n${a.text}`)
+            : true,
   );
   const hold = needsHold(actions);
   return {
@@ -502,6 +504,20 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
 }
 
 function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
+  if (a.kind === "email") {
+    return {
+      kind: "email",
+      title: a.name,
+      detail:
+        a.as === "owner"
+          ? `From your own mail, so it reads as you wrote it${a.thread ? ", in the conversation it answers" : ""}.`
+          : `From Atlas's own address, saying it's Atlas, an AI assistant writing for you${a.thread ? ", in the conversation it answers" : ""}.`,
+      where: a.via === "atlas" ? "Atlas's address" : a.via,
+      undo: "Mail can't be taken back once it's sent.",
+      message: a.text,
+      mail: { from: a.from, to: a.to.join(", "), ...(a.cc?.length ? { cc: a.cc.join(", ") } : {}), subject: a.subject },
+    };
+  }
   if (a.kind === "node") {
     return {
       kind: "node",
