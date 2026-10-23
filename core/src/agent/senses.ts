@@ -1,18 +1,19 @@
-// Awareness without the cost (VISION §10.3). Everything a sense notices goes
-// through three steps: rules (cheap and fixed), then `decide` (Clef: would
-// this be worth a thought now, and does it matter to anything open?), then a
-// run of Atlas's own, only when it might, which works out what would help
-// and speaks up with `nudge`, does what's its to do, or stays silent. What
-// it notices is a move or a place, a device's event, and what changed when
-// the situation was looked at again: the calendar ahead, the trip to the
-// next event, the weather. Rhythm moments (start of day, evening, a look
-// before leaving for an event) are agenda items on the one clock and go
-// straight to Atlas, who may also stay silent. Each step leaves an
-// `awareness` row, so History says what was decided and why, and the
-// owner's reactions to nudges are logged with what each was about. This
-// desk also keeps the situation's cache current (core/src/situation.ts).
-// None of it says what to tell the owner: the character and the situation
-// do (rule 1).
+// Awareness without the cost (VISION §10.3), for everything the intake
+// takes in (§10.4, core/src/intake.ts). Each item is weighed: cheap fixed
+// rules, then `decide` (Clef: worth a thought now, worth knowing later, or
+// not at all, and does it matter to anything open?). Now wakes a run of
+// Atlas's own, which works out what would help and speaks up with `nudge`,
+// does what's its to do, or stays silent. Later goes on the later pile,
+// which a run of Atlas's own looks over in a batch on the clock, as do the
+// start of day and the evening, and which the owner's next turn sees.
+// Rhythm moments (start of day, evening, a look before leaving for an
+// event) are agenda items on the one clock. Each step leaves an
+// `awareness` row, so History says what was decided and why; each item's
+// place is kept in the intake, so a restart picks up where it stopped.
+// The owner's reactions to nudges are logged with what each was about.
+// This desk also keeps the situation's cache current (core/src/situation.ts)
+// and looks at the calendar for changes. None of it says what to tell the
+// owner: the character and the situation do (rule 1).
 
 import { type Decider } from "../brains/decide";
 import type { Calendar } from "../calendar/types";
@@ -21,6 +22,7 @@ import { kindWords } from "../maps";
 import { type AgendaItem, createItem, finish, getItem, rearm, upcoming } from "../store/agenda";
 import { parse, type Sql } from "../store/db";
 import { append, type LogRow } from "../store/log";
+import { calendarLook, describe, laterPile, mark, markSeen, take as collect, unfinished, type IntakeItem, type SenseItem } from "../intake";
 import { findRecords } from "../store/records";
 import { readSettings, type Settings, writeSettings } from "../store/settings";
 import { getState, setState } from "../store/state";
@@ -60,9 +62,9 @@ export const REACT_MS = 30 * 60_000;
 export const IGNORED_MS = 2 * 3_600_000;
 /** How sure `decide` must be that an event matters before Atlas wakes. */
 export const MATTERS = 0.5;
-/** The same event (at the same place, from the same device) within this long is a duplicate; a change to the situation, within six hours. */
-const DUPLICATE_MS = 10 * 60_000;
-const SAME_CHANGE_MS = 6 * 3_600_000;
+/** The later pile is looked over when its oldest has waited this long, or it has this many, and at most this often. */
+export const REVIEW_AFTER_MS = 60 * 60_000;
+const REVIEW_COUNT = 8;
 /** On the move, the most often a move wakes Atlas. */
 export const MOVE_COOLDOWN_MS = 20 * 60_000;
 /** The leave look comes this long before the leave-by time. */
@@ -90,6 +92,8 @@ export interface SenseDeps {
   /** A run of Atlas's own, with the note, the nudge tool and looks. Resolves when the run ends. */
   wake(o: { trigger: string; note: string; from: NudgeFrom; ref?: string }): Promise<{ run_id: string; nudged: boolean; error?: string }>;
   rows(rows: LogRow[]): void;
+  /** Automations whose triggers read the intake (a calendar change) see what came in. */
+  automations(rows: LogRow[]): Promise<void>;
   /** Keeps the agent alive while this runs in the background. */
   background(fn: () => Promise<void>): void;
   /** The situation changed: views showing it ask again. */
@@ -138,15 +142,8 @@ export class SenseDesk {
           full: full && this.#needed(settings),
         });
         await this.#armLeave(settings);
-        // What changed is news for the senses, like a move: the calendar ahead, the trip, the weather.
-        const noticed = changes(before, after, settings).map((body) =>
-          append(this.d.sql, { actor: "system", kind: "sense", body: body as never }),
-        );
-        if (noticed.length) {
-          this.d.rows(noticed);
-          // Not awaited: a run that's waiting for this refresh (an owner's turn) would hold up the wake's own turn.
-          this.d.background(() => this.sensed(noticed));
-        }
+        // What changed is news for the senses, like a move: the trip to the next event, the weather.
+        this.take(changes(before, after, settings));
       } while (this.#again);
       this.d.changed();
     };
@@ -174,7 +171,7 @@ export class SenseDesk {
   /** The refresh's place on the clock: one item, put back each time, every 15 minutes while it's needed, else every two hours. */
   async armTick(now = Date.now()): Promise<void> {
     const open = upcoming(this.d.sql, 200).find((i) => i.kind === "situation");
-    const at = now + (this.#needed(readSettings(this.d.sql), now) ? 15 * 60_000 : 2 * 3_600_000);
+    const at = now + this.#every(now);
     if (open && open.state === "scheduled" && open.due_at <= at) return;
     const item = open
       ? rearm(this.d.sql, open.id, at)!
@@ -182,33 +179,69 @@ export class SenseDesk {
     await this.d.clock.schedule(item);
   }
 
-  /** The clock's tick (the item is already leased): refresh, note ignored nudges, and come back. */
+  /** Every 15 minutes while the weather and trip are needed, else every half hour, for the calendar's changes. */
+  #every(now: number): number {
+    return this.#needed(readSettings(this.d.sql), now) ? 15 * 60_000 : 30 * 60_000;
+  }
+
+  /**
+   * The clock's tick (the item is already leased): the calendar's changes,
+   * the situation, ignored nudges, the later pile when it's due a look,
+   * and back on the clock.
+   */
   async tick(item: AgendaItem): Promise<void> {
     const now = Date.now();
-    await this.refresh(true);
-    this.#ignored(now);
-    const at = now + (this.#needed(readSettings(this.d.sql), now) ? 15 * 60_000 : 2 * 3_600_000);
-    await this.d.clock.schedule(rearm(this.d.sql, item.id, at)!);
+    try {
+      const cal = this.d.calendar();
+      if (cal) this.take(await calendarLook(this.d.sql, cal, readSettings(this.d.sql), now));
+      await this.refresh(true);
+      this.#ignored(now);
+      await this.#review(now);
+    } finally {
+      await this.d.clock.schedule(rearm(this.d.sql, item.id, now + this.#every(now))!);
+    }
+  }
+
+  /**
+   * Collect (§10.4): items from any source become sense rows in the intake.
+   * Automations that read the intake see them, and each new one is weighed,
+   * in the background, so the source isn't kept waiting and a run waiting
+   * on this one (an owner's turn) doesn't hold up a wake.
+   */
+  take(items: Array<Omit<SenseItem, "what"> & { what?: string }>, o: { raw?: string; refresh?: boolean } = {}): LogRow[] {
+    if (!items.length) return [];
+    const { rows, fresh } = collect(this.d.sql, items, o.raw ? { raw: o.raw } : {});
+    this.d.rows(rows);
+    this.d.background(async () => {
+      // A move changes the situation, so it's brought up to date before the move is weighed.
+      if (o.refresh) await this.refresh(true);
+      await this.d
+        .automations(fresh)
+        .catch((err: unknown) =>
+          console.error(JSON.stringify({ at: "intake.automations", error: err instanceof Error ? err.message : String(err) })),
+        );
+      await this.sensed(fresh);
+    });
+    return rows;
+  }
+
+  /** After a restart: items left half way are weighed again. */
+  async resume(): Promise<void> {
+    const left = unfinished(this.d.sql);
+    if (left.length) await this.sensed(left);
   }
 
   // --- step by step, for each sense event ---------------------------------------------------------------
 
-  /** Takes what a sense just logged through the three steps. Never throws: a failure is logged with its words. */
+  /** Weighs what the intake took in, one at a time. Never throws: a failure is logged with its words, and the item marked failed. */
   async sensed(rows: LogRow[]): Promise<void> {
     for (const row of rows) {
-      // Location turned on or off is the owner's own doing, not news.
-      if (row.body.source !== "node" && row.body.source !== "situation" && !["arrived", "left", "moved"].includes(String(row.body.event)))
-        continue;
       try {
         await this.#consider(row);
       } catch (err) {
-        this.#log({
-          of: row.id,
-          event: describe(row),
-          step: "rules",
-          outcome: "failed",
-          why: err instanceof Error ? err.message : String(err),
-        });
+        const why = err instanceof Error ? err.message : String(err);
+        mark(this.d.sql, row.id, { state: "failed", why });
+        this.#log({ of: row.id, event: describe(row), step: "rules", outcome: "failed", why });
       }
     }
   }
@@ -217,33 +250,64 @@ export class SenseDesk {
     const t0 = Date.now();
     const settings = readSettings(this.d.sql);
     const event = describe(row);
-    const quiet = (step: "rules" | "decide", why: string, extra: Record<string, unknown> = {}) =>
-      this.#log({ of: row.id, event, step, outcome: step === "rules" ? "quiet" : "not relevant", why, ms: Date.now() - t0, ...extra });
+    const settle = (outcome: "later" | "never", step: "rules" | "decide", why: string, scores?: Record<string, number>) => {
+      mark(this.d.sql, row.id, { state: outcome === "never" ? "done" : "weighed", outcome, why, scores: scores ?? null });
+      this.#log({
+        of: row.id,
+        event,
+        step,
+        outcome: outcome === "later" ? "later" : step === "rules" ? "quiet" : "not relevant",
+        why,
+        ms: Date.now() - t0,
+        ...(scores ? { scores } : {}),
+      });
+    };
 
-    // 1. Rules: cheap and fixed.
+    // 1. Rules: cheap and fixed. Duplicates were already set aside when the item came in.
     if (!isOn(settings, "noticing")) {
-      quiet("rules", "Speaking up about what Atlas notices is off.");
+      settle("never", "rules", "Speaking up about what Atlas notices is off.");
       return;
     }
-    // The same news twice in a short while (the edge of a place, a device flickering, a forecast that came back) isn't news.
-    const key = subjectOf(row);
-    if (key) {
-      const since = row.at - (row.body.source === "situation" ? SAME_CHANGE_MS : DUPLICATE_MS);
-      const dup = this.d.sql
-        .exec<{ body: string }>(
-          `SELECT body FROM log WHERE kind = 'sense' AND seq < ? AND at > ? ORDER BY seq DESC LIMIT 200`,
-          row.seq,
-          since,
-        )
-        .toArray()
-        .some((r) => subjectOf({ body: parse<Record<string, unknown>>(r.body, {}) }) === key);
-      if (dup) {
-        quiet("rules", "The same happened a little while ago.");
-        return;
+    const open = this.#openThings(settings);
+
+    // 2. Decide: now, later or never, and does it matter to anything open?
+    const decider = this.d.decider();
+    let matched = open;
+    let now = true;
+    let later = true;
+    let scores: Record<string, number> | null = null;
+    let why = "";
+    if (decider) {
+      const state = `${event}\n\n${situationLines(this.d.sql, settings)}`;
+      const questions = {
+        [NOW]: { instructions: nowQuestion(settings) },
+        [LATER]: { instructions: laterQuestion(settings) },
+        ...Object.fromEntries(open.slice(0, 30).map((o) => [o.id, { instructions: o.question }])),
+      };
+      try {
+        scores = await decider.yesNo(state.slice(0, 4_000), questions, AbortSignal.timeout(8_000));
+        matched = open.filter((o) => (scores![o.id] ?? 0) >= MATTERS);
+        now = (scores[NOW] ?? 0) >= MATTERS || matched.length > 0;
+        later = (scores[LATER] ?? 0) >= MATTERS;
+      } catch (err) {
+        why = `decide didn't answer (${err instanceof Error ? err.message : String(err)})`;
+        now = open.length > 0;
       }
+    } else {
+      // Without decide, the main brain looks now only when something is open; the rest waits for the batch.
+      why = "there's no decide role here";
+      now = open.length > 0;
     }
+    const top = scores
+      ? Object.fromEntries(
+          Object.entries(scores).map(([k, v]) => [
+            k === NOW ? "worth a thought now" : k === LATER ? "worth knowing later" : titleOf(open, k),
+            Math.round(v * 100) / 100,
+          ]),
+        )
+      : undefined;
     // On the move, Atlas looks at most every twenty minutes; leaving a place always counts, since that's the moment.
-    if (row.body.event === "moved") {
+    if (now && row.body.event === "moved") {
       const looked = this.d.sql
         .exec(
           `SELECT 1 FROM log WHERE kind = 'awareness' AND json_extract(body, '$.step') = 'woke' AND at > ? LIMIT 1`,
@@ -251,64 +315,37 @@ export class SenseDesk {
         )
         .toArray().length;
       if (looked) {
-        quiet("rules", "Atlas looked a few minutes ago; on the move it looks at most every twenty minutes.");
+        settle(
+          "later",
+          "rules",
+          "Atlas looked a few minutes ago; on the move it looks at most every twenty minutes, so this waits for the next look.",
+          top,
+        );
         return;
       }
     }
-    const open = this.#openThings(settings);
-
-    // 2. Decide: is it worth a thought now, and does it matter to anything open?
-    const decider = this.d.decider();
-    let matched = open;
-    let worth = true;
-    let scores: Record<string, number> | null = null;
-    let why = "";
-    if (decider) {
-      const state = `${event}\n\n${situationLines(this.d.sql, settings)}`;
-      const questions = {
-        [NOW]: { instructions: worthQuestion(settings) },
-        ...Object.fromEntries(open.slice(0, 30).map((o) => [o.id, { instructions: o.question }])),
-      };
-      try {
-        scores = await decider.yesNo(state.slice(0, 4_000), questions, AbortSignal.timeout(8_000));
-        matched = open.filter((o) => (scores![o.id] ?? 0) >= MATTERS);
-        worth = (scores[NOW] ?? 0) >= MATTERS;
-      } catch (err) {
-        why = `decide didn't answer (${err instanceof Error ? err.message : String(err)}), so Atlas looked itself`;
-      }
-    } else if (open.length) {
-      why = "there's no decide role here, so Atlas looked itself";
-    } else {
-      // Without decide, the main brain would look at every move; it looks only when something is open.
-      worth = false;
-    }
-    const top = scores
-      ? Object.fromEntries(
-          Object.entries(scores).map(([k, v]) => [k === NOW ? "worth a thought" : titleOf(open, k), Math.round(v * 100) / 100]),
-        )
-      : undefined;
-    if (!matched.length && !worth) {
-      quiet(
-        "decide",
-        decider ? "It isn't worth a thought now, and doesn't matter to anything open." : "There's no decide role, and nothing is open.",
-        top ? { scores: top } : {},
-      );
+    if (!now) {
+      if (later || !scores)
+        settle("later", "decide", why ? `${why}, so it waits for the next look.` : "It can wait for the next look.", top);
+      else settle("never", "decide", "It isn't worth a thought, now or later, and doesn't matter to anything open.", top);
       return;
     }
     if (!scores) matched = open;
+    mark(this.d.sql, row.id, { state: "weighed", outcome: "now", why: why || "It's worth a thought now.", scores: top ?? null });
 
     // 3. Atlas, only now, with the event and what it may matter to. What to make of it is Atlas's own judgment.
     const note = [
       `[Atlas's senses, not the owner] ${event}.`,
       matched.length ? `It may matter to: ${matched.map((m) => m.text).join("; ")}.` : "",
       AWARE,
-      quietLine(settings),
+      listsLine(settings),
       reactionsLine(this.d.sql),
     ]
       .filter(Boolean)
       .join("\n\n");
     const ref = matched.find((m) => m.kind === "errand");
     const out = await this.d.wake({ trigger: `sense:${row.id}`, note, from: "noticing", ...(ref ? { ref: ref.id } : {}) });
+    mark(this.d.sql, row.id, { state: out.error ? "failed" : "done", run_id: out.run_id, ...(out.error ? { why: out.error } : {}) });
     this.#log(
       {
         of: row.id,
@@ -317,9 +354,55 @@ export class SenseDesk {
         outcome: out.error ? "failed" : out.nudged ? "nudged" : "silent",
         why:
           out.error ??
-          (why || (matched.length ? `It may matter to ${matched.map((m) => m.title).join(", ")}.` : "It seemed worth a thought.")),
+          (why || (matched.length ? `It may matter to ${matched.map((m) => m.title).join(", ")}.` : "It seemed worth a thought now.")),
         ms: Date.now() - t0,
         ...(top ? { scores: top } : {}),
+      },
+      out.run_id,
+    );
+  }
+
+  /**
+   * The later pile's look (§10.4): a run of Atlas's own over what could
+   * wait, as one batch with the full picture, when the oldest has waited an
+   * hour or the pile has grown, and at most once an hour.
+   */
+  async #review(now = Date.now()): Promise<void> {
+    const pile = laterPile(this.d.sql, 30);
+    if (!pile.length) return;
+    const oldest = Math.min(...pile.map((i) => i.at));
+    if (now - oldest < REVIEW_AFTER_MS && pile.length < REVIEW_COUNT) return;
+    const last = this.d.sql
+      .exec(
+        `SELECT 1 FROM log WHERE kind = 'awareness' AND json_extract(body, '$.step') = 'review' AND at > ? LIMIT 1`,
+        now - REVIEW_AFTER_MS,
+      )
+      .toArray().length;
+    if (last) return;
+    const settings = readSettings(this.d.sql);
+    const t0 = Date.now();
+    const note = [
+      `[Atlas's senses, not the owner] Since your last look, these came in and decide thought they could wait:\n${pileList(pile, zoneOf(settings))}`,
+      "Look them over together, with the full picture: what they add up to, what changed for the owner, and whether anything here is worth telling them now after all, or doing something about. One nudge at most, for what matters most, or none. What doesn't need saying, leave: they'll see it when they ask what you've noticed.",
+      listsLine(settings),
+      reactionsLine(this.d.sql),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const out = await this.d.wake({ trigger: "senses:review", note, from: "noticing" });
+    if (!out.error)
+      markSeen(
+        this.d.sql,
+        pile.map((i) => i.id),
+      );
+    this.#log(
+      {
+        event: `A look at ${pile.length} thing${pile.length === 1 ? "" : "s"} that could wait`,
+        step: "review",
+        count: pile.length,
+        outcome: out.error ? "failed" : out.nudged ? "nudged" : "silent",
+        why: out.error ?? "",
+        ms: Date.now() - t0,
       },
       out.run_id,
     );
@@ -355,6 +438,15 @@ export class SenseDesk {
           title: i.title,
           text: `the ${i.kind} "${i.title}" (due ${shortLocal(new Date(i.due_at), zoneOf(settings))})`,
           question: `The owner has a ${i.kind} coming up: "${i.title}". Does this event change anything about it, or make now the moment for it?`,
+        });
+      }
+      for (const r of findRecords(this.d.sql, "goal").slice(0, 5)) {
+        out.push({
+          id: r.id,
+          kind: "commitment",
+          title: r.name,
+          text: `the goal or project "${r.name}"`,
+          question: `The owner is working toward: "${r.name}"${typeof r.fields.fact === "string" ? ` (${r.fields.fact})` : ""}. Does this event matter to it now?`,
         });
       }
       for (const r of findRecords(this.d.sql, "commitment").slice(0, 5)) {
@@ -449,6 +541,7 @@ export class SenseDesk {
     const tz = zoneOf(settings);
     const kind: NudgeFrom = moment === "leave" ? "leave" : moment === "evening" ? "evening" : "morning";
     const said = saidToday(this.d.sql, tz);
+    const pile = kind === "leave" ? [] : laterPile(this.d.sql, 30);
     let note: string;
     if (kind === "leave") {
       const t = cache(this.d.sql).travel;
@@ -467,7 +560,7 @@ export class SenseDesk {
       note = [
         `[Atlas's clock, not the owner] It's nearly time to leave for "${t.title}" at ${clockLocal(new Date(t.start), tz)} (${t.location}): about ${minutes(t.s)} by car from ${t.from_what === "here" ? "where they are" : "home"}${t.traffic ? " with traffic" : ", typical time with no live traffic"}, so leave by ${clockLocal(new Date(t.leave_by), tz)}.`,
         "If they're already there or on their way (see the situation), or it clearly doesn't need them to go, don't nudge. Otherwise nudge once, short: when to leave and how long it takes, and anything else that would help on the way (traffic, the weather, something to bring or pick up).",
-        quietLine(settings),
+        listsLine(settings),
         reactionsLine(this.d.sql),
       ]
         .filter(Boolean)
@@ -476,14 +569,20 @@ export class SenseDesk {
       note = [
         `[Atlas's clock, not the owner] It's the ${kind === "morning" ? "start of the day" : "evening"}: your look at ${kind === "morning" ? "the day ahead" : "how today went and what tomorrow holds"}, which may end in silence.`,
         `Look it over the way a great assistant would: the situation, the calendar, reminders, errands, the people involved and what you know of them, and the weather. Think about what they'd be glad to hear now, or what you could get ready for them. If there's something, nudge once with it, in a few lines; if there isn't, don't nudge.`,
+        pile.length ? `Also look over what came in since your last look, which could wait until now:\n${pileList(pile, tz)}` : "",
         said.length ? `You've already said today (never say it again):\n${said.map((s) => `- ${s}`).join("\n")}` : "",
-        quietLine(settings),
+        listsLine(settings),
         reactionsLine(this.d.sql),
       ]
         .filter(Boolean)
         .join("\n\n");
     }
     const out = await this.d.wake({ trigger: `rhythm:${item.id}`, note, from: kind });
+    if (!out.error && pile.length)
+      markSeen(
+        this.d.sql,
+        pile.map((i) => i.id),
+      );
     this.#log(
       {
         moment,
@@ -574,59 +673,46 @@ export class SenseDesk {
   }
 }
 
-/** A sense row in words, for the log and for decide. */
-export function describe(row: Pick<LogRow, "body">): string {
-  const b = row.body as {
-    source?: string;
-    event?: string;
-    what?: string;
-    node?: { name?: string };
-    body?: unknown;
-    place?: { name?: string };
-    stayed_ms?: number;
-    near?: { name: string; m: number } | null;
-    motion?: string[];
-  };
-  if (b.source === "situation") return String(b.what ?? "The situation changed");
-  if (b.source === "node") {
-    const device = b.node?.name ?? "A paired device";
-    if (b.event === "online") return `${device} came online`;
-    if (b.event === "offline") return `${device} went offline`;
-    return `${device} says ${String(b.event ?? "something").replace(/_/g, " ")}: ${JSON.stringify(b.body ?? {}).slice(0, 300)}`;
-  }
-  if (b.event === "arrived") return `The owner arrived at ${b.place?.name ?? "a saved place"}`;
-  if (b.event === "left")
-    return `The owner left ${b.place?.name ?? "a saved place"}${b.stayed_ms ? ` after ${minutes(b.stayed_ms / 1000)}` : ""}`;
-  if (b.event === "moved")
-    return `The owner moved${b.near ? `, now about ${Math.round(b.near.m / 100) / 10} km from ${b.near.name}` : ""}${b.motion?.includes("automotive") ? ", driving" : ""}`;
-  return `Location turned ${b.event ?? "?"}`;
-}
-
 const titleOf = (open: Array<{ id: string; title: string }>, id: string) => open.find((o) => o.id === id)?.title ?? id;
 
-/** Decide's own question for every event: is it worth a thought now, whatever is open? */
-const NOW = "worth_a_thought";
+/** Decide's own questions for every item, whatever is open: worth a thought now, or worth knowing later. */
+const NOW = "worth_a_thought_now";
+const LATER = "worth_knowing_later";
 
-/** What makes the same news twice: the event and its place, its device and what it said, or the change's own key. */
-function subjectOf(row: { body: Record<string, unknown> }): string | null {
-  const b = row.body as { source?: string; event?: string; key?: string; place?: { id?: string }; node?: { id?: string }; body?: unknown };
-  if (b.source === "situation") return b.key ? `situation:${b.key}` : null;
-  if (b.source === "node") return `node:${b.node?.id ?? ""}:${b.event ?? ""}:${JSON.stringify(b.body ?? {})}`;
-  if (b.event === "moved") return null;
-  return b.place?.id ? `${b.event}:${b.place.id}` : null;
-}
-
-function worthQuestion(s: Settings): string {
-  return [
-    "Something just happened around the owner (above, with their situation).",
-    "Would a thoughtful personal assistant who knows them well want to think about it right now, because it could change their plans or timing, help with something they need or care about, or matter to their safety or money?",
-    "Ordinary comings and goings that change nothing are a no.",
+const prefs = (s: Settings) =>
+  [
+    s.speaking.tell_about.length
+      ? `They asked to always hear about: ${s.speaking.tell_about.join("; ")}; something about those is a yes.`
+      : "",
     s.speaking.quiet_about.length
       ? `They asked not to hear about: ${s.speaking.quiet_about.join("; ")}; something only about those is a no.`
       : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  ].filter(Boolean);
+
+function nowQuestion(s: Settings): string {
+  return [
+    "Something just came in about the owner's world (above, with their situation).",
+    "Would a thoughtful personal assistant who knows them well want to think about it right now, because it's urgent or timely: it could change their plans or timing in the next hours, it needs them soon, or it matters to their safety or money?",
+    "Ordinary comings and goings, and news that can wait, are a no.",
+    ...prefs(s),
+  ].join(" ");
+}
+
+function laterQuestion(s: Settings): string {
+  return [
+    "Something just came in about the owner's world (above).",
+    "Is it worth knowing about today, though it can wait: something that changes what's coming, needs them eventually, or is about a person, project or plan they care about?",
+    "Routine noise that changes nothing for them (a move that goes nowhere new, a device going idle, a newsletter) is a no.",
+    ...prefs(s),
+  ].join(" ");
+}
+
+/** The pile as lines for a note. */
+function pileList(pile: IntakeItem[], tz: string): string {
+  return [...pile]
+    .reverse()
+    .map((i) => `- ${clockLocal(new Date(i.at), tz)}: ${i.what} (${i.source})`)
+    .join("\n");
 }
 
 /** What a run woken by a sense is asked to do: think, and speak only if it helps. The judgment is Atlas's own. */
@@ -636,11 +722,21 @@ const AWARE = [
   "If it wouldn't (it changes nothing for them, it can wait, you'd be guessing, they're busy), don't nudge: end with a few words for your own log saying why. Silence is often right.",
 ].join(" ");
 
-/** What the owner doesn't want to hear about, for Atlas's note. */
-function quietLine(s: Settings): string {
-  return s.speaking.quiet_about.length
-    ? `The owner asked you not to bring up: ${s.speaking.quiet_about.join("; ")} (Settings → Notifications → Speaking up).`
-    : "";
+/** What the owner asked to always hear about, and never, for Atlas's note. */
+function listsLine(s: Settings): string {
+  return [
+    s.speaking.tell_about.length ? `The owner asked you to always bring up: ${s.speaking.tell_about.join("; ")}.` : "",
+    s.speaking.quiet_about.length ? `The owner asked you not to bring up: ${s.speaking.quiet_about.join("; ")}.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** What came in that could wait, for the owner's own turns: "since you last looked". */
+export function pileLine(sql: Sql, settings: Settings): string {
+  const pile = laterPile(sql, 8);
+  if (!pile.length) return "";
+  return `Noticed since your last look, and could wait (bring it up only if it fits; noticed has the rest):\n${pileList(pile, zoneOf(settings))}`;
 }
 
 /** An errand's kind of place or particular place, in words. */
@@ -681,6 +777,7 @@ export function speakingLine(s: Settings): string {
   const off = (Object.keys(NUDGE_WORDS) as NudgeFrom[]).filter((k) => !isOn(s, k)).map((k) => NUDGE_WORDS[k]);
   return [
     `Speaking up on your own (Settings → Notifications → Speaking up; change it with speaking_up): ${on.length ? `on for ${on.join(", ")}` : "off for everything"}${on.length && off.length ? `; off for ${off.join(", ")}` : ""}.`,
+    s.speaking.tell_about.length ? ` The owner asked you to always bring up: ${s.speaking.tell_about.join("; ")}.` : "",
     s.speaking.quiet_about.length ? ` The owner asked you not to bring up: ${s.speaking.quiet_about.join("; ")}.` : "",
   ].join("");
 }
@@ -718,12 +815,14 @@ export const speakingUp = defineTool({
   name: "speaking_up",
   kind: "change_own",
   description: [
-    "Change what you bring up on your own, when the owner asks: add or remove subjects they don't want to hear about (in their words, as narrow or broad as they meant: 'the weather unless it's severe', 'errands'), or switch what you notice, the look before leaving for events, and the start of day and evening looks (with their times).",
+    "Change what you bring up on your own, when the owner asks: add or remove subjects they don't want to hear about (in their words, as narrow or broad as they meant: 'the weather unless it's severe', 'errands'), subjects they always want to hear about ('anything from my landlord', 'reviews requested on my PRs'), or switch what you notice, the look before leaving for events, and the start of day and evening looks (with their times).",
     "They see a receipt with Undo, and it all shows in Settings → Notifications → Speaking up.",
   ].join(" "),
   input: z.object({
     quiet_about_add: z.array(z.string().min(1).max(120)).max(5).optional(),
     quiet_about_remove: z.array(z.string().min(1).max(120)).max(5).optional(),
+    tell_about_add: z.array(z.string().min(1).max(120)).max(5).optional(),
+    tell_about_remove: z.array(z.string().min(1).max(120)).max(5).optional(),
     noticing: z.boolean().optional().describe("Whether you speak up about what your senses notice."),
     leave: z.boolean().optional().describe("Whether you look before they leave for an event with a place."),
     morning: z.object({ on: z.boolean().optional(), at: HHMM.optional() }).optional(),
@@ -732,15 +831,19 @@ export const speakingUp = defineTool({
   async run(input, ctx) {
     const before = readSettings(ctx.sql).speaking;
     const lower = (x: string) => x.trim().toLowerCase();
-    const drop = new Set((input.quiet_about_remove ?? []).map(lower));
-    const quiet = [...before.quiet_about.filter((q) => !drop.has(lower(q)))];
-    for (const q of input.quiet_about_add ?? []) if (!quiet.some((x) => lower(x) === lower(q))) quiet.push(q.trim());
+    const edit = (list: string[], add: string[] = [], remove: string[] = []) => {
+      const drop = new Set(remove.map(lower));
+      const out = list.filter((q) => !drop.has(lower(q)));
+      for (const q of add) if (!out.some((x) => lower(x) === lower(q))) out.push(q.trim());
+      return out.slice(-30);
+    };
     const after: Settings["speaking"] = {
       noticing: input.noticing ?? before.noticing,
       leave: input.leave ?? before.leave,
       morning: { ...before.morning, ...input.morning },
       evening: { ...before.evening, ...input.evening },
-      quiet_about: quiet.slice(-30),
+      quiet_about: edit(before.quiet_about, input.quiet_about_add, input.quiet_about_remove),
+      tell_about: edit(before.tell_about, input.tell_about_add, input.tell_about_remove),
     };
     if (JSON.stringify(after) === JSON.stringify(before)) return { ok: true, output: { changed: false, speaking: before } };
     writeSettings(ctx.sql, { speaking: after });
@@ -749,6 +852,8 @@ export const speakingUp = defineTool({
     const said = [
       ...(input.quiet_about_add ?? []).map((q) => `won't bring up ${q}`),
       ...(input.quiet_about_remove ?? []).map((q) => `may bring up ${q} again`),
+      ...(input.tell_about_add ?? []).map((q) => `will always bring up ${q}`),
+      ...(input.tell_about_remove ?? []).map((q) => `no longer always brings up ${q}`),
       ...(["noticing", "leave"] as const).filter((k) => input[k] != null).map((k) => `${NUDGE_WORDS[k]} ${input[k] ? "on" : "off"}`),
       ...(["morning", "evening"] as const)
         .filter((k) => input[k])

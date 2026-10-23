@@ -14,7 +14,7 @@ import { AreaChip, AreaDot, Diamond, Empty, Icon, pressable, Sheet, shortDay } f
 import { AutomationFlow } from "./pages/Automations";
 import { AppFrame, ChartBody, CompareBody, KitBody } from "./ChartViews";
 import { McpAppFrame } from "./McpApp";
-import { MapView, PlaceView, SituationView, WeatherView } from "./SenseViews";
+import { MapView, PlaceView, SensesView, SituationView, WeatherView } from "./SenseViews";
 
 /** A view on the stage: the receipt it came from (or a local id), the view, and its title. */
 export interface Shown {
@@ -57,7 +57,7 @@ export const pageRef = (v: StageView) =>
                 ? "workspace"
                 : v.kind === "place"
                   ? `place:${v.place}`
-                  : v.kind === "weather" || v.kind === "situation"
+                  : v.kind === "weather" || v.kind === "situation" || v.kind === "senses"
                     ? v.kind
                     : null;
 
@@ -163,7 +163,9 @@ function ViewBody({
       )}
       {v.kind === "page" && <PageView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
       {v.kind === "map" && <MapView view={v} onClose={onClose} />}
-      {(v.kind === "place" || v.kind === "weather" || v.kind === "situation") && <SenseView atlas={atlas} view={v} onClose={onClose} />}
+      {(v.kind === "place" || v.kind === "weather" || v.kind === "situation" || v.kind === "senses") && (
+        <SenseView atlas={atlas} view={v} onClose={onClose} />
+      )}
     </>
   );
 }
@@ -175,7 +177,7 @@ function SenseView({
   onClose,
 }: {
   atlas: Atlas;
-  view: Extract<StageView, { kind: "place" | "weather" | "situation" }>;
+  view: Extract<StageView, { kind: "place" | "weather" | "situation" | "senses" }>;
   onClose?: () => void;
 }) {
   const page = usePage(atlas, view);
@@ -184,6 +186,7 @@ function SenseView({
   if (page.kind === "place") return <PlaceView page={page} onClose={onClose} />;
   if (page.kind === "weather") return <WeatherView page={page} onClose={onClose} />;
   if (page.kind === "situation") return <SituationView page={page} onClose={onClose} />;
+  if (page.kind === "senses") return <SensesView page={page} onClose={onClose} />;
   return null;
 }
 
@@ -1135,6 +1138,7 @@ function viewLabel(atlas: Atlas, v: StageView): string {
   if (v.kind === "place") return "A place";
   if (v.kind === "weather") return "The weather";
   if (v.kind === "situation") return "The situation";
+  if (v.kind === "senses") return "What Atlas noticed";
   return v.title;
 }
 
@@ -1359,6 +1363,7 @@ const KIND: Record<StageView["kind"], string> = {
   place: "Place",
   weather: "Weather",
   situation: "Situation",
+  senses: "Noticed",
 };
 
 export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown; onOpen: () => void }) {
@@ -1420,7 +1425,9 @@ export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown
                                               ? "Now, the next hours, and the week."
                                               : v.kind === "situation"
                                                 ? "Where you are, what's next, and when to leave."
-                                                : "What Atlas knows about them, and where they came up.";
+                                                : v.kind === "senses"
+                                                  ? "Today's funnel, each source, and what's waiting."
+                                                  : "What Atlas knows about them, and where they came up.";
   return (
     <div className="stage-card rise">
       <span className="lab">

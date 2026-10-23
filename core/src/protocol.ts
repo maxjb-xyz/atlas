@@ -243,6 +243,9 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.errand.done"), id: z.string().max(64), done: z.boolean() }),
   /** Settings → Devices → Set up OwnTracks: makes OwnTracks' own user and password (replacing any before) and its setup link. */
   z.object({ type: z.literal("atlas.location.setup") }),
+  /** Settings → Connections → Senses: a webhook source with its own address and key, or removing one. */
+  z.object({ type: z.literal("atlas.sense.hook.add"), name: z.string().min(1).max(60) }),
+  z.object({ type: z.literal("atlas.sense.hook.remove"), id: z.string().max(64) }),
   /** "Sign in with ChatGPT": start, then paste the address the browser landed on. */
   z.object({ type: z.literal("atlas.chatgpt.start") }),
   z.object({ type: z.literal("atlas.chatgpt.finish"), url: z.string().min(1).max(8000) }),
@@ -486,6 +489,20 @@ export interface SettingsView {
   location: LocationView;
   /** Paired devices (Settings → Devices, §16.3). */
   nodes: import("./nodes").NodeView[];
+  /** The intake's sources (Settings → Connections → Senses, §10.4): webhook sources, and each source's state. */
+  senses: SensesView;
+}
+
+export interface SensesView {
+  hooks: Array<{ id: string; name: string; made_at: number; last_at: number | null; refused_at: number | null }>;
+  /** Each source by name: when it last sent something, and when it last worked or failed, with the provider's words. */
+  sources: Array<{
+    source: string;
+    last: { at: number; what: string } | null;
+    ok_at: number | null;
+    error: string | null;
+    error_at: number | null;
+  }>;
 }
 
 export interface LocationView {
@@ -577,6 +594,8 @@ export type ServerMessage =
   | { type: "atlas.node.paired"; code: string; name: string | null }
   /** OwnTracks' setup, shown once: where it posts, its user and password, and the link that fills them in. */
   | { type: "atlas.location.setup"; url: string; user: string; password: string; link: string }
+  /** A new webhook source's address, with its key in it, shown once. */
+  | { type: "atlas.sense.hook"; id: string; name: string; url: string }
   | { type: "atlas.test.result"; what: string; ref?: string; ok: boolean; message: string; detail?: unknown }
   | { type: "atlas.error"; message: string }
   /** This socket's sign-in was ended; the app goes back to signing in. */

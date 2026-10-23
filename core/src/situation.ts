@@ -9,6 +9,7 @@
 // network call, so voice stays fast.
 
 import type { Calendar, CalendarEvent } from "./calendar/types";
+import type { SenseItem } from "./store/log";
 import { focusNow } from "./outbox";
 import type { SituationPage, WeatherPage } from "./stage";
 import { upcoming } from "./store/agenda";
@@ -227,64 +228,20 @@ export async function refresh(d: RefreshDeps): Promise<SituationCache> {
 
 // --- what changed -----------------------------------------------------------------------------------
 
-/** A change the senses notice when the situation is looked at again (core/src/agent/senses.ts). `key` tells the same change apart. */
-export interface SituationChange {
-  source: "situation";
-  event: "calendar" | "travel" | "weather";
-  what: string;
-  key: string;
-}
+/** What a look at the situation can notice (§10.4): the trip to the next event, and the weather. The calendar's changes have their own look (core/src/intake.ts). */
+export type SituationChange = SenseItem & { source: "situation"; event: "travel" | "weather"; key: string };
 
 /** What kind of weather a line from `whatMatters` is about: rain, heat, wind. */
 const weatherKind = (line: string) => line.split(/[ ,]/)[0]!;
 
 /**
- * What changed between two looks: events in the next day added, moved,
- * moved somewhere else or gone; the trip to the next event now needing
- * to start ten minutes sooner or more; weather that newly matters today.
- * Nothing on the first look, when there's nothing to compare with.
+ * What changed between two looks: the trip to the next event now needing
+ * to start ten minutes sooner or more, and weather that newly matters
+ * today. Nothing on the first look, when there's nothing to compare with.
  */
 export function changes(before: SituationCache, after: SituationCache, settings: Settings, now = Date.now()): SituationChange[] {
   const tz = zoneOf(settings);
   const out: SituationChange[] = [];
-  const when = (e: SituationEvent) => shortLocal(new Date(startOf(e)), tz);
-  const ahead = (e: SituationEvent) => !e.all_day && startOf(e) > now && startOf(e) - now < 86_400_000;
-  if (before.events_at && after.events_at && !before.events_error && !after.events_error) {
-    const was = new Map(before.events.map((e) => [e.id, e]));
-    const is = new Map(after.events.map((e) => [e.id, e]));
-    for (const e of after.events.filter(ahead)) {
-      const w = was.get(e.id);
-      if (!w)
-        out.push({
-          source: "situation",
-          event: "calendar",
-          what: `"${e.title}" was added to the calendar, ${when(e)}`,
-          key: `added:${e.id}`,
-        });
-      else if (w.start !== e.start)
-        out.push({
-          source: "situation",
-          event: "calendar",
-          what: `"${e.title}" moved on the calendar from ${when(w)} to ${when(e)}`,
-          key: `moved:${e.id}:${e.start}`,
-        });
-      else if ((w.location ?? "") !== (e.location ?? "") && e.location)
-        out.push({
-          source: "situation",
-          event: "calendar",
-          what: `"${e.title}" (${when(e)}) is now at ${e.location}`,
-          key: `place:${e.id}:${e.location}`,
-        });
-    }
-    for (const w of before.events.filter(ahead))
-      if (!is.has(w.id))
-        out.push({
-          source: "situation",
-          event: "calendar",
-          what: `"${w.title}" (${when(w)}) is gone from the calendar`,
-          key: `gone:${w.id}`,
-        });
-  }
   const t0 = before.travel;
   const t1 = after.travel;
   if (t0 && t1 && t0.event_id === t1.event_id && t1.leave_by <= t0.leave_by - 10 * 60_000)
@@ -293,6 +250,7 @@ export function changes(before: SituationCache, after: SituationCache, settings:
       event: "travel",
       what: `The trip to "${t1.title}" now takes about ${minutes(t1.s)}${t1.traffic ? " with traffic" : ""}: leave by ${clockLocal(new Date(t1.leave_by), tz)}, not ${clockLocal(new Date(t0.leave_by), tz)}`,
       key: `travel:${t1.event_id}:${Math.round(t1.leave_by / 600_000)}`,
+      thread: t1.event_id,
     });
   if (before.weather && after.weather && after.weather.at !== before.weather.at) {
     const units = unitsFor(settings.units, tz);
@@ -306,7 +264,7 @@ export function changes(before: SituationCache, after: SituationCache, settings:
         key: `weather:${weatherKind(line)}:${day}`,
       });
   }
-  return out.slice(0, 6);
+  return out;
 }
 
 // --- what a run is told ----------------------------------------------------------------------------

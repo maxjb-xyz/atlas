@@ -33,6 +33,7 @@ interface SenseApi {
   }): Promise<{ code: string; poll: string; expires: number }>;
   apiPairPoll(poll: string): Promise<unknown>;
   apiNodeAuth(token: string): Promise<string | null>;
+  apiSenseHook(id: string, key: string | null, headers: Record<string, string>, text: string): Promise<{ status: number; body: unknown }>;
 }
 
 /** Passkeys, challenges and sessions live in the owner's agent. */
@@ -71,6 +72,19 @@ export default {
       const res = json(out.body, out.status);
       if (out.status === 401) res.headers.set("www-authenticate", 'Basic realm="Atlas"');
       return res;
+    }
+
+    // Webhook sources (§10.4): any service posts to its own address, checked by its key or its signature.
+    const hook = /^\/senses\/(hk_[a-z0-9]+)$/.exec(path);
+    if (hook && request.method === "POST") {
+      const agent = (await getAgentByName(env.PersonAgent, OWNER)) as unknown as SenseApi;
+      const text = await request.text();
+      if (text.length > 256_000) return json({ error: "That's too big for one post: 256 KB at most." }, 413);
+      const headers: Record<string, string> = {};
+      for (const [k, v] of request.headers)
+        if (/^(x-github-|linear-|x-hub-|content-type$|user-agent$)/i.test(k)) headers[k.toLowerCase()] = v;
+      const out = await agent.apiSenseHook(hook[1]!, url.searchParams.get("key"), headers, text);
+      return json(out.body, out.status);
     }
 
     // Paired devices (§16.3). Pairing is the device flow: the device asks for a code, shows it, and polls;

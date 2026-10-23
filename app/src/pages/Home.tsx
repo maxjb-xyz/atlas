@@ -44,6 +44,7 @@ function identity(s: Shown): string | null {
       return `place:${v.place}`;
     case "weather":
     case "situation":
+    case "senses":
       return v.kind;
     default:
       return null;

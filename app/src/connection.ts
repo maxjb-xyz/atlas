@@ -93,6 +93,8 @@ export interface State {
   situationVersion: number;
   /** OwnTracks' setup, shown once in Settings → Devices. */
   ownTracks: { url: string; user: string; password: string; link: string } | null;
+  /** A webhook source just added: its address with its key, shown once. */
+  senseHook: { id: string; name: string; url: string } | null;
   /** Pairing codes looked up (null: not waiting), and the answer to Pair (the device's name, or null), by code. */
   pairing: Record<string, { name: string; kind: string; platform?: string; expires: number } | null>;
   paired: Record<string, string | null>;
@@ -131,6 +133,7 @@ const initial: State = {
   kept: null,
   situationVersion: 0,
   ownTracks: null,
+  senseHook: null,
   pairing: {},
   paired: {},
 };
@@ -297,6 +300,8 @@ function reduce(s: State, a: Action): State {
       return { ...s, situationVersion: s.situationVersion + 1 };
     case "atlas.location.setup":
       return { ...s, ownTracks: { url: m.url, user: m.user, password: m.password, link: m.link } };
+    case "atlas.sense.hook":
+      return { ...s, senseHook: { id: m.id, name: m.name, url: m.url } };
   }
   return s;
 }

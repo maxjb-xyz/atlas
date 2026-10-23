@@ -297,16 +297,11 @@ const webhookNames = (a: Pick<AutomationInput, "do">) => [
 // --- when it runs --------------------------------------------------------------------------
 
 /** Whether an automation's trigger runs on the clock (and so has an agenda item). */
-export const onClock = (t: Trigger) =>
-  t.kind === "schedule" || t.kind === "watch" || t.kind === "absence" || (t.kind === "event" && t.on === "calendar");
-
-/** How often a calendar trigger reads the calendar for changes. Each read is at most one sign-in, and Atlas keeps a copy. */
-export const CALENDAR_EVERY_MS = 30 * 60_000;
+export const onClock = (t: Trigger) => t.kind === "schedule" || t.kind === "watch" || t.kind === "absence";
 
 /** The next time a clock trigger fires after `from`, in the owner's time zone, or null for triggers that don't run on the clock. */
 export function nextRun(t: Trigger, from: Date, tz: string): Date | null {
   if (t.kind === "watch") return new Date(from.getTime() + t.every_hours * 3600_000);
-  if (t.kind === "event") return t.on === "calendar" ? new Date(from.getTime() + CALENDAR_EVERY_MS) : null;
   if (t.kind !== "schedule" && t.kind !== "absence") return null;
   const days = t.kind === "schedule" ? t.days : [];
   const [h, m] = t.at.split(":").map(Number) as [number, number];

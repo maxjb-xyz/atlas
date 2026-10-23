@@ -532,6 +532,9 @@ function Connections({ atlas, draft, edit, view }: { atlas: Atlas; draft: Settin
         />
         <Webhooks atlas={atlas} view={view} />
       </Row>
+      <Row label="Senses">
+        <Senses atlas={atlas} view={view} />
+      </Row>
       <Row label="MCP servers">
         <McpServers atlas={atlas} />
       </Row>
@@ -1712,12 +1715,12 @@ export function Pair({ atlas, code }: { atlas: Atlas; code: string }) {
 
 /**
  * Speaking up (§10.3): whether Atlas tells you things on its own, the looks
- * it takes at set moments, and what you've asked it not to bring up (it
- * keeps that list itself when you say stop, and you can change it here).
+ * it takes at set moments, and, in your own words, what it should always
+ * bring up and what never (it keeps both lists itself when you say stop,
+ * or ask why it didn't tell you, and you can change them here).
  */
 function Speaking({ draft, edit }: { draft: SettingsT; edit: Edit }) {
   const sp = draft.speaking;
-  const [adding, setAdding] = useState("");
   const set = (patch: Partial<SettingsT["speaking"]>) => edit({ speaking: { ...sp, ...patch } });
   const flag = (k: "noticing" | "leave", label: string) => (
     <label className="check">
@@ -1742,41 +1745,66 @@ function Speaking({ draft, edit }: { draft: SettingsT; edit: Edit }) {
       </label>
     </div>
   );
+  return (
+    <>
+      {flag(
+        "noticing",
+        "What Atlas notices: where you are and are heading, changes on your calendar, traffic, the weather, your devices, your webhooks",
+      )}
+      {flag("leave", "When to leave for events with a place, from the travel time")}
+      {moment("morning", "A look at the start of the day")}
+      {moment("evening", "A look in the evening")}
+      <Words
+        label="Always bring up"
+        empty={'Nothing yet. Asking "why didn\'t you tell me?" can add what you meant here.'}
+        placeholder="Like: anything from my landlord"
+        list={sp.tell_about}
+        set={(tell_about) => set({ tell_about })}
+      />
+      <Words
+        label="Don't bring up"
+        empty={'Nothing yet. Saying "stop" to a nudge adds what you meant here.'}
+        placeholder="Like: the weather unless it's severe"
+        list={sp.quiet_about}
+        set={(quiet_about) => set({ quiet_about })}
+      />
+      <p className="muted small">
+        Atlas speaks up when it would help, and stays quiet otherwise; History shows what it decided each time and why, and "show me what
+        you noticed" puts today's on the stage. These wait for quiet hours and count against the day's interruptions.
+      </p>
+    </>
+  );
+}
+
+/** A list of the owner's own words, with a × on each and a field to add one. */
+function Words(o: { label: string; empty: string; placeholder: string; list: string[]; set: (list: string[]) => void }) {
+  const [adding, setAdding] = useState("");
   const add = () => {
     const t = adding.trim();
-    if (t && !sp.quiet_about.some((q) => q.toLowerCase() === t.toLowerCase())) set({ quiet_about: [...sp.quiet_about, t] });
+    if (t && !o.list.some((q) => q.toLowerCase() === t.toLowerCase())) o.set([...o.list, t]);
     setAdding("");
   };
   return (
     <>
-      {flag("noticing", "What Atlas notices: where you are and are heading, changes on your calendar, traffic, the weather, your devices")}
-      {flag("leave", "When to leave for events with a place, from the travel time")}
-      {moment("morning", "A look at the start of the day")}
-      {moment("evening", "A look in the evening")}
       <p className="small" style={{ marginTop: 12 }}>
-        Don't bring up
+        {o.label}
       </p>
-      {sp.quiet_about.length ? (
+      {o.list.length ? (
         <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
-          {sp.quiet_about.map((q) => (
-            <button
-              key={q}
-              className="chip"
-              title="Let Atlas bring this up again"
-              onClick={() => set({ quiet_about: sp.quiet_about.filter((x) => x !== q) })}
-            >
+          {o.list.map((q) => (
+            <button key={q} className="chip" title="Take this off the list" onClick={() => o.set(o.list.filter((x) => x !== q))}>
               {q} ×
             </button>
           ))}
         </div>
       ) : (
-        <p className="muted small">Nothing yet. Saying "stop" to a nudge adds what you meant here.</p>
+        <p className="muted small">{o.empty}</p>
       )}
       <div className="row">
         <label className="field" style={{ flex: 1 }}>
           <input
-            aria-label="Something Atlas shouldn't bring up"
-            placeholder="Like: the weather unless it's severe"
+            aria-label={o.label}
+            placeholder={o.placeholder}
             value={adding}
             maxLength={120}
             onChange={(e) => setAdding(e.target.value)}
@@ -1787,10 +1815,100 @@ function Speaking({ draft, edit }: { draft: SettingsT; edit: Edit }) {
           Add
         </button>
       </div>
-      <p className="muted small">
-        Atlas speaks up when it would help, and stays quiet otherwise; History shows what it decided each time and why. These wait for quiet
-        hours and count against the day's interruptions.
+    </>
+  );
+}
+
+const SOURCE_NAMES: Record<string, string> = {
+  location: "Phone (OwnTracks)",
+  device: "Paired devices",
+  calendar: "Calendar",
+  situation: "Trip and weather",
+  webhook: "Webhook sources",
+};
+
+/**
+ * Senses (§10.4): every source the intake has heard from, with its state,
+ * and webhook sources: any service that can post (GitHub, Linear, a home
+ * server) gets its own address with its own key, shown once.
+ */
+function Senses({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const [name, setName] = useState("");
+  const made = atlas.state.senseHook;
+  const now = Date.now();
+  const ago = (at: number) => (now - at < 60_000 ? "just now" : `${shortDay(at)}, ${clock(at)}`);
+  return (
+    <>
+      <State
+        on={view.senses.sources.length > 0}
+        text={view.senses.sources.length ? `${view.senses.sources.length} sources` : "Nothing yet"}
+        what="Everything Atlas takes in comes through here and is weighed: now, later, or not at all."
+      />
+      {view.senses.sources.map((s) => {
+        const bad = s.error && (!s.ok_at || (s.error_at ?? 0) > s.ok_at);
+        return (
+          <p className="small" key={s.source}>
+            <b>{SOURCE_NAMES[s.source] ?? s.source.replace(/^webhook:/, "")}</b>{" "}
+            <span className={bad ? "" : "muted"} style={bad ? { color: "var(--bad)" } : undefined}>
+              {bad
+                ? `${s.error} (${ago(s.error_at!)})`
+                : s.last
+                  ? `Last: ${s.last.what} (${ago(s.last.at)})`
+                  : s.ok_at
+                    ? `Working (${ago(s.ok_at)})`
+                    : ""}
+            </span>
+          </p>
+        );
+      })}
+      <p className="small" style={{ marginTop: 12 }}>
+        Webhook sources
       </p>
+      {view.senses.hooks.map((h) => (
+        <div className="row" key={h.id}>
+          <span style={{ fontWeight: 500 }}>{h.name}</span>
+          <span className="muted small">
+            {h.last_at ? `last post ${ago(h.last_at)}` : "no posts yet"}
+            {h.refused_at ? ` · refused one ${ago(h.refused_at)}` : ""}
+          </span>
+          <span className="grow" />
+          <button className="btn sm" onClick={() => atlas.send({ type: "atlas.sense.hook.remove", id: h.id })}>
+            Remove
+          </button>
+        </div>
+      ))}
+      {made && view.senses.hooks.some((h) => h.id === made.id) && (
+        <div className="cell" style={{ marginTop: 8 }}>
+          <p className="small">
+            <b>{made.name}</b>'s address, shown once. Paste it where the service asks for a webhook or payload URL (for GitHub, content type
+            application/json). Anyone with it can post to Atlas, so keep it private.
+          </p>
+          <code className="small" style={{ wordBreak: "break-all", userSelect: "all" }}>
+            {made.url}
+          </code>
+        </div>
+      )}
+      <div className="row">
+        <label className="field" style={{ flex: 1 }}>
+          <input
+            aria-label="Name of the service"
+            placeholder="Like: GitHub, Linear, Home server"
+            value={name}
+            maxLength={60}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <button
+          className="btn sm"
+          disabled={!name.trim()}
+          onClick={() => {
+            atlas.send({ type: "atlas.sense.hook.add", name: name.trim() });
+            setName("");
+          }}
+        >
+          Add source
+        </button>
+      </div>
     </>
   );
 }

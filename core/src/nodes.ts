@@ -14,7 +14,7 @@
 
 import { z } from "zod";
 import type { Json, Sql } from "./store/db";
-import { append, type LogRow } from "./store/log";
+import { append, type LogRow, type SenseItem } from "./store/log";
 import { getState, setState } from "./store/state";
 
 export const NODE_KINDS = ["desktop", "phone", "home", "browser", "other"] as const;
@@ -279,13 +279,25 @@ export function findNode(sql: Sql, ref: string): Node | null {
   );
 }
 
-/** A node coming or going, or one of its events, as a `sense` row. */
-export function logNode(sql: Sql, n: Node, event: string, body: Record<string, unknown> = {}): LogRow {
+/** A node coming or going, as a `sense` row. Its events go through the intake instead (`nodeItem`). */
+export function logNode(sql: Sql, n: Node, event: "online" | "offline"): LogRow {
   return append(sql, {
     actor: "system",
     kind: "sense",
-    body: { source: "node", node: { id: n.id, name: n.name }, event, ...body } as never,
+    body: { source: "device", node: { id: n.id, name: n.name }, event } as never,
   });
+}
+
+/** One of a node's events, as an item for the intake (§10.4). */
+export function nodeItem(n: Node, event: string, body: unknown): SenseItem {
+  return {
+    source: "device",
+    event,
+    what: `${n.name} says ${event.replace(/_/g, " ")}: ${JSON.stringify(body ?? {}).slice(0, 300)}`,
+    node: { id: n.id, name: n.name },
+    body,
+    thread: n.id,
+  };
 }
 
 /** The devices line for every prompt: each node, online or not, and what it offers. */

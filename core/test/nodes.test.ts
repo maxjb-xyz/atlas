@@ -125,14 +125,14 @@ describe("pairing and the device's socket", () => {
     // An event is kept for the situation, and logged.
     node.send({ type: "node.event", event: "idle", body: { value: "away for 12 min" } });
     await new Promise((r) => setTimeout(r, 100));
-    // It's news for the senses too: here, with no decide role and nothing open, it ends quietly.
+    // It's news for the senses too: here, with no decide role and nothing open, it waits for the next look.
     const aware = await inOwner((_a, sql) =>
       sql
         .exec<{ body: string }>(`SELECT body FROM log WHERE kind = 'awareness' ORDER BY seq DESC LIMIT 1`)
         .toArray()
         .map((r) => JSON.parse(r.body) as Record<string, unknown>),
     );
-    expect(aware[0]).toMatchObject({ event: expect.stringContaining("says idle: "), outcome: "not relevant" });
+    expect(aware[0]).toMatchObject({ event: expect.stringContaining("says idle: "), outcome: "later" });
     const b = brain([say("ok")]);
     await turn(s, "is my Mac there?");
     expect(b.requests[0]!.system).toMatch(

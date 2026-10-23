@@ -4,7 +4,7 @@
 // in the theme's light or dark style, with OpenStreetMap's credit on it.
 
 import { useEffect, useRef, useState } from "react";
-import type { PlacePage, SituationPage, StageView, WeatherPage } from "../../core/src/stage";
+import type { PlacePage, SensesPage, SituationPage, StageView, WeatherPage } from "../../core/src/stage";
 import { distance, sky, temp } from "../../core/src/weather";
 import { clock, dayName, Icon, shortDay, useNow } from "./ui";
 
@@ -322,6 +322,118 @@ export function SituationView({ page: p, onClose }: { page: SituationPage; onClo
         <div style={{ marginTop: 16 }}>
           <MapCanvas markers={markers} height={260} />
         </div>
+      )}
+    </>
+  );
+}
+
+const OUTCOME: Record<string, string> = { now: "Looked now", later: "Later", never: "Didn't matter", duplicate: "Repeat" };
+const SOURCE: Record<string, string> = {
+  location: "Phone",
+  device: "Devices",
+  calendar: "Calendar",
+  situation: "Trip and weather",
+  webhook: "Webhooks",
+};
+const sourceName = (s: string) => SOURCE[s] ?? (s.startsWith("webhook:") ? s.slice(8) : s);
+
+/**
+ * What Atlas noticed (§10.4): today's funnel from everything that came in
+ * down to what it said, then what's waiting for a look, the latest
+ * decisions, and each source's state.
+ */
+export function SensesView({ page: p, onClose }: { page: SensesPage; onClose?: () => void }) {
+  const now = useNow();
+  const f = p.funnel;
+  const steps: Array<{ label: string; n: number; note: string }> = [
+    { label: "Came in", n: f.in, note: "from every source today" },
+    { label: "Weighed", n: f.in - f.duplicate, note: `${f.duplicate} repeat${f.duplicate === 1 ? "" : "s"} set aside` },
+    { label: "Worth knowing", n: f.later + f.now, note: `${f.never} didn't matter` },
+    { label: "Looked at now", n: f.now, note: `${f.later} kept for a later look` },
+    { label: "Spoke up", n: f.nudged, note: f.nudged ? "nudges sent today" : "nothing said today" },
+  ];
+  const top = Math.max(1, f.in);
+  return (
+    <>
+      <Title icon="layers" text="What Atlas noticed" onClose={onClose} />
+      <div className="funnel" role="list" aria-label="Today, from what came in to what Atlas said">
+        {steps.map((s, i) => (
+          <div className="funnel-step" role="listitem" key={s.label}>
+            <span className="lab">{s.label}</span>
+            <div className="funnel-bar">
+              <i
+                style={{ width: `${Math.max(s.n ? 3 : 0, (s.n / top) * 100)}%`, animationDelay: `${i * 70}ms` }}
+                className={i === steps.length - 1 ? "ac" : ""}
+              />
+            </div>
+            <b className="funnel-n">{s.n}</b>
+            <span className="faint small funnel-note">{s.note}</span>
+          </div>
+        ))}
+      </div>
+      {f.failed > 0 && (
+        <p className="small" style={{ color: "var(--bad)" }}>
+          {f.failed} didn't finish; History says why.
+        </p>
+      )}
+      <div className="cells two" style={{ marginTop: 16 }}>
+        <div className="cell">
+          <span className="lab">Waiting for a look</span>
+          {p.later.length ? (
+            <ul className="senses-list">
+              {p.later.slice(0, 8).map((i) => (
+                <li key={i.id}>
+                  <span className="faint small">{clock(i.at)}</span> {i.what}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted small">
+              Nothing. What can wait is looked over in a batch, about once an hour, and at the start of day and evening.
+            </p>
+          )}
+        </div>
+        <div className="cell">
+          <span className="lab">Latest</span>
+          {p.recent.length ? (
+            <ul className="senses-list">
+              {p.recent.slice(0, 8).map((i) => (
+                <li key={i.id} title={i.why ?? undefined}>
+                  <span className="faint small">{clock(i.at)}</span> {i.what}{" "}
+                  <span className={`chip small ${i.outcome === "now" ? "ac" : ""}`}>{i.outcome ? OUTCOME[i.outcome] : "Weighing"}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted small">Nothing has come in yet.</p>
+          )}
+        </div>
+      </div>
+      <span className="lab" style={{ display: "block", marginTop: 16 }}>
+        Sources
+      </span>
+      {p.sources.length ? (
+        <ul className="senses-list">
+          {p.sources.map((s) => {
+            const bad = s.error && (!s.ok_at || (s.error_at ?? 0) > s.ok_at);
+            return (
+              <li key={s.source}>
+                <span className={`dot ${bad ? "bad" : "ok"}`} aria-hidden /> <b>{sourceName(s.source)}</b>{" "}
+                <span className="muted small">
+                  {bad
+                    ? s.error
+                    : s.last
+                      ? `last ${since(s.last.at, now)}: ${s.last.what}`
+                      : s.ok_at
+                        ? `working, ${since(s.ok_at, now)}`
+                        : ""}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="muted small">No sources yet: set up OwnTracks, the calendar, a device or a webhook in Settings.</p>
       )}
     </>
   );

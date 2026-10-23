@@ -267,6 +267,9 @@ export const WeatherStage = z.object({ kind: z.literal("weather") });
 /** The situation (§10.2, §21.6): where the owner is, what they're doing, what's next and when to leave, weather and devices. */
 export const SituationStage = z.object({ kind: z.literal("situation") });
 
+/** What Atlas noticed (§10.4): today's funnel, each source's state, what's waiting for a look, and the latest decisions. */
+export const SensesStage = z.object({ kind: z.literal("senses") });
+
 export const PageStage = z.object({
   kind: z.literal("page"),
   page: z.string().min(1).max(80).describe("The page's name or id."),
@@ -297,6 +300,7 @@ export const StageView = z.discriminatedUnion("kind", [
   PlaceStage,
   WeatherStage,
   SituationStage,
+  SensesStage,
 ]);
 export type StageView = z.infer<typeof StageView>;
 export type StageKind = StageView["kind"];
@@ -452,6 +456,7 @@ export type StagePage =
   | PlacePage
   | WeatherPage
   | SituationPage
+  | SensesPage
   | { kind: "missing"; why: string };
 
 /** A saved place as its view shows it. */
@@ -507,6 +512,15 @@ export interface SituationPage {
   credit: string;
 }
 
+/** What Atlas noticed, as its view shows it (§10.4). */
+export interface SensesPage {
+  kind: "senses";
+  funnel: { in: number; duplicate: number; never: number; later: number; now: number; failed: number; nudged: number };
+  sources: import("./protocol").SensesView["sources"];
+  later: Array<{ id: string; at: number; source: string; what: string }>;
+  recent: Array<{ id: string; at: number; source: string; what: string; outcome: string | null; why: string | null }>;
+}
+
 /** The few words a view goes by: on its tab, its receipt and its compact card. */
 export function stageTitle(
   v: StageView,
@@ -533,6 +547,8 @@ export function stageTitle(
       return "Weather";
     case "situation":
       return "Situation";
+    case "senses":
+      return "Noticed";
     case "workspace":
       return "Workspace";
     case "area":

@@ -470,7 +470,7 @@ describe("automations", () => {
     s.close();
   });
 
-  it("follow the calendar: the first look only remembers, a moved event runs once with the change", async () => {
+  it("follow the calendar through the intake: the first look only remembers, a moved event runs once with the change", async () => {
     const at = (h: number) => new Date(Date.now() + h * 3600_000).toISOString();
     const events = [
       { id: "e1", calendar: "Work", title: "Riverside walkthrough", start: at(30), end: at(31), all_day: false },
@@ -493,30 +493,56 @@ describe("automations", () => {
       do: [{ kind: "say", text: "Riverside moved." }],
       report: "thread",
     });
-    const wake = () =>
-      inOwner(async (agent, sql) => {
-        const item = sql
-          .exec<{ id: string }>(
-            `SELECT id FROM agenda WHERE kind = 'automation' AND state = 'scheduled' AND json_extract(source, '$.detail.automation') = ?`,
+    // A calendar trigger isn't on the clock of its own: the intake's calendar look, on the senses' tick, feeds it.
+    const own = await inOwner(
+      (_a, sql) =>
+        sql
+          .exec(
+            `SELECT 1 FROM agenda WHERE kind = 'automation' AND state = 'scheduled' AND json_extract(source, '$.detail.automation') = ?`,
             id,
           )
-          .one().id;
+          .toArray().length,
+    );
+    expect(own).toBe(0);
+    const look = () =>
+      inOwner(async (agent, sql) => {
+        const item = sql.exec<{ id: string }>(`SELECT id FROM agenda WHERE kind = 'situation' AND state = 'scheduled' LIMIT 1`).one().id;
         sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1000, item);
         await agent.onAgendaDue({ id: item });
       });
-    await wake();
+    await inOwner((_a, sql) => sql.exec(`DELETE FROM state WHERE key = 'calendar_seen'`));
+    await look();
     const moved = { ...events[0]!, start: at(32), end: at(33) };
     current = [moved, { ...events[1]!, start: at(52), end: at(53) }];
-    await wake();
-    await wake();
-    current = [moved];
-    await wake();
-    const all = await inOwner((_a, sql) => runs(sql, id));
-    expect(all.map((r) => (r.quiet ? "quiet" : "ran"))).toEqual(["quiet", "ran", "quiet", "quiet"]);
-    expect(String(all[0]!.text)).toContain("First look");
-    expect(all[1]).toMatchObject({ why: "calendar", ok: true, text: "Riverside moved." });
+    await look();
+    const ran = async (n: number) => {
+      const end = Date.now() + 5_000;
+      while (Date.now() < end) {
+        const all = await inOwner((_a, sql) => runs(sql, id));
+        if (all.length >= n) return all;
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      return inOwner((_a, sql) => runs(sql, id));
+    };
+    const all = await ran(1);
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({ why: "calendar", ok: true, text: "Riverside moved." });
     // Only the Riverside event counts: the dentist moving, then going, isn't about it.
-    expect(String(all[3]!.text)).toContain('Nothing about "riverside" changed');
+    current = [moved];
+    await look();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await inOwner((_a, sql) => runs(sql, id))).toHaveLength(1);
+    const sensed = await inOwner((_a, sql) =>
+      sql
+        .exec<{ body: string }>(`SELECT body FROM log WHERE kind = 'sense' AND json_extract(body, '$.source') = 'calendar' ORDER BY seq`)
+        .toArray()
+        .map((r) => JSON.parse(r.body).what as string),
+    );
+    expect(sensed.slice(-3)).toEqual([
+      expect.stringContaining('Moved on the calendar: "Riverside walkthrough"'),
+      expect.stringContaining('Moved on the calendar: "Dentist"'),
+      expect.stringContaining('Gone from the calendar: "Dentist"'),
+    ]);
     s.close();
   });
 

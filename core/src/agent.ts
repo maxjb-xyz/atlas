@@ -129,12 +129,14 @@ import { HelperAgent, type HelperHost, type HelperJob, type HelperOutcome } from
 import type { BrainEvent, BrainRequest } from "./brains/types";
 import type { Append } from "./store/log";
 import { NUDGE_WORDS, nudgeTool, SenseDesk, speakingUp } from "./agent/senses";
+import { addHook, hookAllowed, hookItem, hookSeen, noteSource, noticedTool, removeHook, senseHooks } from "./intake";
 import { errandDone, openErrands, placeLooks, placeTools, NO_DEADLINE } from "./tools/places";
 import {
   type AtlasToNode,
   allowedMap,
   decidePairing,
   logNode,
+  nodeItem,
   NodeMessage,
   type NodeKind,
   nodeByToken,
@@ -149,7 +151,6 @@ import { deviceCall } from "./tools/nodes";
 import {
   locationOff,
   locationOn,
-  logSense,
   newOwnTracksLogin,
   observe,
   ownTracksAllowed,
@@ -224,8 +225,22 @@ const TOOLS: Record<Actor, Tool[]> = {
     ...placeTools,
     deviceCall,
     speakingUp,
+    noticedTool,
   ],
-  atlas: [calendarRead, ...agendaTools, recall, ...webTools, fileRead, skillRead, mcpTools, mcpCall, ...placeLooks, errandDone, deviceCall],
+  atlas: [
+    calendarRead,
+    ...agendaTools,
+    recall,
+    ...webTools,
+    fileRead,
+    skillRead,
+    mcpTools,
+    mcpCall,
+    ...placeLooks,
+    errandDone,
+    deviceCall,
+    noticedTool,
+  ],
   system: [],
 };
 
@@ -450,11 +465,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       decider: () => this.#decider(),
       wake: (o) => this.#wake(o),
       rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
+      automations: (rows) => this.#automations.sensed(rows),
       background: (fn) => void this.keepAliveWhile(fn).catch(() => {}),
       changed: () => this.#broadcast({ type: "atlas.situation" }),
     });
     void this.#senses.armRhythm().catch(() => {});
     void this.#senses.armTick().catch(() => {});
+    // Items a restart left half way are weighed again.
+    void this.keepAliveWhile(() => this.#senses.resume()).catch(() => {});
     // The default routines are made once; then every automation that's on has its next run on the clock (a missing one is put back).
     try {
       seedRoutines(this.#sql);
@@ -639,6 +657,21 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           password: login.password,
           link: ownTracksLink(config),
         });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.sense.hook.add": {
+        const origin = getState<string>(this.#sql, "origin") ?? new URL(connection.uri ?? "https://atlas.invalid").origin;
+        const { hook, key } = addHook(this.#sql, msg.name);
+        append(this.#sql, { actor: "owner", kind: "settings.change", body: { sense_hook: "added", name: hook.name } });
+        this.#send(connection, { type: "atlas.sense.hook", id: hook.id, name: hook.name, url: `${origin}/senses/${hook.id}?key=${key}` });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.sense.hook.remove": {
+        const h = senseHooks(this.#sql).find((x) => x.id === msg.id);
+        removeHook(this.#sql, msg.id);
+        if (h) append(this.#sql, { actor: "owner", kind: "settings.change", body: { sense_hook: "removed", name: h.name } });
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       }
@@ -1379,10 +1412,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (m.type === "node.event") {
       const n = updateNode(this.#sql, id, (x) => ({ ...x, last_seen: Date.now(), state: { ...x.state, [m.event]: summary(m.body) } }));
       if (n) {
-        const row = logNode(this.#sql, n, m.event, { body: m.body as never });
-        this.#broadcast({ type: "atlas.rows", rows: [row] });
         // A device's event is news for the senses, like a move.
-        void this.keepAliveWhile(() => this.#senses.sensed([row]));
+        this.#senses.take([nodeItem(n, m.event, m.body)]);
       }
       return;
     }
@@ -2370,12 +2401,48 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     } catch {
       return { status: 400, body: { error: "OwnTracks sent something that isn't JSON." } };
     }
-    const rows = readOwnTracks(data).flatMap((o) => logSense(this.#sql, observe(this.#sql, o)));
-    if (rows.length) this.#broadcast({ type: "atlas.rows", rows });
+    // Into the intake; it's weighed after the answer, so OwnTracks isn't kept waiting: the situation first, then each item.
+    this.#senses.take(
+      readOwnTracks(data).flatMap((o) => observe(this.#sql, o)),
+      { refresh: true },
+    );
     this.#broadcast({ type: "atlas.view", view: this.#view() });
-    // Awareness runs after the answer, so OwnTracks isn't kept waiting: the situation first, then each event's steps.
-    if (rows.length) void this.keepAliveWhile(() => this.#senses.refresh(true).then(() => this.#senses.sensed(rows)));
     return { status: 200, body: ownTracksAnswer(this.#sql) };
+  }
+
+  /**
+   * A webhook source's post (§10.4): checked by its key or its signature,
+   * then into the intake as one item, with the post kept as raw content.
+   * The answer comes before it's weighed, so the service isn't kept waiting.
+   */
+  async apiSenseHook(
+    id: string,
+    key: string | null,
+    headers: Record<string, string>,
+    text: string,
+  ): Promise<{ status: number; body: unknown }> {
+    const hook = senseHooks(this.#sql).find((h) => h.id === id);
+    const h = new Headers(headers);
+    if (!hook || !(await hookAllowed(this.#sql, id, key, h, text))) {
+      if (hook) hookSeen(this.#sql, id, true);
+      console.error(JSON.stringify({ at: "senses.hook", hook: id, error: hook ? "wrong key or signature" : "no such source" }));
+      return {
+        status: 401,
+        body: { error: "That isn't this source's key or signature. Settings → Connections → Senses has its address." },
+      };
+    }
+    let payload: unknown = text;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      // Not JSON: the text itself is the post.
+    }
+    hookSeen(this.#sql, id, false);
+    noteSource(this.#sql, `webhook:${hook.name}`);
+    // GitHub's first post only says the hook works.
+    if (h.get("x-github-event") === "ping") return { status: 200, body: { ok: true, note: "Connected." } };
+    this.#senses.take([hookItem(hook, h, typeof payload === "string" ? { text: payload } : payload)], { raw: text });
+    return { status: 202, body: { ok: true } };
   }
 
   async apiLastSeq(): Promise<number> {

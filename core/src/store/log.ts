@@ -65,6 +65,25 @@ export type Undo =
   /** Puts Speaking up back the way it was before Atlas changed it. */
   | { kind: "speaking.restore"; before: unknown };
 
+/** What a source says happened, as the intake keeps it in a `sense` row (§10.4). Sources add their own fields beside these (a place, a device, an event). */
+export interface SenseItem {
+  /** Where it came from: "location", "device", "calendar", "situation", "webhook". */
+  source: string;
+  event: string;
+  /** What happened, in a line, for History, `decide` and Atlas. */
+  what: string;
+  /** The same key again within a while is the same news (a place's edge, a device flickering, a webhook sent twice). */
+  key?: string;
+  /** The thing it belongs to: an event's id, a place, a device, an issue. */
+  thread?: string;
+  /** Who it's from, when it's from someone. */
+  from?: string;
+  /** The source's own signals, for cheap rules: "review_requested", "assigned", "newsletter". */
+  signals?: string[];
+  link?: string;
+  [field: string]: unknown;
+}
+
 export interface LogRow {
   seq: number;
   id: string;

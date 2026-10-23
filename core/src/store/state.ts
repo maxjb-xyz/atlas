@@ -74,7 +74,13 @@ export type StateName =
   /** Paired devices (§16.3): each one's name, token hash, capabilities, switches, and whether it's online. */
   | "nodes"
   /** Devices waiting for the owner to say yes to pairing, each with its code, for ten minutes. */
-  | "node_pairings";
+  | "node_pairings"
+  /** The intake's sources (§10.4): when each last worked, and its last error in the provider's words. */
+  | "intake_sources"
+  /** What the calendar's last look saw over the next 14 days, to tell its changes. */
+  | "calendar_seen"
+  /** Webhook sources the owner added (§10.4): their names; their keys are secrets. */
+  | "sense_hooks";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

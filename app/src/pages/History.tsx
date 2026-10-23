@@ -114,18 +114,23 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
         kind: `file.${str(b.change)}`,
       };
     case "sense": {
-      if (b.source === "situation") {
-        const who = { calendar: "Calendar", travel: "Traffic", weather: "Weather" }[str(b.event)] ?? "Situation";
-        return { who, what: str(b.what), kind: `sense.${str(b.event)}` };
+      if (b.source === "situation" || b.source === "calendar" || b.source === "webhook") {
+        const who =
+          b.source === "calendar"
+            ? "Calendar"
+            : b.source === "webhook"
+              ? str((b.hook as { name?: string } | undefined)?.name) || "Webhook"
+              : ({ travel: "Traffic", weather: "Weather" }[str(b.event)] ?? "Situation");
+        return { who, what: str(b.what), kind: `sense.${str(b.source)}` };
       }
-      if (b.source === "node") {
+      if (b.source === "node" || b.source === "device") {
         const device = str((b.node as { name?: string } | undefined)?.name);
         const what =
           b.event === "online"
             ? "Came online"
             : b.event === "offline"
               ? "Went offline"
-              : `${str(b.event).replace(/_/g, " ")}: ${JSON.stringify(b.body ?? {}).slice(0, 120)}`;
+              : str(b.what) || `${str(b.event).replace(/_/g, " ")}: ${JSON.stringify(b.body ?? {}).slice(0, 120)}`;
         return { who: device, what, kind: `device.${str(b.event)}` };
       }
       const place = (b.place as { name?: string } | undefined)?.name ?? "a saved place";
@@ -162,7 +167,9 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
             ? `${str(b.event)}: Atlas looked and stayed quiet`
             : b.outcome === "failed"
               ? `${str(b.event)}: the look didn't finish: ${str(b.why)}`
-              : `${str(b.event)}: decided it doesn't matter (${str(b.why)})`;
+              : b.outcome === "later"
+                ? `${str(b.event)}: it can wait for a later look (${str(b.why)})`
+                : `${str(b.event)}: decided it doesn't matter (${str(b.why)})`;
       return {
         who: "Atlas",
         what: `${what}${typeof b.ms === "number" ? ` · ${(b.ms / 1000).toFixed(2)} s` : ""}`,

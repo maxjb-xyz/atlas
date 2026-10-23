@@ -106,8 +106,9 @@ export const Settings = z.object({
    * `noticing` covers whatever its senses notice (a move, a change on the
    * calendar, the weather, traffic, a device); `leave` the look before an
    * event with a place; the moments have a time. `quiet_about` is what the
-   * owner doesn't want to hear about, in their words: Atlas and `decide`
-   * both see it, and the owner edits it in the app.
+   * owner doesn't want to hear about and `tell_about` what they always do,
+   * in their words: Atlas and `decide` both see them, and the owner edits
+   * them in the app.
    */
   speaking: z
     .object({
@@ -116,8 +117,17 @@ export const Settings = z.object({
       morning: z.object({ on: z.boolean().default(true), at: HHMM.default("08:00") }).default({ on: true, at: "08:00" }),
       evening: z.object({ on: z.boolean().default(false), at: HHMM.default("20:00") }).default({ on: false, at: "20:00" }),
       quiet_about: z.array(z.string().min(1).max(120)).max(30).default([]),
+      /** What the owner always wants to hear about, in their words (from "why didn't you tell me?"). */
+      tell_about: z.array(z.string().min(1).max(120)).max(30).default([]),
     })
-    .default({ noticing: true, leave: true, morning: { on: true, at: "08:00" }, evening: { on: false, at: "20:00" }, quiet_about: [] }),
+    .default({
+      noticing: true,
+      leave: true,
+      morning: { on: true, at: "08:00" },
+      evening: { on: false, at: "20:00" },
+      quiet_about: [],
+      tell_about: [],
+    }),
   /** How Atlas says temperatures, speeds and distances. "auto" follows the time zone: US zones get °F and miles. */
   units: z.enum(["auto", "us", "metric"]).default("auto"),
 });
@@ -196,7 +206,9 @@ export type SecretName =
   /** OwnTracks' own user and password (§10.1), for its posts to the Worker and nothing else. */
   | "owntracks"
   /** A Mapbox token, when the owner picks Mapbox for maps (§19.1). */
-  | "mapbox_token";
+  | "mapbox_token"
+  /** Each webhook source's key (§10.4), by its id. */
+  | "sense_hooks";
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];

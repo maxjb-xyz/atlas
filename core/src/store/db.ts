@@ -246,6 +246,27 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (skill_id, n)
   );
   `,
+  // 11. M4: the intake (§10.4). Each sense row's place in it: received, weighed, then done or failed, and what was decided.
+  `
+  CREATE TABLE intake (
+    id TEXT PRIMARY KEY,
+    seq INTEGER NOT NULL,
+    at INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    key TEXT,
+    state TEXT NOT NULL,
+    outcome TEXT,
+    why TEXT,
+    scores TEXT,
+    run_id TEXT,
+    seen_at INTEGER,
+    raw TEXT,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX intake_state ON intake(state, at);
+  CREATE INDEX intake_key ON intake(key, at);
+  CREATE INDEX intake_later ON intake(outcome, seen_at, at);
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

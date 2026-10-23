@@ -2280,3 +2280,90 @@ button.chip:hover {
   border-radius: 10px;
   padding: 12px 14px;
 }
+
+/* What Atlas noticed (§10.4): the funnel, from what came in to what was said. */
+.funnel {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+.funnel-step {
+  display: grid;
+  grid-template-columns: 120px 1fr 44px;
+  grid-template-areas: "lab bar n" ". note note";
+  align-items: center;
+  column-gap: 12px;
+}
+.funnel-step .lab {
+  grid-area: lab;
+}
+.funnel-bar {
+  grid-area: bar;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--dot);
+  overflow: hidden;
+}
+.funnel-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 5px;
+  background: var(--tx3);
+  transform-origin: left;
+  animation: funnel-grow 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.funnel-bar i.ac {
+  background: var(--ac);
+}
+.funnel-n {
+  grid-area: n;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.funnel-note {
+  grid-area: note;
+}
+@keyframes funnel-grow {
+  from {
+    transform: scaleX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .funnel-bar i {
+    animation: none;
+  }
+}
+@media (max-width: 520px) {
+  .funnel-step {
+    grid-template-columns: 96px 1fr 36px;
+  }
+}
+.senses-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--tx3);
+}
+.dot.ok {
+  background: var(--ok);
+}
+.dot.bad {
+  background: var(--bad);
+}
+.cells.two {
+  grid-template-columns: 1fr 1fr;
+}
+@media (max-width: 720px) {
+  .cells.two {
+    grid-template-columns: 1fr;
+  }
+}

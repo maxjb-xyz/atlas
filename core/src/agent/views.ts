@@ -12,6 +12,7 @@ import { readSettings, secretValues } from "../store/settings";
 import { here, pinOf } from "../location";
 import { MAPS } from "../maps";
 import { situationPage, weatherPage } from "../situation";
+import { sensesPage } from "../intake";
 import { webhooks, webhookView } from "../webhooks";
 import type { AreaPage, AutomationView, PersonPage, PlacePage, StageMessage, StagePage, StageView } from "../stage";
 import { type Automation, getAutomation, needsTest, stepText, whenText } from "../automations";
@@ -98,6 +99,7 @@ export function stagePage(sql: Sql, view: StageView): StagePage | null {
   }
   if (view.kind === "page") return pagePage(sql, view.page, view.version);
   if (view.kind === "situation") return situationPage(sql, readSettings(sql));
+  if (view.kind === "senses") return sensesPage(sql, readSettings(sql));
   if (view.kind === "weather") return weatherPage(sql, readSettings(sql));
   if (view.kind === "place") return placePage(sql, view.place);
   return null;

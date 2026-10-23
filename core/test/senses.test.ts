@@ -79,7 +79,7 @@ function fakeWorld() {
 }
 
 /** A fake decide role: an errand question is yes when `yes` says so; a reaction reads "thanks" or "stop" from the reply. */
-function decider(o: { errand: number }): Decider & { asked: Array<Record<string, string>> } {
+function decider(o: { errand: number; now?: number; later?: number }): Decider & { asked: Array<Record<string, string>> } {
   const asked: Array<Record<string, string>> = [];
   return {
     model: "fake-decide",
@@ -88,7 +88,9 @@ function decider(o: { errand: number }): Decider & { asked: Array<Record<string,
       asked.push(Object.fromEntries(Object.entries(questions).map(([k, q]) => [k, q.instructions])));
       const out: Record<string, number> = {};
       for (const [id, q] of Object.entries(questions)) {
-        if (id === "stop") out[id] = /"stop/i.test(state.split("The owner replied:")[1] ?? "") ? 0.95 : 0.05;
+        if (id === "worth_a_thought_now") out[id] = o.now ?? 0.01;
+        else if (id === "worth_knowing_later") out[id] = o.later ?? 0.01;
+        else if (id === "stop") out[id] = /"stop/i.test(state.split("The owner replied:")[1] ?? "") ? 0.95 : 0.05;
         else if (id === "thanks") out[id] = /thank/i.test(state.split("The owner replied:")[1] ?? "") ? 0.95 : 0.05;
         // Like Clef: an errand fits when they're leaving somewhere and heading on, not when they arrive.
         else if (q.instructions.includes("errand")) out[id] = /left|moved/.test(state.split("\n")[0]!) ? o.errand : 0.05;
@@ -109,12 +111,16 @@ const fixAt = (p: { lat: number; lon: number }, at = Date.now()) => ({
   tid: "me",
 });
 
-async function rowsSince(seq: number, kind: string): Promise<Array<Record<string, unknown> & { run_id: string | null }>> {
+async function rowsSince(seq: number, kind: string): Promise<Array<Record<string, unknown> & { id: string; run_id: string | null }>> {
   return inOwner((_a, sql) =>
     sql
-      .exec<{ body: string; run_id: string | null }>(`SELECT body, run_id FROM log WHERE kind = ? AND seq > ? ORDER BY seq`, kind, seq)
+      .exec<{ id: string; body: string; run_id: string | null }>(
+        `SELECT id, body, run_id FROM log WHERE kind = ? AND seq > ? ORDER BY seq`,
+        kind,
+        seq,
+      )
       .toArray()
-      .map((r) => ({ ...parse<Record<string, unknown>>(r.body, {}), run_id: r.run_id })),
+      .map((r) => ({ ...parse<Record<string, unknown>>(r.body, {}), id: r.id, run_id: r.run_id })),
   );
 }
 
@@ -237,10 +243,19 @@ describe("the gym-to-store moment", () => {
     const quiet = await waitFor("the quiet row", async () =>
       (await rowsSince(from, "awareness")).find((r) => String(r.event).includes("arrived at Home")),
     );
-    expect(quiet).toMatchObject({ step: "decide", outcome: "not relevant", scores: { "worth a thought": 0.01 } });
+    expect(quiet).toMatchObject({
+      step: "decide",
+      outcome: "not relevant",
+      scores: { "worth a thought now": 0.01, "worth knowing later": 0.01 },
+    });
     expect(quiet.ms as number).toBeLessThan(1_000);
-    // Decide was asked its own question, with nothing open.
-    expect(Object.keys(d.asked.at(-1)!)).toEqual(["worth_a_thought"]);
+    // Decide was asked its own two questions, with nothing open.
+    expect(Object.keys(d.asked.at(-1)!)).toEqual(["worth_a_thought_now", "worth_knowing_later"]);
+    // The intake keeps the item, done, with what was decided.
+    const kept = await inOwner((_a, sql) =>
+      sql.exec<{ state: string; outcome: string }>(`SELECT state, outcome FROM intake WHERE id = ?`, String(quiet.of)).one(),
+    );
+    expect(kept).toEqual({ state: "done", outcome: "never" });
 
     await inOwner(async (_a, sql) => {
       const { createItem } = await import("../src/store/agenda");
@@ -254,7 +269,7 @@ describe("the gym-to-store moment", () => {
     const from2 = await lastSeq();
     await post(fixAt(north(HOME, 2_000)), auth);
     const nope = await waitFor("the decide row", async () => (await rowsSince(from2, "awareness")).find((r) => r.step === "decide"));
-    expect(nope).toMatchObject({ outcome: "not relevant", scores: { Stamps: 0.1, "worth a thought": 0.01 } });
+    expect(nope).toMatchObject({ outcome: "not relevant", scores: { Stamps: 0.1, "worth a thought now": 0.01 } });
     expect(b.requests).toHaveLength(0);
   });
 
@@ -295,13 +310,23 @@ describe("the gym-to-store moment", () => {
     await waitFor("the undo", async () => (await inOwner((_a, sql) => readSettings(sql))).speaking.quiet_about.length === 0);
   });
 
-  it("notices a change on the calendar, and asks decide whether it's worth a thought", async () => {
-    const d = decider({ errand: 0 });
-    seams.decide = d;
+  it("notices a change on the calendar once, keeps it for later, and looks the pile over in a batch", async () => {
+    seams.decide = decider({ errand: 0, later: 0.8 });
     const events: Parameters<typeof fakeCalendar>[0] = [];
     seams.calendar = fakeCalendar(events);
-    brain([say("Noted."), say("Nothing to say.")]);
-    await turn(s, "hi");
+    const tick = () =>
+      inOwner(async (agent, sql) => {
+        const item = sql.exec<{ id: string }>(`SELECT id FROM agenda WHERE kind = 'situation' AND state = 'scheduled' LIMIT 1`).one().id;
+        sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1000, item);
+        await agent.onAgendaDue({ id: item });
+      });
+    await inOwner((_a, sql) => {
+      sql.exec(`DELETE FROM state WHERE key = 'calendar_seen'`);
+      sql.exec(`UPDATE intake SET seen_at = 1 WHERE seen_at IS NULL`);
+      sql.exec(`UPDATE log SET at = at - 7200000 WHERE kind = 'awareness'`);
+    });
+    // The first look only remembers.
+    await tick();
     const from = await lastSeq();
     const start = new Date(Date.now() + 3 * 3_600_000);
     events.push({
@@ -312,16 +337,125 @@ describe("the gym-to-store moment", () => {
       all_day: false,
       calendar: "Home",
     } as never);
-    await turn(s, "anything new?");
-    const sense = await waitFor("the calendar sense", async () => (await rowsSince(from, "sense")).find((r) => r.event === "calendar"));
-    expect(sense.what).toContain('"Lunch with Sam" was added to the calendar');
-    const row = await waitFor("its decision", async () =>
-      (await rowsSince(from, "awareness")).find((r) => String(r.event).includes("Lunch with Sam")),
-    );
-    expect(row).toMatchObject({ step: "decide", outcome: "not relevant" });
+    brain([]);
+    await tick();
+    const sense = await waitFor("the calendar sense", async () => (await rowsSince(from, "sense")).find((r) => r.source === "calendar"));
+    expect(sense).toMatchObject({ event: "added", what: expect.stringContaining('Added to the calendar: "Lunch with Sam"') });
+    const row = await waitFor("its decision", async () => (await rowsSince(from, "awareness")).find((r) => r.of === sense.id));
+    expect(row).toMatchObject({ step: "decide", outcome: "later" });
     // The same change isn't news twice.
-    await turn(s, "and now?");
-    expect((await rowsSince(from, "sense")).filter((r) => r.event === "calendar")).toHaveLength(1);
+    await tick();
+    expect((await rowsSince(from, "sense")).filter((r) => r.source === "calendar")).toHaveLength(1);
+
+    // The owner's next turn sees what's waiting.
+    const b = brain([say("Lunch with Sam at noon is new on your calendar.")]);
+    await turn(s, "anything new?");
+    expect(b.requests[0]!.system).toContain("Noticed since your last look");
+    expect(b.requests[0]!.system).toContain("Lunch with Sam");
+
+    // When the oldest has waited an hour, a run of Atlas's own looks the pile over, and it's seen.
+    await inOwner((_a, sql) => sql.exec(`UPDATE intake SET at = at - 7200000 WHERE id = ?`, sense.id));
+    const r = brain([say("A lunch got added; nothing to say yet.")]);
+    await tick();
+    const review = await waitFor("the review", async () => (await rowsSince(from, "awareness")).find((x) => x.step === "review"));
+    expect(review).toMatchObject({ outcome: "silent", count: 1 });
+    expect(String(r.requests[0]!.messages.at(-1)!.content)).toContain("Since your last look, these came in");
+    const seen = await inOwner((_a, sql) =>
+      sql.exec<{ seen_at: number | null }>(`SELECT seen_at FROM intake WHERE id = ?`, sense.id).one(),
+    );
+    expect(seen.seen_at).not.toBeNull();
+  }, 20_000);
+
+  it("takes a webhook from GitHub, checked by its signature, as one item, and the misses tool finds it with what was sent", async () => {
+    seams.decide = decider({ errand: 0, later: 0.9 });
+    s.send({ type: "atlas.sense.hook.add", name: "GitHub" });
+    const made = await s.next("atlas.sense.hook");
+    const key = new URL(made.url).searchParams.get("key")!;
+    const body = JSON.stringify({
+      action: "review_requested",
+      requested_reviewer: { login: "owner" },
+      pull_request: { number: 7, title: "Fix the intake", html_url: "https://github.com/o/r/pull/7" },
+      repository: { full_name: "o/r" },
+      sender: { login: "sam" },
+    });
+    const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(body))), (x) =>
+      x.toString(16).padStart(2, "0"),
+    ).join("");
+    const send = (signature: string) =>
+      SELF.fetch(`https://atlas.test/senses/${made.id}`, {
+        method: "POST",
+        headers: {
+          "x-github-event": "pull_request",
+          "x-github-delivery": "d-1",
+          "x-hub-signature-256": `sha256=${signature}`,
+          "content-type": "application/json",
+        },
+        body,
+      });
+    expect((await send("0".repeat(64))).status).toBe(401);
+    const from = await lastSeq();
+    expect((await send(sig)).status).toBe(202);
+    // GitHub sends again: the same delivery counts once.
+    expect((await send(sig)).status).toBe(202);
+    const items = await waitFor("the items", async () => {
+      const r = (await rowsSince(from, "sense")).filter((x) => x.source === "webhook");
+      return r.length === 2 ? r : null;
+    });
+    expect(items[0]).toMatchObject({
+      what: 'GitHub: pull request review requested, "Fix the intake" in o/r by sam',
+      signals: expect.arrayContaining(["review_requested"]),
+      link: "https://github.com/o/r/pull/7",
+    });
+    const dup = await inOwner((_a, sql) =>
+      sql.exec<{ outcome: string }>(`SELECT outcome FROM intake WHERE id = ?`, String(items[1]!.id)).one(),
+    );
+    expect(dup.outcome).toBe("duplicate");
+    await waitFor("its decision", async () => (await rowsSince(from, "awareness")).find((x) => x.of === items[0]!.id));
+
+    // "Why didn't you tell me?": Atlas finds it, says what it decided, and reads what GitHub sent as someone else's words.
+    const b = brain([
+      call("noticed", { words: "intake" }),
+      (req) => {
+        const out = String(req.messages.at(-1)!.content);
+        expect(out).toContain("kept it for a later look");
+        return call("noticed", { id: String(items[0]!.id) });
+      },
+      (req) => {
+        expect(String(req.messages.at(-1)!.content)).toContain("[From the source, not the owner]");
+        return call("speaking_up", { tell_about_add: ["reviews requested on my pull requests"] });
+      },
+      say("It was waiting for my next look. From now on I'll tell you about review requests right away."),
+    ]);
+    await turn(s, "why didn't you tell me Sam asked for a review?");
+    expect(b.requests).toHaveLength(4);
+    expect((await inOwner((_a, sql) => readSettings(sql))).speaking.tell_about).toEqual(["reviews requested on my pull requests"]);
+    // The Senses view has it in today's funnel, and the source.
+    const v = await inOwner(async (_a, sql) => {
+      const { sensesPage } = await import("../src/intake");
+      return sensesPage(sql, readSettings(sql));
+    });
+    expect(v.funnel.in).toBeGreaterThanOrEqual(2);
+    expect(v.funnel.duplicate).toBeGreaterThanOrEqual(1);
+    expect(v.sources.map((x) => x.source)).toContain("webhook:GitHub");
+    s.send({ type: "atlas.sense.hook.remove", id: made.id });
+    await s.next("atlas.view", (m) => !m.view.senses.hooks.some((h) => h.id === made.id));
+  }, 20_000);
+
+  it("after a restart, weighs again what was left half way", async () => {
+    seams.decide = decider({ errand: 0 });
+    const id = await inOwner(async (agent, sql) => {
+      const { take } = await import("../src/intake");
+      const { fresh } = take(sql, [{ source: "webhook", event: "post", what: "Home server: backup failed", key: "b-1" }]);
+      sql.exec(`UPDATE intake SET updated_at = ? WHERE id = ?`, Date.now() - 120_000, fresh[0]!.id);
+      await (agent as unknown as { onStart(): Promise<void> }).onStart();
+      return fresh[0]!.id;
+    });
+    const row = await waitFor("its decision", async () => {
+      const r = await inOwner((_a, sql) => sql.exec<{ state: string }>(`SELECT state FROM intake WHERE id = ?`, id).one());
+      return r.state !== "received" ? r : null;
+    });
+    expect(row.state).toBe("done");
   });
 
   it("finds any kind of place, as a word or a map tag", async () => {
@@ -354,7 +488,8 @@ describe("on the move, and pushes", () => {
     const cooled = await waitFor("the cool-down", async () =>
       (await rowsSince(from, "awareness")).find((r) => String(r.why).includes("every twenty minutes")),
     );
-    expect(cooled).toMatchObject({ step: "rules", outcome: "quiet" });
+    // It isn't dropped: it waits for the next look.
+    expect(cooled).toMatchObject({ step: "rules", outcome: "later" });
     // Leaving a place isn't cooled down.
     await post(fixAt(GYM), auth);
     await post(fixAt(north(GYM, 700)), auth);
@@ -543,7 +678,7 @@ describe("weather and routes, read", () => {
 });
 
 describe("what changed in the situation", () => {
-  it("notices a moved event, a trip that now needs an earlier start, and weather that newly matters", async () => {
+  it("notices a trip that now needs an earlier start, and weather that newly matters", async () => {
     const { changes } = await import("../src/situation");
     const settings = await inOwner((_a, sql) => readSettings(sql));
     const now = Date.now();
@@ -575,10 +710,10 @@ describe("what changed in the situation", () => {
       places: {},
     };
     const out = changes(before, after, settings, now);
-    expect(out.map((c) => c.event)).toEqual(["calendar", "travel", "weather"]);
-    expect(out[0]!.what).toContain('"Dentist" moved on the calendar');
-    expect(out[1]!.what).toContain("leave by");
-    expect(out[2]!.what).toMatch(/^The forecast changed: rain likely/);
+    // The calendar's changes have their own look in the intake.
+    expect(out.map((c) => c.event)).toEqual(["travel", "weather"]);
+    expect(out[0]!.what).toContain("leave by");
+    expect(out[1]!.what).toMatch(/^The forecast changed: rain likely/);
     // Nothing on a first look, and nothing when nothing changed.
     expect(changes({ ...before, events_at: 0, weather: null, travel: null }, after, settings, now)).toEqual([]);
     expect(changes(after, after, settings, now)).toEqual([]);
