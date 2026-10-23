@@ -163,6 +163,7 @@ import {
   refused as ownTracksRefused,
   allowedPost,
 } from "./location";
+import { forgetWhere } from "./situation";
 
 export { seams };
 
@@ -2487,7 +2488,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const keys = writeSettings(this.#sql, patch);
     if (keys.length) append(this.#sql, { actor: "owner", kind: "settings.change", body: { keys } });
     const isOn = readSettings(this.#sql).location.on;
-    if (wasOn !== isOn) this.#broadcast({ type: "atlas.rows", rows: isOn ? locationOn(this.#sql) : locationOff(this.#sql) });
+    if (wasOn !== isOn) {
+      if (!isOn) forgetWhere(this.#sql);
+      this.#broadcast({ type: "atlas.rows", rows: isOn ? locationOn(this.#sql) : locationOff(this.#sql) });
+    }
     if (keys.includes("calendar") || keys.includes("timezone")) this.#calendar.reset();
     this.#refreshVoice();
     this.#broadcast({ type: "atlas.view", view: this.#view() });

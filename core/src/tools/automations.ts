@@ -38,7 +38,8 @@ export const automationSave = defineTool({
   }),
   async run(given, ctx) {
     if (!ctx.automations) return fail("Automations can't be changed from here.");
-    const old = given.id ? getAutomation(ctx.sql, given.id) : null;
+    // An id, or its name: either finds it.
+    const old = given.id ? (getAutomation(ctx.sql, given.id) ?? findAutomation(ctx.sql, given.id)) : null;
     if (given.id && !old) return fail(`There's no automation with id ${given.id}.`);
     const merged = AutomationInput.safeParse({
       ...(old ? { name: old.name, about: old.about, when: old.when, do: old.do, report: old.report } : {}),
@@ -48,7 +49,7 @@ export const automationSave = defineTool({
       return fail(
         `A new automation needs a name, a when and what it does: ${merged.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}.`,
       );
-    const input = { ...merged.data, id: given.id };
+    const input = { ...merged.data, id: old?.id };
     for (const s of input.do) {
       if (s.kind === "webhook" && !findWebhook(ctx.sql, s.webhook)) {
         const have = webhooks(ctx.sql).map((w) => w.name);

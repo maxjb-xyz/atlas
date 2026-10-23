@@ -64,6 +64,12 @@ const EMPTY: SituationCache = { events: [], events_at: 0, weather: null, travel:
 export const cache = (sql: Sql): SituationCache => ({ ...EMPTY, ...(getState<Partial<SituationCache>>(sql, "situation") ?? {}) });
 const save = (sql: Sql, c: SituationCache) => setState(sql, "situation", c);
 
+/** Location off: the weather and trip worked out from where the owner was go with the last fix, so nothing says where they were. */
+export function forgetWhere(sql: Sql): void {
+  const c = cache(sql);
+  save(sql, { ...c, weather: null, weather_error: undefined, travel: null, travel_error: undefined });
+}
+
 /** A fresh look at the weather near the owner (the weather tool's) becomes the situation's, so the view and the answer agree. */
 export function keepWeather(sql: Sql, w: Weather): void {
   const c = cache(sql);
