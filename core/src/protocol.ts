@@ -73,7 +73,7 @@ export interface CalendarEventView {
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "node" | "email" | "face_reply";
+  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "node" | "email" | "face_reply" | "pull_request";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -112,6 +112,8 @@ export interface InboxItem {
   approval?: ApprovalView;
   /** Atlas asking the owner something it can't decide alone, such as whether to stop asking for an action. */
   question?: { key: string; yes: string; no: string };
+  /** A coding job's question for the owner (§8.2): the answer goes back to its agent. */
+  job?: { id: string; title: string; question: string; options: string[]; why?: string };
   /** What a face handed the owner (§7.2): who it's from, the conversation, and whether it can be answered from here. */
   face?: {
     name: string;
@@ -150,6 +152,28 @@ export interface JobView {
   brief: string;
   result: string | null;
   run_id: string | null;
+  /** A coding job (§8.2, §21.4): its steps, the agent's stream, what Atlas answered for the owner, and what waits on them. */
+  coding?: CodingView;
+}
+
+export interface CodingView {
+  phase: "preparing" | "working" | "deciding" | "waiting" | "publishing" | "done" | "failed" | "cancelled";
+  agent: string;
+  repo: string;
+  branch: string;
+  base: string;
+  branch_link: string | null;
+  steps: Array<{ name: string; state: "done" | "now" | "todo" }>;
+  /** The agent's messages and commands, Atlas's notes and replies, and the owner's words, oldest first. */
+  log: Array<{ at: number; who: "agent" | "atlas" | "owner" | "tool" | "note" | "plan"; text: string; status?: string; out?: string }>;
+  /** Questions Atlas answered for the owner, each with where the answer came from ("you" for the owner's own). */
+  answers: Array<{ q: string; a: string; source: string; at: number }>;
+  question: { text: string; options: string[]; why?: string; site?: string; approval?: string } | null;
+  /** Dollars spent so far, when the agent says, and the cap. */
+  cost: number | null;
+  cap: number | null;
+  pr: { number: number; link: string; title: string } | null;
+  error: string | null;
 }
 
 // --- app -> agent ----------------------------------------------------------
@@ -445,6 +469,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.page.delete"), id: z.string().max(64) }),
   /** Stop a helper's job (Stop on the Jobs tab). */
   z.object({ type: z.literal("atlas.job.stop"), id: z.string().max(64) }),
+  /** The owner's words for a coding job (§8.2): the answer to its question, or Steer while it works. */
+  z.object({ type: z.literal("atlas.job.say"), id: z.string().max(64), text: z.string().min(1).max(4_000) }),
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),

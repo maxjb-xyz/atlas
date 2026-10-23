@@ -42,6 +42,11 @@ export class ChatGPTSignIn {
     return chatgptBrain(this.#access, model, this.#fetch);
   }
 
+  /** A current token for the owner's plan (refreshed when it's close to expiring), or null when they aren't signed in. */
+  token(): Promise<string | null> {
+    return this.#access.access();
+  }
+
   get #fetch(): typeof fetch {
     return seams.fetch ?? fetch;
   }

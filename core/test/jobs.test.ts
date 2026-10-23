@@ -282,6 +282,35 @@ describe("helpers", () => {
     });
   });
 
+  it("that keep making progress aren't lost, however long they run, and the clock looks again later", async () => {
+    await runInDurableObject(fresh(), async (_agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      const watched: number[] = [];
+      const desk = testDesk(sql, { watch: async (item) => void watched.push(item.lease_until!) });
+      const job = await desk.start({
+        title: "Long one",
+        brief: "x",
+        system: "s",
+        tools: ["recall"],
+        chain: [],
+        askedIn: "run_x",
+        budget: { steps: 200, ms: 3 * 3600_000 },
+      });
+      const first = job.lease_until!;
+      // A call from the helper well after it started renews the lease.
+      await new Promise((r) => setTimeout(r, 5));
+      await desk.log(job.id, { actor: "atlas", kind: "tool.call", body: { name: "recall", input: {} } });
+      const renewed = getItem(sql, job.id)!.lease_until!;
+      expect(renewed).toBeGreaterThan(first);
+      // The wake set for the first lease finds it alive, and sets itself for the renewed one.
+      expect(await desk.lost(job.id, first + 1)).toBe(false);
+      expect(watched.at(-1)).toBe(renewed);
+      expect(getItem(sql, job.id)!.state).toBe("running");
+      expect(await desk.lost(job.id, renewed + 1)).toBe(true);
+    });
+  });
+
   it("that can't start fail the asking tool with the reason, and aren't reported twice", async () => {
     await runInDurableObject(fresh(), async (_agent: PersonAgent, state) => {
       const sql = state.storage.sql;

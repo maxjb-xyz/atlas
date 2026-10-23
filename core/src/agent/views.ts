@@ -2,6 +2,7 @@
 // Inbox's waiting items. Each is a read of the one log or the records, shaped
 // for its page; nothing here changes anything except marking Inbox items done.
 
+import { codingJobs } from "./coding";
 import { getPage, pageVersion, pageVersions, segments } from "../pages";
 import type { ApprovalView, HistoryFilter, HistoryStats, InboxItem, RecordView } from "../protocol";
 import { FIELDS, findEntry } from "../vault";
@@ -465,7 +466,29 @@ export function inbox(sql: Sql): InboxItem[] {
       run_id: null,
       question: { key, yes: "Yes, stop asking", no: "Keep asking" },
     }));
-  return [...approvals, ...questions, ...pastItems(sql)];
+  // A coding job's question (§8.2), while the job still waits on it.
+  const waiting = new Set(
+    codingJobs(sql)
+      .map((j) => (j.phase === "waiting" && !j.question?.site ? j.question?.log : null))
+      .filter((x): x is string => !!x),
+  );
+  const jobQuestions = [...waiting]
+    .map((id) => getRow(sql, id))
+    .filter((r): r is LogRow => r != null)
+    .map((r): InboxItem => {
+      const b = r.body as { job: string; title: string; text: string; options?: string[]; why?: string };
+      return {
+        id: r.id,
+        kind: "question",
+        title: `${b.title} needs you`,
+        text: b.text,
+        at: r.at,
+        areas: r.areas,
+        run_id: r.run_id,
+        job: { id: b.job, title: b.title, question: b.text, options: b.options ?? [], ...(b.why ? { why: b.why } : {}) },
+      };
+    });
+  return [...approvals, ...jobQuestions, ...questions, ...pastItems(sql)];
 }
 
 /** An approval as its card shows it: every step, why, and the checks it already passed. */
@@ -600,6 +623,16 @@ function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
       detail: a.fact || a.name,
       where: "Library",
       undo: "Can't be undone: the record, its history and its old values are erased. The message you said it in stays in History.",
+    };
+  }
+  if (a.kind === "pull_request") {
+    return {
+      kind: "pull_request",
+      title: a.name,
+      detail: "Opens a pull request from a coding job's branch. Nothing is merged.",
+      where: a.repo,
+      undo: "Closing the pull request undoes it.",
+      message: a.body,
     };
   }
   const hook = webhooks(sql).find((w) => w.id === a.webhook);

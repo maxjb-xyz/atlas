@@ -19,8 +19,13 @@ import { fail, type ToolContext, type ToolResult } from "../tools/types";
 /** A helper's budget: room for real work, still bounded (§4.1, §8.1). */
 export const HELPER_BUDGET: Budget = { steps: 40, ms: 10 * 60_000 };
 
-/** A job that hasn't ended this long after it started is counted as lost: its budget, plus room for a restart. */
-export const LOST_AFTER_MS = HELPER_BUDGET.ms + 10 * 60_000;
+/**
+ * A job that makes no progress for this long is counted as lost. Every call a
+ * helper makes to its parent (a brain call, a tool, a log row) is progress and
+ * renews its lease, so a job can run for hours and still be caught when it
+ * stalls: a restart it didn't come back from, or a call that never returned.
+ */
+export const LOST_AFTER_MS = 15 * 60_000;
 
 /** What a helper may write to the log: its own steps, never words to people (§8.1). */
 const HELPER_LOG_KINDS: LogKind[] = ["tool.call", "tool.result", "brain.fallback"];
@@ -73,6 +78,8 @@ export class HelperDesk {
     tools: string[];
     chain: BrainChoice[];
     askedIn: string;
+    /** Its own budget (§8.1); a quick lookup's by default. */
+    budget?: Budget;
   }): Promise<AgendaItem> {
     const { sql } = this.host;
     await this.#discardFinished();
@@ -95,7 +102,15 @@ export class HelperDesk {
     this.#changed();
     try {
       await this.host.watch(item);
-      await this.host.launch({ id: item.id, run_id, system: o.system, brief: o.brief, tools, chain: o.chain, budget: HELPER_BUDGET });
+      await this.host.launch({
+        id: item.id,
+        run_id,
+        system: o.system,
+        brief: o.brief,
+        tools,
+        chain: o.chain,
+        budget: o.budget ?? HELPER_BUDGET,
+      });
     } catch (err) {
       // The asking run hears it from the tool, so it isn't reported again.
       const error = `The helper couldn't start: ${errText(err)}`;
@@ -132,23 +147,14 @@ export class HelperDesk {
     if (!item || item.kind !== "job" || item.state !== "running" || !detail?.helper_run) {
       throw new Error(`Job ${id} isn't running anymore.`);
     }
+    // Any call from the helper is progress: its lease runs from now.
+    this.host.sql.exec(`UPDATE agenda SET lease_until = ? WHERE id = ?`, Date.now() + LOST_AFTER_MS, id);
     return { item, run: detail.helper_run, tools: detail.tools ?? [], chain: detail.chain ?? [] };
   }
 
   async brain(jobId: string, choice: BrainChoice, req: Omit<BrainRequest, "signal">): Promise<BrainEvent[]> {
     const job = this.#job(jobId);
-    if (!job.chain.some((c) => brainKey(c) === brainKey(choice))) throw new Error(`${brainKey(choice)} isn't in this job's chain.`);
-    const brain = this.host.makeBrain(choice);
-    if (!brain) throw new Error(`${brainKey(choice)} isn't set up.`);
-    const events: BrainEvent[] = [];
-    try {
-      for await (const e of brain.stream({ ...req, signal: AbortSignal.timeout(140_000) })) events.push(e);
-      this.host.router.markOk(brain);
-      return events;
-    } catch (err) {
-      this.host.router.markFailed(brain, err);
-      throw new Error(errText(err));
-    }
+    return helperBrain(this.host, choice, req, job.chain);
   }
 
   async tool(jobId: string, name: string, input: unknown): Promise<ToolResult> {
@@ -242,7 +248,12 @@ export class HelperDesk {
    */
   async lost(jobId: string, now = Date.now()): Promise<boolean> {
     const item = getItem(this.host.sql, jobId);
-    if (!item || item.kind !== "job" || item.state !== "running" || (item.lease_until ?? 0) > now) return false;
+    if (!item || item.kind !== "job" || item.state !== "running") return false;
+    if ((item.lease_until ?? 0) > now) {
+      // It made progress since this wake was set: look again when its renewed lease runs out.
+      await this.host.watch(item);
+      return false;
+    }
     this.#abort(jobId);
     const run = (item.source.detail as { helper_run?: string } | undefined)?.helper_run;
     const steps = run ? (getRun(this.host.sql, run)?.steps ?? 0) : 0;
@@ -292,7 +303,7 @@ export class HelperDesk {
   list(): JobView[] {
     return this.host.sql
       .exec<{ id: string; title: string; state: string; created_at: number; source: string }>(
-        `SELECT id, title, state, created_at, source FROM agenda WHERE kind = 'job' AND (state = 'running' OR updated_at > ?) ORDER BY created_at DESC LIMIT 20`,
+        `SELECT id, title, state, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND (state = 'running' OR updated_at > ?) ORDER BY created_at DESC LIMIT 20`,
         Date.now() - 60 * 60_000,
       )
       .toArray()
@@ -327,6 +338,27 @@ export class HelperDesk {
 
   #changed(): void {
     this.host.jobsChanged(this.list());
+  }
+}
+
+/** A helper's brain call, through the parent's router, for a brain in its chain. */
+export async function helperBrain(
+  host: { router: BrainRouter; makeBrain(choice: BrainChoice): Brain | null },
+  choice: BrainChoice,
+  req: Omit<BrainRequest, "signal">,
+  chain: BrainChoice[],
+): Promise<BrainEvent[]> {
+  if (!chain.some((c) => brainKey(c) === brainKey(choice))) throw new Error(`${brainKey(choice)} isn't in this job's chain.`);
+  const brain = host.makeBrain(choice);
+  if (!brain) throw new Error(`${brainKey(choice)} isn't set up.`);
+  const events: BrainEvent[] = [];
+  try {
+    for await (const e of brain.stream({ ...req, signal: AbortSignal.timeout(140_000) })) events.push(e);
+    host.router.markOk(brain);
+    return events;
+  } catch (err) {
+    host.router.markFailed(brain, err);
+    throw new Error(errText(err));
   }
 }
 

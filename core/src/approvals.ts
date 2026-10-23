@@ -109,20 +109,39 @@ export type Action =
       references?: string[];
       /** The person it's to, when it's one person Atlas knows. */
       person?: string;
+    }
+  /**
+   * A coding job's pull request (§8.2): its branch, already pushed, opened on
+   * the code host (`host`, an extension). Atlas does it once it has reviewed
+   * the work, and tells the owner: it's on their own repo, and closing it
+   * undoes it (§12.1). Nothing is merged.
+   */
+  | {
+      kind: "pull_request";
+      name: string;
+      job: string;
+      host: string;
+      repo: string;
+      head: string;
+      base: string;
+      title: string;
+      body: string;
     };
 
 /** Sending a form can't be taken back (VISION §12.1 lists submit with the things that can't be undone). */
 export const kindOf = (a: Action): ToolKind =>
-  a.kind === "webhook" ||
-  a.kind === "site" ||
-  a.kind === "node" ||
-  a.kind === "mcp_add" ||
-  a.kind === "email" ||
-  a.kind === "face_reply" ||
-  (a.kind === "vault" && !a.card) ||
-  (a.kind === "mcp" && !a.destructive)
-    ? "outside"
-    : "irreversible";
+  a.kind === "pull_request"
+    ? "change_own"
+    : a.kind === "webhook" ||
+        a.kind === "site" ||
+        a.kind === "node" ||
+        a.kind === "mcp_add" ||
+        a.kind === "email" ||
+        a.kind === "face_reply" ||
+        (a.kind === "vault" && !a.card) ||
+        (a.kind === "mcp" && !a.destructive)
+      ? "outside"
+      : "irreversible";
 
 /** What earned trust is counted by: each webhook on its own. Nothing that can't be undone is ever trusted. */
 export const trustKey = (a: Action): string | null =>

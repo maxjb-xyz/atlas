@@ -38,6 +38,8 @@ export interface ChannelDeps {
   owner(o: { text: string; note: string | null; via: ChatVia }): Promise<void>;
   /** The owner's yes or no on an approval, from a button. */
   decide(id: string, yes: boolean): Promise<{ ok: boolean; text: string }>;
+  /** The owner's choice on a coding job's question, from a button: its option's number. */
+  job(id: string, option: number): Promise<{ ok: boolean; text: string }>;
   /** Someone else wrote on a channel a face is on. Returns false when no face takes it. */
   face(o: { ext: Installed; msg: Message; text: string; note: string | null }): Promise<boolean>;
   /** Whether a face on this channel is for whoever sent it, before anything is read. */
@@ -110,9 +112,14 @@ export class ChannelDesk {
     if (!isOwner) return this.#stranger(e, m);
     // A button on one of Atlas's messages: an approval's yes or no.
     if (m.button) {
-      const [what, id] = m.button.data.split(":");
+      const [what, id, option] = m.button.data.split(":");
       if ((what === "ok" || what === "no") && id) {
         const out = await this.d.decide(id, what === "ok");
+        await this.send(e.id, { chat: m.chat, text: out.text, ...(m.button.message ? { reply_to: `${m.chat}:${m.button.message}` } : {}) });
+      }
+      // A coding job's question (§8.2): the choice goes back to its agent.
+      if (what === "job" && id && option != null && /^\d$/.test(option)) {
+        const out = await this.d.job(id, Number(option));
         await this.send(e.id, { chat: m.chat, text: out.text, ...(m.button.message ? { reply_to: `${m.chat}:${m.button.message}` } : {}) });
       }
       return;

@@ -37,7 +37,68 @@ export type Provides =
   /** The weather for a rough area: `weather`. */
   | "weather"
   /** Web search: `search`. */
-  | "search";
+  | "search"
+  /** A coding agent for jobs (§8.2): `agent` in its manifest says how the workspace runs it. */
+  | "coding"
+  /** Where the owner's code lives (§8.2): `git` in its manifest, and `repos`, `repo` and `pull_request`. */
+  | "code";
+
+/**
+ * A coding agent (§8.2): an npm package with an ACP server, which the core
+ * runs in the workspace for a job. The agent never holds its key: the core
+ * points it at its model's address with a placeholder, and the workspace's
+ * gate puts the key into its requests there.
+ */
+export interface CodingAgent {
+  /** The npm package with its ACP server, pinned: "@agentclientprotocol/codex-acp@2.2.2". */
+  package: string;
+  /** The command the package installs. */
+  bin: string;
+  model: {
+    /** Its model's address: "https://api.openai.com/v1". */
+    url: string;
+    /** The header the key goes in ("authorization", "x-api-key"), and what comes before it ("Bearer "). */
+    header: string;
+    prefix?: string;
+    /** The key: one of this extension's secrets, or a sign-in the core holds (the owner's ChatGPT plan, §18). */
+    key: { secret: string } | { signin: "chatgpt" };
+  };
+  /** Environment variables to start it with; "{url}" and "{key}" are filled with the model's address and a placeholder. */
+  env?: Record<string, string>;
+  /** It's told its model's address and key by ACP's gateway sign-in, not only its environment. */
+  gateway?: boolean;
+  /** The environment variable that points it at its own folder (its sessions), which the job keeps. */
+  home?: string;
+  /** The ACP mode a job runs in: the one that asks only about what matters, since Atlas answers. */
+  mode?: string;
+  /** It reports what it spends (ACP's usage with a cost), so a job can stop at a cap. */
+  costs_money?: boolean;
+}
+
+/** Where code lives (§8.2): how the workspace clones and pushes, with a token only the gate holds. */
+export interface GitHost {
+  /** The clone address, with {repo} for "owner/name": "https://github.com/{repo}.git". */
+  clone: string;
+  /** The hosts git talks to. */
+  hosts: string[];
+  /** The token is sent as HTTP Basic: this user name, and the secret as the password. */
+  user: string;
+  secret: string;
+  /** A link to a branch, with {repo} and {branch}. */
+  branch_link?: string;
+}
+
+/** A repository, as a code host lists it. */
+export interface Repo {
+  /** "owner/name". */
+  repo: string;
+  about?: string;
+  default_branch: string;
+  link: string;
+  private?: boolean;
+  /** When it last changed, ISO. */
+  pushed_at?: string;
+}
 
 export interface SecretSpec {
   name: string;
@@ -125,6 +186,10 @@ export interface Manifest {
   costs?: string;
   /** The credit its data needs wherever it's shown: "© OpenStreetMap contributors". */
   credit?: string;
+  /** A coding agent's spec, when it provides "coding". */
+  agent?: CodingAgent;
+  /** How git reaches it, when it provides "code". */
+  git?: GitHost;
 }
 
 /** What every call gets. */
@@ -407,6 +472,15 @@ export interface Extension {
   ): Promise<Found[]>;
   weather?(ctx: Ctx, area: Point): Promise<Weather>;
   search?(ctx: Ctx, q: { query: string; count: number; fresh?: "day" | "week" | "month" | "year" }): Promise<SearchResult[]>;
+  /** The owner's repositories, most recently changed first. */
+  repos?(ctx: Ctx): Promise<Repo[]>;
+  /** One repository. */
+  repo?(ctx: Ctx, q: { repo: string }): Promise<Repo>;
+  /** Opens a pull request from `head` into `base`, and says where it is. */
+  pull_request?(
+    ctx: Ctx,
+    pr: { repo: string; head: string; base: string; title: string; body: string },
+  ): Promise<{ number: number; link: string }>;
 }
 
 /** A failure in the service's own words. `code` "auth" means the owner's sign-in or key was refused. */

@@ -21,6 +21,7 @@ import { agendaList } from "./tools/agenda";
 import type { Tool, ToolResult } from "./tools/types";
 import { webFetch, webSearch } from "./tools/web";
 import { skillRead } from "./tools/skills";
+import { JOB_TOOLS } from "./tools/coding";
 
 /** What a helper may use: looking only, the web included (§8.1: reading untrusted pages is a helper's job). Helpers can't change the owner's things or save facts about them (§5.4). */
 export const HELPER_TOOLS: Tool[] = [recall, calendarRead, agendaList, webSearch, webFetch, skillRead];
@@ -91,9 +92,10 @@ export class HelperAgent extends Agent<Env> {
       return;
     }
 
-    const tools = HELPER_TOOLS.filter((t) => job.tools.includes(t.name)).map(
-      (t): Tool => ({ ...t, run: async (input: unknown) => host.helperTool(job.id, t.name, input) }) as Tool,
-    );
+    // A coding job's look (§8.2) also has the job's own tools, which run in the parent like the rest.
+    const tools = [...HELPER_TOOLS, ...JOB_TOOLS]
+      .filter((t) => job.tools.includes(t.name))
+      .map((t): Tool => ({ ...t, run: async (input: unknown) => host.helperTool(job.id, t.name, input) }) as Tool);
     const router = new BrainRouter((choice) => proxyBrain(host, job.id, choice));
     let outcome: HelperOutcome;
     try {
