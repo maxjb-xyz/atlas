@@ -2806,6 +2806,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return getJob(this.#sql, id);
   }
 
+  /** For tests: Stop on a coding job, as from the app. */
+  async apiJobStop(id: string): Promise<boolean> {
+    return this.#coding.stop(id);
+  }
+
   /** For tests: Inbox as the app sees it. */
   async apiInbox(): Promise<import("./protocol").InboxItem[]> {
     return inbox(this.#sql);

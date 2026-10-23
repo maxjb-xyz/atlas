@@ -186,6 +186,16 @@ export interface JobWorkspace {
   jobSave(id: string, o: { base: string }): Promise<{ ok: boolean; note: string }>;
   jobRestore(id: string, o: { branch: string }): Promise<{ restored: boolean; note: string }>;
   jobHere(id: string): Promise<boolean>;
+  jobClone(o: {
+    id: string;
+    url: string;
+    what: string;
+    branch: string;
+    name: string;
+    email: string;
+    env: Record<string, string>;
+    rules: KeyRule[];
+  }): Promise<{ exit: number; out: string }>;
   jobPush(o: {
     id: string;
     sha: string;
@@ -252,6 +262,9 @@ export interface CodingHost {
   rows(rows: LogRow[]): void;
   changed(): void;
 }
+
+/** The owner pressed Stop while a step ran: the step goes no further, and the job ends at once. */
+class Stopped extends Error {}
 
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
@@ -509,7 +522,7 @@ export class CodingDesk {
   /** After a restart: every job that was moving gets a wake, in case its own was lost. */
   async resume(): Promise<void> {
     for (const j of activeJobs(this.h.sql)) {
-      if (j.phase === "waiting" && !(getState<Mail[]>(this.h.sql, `coding_mail:${j.id}`) ?? []).length) continue;
+      if (j.phase === "waiting" && !j.queued && !(getState<Mail[]>(this.h.sql, `coding_mail:${j.id}`) ?? []).length) continue;
       await this.h.watch(j.id, Date.now() + 2_000).catch(() => {});
     }
   }
@@ -550,6 +563,11 @@ export class CodingDesk {
         saveJob(this.h.sql, fresh);
       }
     } catch (err) {
+      if (err instanceof Stopped) {
+        const fresh = getJob(this.h.sql, id) ?? job;
+        await this.#mail(fresh).catch(() => {});
+        return;
+      }
       // A wake can fail for a passing reason (the workspace restarting through a deploy): try again a few times, then give up with the reason.
       const fresh = getJob(this.h.sql, id) ?? job;
       if (ENDED.includes(fresh.phase)) return;
@@ -649,26 +667,23 @@ export class CodingDesk {
 
   /** Gets the repo at the job's base into the job's folder: at its branch's start, or at the commit it started from. */
   async #clone(job: CodingJob): Promise<void> {
+    this.#halt(job);
     const git = this.#gitKey(job);
     const id = this.h.identity();
     const what = job.base_sha ?? job.base;
-    const out = await this.#exec(
-      job,
-      [
-        "rm -rf repo && git init -q repo && cd repo",
-        `git remote add origin ${sh(git.url)}`,
-        `git fetch -q --depth 50 origin ${sh(what)} 2>&1`,
-        `git checkout -q -b ${sh(job.branch)} FETCH_HEAD`,
-        `git config user.name ${sh(id.name)} && git config user.email ${sh(id.email)}`,
-        "git rev-parse HEAD",
-      ].join(" && "),
-      { rules: git.rules, env: git.env, timeout_s: 600, root: true },
-    );
-    if (out.exit !== 0)
-      throw new Error(
-        `Couldn't get ${job.repo} (${what}) into the workspace: ${tail(out.output.trim(), 600)}${out.blocked.length ? ` (refused: ${out.blocked.join(", ")})` : ""}`,
-      );
-    job.base_sha ??= out.output.trim().split("\n").at(-1)!.trim();
+    const out = await this.#ws().jobClone({
+      id: job.id,
+      url: git.url,
+      what,
+      branch: job.branch,
+      name: id.name,
+      email: id.email,
+      env: git.env,
+      rules: git.rules,
+    });
+    const sha = /\b([0-9a-f]{40})\b/.exec(out.out)?.[1];
+    if (out.exit !== 0 || !sha) throw new Error(`Couldn't get ${job.repo} (${what}) into the workspace: ${tail(out.out.trim(), 600)}`);
+    job.base_sha ??= sha;
   }
 
   async #prepare(job: CodingJob): Promise<void> {
@@ -712,6 +727,7 @@ export class CodingDesk {
    * session. Returns whether the conversation carried over.
    */
   async #connect(job: CodingJob): Promise<{ carried: boolean; alive: boolean }> {
+    this.#halt(job);
     const ws = this.#ws();
     const spec = this.#spec(job);
     const e = getExt(this.h.sql, job.agent)!;
@@ -902,6 +918,7 @@ export class CodingDesk {
     job.acp = r.state;
     await this.#ws().jobSend(job.id, [r.line]);
     job.turns += 1;
+    job.queued = undefined;
     job.log.push({ at: Date.now(), who, text });
     job.turn_start = job.log.length;
     job.stop = null;
@@ -962,6 +979,7 @@ export class CodingDesk {
 
   /** The agent's process isn't there (the container slept or was lost, or it ended): start it again and carry on. */
   async #revive(job: CodingJob, why: string): Promise<void> {
+    this.#halt(job);
     job.revives += 1;
     if (job.revives > MAX_REVIVES) {
       await this.#fail(job, `The agent kept stopping: ${why}`);
@@ -1367,9 +1385,21 @@ Now: ${d.now}.`;
     return (getState<Mail[]>(this.h.sql, `coding_mail:${id}`) ?? []).some((m) => m.kind === "stop");
   }
 
+  /** Before anything that reaches outside or starts the agent: if the owner pressed Stop, go no further. */
+  #halt(job: CodingJob): void {
+    if (this.#stopping(job.id)) throw new Stopped("Stopped by the owner.");
+  }
+
   /** Takes what waits for the job, in the job's line. Returns true when the job moved on (or ended). */
   async #mail(job: CodingJob): Promise<boolean> {
     const mail = getState<Mail[]>(this.h.sql, `coding_mail:${job.id}`) ?? [];
+    // An answer taken before, whose prompt didn't go (its step failed), goes now.
+    if (!mail.length && job.queued && job.phase === "waiting") {
+      const q = job.queued;
+      job.queued = undefined;
+      await this.#prompt(job, q.text, q.who);
+      return true;
+    }
     if (!mail.length) return false;
     setState(this.h.sql, `coding_mail:${job.id}`, null);
     if (mail.some((m) => m.kind === "stop")) {
@@ -1399,11 +1429,12 @@ Now: ${d.now}.`;
       };
     }
     if (job.queued && job.phase === "waiting") {
-      const q = job.queued;
       const words = job.steer.length ? `\n\nThe owner also says: ${job.steer.splice(0).join("\n")}` : "";
-      job.queued = undefined;
+      job.queued = { ...job.queued, text: `${job.queued.text}${words}` };
+      // Kept until it's sent: a step that fails here leaves it for the next wake.
       saveJob(this.h.sql, job);
-      await this.#prompt(job, `${q.text}${words}`, q.who);
+      const q = job.queued;
+      await this.#prompt(job, q.text, q.who);
       return true;
     }
     saveJob(this.h.sql, job);
@@ -1473,6 +1504,7 @@ Now: ${d.now}.`;
       );
     }
     // 2. Pushed by root from a copy of its own (the workspace's jobPush), with the key for this repo alone.
+    this.#halt(job);
     const git = this.#gitKey(job);
     const pushed = await this.#ws().jobPush({ id: job.id, sha, url: git.url, branch: job.branch, env: git.env, rules: git.rules });
     if (pushed.exit !== 0) throw new Error(`Couldn't push ${job.branch} to ${job.repo}: ${tail(pushed.out.trim(), 600)}`);
@@ -1488,6 +1520,7 @@ Now: ${d.now}.`;
       title: p.title,
       body: `${p.body}\n\n---\nOpened by Atlas from a coding job (${getExt(this.h.sql, job.agent)?.name ?? job.agent}). Nothing is merged until you do.`,
     };
+    this.#halt(job);
     const out = await this.h.publish(action, job.deciding?.run ?? null);
     if (!out.ok) throw new Error(out.text);
     // The code host said where it opened it (opened, below), in the job's saved state.

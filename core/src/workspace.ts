@@ -326,11 +326,18 @@ export class Workspace extends DurableObject<Env> {
       (j) => (j.until ?? 0) > now,
     );
     const extra = [...this.#extra.values()];
+    // The gate can't tell who's asking, so while a job's agent runs, the owner's vault keys stay off it: an agent could
+    // otherwise reach their sites with them. The owner's own commands then reach those sites without the key.
+    this.#keysOff = jobs.length > 0 && Object.keys(this.#base.inject).length > 0;
+    if (jobs.length) {
+      const next = Math.min(...jobs.map((j) => j.until ?? now));
+      await this.ctx.storage.setAlarm(next + 1_000).catch(() => {});
+    }
     const gw = (this.ctx.exports as unknown as { WorkspaceEgress(o: { props: Gate }): Fetcher }).WorkspaceEgress({
       props: {
         ws: this.#name,
         allow: [...new Set([...this.#base.allow, ...extra.flatMap((e) => e.allow), ...jobs.flatMap((j) => j.allow)])],
-        inject: this.#base.inject,
+        inject: jobs.length ? {} : this.#base.inject,
         rules: [...extra.flatMap((e) => e.rules), ...jobs.flatMap((j) => j.rules)],
       },
     });
@@ -483,6 +490,8 @@ export class Workspace extends DurableObject<Env> {
         if (cwd !== "/workspace" && !cwd.startsWith(`${JOBS}/`) && !cwd.startsWith(`${PUSH}/`))
           throw new Error(`Commands run in /workspace or a job's folder, not ${cwd}.`);
         if (o.as && !cwd.startsWith(`${jobDir(safeId(o.as))}`)) throw new Error("A job's commands run in its own folder.");
+        // What's in a command's own environment (a nonce) never goes to a job's user.
+        if (o.as && o.env && Object.keys(o.env).length) throw new Error("A job's commands don't take an environment of their own.");
         await this.#setBase({ allow: o.allow, inject: o.inject });
         if (o.rules?.length) this.#extra.set(key, { allow: [], rules: o.rules });
         await this.#gate();
@@ -512,6 +521,7 @@ export class Workspace extends DurableObject<Env> {
         // A key behind a nonce is for this command only.
         if (this.#extra.delete(key)) await this.#gate();
         const kept = await this.#keep();
+        if (this.#keysOff) await send({ note: "Your vault keys aren't added to the workspace's requests while a coding job runs." });
         await send({ done: { exit, ms: Date.now() - t0, blocked: [...this.#blocked], kept } });
       } catch (err) {
         console.error(JSON.stringify({ at: "workspace.run", error: err instanceof Error ? err.message : String(err) }));
@@ -596,9 +606,9 @@ export class Workspace extends DurableObject<Env> {
   async #jobUser(id: string): Promise<{ name: string; uid: number; gid: number }> {
     const name = userOf(safeId(id));
     const r = await this.#exec(
-      `id -u ${name} >/dev/null 2>&1 || useradd -M -U -d ${sh(`${jobDir(id)}/home`)} -s /bin/bash ${name} >/dev/null 2>&1; echo "$(id -u ${name}) $(id -g ${name})"`,
+      `id -u ${name} >/dev/null 2>&1 || useradd -M -U -d ${sh(`${jobDir(id)}/home`)} -s /bin/bash ${name} 2>&1; echo "$(id -u ${name}) $(id -g ${name})"`,
     );
-    const [uid, gid] = r.out.trim().split(/\s+/).map(Number);
+    const [uid, gid] = r.out.trim().split("\n").at(-1)!.trim().split(/\s+/).map(Number);
     if (!Number.isInteger(uid) || !Number.isInteger(gid) || !uid)
       throw new Error(`The workspace couldn't make the job's user: ${r.out.slice(-300)}`);
     return { name, uid: uid!, gid: gid! };
@@ -652,7 +662,9 @@ export class Workspace extends DurableObject<Env> {
     const dir = jobDir(id);
     const user = await this.#jobUser(id);
     const own = await this.#exec(
-      `mkdir -p ${sh(`${dir}/home`)} ${sh(`${dir}/repo`)} && chown -R -h -P ${user.uid}:${user.gid} ${sh(dir)} && chmod 700 ${sh(dir)}`,
+      // Only the folder and its home are given to the user here, never a tree it could have planted links in: the repo
+      // was made by root in a staging folder and handed over there (jobClone).
+      `mkdir -p ${sh(`${dir}/home`)} && chown -h ${user.uid}:${user.gid} ${sh(dir)} ${sh(`${dir}/home`)} && chmod 700 ${sh(dir)}`,
     );
     if (own.exit !== 0) throw new Error(`The workspace couldn't give the job its folder: ${own.out.slice(-300)}`);
     const env: Record<string, string> = {
@@ -774,7 +786,9 @@ export class Workspace extends DurableObject<Env> {
     if (!bundle) return { restored: false, note: "Nothing of this job was kept yet." };
     // Its folder is the job's user's; what was kept is put back as that user, never as root.
     const user = await this.#jobUser(id);
-    const own = await this.#exec(`mkdir -p ${sh(`${dir}/home`)} && chown -R -h -P ${user.uid}:${user.gid} ${sh(dir)} && chmod 700 ${sh(dir)}`);
+    const own = await this.#exec(
+      `mkdir -p ${sh(`${dir}/home`)} && chown -h ${user.uid}:${user.gid} ${sh(dir)} ${sh(`${dir}/home`)} && chmod 700 ${sh(dir)}`,
+    );
     if (own.exit !== 0) throw new Error(`The workspace couldn't give the job its folder: ${own.out.slice(-300)}`);
     const put = await this.#exec(
       [
@@ -847,6 +861,63 @@ export class Workspace extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Gets a job's repo: fetched by root in a staging folder only root can
+   * reach (git's key behind its nonce, in git's environment), given to the
+   * job's user there, then moved into the job's folder in place of whatever
+   * was there. Nothing of the job's user runs meanwhile. Says the commit it's at.
+   */
+  async jobClone(o: {
+    id: string;
+    url: string;
+    /** A branch or a commit. */
+    what: string;
+    branch: string;
+    name: string;
+    email: string;
+    env: Record<string, string>;
+    rules: KeyRule[];
+  }): Promise<{ exit: number; out: string }> {
+    const id = safeId(o.id);
+    if (!/^[A-Za-z0-9._/-]{1,120}$/.test(o.branch) || !/^[A-Za-z0-9._/-]{1,120}$/.test(o.what))
+      throw new Error("That isn't a branch or commit.");
+    if (!/^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9_./-]+$/.test(o.url)) throw new Error(`"${o.url}" isn't a git address Atlas clones from.`);
+    await this.#up(async () => {});
+    await this.jobStop(id);
+    const user = await this.#jobUser(id);
+    const dir = jobDir(id);
+    const stage = `${PUSH}/clone-${id}-${crypto.randomUUID().slice(0, 8)}`;
+    const key = `clone:${stage}`;
+    this.#extra.set(key, { allow: [], rules: o.rules });
+    try {
+      await this.#gate();
+      const p = await this.#c.exec(
+        [
+          "bash",
+          "-lc",
+          [
+            `set -e; mkdir -p -m 700 ${PUSH}; mkdir -m 700 ${sh(stage)}; cd ${sh(stage)}`,
+            `git init -q repo; cd repo; git remote add origin ${sh(o.url)}`,
+            `timeout -k 5 600 git -c core.hooksPath=/dev/null fetch -q --depth 50 origin ${sh(o.what)} 2>&1`,
+            `git checkout -q -b ${sh(o.branch)} FETCH_HEAD`,
+            `git config user.name ${sh(o.name)}; git config user.email ${sh(o.email)}`,
+            `git rev-parse HEAD; cd ${sh(stage)}`,
+            `chown -R -h ${user.uid}:${user.gid} repo`,
+            `mkdir -p ${sh(dir)}; chown -h ${user.uid}:${user.gid} ${sh(dir)}; chmod 700 ${sh(dir)}`,
+            `rm -rf ${sh(`${dir}/repo`)}; mv repo ${sh(`${dir}/repo`)}; cd /; rm -rf ${sh(stage)}`,
+          ].join("\n"),
+        ],
+        { env: { ...ENV, ...o.env }, cwd: "/", stderr: "combined" },
+      );
+      const r = await p.output();
+      if (r.exitCode !== 0) await this.#exec(`rm -rf ${sh(stage)}`).catch(() => {});
+      return { exit: r.exitCode, out: new TextDecoder().decode(r.stdout).slice(-2_000) };
+    } finally {
+      this.#extra.delete(key);
+      await this.#gate().catch(() => {});
+    }
+  }
+
   /** Whether the job's folder is in the running container, so it doesn't need putting back. */
   async jobHere(id: string): Promise<boolean> {
     safeId(id);
@@ -886,6 +957,13 @@ export class Workspace extends DurableObject<Env> {
   #extra = new Map<string, { allow: string[]; rules: KeyRule[] }>();
   /** The gate was set by this instance (a deploy leaves the old version's handler until it's set again). */
   #gated = false;
+  /** The owner's vault keys are off the gate while a job runs. */
+  #keysOff = false;
+
+  /** A job's entry on the gate ran out: the gate is set again without it. */
+  override async alarm(): Promise<void> {
+    if (this.ctx.container?.running) await this.#gate().catch(() => {});
+  }
 
   /** A link to a server listening on `port` in the workspace, for a day. */
   async preview(port: number): Promise<{ token: string; expires: number }> {

@@ -42,6 +42,7 @@ function fakeWorkspace(turns: Turn[]) {
     prompts: [] as string[],
     answers: [] as Array<{ id: unknown; result: unknown }>,
     commands: [] as Array<{ command: string; cwd?: string; rules?: KeyRule[]; env?: Record<string, string>; as?: string }>,
+    clones: [] as Array<{ id: string; url: string; what: string; branch: string; env: Record<string, string>; rules: KeyRule[] }>,
     pushes: [] as Array<{ id: string; sha: string; url: string; branch: string; env: Record<string, string>; rules: KeyRule[] }>,
     envs: [] as Array<Record<string, string>>,
     gates: [] as unknown[],
@@ -196,6 +197,11 @@ function fakeWorkspace(turns: Turn[]) {
     },
     async jobHere() {
       return st.here;
+    },
+    async jobClone(o) {
+      st.clones.push(o);
+      st.here = true;
+      return { exit: 0, out: "0123456789abcdef0123456789abcdef01234567\n" };
     },
     async jobPush(o) {
       st.pushes.push(o);
@@ -365,23 +371,26 @@ describe("coding jobs", { timeout: 30_000 }, () => {
 
       // It clones with the token behind a nonce, branches, starts the agent and sends the brief.
       const working = await stepTo(agent, id, "working");
-      const clone = st.commands[0]!;
-      expect(clone.command).toContain("git remote add origin 'https://github.com/ann/budget.git'");
-      // git's nonce is in its environment, which only root can read, never on the command line.
-      expect(clone.command).not.toContain("x-atlas-key");
+      // Cloned by the workspace's root, in a staging folder, with git's nonce in its environment (only root can read it).
+      const clone = st.clones[0]!;
+      expect(clone).toMatchObject({
+        id,
+        url: "https://github.com/ann/budget.git",
+        what: "main",
+        branch: expect.stringMatching(/^atlas\//),
+      });
       expect(clone.env).toMatchObject({
         GIT_CONFIG_KEY_0: "http.extraHeader",
         GIT_CONFIG_VALUE_0: expect.stringMatching(/^x-atlas-key: [0-9a-f]{32}$/),
       });
-      expect(clone.as).toBeUndefined();
       // The key is for this repo's git address alone.
-      expect(clone.rules![0]).toMatchObject({
+      expect(clone.rules[0]).toMatchObject({
         host: "github.com",
         path: "/ann/budget.git/",
         header: "authorization",
         value: `Basic ${btoa("x-access-token:ghp_test_token_456")}`,
       });
-      expect(clone.rules![0]!.nonce).toMatch(/^[0-9a-f]{32}$/);
+      expect(clone.rules[0]!.nonce).toMatch(/^[0-9a-f]{32}$/);
       expect(working.branch).toMatch(/^atlas\/budget-app-failing-test-/);
       expect(working.base_sha).toBe("0123456789abcdef0123456789abcdef01234567");
       // The agent gets a placeholder; the gate holds its key.
@@ -573,6 +582,31 @@ describe("coding jobs", { timeout: 30_000 }, () => {
       expect(st.methods).toContain("session/cancel");
       await stepTo(agent, id, "working", (j) => j.turns === 2);
       expect(st.prompts[1]).toBe("The owner says: Use the existing date helper instead.\n\nCarry on with that in mind.");
+    });
+  });
+
+  it("stop when the owner says, at once: the agent and all it started end, and the branch is kept", async () => {
+    const { ws, st } = fakeWorkspace([{ hang: true, say: "Halfway." }]);
+    seams.workspace = ws;
+    fakeGitHub();
+    brain([call("code_job", { title: "Budget: big one", repo: "ann/budget", task: "Big change." }), say("Started.")]);
+    await runInDurableObject(fresh(), async (agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      setUp(sql);
+      await agent.apiTurn("make the big change");
+      const id = sql.exec<{ id: string }>(`SELECT id FROM coding`).one().id;
+      await stepTo(agent, id, "working", (j) => j.log.some((e) => e.text === "Halfway."));
+      expect(await agent.apiJobStop(id)).toBe(true);
+      // The agent is stopped before the next wake comes.
+      expect(st.running).toBe(false);
+      const stopped = await stepTo(agent, id, "cancelled");
+      expect(stopped.log.at(-1)!.text).toMatch(
+        /^Stopped by the owner\. The branch atlas\/budget-big-one-\w+ is kept in the workspace\. Last: Halfway\./,
+      );
+      expect(getItem(sql, id)!.state).toBe("cancelled");
+      // It isn't started again.
+      expect(st.starts).toBe(1);
+      expect(await agent.apiJobStop(id)).toBe(false);
     });
   });
 
