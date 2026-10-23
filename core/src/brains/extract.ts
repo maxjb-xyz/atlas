@@ -15,6 +15,8 @@ export type FieldType = "text" | "number" | "date" | "list";
 export interface Field {
   type: FieldType;
   instructions: string;
+  /** For a list: what each item is (Clairic requires it). */
+  items?: "text" | "number" | "date";
 }
 
 /** A value the text holds, with how sure the reader is; null when it doesn't hold one. */
@@ -80,7 +82,7 @@ export const MESSAGE_FIELDS: Record<string, Field> = {
   event_time: { type: "text", instructions: "The time of day the meeting or appointment is at now, as the text says it (like '3:00 PM')." },
   amount: { type: "number", instructions: "An amount of money the recipient owes, is due, or was paid." },
   due: { type: "date", instructions: "When a bill or payment is due." },
-  people: { type: "list", instructions: "Other people named in the message, by name." },
+  people: { type: "list", items: "text", instructions: "Other people named in the message, by name." },
 };
 
 /** Facts it's sure enough of, as plain values (confidence at least a half). */

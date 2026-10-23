@@ -1080,3 +1080,13 @@ describe("how nudges land, and the smaller fixes", () => {
     expect(v.sources.map((x) => x.source)).toContain("location");
   });
 });
+
+describe("what extract asks Clairic", () => {
+  it("uses only Clairic's field types, and says what a list holds", async () => {
+    const { MESSAGE_FIELDS } = await import("../src/brains/extract");
+    for (const [name, f] of Object.entries(MESSAGE_FIELDS)) {
+      expect(["text", "number", "date", "list"], name).toContain(f.type);
+      if (f.type === "list") expect(["text", "number", "date"], name).toContain(f.items);
+    }
+  });
+});
