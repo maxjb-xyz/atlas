@@ -652,7 +652,7 @@ export class Workspace extends DurableObject<Env> {
     const dir = jobDir(id);
     const user = await this.#jobUser(id);
     const own = await this.#exec(
-      `mkdir -p ${sh(`${dir}/home`)} ${sh(`${dir}/repo`)} && chown -R ${user.uid}:${user.gid} ${sh(dir)} && chmod 700 ${sh(dir)}`,
+      `mkdir -p ${sh(`${dir}/home`)} ${sh(`${dir}/repo`)} && chown -R -h -P ${user.uid}:${user.gid} ${sh(dir)} && chmod 700 ${sh(dir)}`,
     );
     if (own.exit !== 0) throw new Error(`The workspace couldn't give the job its folder: ${own.out.slice(-300)}`);
     const env: Record<string, string> = {
@@ -774,7 +774,7 @@ export class Workspace extends DurableObject<Env> {
     if (!bundle) return { restored: false, note: "Nothing of this job was kept yet." };
     // Its folder is the job's user's; what was kept is put back as that user, never as root.
     const user = await this.#jobUser(id);
-    const own = await this.#exec(`mkdir -p ${sh(`${dir}/home`)} && chown -R ${user.uid}:${user.gid} ${sh(dir)} && chmod 700 ${sh(dir)}`);
+    const own = await this.#exec(`mkdir -p ${sh(`${dir}/home`)} && chown -R -h -P ${user.uid}:${user.gid} ${sh(dir)} && chmod 700 ${sh(dir)}`);
     if (own.exit !== 0) throw new Error(`The workspace couldn't give the job its folder: ${own.out.slice(-300)}`);
     const put = await this.#exec(
       [
