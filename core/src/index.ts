@@ -5,7 +5,8 @@ import { getAgentByName, routeAgentRequest } from "agents";
 import { SESSION_HEADER } from "./auth";
 import { NODE_HEADER, OWNER } from "./agent";
 import { NODE_KINDS } from "./nodes";
-import { type AuthStore, handleAuth, owner, sameOrigin } from "./auth";
+import { type AuthStore, handleAuth, memberOf, owner, sameOrigin } from "./auth";
+import { agentNameOf } from "./members";
 
 export { PersonAgent } from "./agent";
 // Helpers are sub-agents of the person agent; the class must be exported by this name.
@@ -174,8 +175,14 @@ export default {
     if (path.startsWith("/api/")) {
       const auth = await handleAuth(request, env, path, () => authStore(env));
       if (auth) return auth;
-      if (!(await owner(request, env, () => authStore(env)))) return json({ error: "Sign in first." }, 401);
-      const agent = (await getAgentByName(env.PersonAgent, OWNER)) as unknown as OwnerApi;
+      const who = await owner(request, env, () => authStore(env));
+      if (!who) return json({ error: "Sign in first." }, 401);
+      // A member's requests go to their own Atlas (§7.1); the workspace and the log API are the owner's.
+      const member = memberOf(who);
+      if (member && !(await (await authStore(env)).memberInfo(member))) return json({ error: "Sign in first." }, 401);
+      if (member && (path.startsWith("/api/workspace/") || path === "/api/log" || path === "/api/character-check"))
+        return json({ error: "That's only for the owner." }, 403);
+      const agent = (await getAgentByName(env.PersonAgent, agentNameOf(member))) as unknown as OwnerApi;
 
       if (path === "/api/turn" && request.method === "POST") {
         const body = (await request.json().catch(() => ({}))) as { text?: unknown };
@@ -244,10 +251,13 @@ export default {
     if (path.startsWith("/agents/")) {
       const res = await routeAgentRequest(request, env, {
         onBeforeConnect: async (req, route) => {
-          if (route.name !== OWNER) return new Response("Not found", { status: 404 });
           if (!sameOrigin(req)) return new Response("Wrong origin", { status: 403 });
           const who = await owner(req, env, () => authStore(env));
           if (!who) return new Response("Sign in first", { status: 401 });
+          // Each person's socket goes to their own Atlas only: the owner's, or a member's (§7.1).
+          const member = memberOf(who);
+          if (route.name !== agentNameOf(member)) return new Response("Not found", { status: 404 });
+          if (member && !(await (await authStore(env)).memberInfo(member))) return new Response("Sign in first", { status: 401 });
           // The agent learns which sign-in opened this socket, so ending that sign-in can close it.
           const headers = new Headers(req.headers);
           headers.set(SESSION_HEADER, who.via === "session" ? who.id : "");

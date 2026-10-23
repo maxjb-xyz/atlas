@@ -96,6 +96,10 @@ export interface State {
   extSetup: Record<string, { ok: boolean; text: string; link?: string; fields?: Array<{ label: string; value: string }> }>;
   /** A face's answers in "talk to it as a stranger", by test conversation (§7.2). */
   faceSaid: Record<string, Array<{ ok: boolean; text: string }>>;
+  /** The invite link just made, shown once (§7.1). */
+  invited: { id: string; name: string; link: string } | null;
+  /** The areas shared between the owner and members, with what's in them (§6). */
+  shared: import("../../core/src/protocol").SharedArea[] | null;
   /** The code to link a chat channel, shown until it's sent from the owner's account (§16.1). */
   channelCode: { ext: string; code: string; expires: number } | null;
   /** A webhook source just added: its address with its key, shown once. */
@@ -140,6 +144,8 @@ const initial: State = {
   extSetup: {},
   faceSaid: {},
   channelCode: null,
+  invited: null,
+  shared: null,
   senseHook: null,
   pairing: {},
   paired: {},
@@ -321,6 +327,10 @@ function reduce(s: State, a: Action): State {
       return m.error ? { ...s, tests: { ...s.tests, [`ext:${m.id}`]: { ok: false, message: m.error } } } : s;
     case "atlas.face.said":
       return { ...s, faceSaid: { ...s.faceSaid, [m.conv]: [...(s.faceSaid[m.conv] ?? []), { ok: m.ok, text: m.text }] } };
+    case "atlas.member.invited":
+      return { ...s, invited: { id: m.id, name: m.name, link: m.link } };
+    case "atlas.shared":
+      return { ...s, shared: m.areas };
     case "atlas.channel.code":
       return { ...s, channelCode: { ext: m.ext, code: m.code, expires: m.expires } };
     case "atlas.mail":
@@ -342,7 +352,8 @@ export interface VoiceState {
   error: string | null;
 }
 
-export function useAtlas() {
+/** The connection to one person's Atlas: the owner's, or a member's own (§7.1). */
+export function useAtlas(agent = "owner") {
   const [state, dispatch] = useReducer(reduce, initial);
   const [voice, setVoice] = useState<VoiceState>({
     connected: false,
@@ -356,7 +367,7 @@ export function useAtlas() {
   const [inCall, setInCall] = useState(false);
 
   useEffect(() => {
-    const c = new VoiceClient({ agent: "PersonAgent", name: "owner", host: location.host });
+    const c = new VoiceClient({ agent: "PersonAgent", name: agent, host: location.host });
     client.current = c;
     const patch = (p: Partial<VoiceState>) => setVoice((v) => ({ ...v, ...p }));
     c.addEventListener("connectionchange", (connected) => {

@@ -25,6 +25,7 @@ import { installed, providing } from "../extensions";
 import type { ExtensionDesk } from "./extensions";
 import type { MailDesk } from "./mail";
 import { faces } from "../faces";
+import { members } from "../members";
 import { getRecord } from "../store/records";
 import { links } from "./channels";
 import { nodes, nodeView } from "../nodes";
@@ -34,12 +35,14 @@ export function settingsView(
   sql: Sql,
   parts: { chatgpt: ChatGPTSignIn; calendar: CalendarSense; router: BrainRouter; extensions: ExtensionDesk; mail?: MailDesk },
 ): SettingsView {
-  const passkeys = (getState<StoredPasskey[]>(sql, "passkeys") ?? []).map((p) => ({
-    id: p.id,
-    name: p.name,
-    created_at: p.created_at,
-    last_used: p.last_used,
-  }));
+  const passkeys = (getState<StoredPasskey[]>(sql, "passkeys") ?? [])
+    .filter((p) => !p.member)
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      created_at: p.created_at,
+      last_used: p.last_used,
+    }));
   const refusal = parts.calendar.refusal();
   const provider = parts.calendar.provider();
   const settings = readSettings(sql);
@@ -53,6 +56,15 @@ export function settingsView(
       refused: refusal ? { ...refusal, note: parts.calendar.note(refusal, settings) } : null,
     },
     extensions: parts.extensions?.views() ?? [],
+    members: members(sql).map((m) => ({
+      id: m.id,
+      name: m.name,
+      role: m.role,
+      joined_at: m.joined_at,
+      invited_at: m.invited_at,
+      invite_open: !m.joined_at && m.invite_expires > Date.now(),
+    })),
+    me: getState<{ id: string; name: string; role: "admin" | "member"; owner: string }>(sql, "member_of"),
     faces: faces(sql).map((f) => ({
       ...f,
       people_names: f.people.map((id) => getRecord(sql, id)?.name ?? "someone forgotten"),

@@ -16,6 +16,7 @@ import { CLOUDFLARE_SEARCH } from "../../core/src/web";
 import { FIELDS, type VaultKind } from "../../core/src/vault-fields";
 
 type Section =
+  | "people"
   | "faces"
   | "character"
   | "look"
@@ -36,6 +37,7 @@ const SECTIONS: Array<{ group: string; items: Array<[Section, string]> }> = [
       ["character", "Character & voice"],
       ["look", "Look & themes"],
       ["faces", "Faces"],
+      ["people", "People"],
     ],
   },
   { group: "Brains", items: [["brains", "Brains"]] },
@@ -160,6 +162,7 @@ export function SettingsPage({
                 {section === "character" && <Character atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "look" && <Look draft={draft} edit={edit} />}
                 {section === "faces" && <Faces atlas={atlas} view={view} />}
+                {section === "people" && <People atlas={atlas} view={view} />}
                 {section === "brains" && <Brains atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "connections" && <Connections atlas={atlas} draft={draft} edit={edit} view={view} />}
                 {section === "extensions" && (
@@ -727,6 +730,95 @@ function AtlasEmail({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
         )}
       </div>
       {note && <p className={`small ${note.ok ? "ok" : "err"}`}>{note.message}</p>}
+    </>
+  );
+}
+
+/**
+ * People (§7.1): who shares this Atlas. Each member gets an Atlas of their
+ * own, signed in with their own passkey; nobody reads anyone else's,
+ * the owner included. What they share is an area, in Library → Areas.
+ */
+function People({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const [name, setName] = useState("");
+  const [role, setRole] = useState<"admin" | "member">("member");
+  const invited = atlas.state.invited;
+  const me = view.me;
+  const canInvite = !me || me.role === "admin";
+  return (
+    <>
+      <Head
+        title="People"
+        sub="Share Atlas with the people you live or work with. Each gets their own Atlas, private to them; areas you share show for both of you."
+      />
+      {me && (
+        <p className="small">
+          You share {me.owner}'s Atlas as {me.role === "admin" ? "an admin" : "a member"}. Your conversations and what you tell Atlas are
+          yours alone; areas shared with you are in Library.
+        </p>
+      )}
+      {!me && (
+        <Row label="Members">
+          <div className="rows">
+            {view.members.map((m) => (
+              <div className="r" key={m.id}>
+                <span className="grow">
+                  <b>{m.name}</b>{" "}
+                  <span className="muted small">
+                    {m.joined_at ? `joined ${shortDay(m.joined_at)}` : m.invite_open ? "invited, hasn't joined yet" : "the invite ran out"}
+                  </span>
+                </span>
+                <select
+                  value={m.role}
+                  onChange={(e) => atlas.send({ type: "atlas.member.role", id: m.id, role: e.target.value as "admin" | "member" })}
+                >
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+                {!m.joined_at && (
+                  <button className="btn" onClick={() => atlas.send({ type: "atlas.member.invite", name: m.name, role: m.role, id: m.id })}>
+                    New link
+                  </button>
+                )}
+                <button className="btn" onClick={() => atlas.send({ type: "atlas.member.remove", id: m.id })}>
+                  Remove
+                </button>
+              </div>
+            ))}
+            {!view.members.length && <p className="muted small">Just you so far.</p>}
+          </div>
+        </Row>
+      )}
+      {canInvite && (
+        <Row label="Invite">
+          <label className="field">
+            <span>Their name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className="field">
+            <span>Role</span>
+            <select value={role} onChange={(e) => setRole(e.target.value as "admin" | "member")}>
+              <option value="member">Member: their own Atlas, and the areas shared with them</option>
+              <option value="admin">Admin: that, and they can invite people too</option>
+            </select>
+          </label>
+          <button
+            className="btn primary"
+            disabled={!name.trim()}
+            onClick={() => {
+              atlas.send({ type: "atlas.member.invite", name: name.trim(), role });
+              setName("");
+            }}
+          >
+            Make an invite link
+          </button>
+          {invited && (
+            <p className="small">
+              Send this to {invited.name}; it works once, for a week: <span className="mono">{invited.link}</span>
+            </p>
+          )}
+        </Row>
+      )}
     </>
   );
 }

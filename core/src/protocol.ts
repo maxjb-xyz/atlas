@@ -131,7 +131,7 @@ export interface AreaView {
   about: string;
   state: "active" | "dormant" | "archived";
   color: number;
-  settings: { tone: string };
+  settings: { tone: string; shared_with: string[] };
   messages: number;
   records: number;
   last_seen: number | null;
@@ -292,6 +292,19 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** A chat channel (§16.1): a code for the owner to send from their own account, or forgetting who they are there. */
   z.object({ type: z.literal("atlas.channel.code"), ext: z.string().max(40) }),
   z.object({ type: z.literal("atlas.channel.unlink"), ext: z.string().max(40) }),
+  /** Members (§7.1): invite one (again, for one who hasn't joined), change a role, remove one. */
+  z.object({
+    type: z.literal("atlas.member.invite"),
+    name: z.string().trim().min(1).max(60),
+    role: z.enum(["admin", "member"]),
+    id: z.string().max(40).optional(),
+  }),
+  z.object({ type: z.literal("atlas.member.role"), id: z.string().max(40), role: z.enum(["admin", "member"]) }),
+  z.object({ type: z.literal("atlas.member.remove"), id: z.string().max(40) }),
+  /** Shares an area with a member, or stops (§6, §7.1). */
+  z.object({ type: z.literal("atlas.area.share"), area: z.string().max(64), member: z.string().max(40), shared: z.boolean() }),
+  /** The areas shared with this person, with what's in them. */
+  z.object({ type: z.literal("atlas.shared") }),
   /** Whether faces may share a record from its areas (§7.2). */
   z.object({ type: z.literal("atlas.record.share"), id: z.string().max(64), shared: z.boolean() }),
   z.object({ type: z.literal("atlas.mail.test") }),
@@ -516,6 +529,17 @@ export interface SettingsView {
   extensions: ExtensionView[];
   /** Atlas's own address (§16.2). */
   mail: MailView;
+  /** Members (§7.1): who shares this Atlas. Only the owner's agent has them. */
+  members: Array<{
+    id: string;
+    name: string;
+    role: "admin" | "member";
+    joined_at: number | null;
+    invited_at: number;
+    invite_open: boolean;
+  }>;
+  /** In a member's own Atlas: who they are, and whose Atlas they share. Null in the owner's. */
+  me: { id: string; name: string; role: "admin" | "member"; owner: string } | null;
   /** Faces (§7.2). */
   faces: FaceView[];
   /** Chat channels (§16.1), and who the owner is on each. */
@@ -569,6 +593,16 @@ export interface SensesView {
 /** One extension as Settings shows it (§17). */
 /** A face as Settings shows it: its settings (§7.2). */
 export type FaceView = import("./face-shape").Face & { people_names: string[]; pull_names: string[] };
+
+/** A shared area as a member's app shows it (§6): what's in it, kept in the owner's Atlas. */
+export interface SharedArea {
+  id: string;
+  name: string;
+  about: string;
+  /** Who it's shared with, by name, the owner first. */
+  with: string[];
+  records: Array<{ id: string; type: string; name: string; fact: string; updated_at: number; by: string }>;
+}
 
 /** Atlas's own address as Settings shows it (§16.2). */
 export interface MailView {
@@ -709,6 +743,10 @@ export type ServerMessage =
   /** A face's answer in a test conversation. */
   | { type: "atlas.face.said"; id: string; conv: string; ok: boolean; text: string }
   | { type: "atlas.channel.code"; ext: string; code: string; expires: number }
+  /** An invite link, shown once. */
+  | { type: "atlas.member.invited"; id: string; name: string; link: string }
+  /** The areas shared with this person (§6), with their records. */
+  | { type: "atlas.shared"; areas: SharedArea[] }
   | { type: "atlas.contacts.imported"; ok: boolean; text: string }
   /** A new webhook source's address, with its key in it, shown once. */
   | { type: "atlas.sense.hook"; id: string; name: string; url: string }

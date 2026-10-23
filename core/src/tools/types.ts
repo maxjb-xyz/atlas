@@ -38,6 +38,11 @@ export interface ToolContext {
   sql: Sql;
   /** Set only in a face's run: the face and its conversation. */
   face?: FaceRun;
+  /** The areas shared between the owner and members (§7.1), kept in the owner's Atlas. */
+  shared?: {
+    list(): Promise<import("../protocol").SharedArea[]>;
+    save(o: { area: string; name: string; fact: string; type: string }): Promise<{ ok: boolean; text: string }>;
+  } | null;
   run_id: string;
   settings: Settings;
   tz: string;

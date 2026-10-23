@@ -25,6 +25,8 @@ export interface StoredPasskey {
   name: string;
   created_at: number;
   last_used: number | null;
+  /** A member's passkey (§7.1): it signs in to their own Atlas. Absent for the owner's. */
+  member?: string;
 }
 
 /** How long a challenge stays good. */
@@ -68,15 +70,17 @@ async function challengeFor(store: AuthStore, clientDataJSON: string, kind: "reg
   return c && c.kind === kind && c.expires >= Date.now() ? value : null;
 }
 
-export async function registrationOptions(store: AuthStore, request: Request) {
+/** Options for a new passkey: the owner's, or a member's (`who`), each its own user on this Atlas. */
+export async function registrationOptions(store: AuthStore, request: Request, who?: { id: string; name: string }) {
   const { rpID } = relyingParty(request);
-  const existing = await store.passkeys();
-  const owner = (await store.ownerName()) || "Owner";
+  const existing = (await store.passkeys()).filter((p) => (p.member ?? null) === (who?.id ?? null));
+  const owner = who?.name || (await store.ownerName()) || "Owner";
   const options = await generateRegistrationOptions({
     rpName: "Atlas",
     rpID,
     userName: owner,
     userDisplayName: owner,
+    ...(who ? { userID: new Uint8Array(new TextEncoder().encode(`member:${who.id}`)) as Uint8Array<ArrayBuffer> } : {}),
     attestationType: "none",
     excludeCredentials: existing.map((p) => ({ id: p.id, transports: p.transports as never })),
     authenticatorSelection: { residentKey: "required", userVerification: "preferred" },
@@ -92,6 +96,7 @@ export async function verifyRegistration(
   request: Request,
   response: RegistrationResponseJSON,
   name: string,
+  member?: string,
 ): Promise<PasskeyResult> {
   const challenge = await challengeFor(store, response.response.clientDataJSON, "register");
   if (!challenge) return { ok: false, status: 400, message: "That took too long or was already used. Start adding the passkey again." };
@@ -118,6 +123,7 @@ export async function verifyRegistration(
     name: name.trim().slice(0, 60) || "Passkey",
     created_at: Date.now(),
     last_used: Date.now(),
+    ...(member ? { member } : {}),
   };
   await store.addPasskey(passkey);
   return { ok: true, passkey };

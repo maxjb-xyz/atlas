@@ -101,7 +101,12 @@ describe("sign-in", () => {
     const cookie = ok.headers.get("set-cookie")!.split(";")[0]!;
     expect(cookie).toMatch(/^atlas_session=/);
     const session = await SELF.fetch(`${ORIGIN}/api/session`, { headers: { cookie } });
-    expect(await session.json()).toEqual({ configured: true, signed_in: true, has_passkeys: false });
+    expect(await session.json()).toEqual({
+      configured: true,
+      signed_in: true,
+      has_passkeys: false,
+      person: { member: null, agent: "owner" },
+    });
   });
 });
 

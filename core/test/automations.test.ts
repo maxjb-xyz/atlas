@@ -284,6 +284,7 @@ describe("automations", () => {
     expect(fetched).toEqual([]); // a test sends nothing
     expect(test.requests[0]!.tools.map((x) => x.name).sort()).toEqual([
       "agenda_list",
+      "area_look",
       "calendar_read",
       "file_read",
       "mcp_call",

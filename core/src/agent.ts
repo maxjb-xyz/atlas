@@ -3,7 +3,7 @@
 // one socket and one loop, so voice is the same mind (§11).
 
 import { DurableObjectOAuthClientProvider } from "agents/mcp/do-oauth-client-provider";
-import { Agent, type Connection, type ConnectionContext, type WSMessage } from "agents";
+import { Agent, type Connection, type ConnectionContext, getAgentByName, type WSMessage } from "agents";
 import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } from "agents/voice";
 import { CalendarSense } from "./agent/calendar";
 import { correctAreas, discoveryPrompt, readyToDiscover, startDiscovered, tagPending, triedDiscovery, unfiled } from "./agent/areas";
@@ -13,7 +13,7 @@ import { history as logHistory, historyStats, inbox, inboxDone, listRecords, run
 import { correctRecord, createRecord, findRecords, forgetRecord, getRecord } from "./store/records";
 import { type Decider, workersAIDecider } from "./brains/decide";
 import { type Extractor, workersAIExtractor } from "./brains/extract";
-import { createArea, getScope, listAreas, mergeAreas, setScope, type Tagged, updateArea } from "./store/areas";
+import { createArea, getArea, getScope, listAreas, mergeAreas, setScope, type Tagged, updateArea } from "./store/areas";
 import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
 import { seams } from "./agent/seams";
 import { liveTest, settingsView } from "./agent/settings";
@@ -23,6 +23,11 @@ import { type ChatVia, ChannelDesk, links } from "./agent/channels";
 import { FaceDesk, type Where } from "./agent/faces";
 import { conversation, type Face, facePrompt, faces, getFace, removeFace, saveFace } from "./faces";
 import { faceTools } from "./tools/faces";
+import { sharedTools } from "./tools/shared";
+import { areaLook } from "./tools/digest";
+import { sharedAreas, sharedLine, sharedSave } from "./shared";
+import { agentNameOf, byInvite, getMember, invite, joined, memberOfAgent, removeMember, setRole } from "./members";
+import type { SharedArea } from "./protocol";
 import { whoIs } from "./tools/people";
 import type { Message as BrainMessage } from "./brains/types";
 import { base64, type Out } from "../../extensions/sdk";
@@ -241,6 +246,8 @@ const TOOLS: Record<Actor, Tool[]> = {
     extensionDraft,
     ...peopleTools,
     emailSend,
+    ...sharedTools,
+    areaLook,
   ],
   atlas: [
     calendarRead,
@@ -259,6 +266,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     person,
     loopOpen,
     loopClose,
+    areaLook,
   ],
   system: [],
 };
@@ -266,6 +274,7 @@ const TOOLS: Record<Actor, Tool[]> = {
 /** What an automation's Atlas step can reach: what the clock's runs can, and the owner's webhooks (§13.1). */
 const AUTOMATION_TOOLS: Tool[] = [
   calendarRead,
+  areaLook,
   ...agendaTools,
   recall,
   webhookCall,
@@ -285,6 +294,7 @@ const AUTOMATION_TOOLS: Tool[] = [
 /** A test run only looks: it changes nothing, and webhooks and other services' tools only say what they'd do (§13.4). */
 const TEST_TOOLS: Tool[] = [
   calendarRead,
+  areaLook,
   agendaList,
   recall,
   webhookCall,
@@ -634,6 +644,139 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const origin = ctx.request.headers.get("origin");
     if (origin && /^https?:\/\/[^/]+$/.test(origin) && getState<string>(this.#sql, "origin") !== origin)
       setState(this.#sql, "origin", origin);
+    // A member's own Atlas (§7.1) learns who they are, and whose Atlas they share, from the owner's.
+    if (this.#member) void this.keepAliveWhile(() => this.#refreshMember()).catch(() => {});
+  }
+
+  // --- members and shared areas (§7.1, §6) --------------------------------------------
+
+  /** The member this agent is, when it's a member's own Atlas; null in the owner's. */
+  get #member(): string | null {
+    return memberOfAgent(this.name);
+  }
+
+  /** The owner's agent, for a member's Atlas: shared areas live there. */
+  #ownerAgent() {
+    return getAgentByName(this.env.PersonAgent as never, OWNER) as unknown as Promise<{
+      memberInfo(id: string): Promise<{ id: string; name: string; role: "admin" | "member" } | null>;
+      ownerName(): Promise<string>;
+      apiShared(member: string): Promise<SharedArea[]>;
+      apiSharedSave(member: string, o: { area: string; name: string; fact: string; type: string }): Promise<{ ok: boolean; text: string }>;
+      apiInvite(
+        member: string,
+        o: { name: string; role: "admin" | "member" },
+      ): Promise<{ ok: boolean; text: string; link?: string; id?: string }>;
+    }>;
+  }
+
+  async #refreshMember(): Promise<void> {
+    const id = this.#member!;
+    const owner = await this.#ownerAgent();
+    const info = await owner.memberInfo(id);
+    if (!info) {
+      setState(this.#sql, "member_of", null);
+      this.#signOutSockets();
+      return;
+    }
+    const was = getState<{ name: string; role: string }>(this.#sql, "member_of");
+    setState(this.#sql, "member_of", { ...info, owner: (await owner.ownerName()) || "the owner" });
+    // Their own name is theirs from the start; the rest of setup is theirs to do.
+    const s = readSettings(this.#sql);
+    if (!s.owner_name || s.owner_name === "Owner") writeSettings(this.#sql, { owner_name: info.name });
+    if (!was || was.name !== info.name || was.role !== info.role) this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  /** The prompt's line about shared areas, and for a member, whose Atlas this is. */
+  async #sharedNote(): Promise<string> {
+    const me = getState<{ name: string; owner: string }>(this.#sql, "member_of");
+    if (!this.#member && !listAreas(this.#sql).some((a) => a.settings.shared_with.length)) return "";
+    const areas = await this.#shared()
+      .list()
+      .catch(() => [] as SharedArea[]);
+    return sharedLine(areas, this.#member && me ? me : null);
+  }
+
+  /** The shared areas, from wherever they live: here for the owner, the owner's Atlas for a member. */
+  #shared(): NonNullable<ToolContext["shared"]> {
+    const member = this.#member;
+    return {
+      list: async () => (member ? (await this.#ownerAgent()).apiShared(member) : sharedAreas(this.#sql, null)),
+      save: async (o) => (member ? (await this.#ownerAgent()).apiSharedSave(member, o) : sharedSave(this.#sql, null, o)),
+    };
+  }
+
+  /** For a member's Atlas: the areas shared with them, with what's in them. */
+  async apiShared(member: string): Promise<SharedArea[]> {
+    return getMember(this.#sql, member) ? sharedAreas(this.#sql, member) : [];
+  }
+
+  /** For a member's Atlas: keeps something in an area shared with them, for both. */
+  async apiSharedSave(
+    member: string,
+    o: { area: string; name: string; fact: string; type: string },
+  ): Promise<{ ok: boolean; text: string }> {
+    if (!getMember(this.#sql, member)) return { ok: false, text: "You aren't a member of this Atlas any more." };
+    const out = sharedSave(this.#sql, member, o);
+    if (out.ok) this.#broadcast({ type: "atlas.records.changed" });
+    return out;
+  }
+
+  /** An admin member invites someone, from their own Atlas. */
+  async apiInvite(
+    member: string,
+    o: { name: string; role: "admin" | "member" },
+  ): Promise<{ ok: boolean; text: string; link?: string; id?: string }> {
+    if (getMember(this.#sql, member)?.role !== "admin") return { ok: false, text: "Only an admin can invite people." };
+    return this.#invite(o);
+  }
+
+  async #invite(o: {
+    name: string;
+    role: "admin" | "member";
+    id?: string;
+  }): Promise<{ ok: boolean; text: string; link?: string; id?: string }> {
+    const origin = getState<string>(this.#sql, "origin");
+    if (!origin) return { ok: false, text: "Open Atlas once from its web address first, so the link points at it." };
+    const { member, token } = await invite(this.#sql, o);
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+    return { ok: true, text: `Invited ${member.name}.`, link: `${origin}/#/join/${token}`, id: member.id };
+  }
+
+  /** Signs a member out of their own Atlas: every socket closes. Called by the owner's agent when they're removed. */
+  async apiSignOut(): Promise<void> {
+    setState(this.#sql, "member_of", null);
+    this.#signOutSockets();
+  }
+
+  async inviteFor(token: string): Promise<{ id: string; name: string } | null> {
+    const m = await byInvite(this.#sql, token);
+    return m ? { id: m.id, name: m.name } : null;
+  }
+
+  async memberJoined(id: string): Promise<void> {
+    joined(this.#sql, id);
+    this.#broadcast({ type: "atlas.view", view: this.#view() });
+  }
+
+  async memberInfo(id: string): Promise<{ id: string; name: string; role: "admin" | "member" } | null> {
+    const m = getMember(this.#sql, id);
+    return m && m.joined_at ? { id: m.id, name: m.name, role: m.role } : null;
+  }
+
+  /** Removes a member: their passkeys and sign-ins end, and their Atlas closes its sockets. Their own Atlas's data stays theirs, unreachable. */
+  async #removeMember(id: string): Promise<void> {
+    const m = removeMember(this.#sql, id);
+    if (!m) return;
+    const keys = (getState<StoredPasskey[]>(this.#sql, "passkeys") ?? []).filter((p) => p.member !== id);
+    setState(this.#sql, "passkeys", keys);
+    const sessions = Object.fromEntries(Object.entries(this.#sessions()).filter(([, x]) => x.member !== id));
+    setState(this.#sql, "sessions", sessions);
+    for (const a of listAreas(this.#sql))
+      if (a.settings.shared_with.includes(id))
+        updateArea(this.#sql, a.id, { settings: { ...a.settings, shared_with: a.settings.shared_with.filter((x) => x !== id) } }, "owner");
+    await (getAgentByName(this.env.PersonAgent as never, agentNameOf(id)) as unknown as Promise<{ apiSignOut(): Promise<void> }>)
+      .then((x) => x.apiSignOut())
+      .catch(() => {});
   }
 
   /** Closes the sockets opened by sessions that just ended; with no list, every socket. */
@@ -833,6 +976,43 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         if (!out.ok) this.#send(connection, { type: "atlas.error", message: out.text });
         else inboxDone(this.#sql, msg.id);
         this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+        return;
+      }
+      case "atlas.member.invite": {
+        const out = this.#member
+          ? await (await this.#ownerAgent()).apiInvite(this.#member, { name: msg.name, role: msg.role })
+          : await this.#invite({ name: msg.name, role: msg.role, ...(msg.id ? { id: msg.id } : {}) });
+        if (!out.ok || !out.link) this.#send(connection, { type: "atlas.error", message: out.text });
+        else this.#send(connection, { type: "atlas.member.invited", id: out.id!, name: msg.name, link: out.link });
+        return;
+      }
+      case "atlas.member.role":
+      case "atlas.member.remove": {
+        if (this.#member) {
+          this.#send(connection, { type: "atlas.error", message: "Only the owner changes who shares this Atlas." });
+          return;
+        }
+        if (msg.type === "atlas.member.role") setRole(this.#sql, msg.id, msg.role);
+        else await this.#removeMember(msg.id);
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.area.share": {
+        const a = getArea(this.#sql, msg.area);
+        if (this.#member || !a || !getMember(this.#sql, msg.member)) return;
+        const list = new Set(a.settings.shared_with);
+        if (msg.shared) list.add(msg.member);
+        else list.delete(msg.member);
+        updateArea(this.#sql, a.id, { settings: { ...a.settings, shared_with: [...list] } }, "owner");
+        this.#broadcast({ type: "atlas.areas", areas: this.#areasView(), scope: getScope(this.#sql) });
+        this.#send(connection, { type: "atlas.shared", areas: sharedAreas(this.#sql, null) });
+        return;
+      }
+      case "atlas.shared": {
+        const areas = await this.#shared()
+          .list()
+          .catch(() => []);
+        this.#send(connection, { type: "atlas.shared", areas });
         return;
       }
       case "atlas.channel.code": {
@@ -2234,7 +2414,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const now = new Date();
     const tools = o.tools ?? TOOLS[o.actor];
     const mcp = tools.includes(mcpCall) ? await this.#mcpServers(3_000) : [];
-    const system = systemPrompt({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq, mcp, extra: o.extra });
+    // What's shared, and for a member's Atlas whose it is (§7.1). The owner's Atlas being unreachable doesn't stop a run.
+    const shared = await this.#sharedNote();
+    const extra = [o.extra ?? "", shared].filter(Boolean).join("\n\n") || undefined;
+    const system = systemPrompt({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq, mcp, extra });
     // Compaction keeps this well inside the window; the budget only matters if it hasn't caught up.
     // Voice reads less, so a spoken reply starts fast; recall still has the rest.
     const room = o.role === "voice" ? VOICE_HISTORY_TOKENS : Math.floor(this.#window * 0.85) - tokens(system);
@@ -2300,6 +2483,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       embed: this.#embedder(),
       source_log_id: sourceLogId,
       via,
+      shared: this.#shared(),
       exit: this.#exit,
       web: this.#web,
       maps: this.#maps,

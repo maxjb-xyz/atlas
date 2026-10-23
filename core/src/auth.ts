@@ -21,6 +21,8 @@ const enc = new TextEncoder();
 export interface Session {
   kind: "passkey" | "code";
   passkey_id?: string;
+  /** A member's sign-in (§7.1): their own Atlas, not the owner's. */
+  member?: string;
   at: number;
   expires: number;
 }
@@ -35,7 +37,13 @@ export interface AuthStore {
   putChallenge(value: string, kind: "register" | "login"): Promise<void>;
   /** Takes one challenge by its value, so a stranger's request can't use up the owner's. */
   takeChallenge(value: string): Promise<{ kind: "register" | "login"; expires: number } | null>;
-  openSession(s: { kind: Session["kind"]; passkey_id?: string }): Promise<string>;
+  openSession(s: { kind: Session["kind"]; passkey_id?: string; member?: string }): Promise<string>;
+  /** The member an invite link is for, while it's good (§7.1). */
+  inviteFor(token: string): Promise<{ id: string; name: string } | null>;
+  /** A member made their first passkey: the invite is used. */
+  memberJoined(id: string): Promise<void>;
+  /** A member as sign-in sees them, or null when they were removed. */
+  memberInfo(id: string): Promise<{ id: string; name: string; role: "admin" | "member" } | null>;
   session(id: string): Promise<Session | null>;
   closeSession(id: string): Promise<void>;
   /** How long until the setup code may be tried again, in ms; 0 means now. */
@@ -105,6 +113,9 @@ function cookieValue(request: Request): string | null {
 }
 
 export type Who = { via: "bearer" } | { via: "session"; id: string; session: Session };
+
+/** The member a sign-in is, or null for the owner. */
+export const memberOf = (who: Who | null) => (who?.via === "session" ? (who.session.member ?? null) : null);
 
 /** Why the setup code can't be used as it is, if it can't. */
 export function codeProblem(env: Env): string | null {
@@ -179,12 +190,44 @@ export async function handleAuth(request: Request, env: Env, path: string, store
 
   if (path === "/api/session" && request.method === "GET") {
     const problem = codeProblem(env);
+    const who = await owner(request, env, store);
+    const member = memberOf(who);
+    const info = member ? await (await store()).memberInfo(member) : null;
     return json({
       configured: !problem,
       ...(problem ? { problem } : {}),
-      signed_in: Boolean(await owner(request, env, store)),
+      signed_in: Boolean(who) && (!member || !!info),
       has_passkeys: problem ? false : (await (await store()).passkeys()).length > 0,
+      // Whose Atlas this sign-in opens (§7.1): the owner's, or a member's own.
+      person: info ? { member: info.id, name: info.name, role: info.role, agent: `member-${info.id}` } : { member: null, agent: "owner" },
     });
+  }
+
+  // Joining as a member (§7.1): the invite link's token, then a passkey of their own, which signs them in.
+  if (path === "/api/join/options" && request.method === "POST") {
+    const body = (await request.json().catch(() => ({}))) as { token?: unknown };
+    const s = await store();
+    const m = typeof body.token === "string" ? await s.inviteFor(body.token) : null;
+    if (!m) return json({ error: "This invite link isn't good any more. Ask for a new one." }, { status: 404 });
+    return json({ name: m.name, options: await registrationOptions(s, request, m) });
+  }
+  if (path === "/api/join/verify" && request.method === "POST") {
+    const body = (await request.json().catch(() => ({}))) as { token?: unknown; response?: unknown; name?: unknown };
+    const s = await store();
+    const m = typeof body.token === "string" ? await s.inviteFor(body.token) : null;
+    if (!m) return json({ error: "This invite link isn't good any more. Ask for a new one." }, { status: 404 });
+    if (!looksLikeCredential(body.response)) return json({ error: "That isn't a passkey answer." }, { status: 400 });
+    const out = await verifyRegistration(
+      s,
+      request,
+      body.response as RegistrationResponseJSON,
+      typeof body.name === "string" ? body.name : "",
+      m.id,
+    );
+    if (!out.ok) return json({ error: out.message }, { status: out.status });
+    await s.memberJoined(m.id);
+    const id = await s.openSession({ kind: "passkey", passkey_id: out.passkey.id, member: m.id });
+    return new Response(null, { status: 204, headers: { "set-cookie": await cookieFor(env, request, id) } });
   }
 
   if (path === "/api/login" && request.method === "POST") {
@@ -226,19 +269,29 @@ export async function handleAuth(request: Request, env: Env, path: string, store
       if (existing && who.via === "session" && Date.now() - who.session.at > RECENT_SIGN_IN_MS) {
         return json({ error: "To add another passkey, enter your setup code, or sign in again first." }, { status: 403 });
       }
+      // A member adds one for themselves.
+      const member = memberOf(who);
+      if (member) {
+        const info = await s.memberInfo(member);
+        if (!info) return json({ error: "Sign in first." }, { status: 401 });
+        return json(await registrationOptions(s, request, info));
+      }
     }
     const options = await registrationOptions(s, request);
     return json(options, cookie ? { headers: { "set-cookie": cookie } } : {});
   }
 
   if (path === "/api/passkey/register/verify" && request.method === "POST") {
-    if (!(await owner(request, env, store))) return json({ error: "Sign in first." }, { status: 401 });
+    const who = await owner(request, env, store);
+    if (!who) return json({ error: "Sign in first." }, { status: 401 });
     if (!looksLikeCredential(body.response)) return json({ error: "That isn't a passkey answer." }, { status: 400 });
+    const member = memberOf(who);
     const out = await verifyRegistration(
       s,
       request,
       body.response as RegistrationResponseJSON,
       typeof body.name === "string" ? body.name : "",
+      ...(member ? [member] : []),
     );
     return out.ok ? json({ name: out.passkey.name }) : json({ error: out.message }, { status: out.status });
   }
@@ -252,7 +305,11 @@ export async function handleAuth(request: Request, env: Env, path: string, store
     if (!looksLikeCredential(body.response)) return json({ error: "That isn't a passkey answer." }, { status: 400 });
     const out = await verifyLogin(s, request, body.response as AuthenticationResponseJSON);
     if (!out.ok) return json({ error: out.message }, { status: out.status });
-    const id = await s.openSession({ kind: "passkey", passkey_id: out.passkey.id });
+    const id = await s.openSession({
+      kind: "passkey",
+      passkey_id: out.passkey.id,
+      ...(out.passkey.member ? { member: out.passkey.member } : {}),
+    });
     return new Response(null, { status: 204, headers: { "set-cookie": await cookieFor(env, request, id) } });
   }
 

@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { type Atlas, useAtlas } from "./connection";
-import { addPasskey, deviceName, passkeysSupported, signInWithCode, signInWithPasskey } from "./passkey";
+import { addPasskey, deviceName, inviteName, joinWithPasskey, passkeysSupported, signInWithCode, signInWithPasskey } from "./passkey";
 import { History } from "./pages/History";
 import { Home } from "./pages/Home";
 import { Library } from "./pages/Library";
@@ -11,7 +11,14 @@ import { Setup } from "./Setup";
 import { Palette, Sidebar, TabBar, Toolbar, Transcript } from "./Shell";
 import { AsciiDiamond, Diamond, useRoute } from "./ui";
 
-type Session = { signed_in: boolean; configured: boolean; problem?: string; has_passkeys: boolean } | null;
+type Session = {
+  signed_in: boolean;
+  configured: boolean;
+  problem?: string;
+  has_passkeys: boolean;
+  /** Whose Atlas this sign-in opens: the owner's, or a member's own (§7.1). */
+  person?: { member: string | null; name?: string; agent: string };
+} | null;
 
 export function App() {
   const [session, setSession] = useState<Session>(null);
@@ -37,8 +44,11 @@ export function App() {
       </Notice>
     );
   }
-  if (!session.signed_in) return <SignIn first={!session.has_passkeys} onDone={() => setSession({ ...session, signed_in: true })} />;
-  return <Signed />;
+  // An invite link (§7.1): joining makes a passkey of their own, then opens their own Atlas.
+  const join = /^#\/join\/([0-9a-f]{48})$/.exec(location.hash)?.[1];
+  if (join) return <Join token={join} />;
+  if (!session.signed_in) return <SignIn first={!session.has_passkeys} onDone={() => location.reload()} />;
+  return <Signed agent={session.person?.agent ?? "owner"} />;
 }
 
 function Notice({ title, children }: { title: string; children: React.ReactNode }) {
@@ -128,8 +138,51 @@ function SignIn({ first, onDone }: { first: boolean; onDone: () => void }) {
   );
 }
 
-function Signed() {
-  const atlas = useAtlas();
+/** Joining someone's Atlas as a member, from their invite link (§7.1). */
+function Join({ token }: { token: string }) {
+  const [who, setWho] = useState<{ name: string } | { error: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    void inviteName(token).then(setWho);
+  }, [token]);
+  if (!who) return null;
+  if ("error" in who) return <Notice title="This invite doesn't work">{who.error}</Notice>;
+  return (
+    <div className="center">
+      <div className="solo rise">
+        <AsciiDiamond rows={14} />
+        <h1 className="disp">Welcome, {who.name}</h1>
+        <p className="muted">
+          You've been invited to share an Atlas. You get one of your own: your conversations, what you tell it and your voice settings are
+          yours, and nobody else can read them. Areas someone shares with you show for both of you.
+        </p>
+        {passkeysSupported() ? (
+          <button
+            className="btn primary"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              void joinWithPasskey(token, deviceName()).then((err) => {
+                setBusy(false);
+                if (err) setError(err);
+                else location.replace("/");
+              });
+            }}
+          >
+            {busy ? "Waiting for your device" : "Make my passkey and join"}
+          </button>
+        ) : (
+          <p className="err">This browser can't make passkeys. Open the link in a current browser on your phone or computer.</p>
+        )}
+        {error && <p className="err small">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
+function Signed({ agent }: { agent: string }) {
+  const atlas = useAtlas(agent);
   const [setupOpen, setSetupOpen] = useState<boolean | null>(null);
   if (!atlas.state.view) return <div className="center muted">Connecting to Atlas.</div>;
   // A fresh Atlas opens on setup until every step is done or skipped; decided before the first paint, so the shell doesn't flash.

@@ -11,6 +11,8 @@ import { getState, setState } from "./state";
 export const AreaSettings = z.object({
   /** How Atlas talks in this area: "formal with clients", "relaxed". */
   tone: z.string().max(300).default(""),
+  /** Members it's shared with (§7.1): its records live here, and both see and write them. */
+  shared_with: z.array(z.string().max(40)).max(20).default([]),
 });
 export type AreaSettings = z.infer<typeof AreaSettings>;
 

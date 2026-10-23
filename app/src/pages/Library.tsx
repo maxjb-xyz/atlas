@@ -464,17 +464,57 @@ function Areas({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
             </div>
           </>
         )}
-        <p className="faint small" style={{ marginTop: 18 }}>
-          What leaves Atlas from each area (which account it sends from, who it's shared with, what Atlas does alone) is set here once those
-          arrive.
-        </p>
+        <SharedAreas atlas={atlas} />
       </div>
     </Sheet>
   );
 }
 
+/**
+ * Shared areas (§6, §7.1): an area the owner shares with members. Its
+ * records live in the owner's Atlas; everyone who shares it sees them here,
+ * and what Atlas keeps there shows for all of them.
+ */
+function SharedAreas({ atlas }: { atlas: Atlas }) {
+  const shared = atlas.state.shared;
+  useEffect(() => {
+    if (atlas.voice.connected) atlas.send({ type: "atlas.shared" });
+  }, [atlas.voice.connected]);
+  if (!shared?.length) return null;
+  return (
+    <>
+      <div className="section-rule">
+        <span className="lab">Shared</span>
+      </div>
+      {shared.map((a) => (
+        <div key={a.id} style={{ marginBottom: 14 }}>
+          <p>
+            <b>{a.name}</b> <span className="muted small">with {a.with.join(", ")}</span>
+          </p>
+          <div className="rows">
+            {a.records.map((r) => (
+              <div className="r" key={r.id}>
+                <span className="grow">
+                  {r.name}
+                  {r.fact && <span className="muted"> · {r.fact}</span>}
+                </span>
+                <span className="faint small">
+                  {r.by} · {shortDay(r.updated_at)}
+                </span>
+              </div>
+            ))}
+            {!a.records.length && <p className="muted small">Nothing kept here yet.</p>}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; others: AreaView[]; go: (d: string) => void }) {
   const [open, setOpen] = useState(false);
+  // Only the owner shares areas, with members who've joined (§7.1).
+  const members = atlas.state.view?.me ? [] : (atlas.state.view?.members ?? []).filter((m) => m.joined_at);
   const saved = { name: area.name, about: area.about, tone: area.settings.tone };
   const [draft, setDraft] = useState(saved);
   // Typing marks the draft as the owner's; until then it follows the saved area as it changes.
@@ -525,6 +565,23 @@ function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; ot
               placeholder="Formal with clients"
             />
           </label>
+          {members.length > 0 && (
+            <div className="field">
+              <span>Shared with (they see and add to what's in it)</span>
+              <div className="row small" style={{ gap: 12 }}>
+                {members.map((m) => (
+                  <label key={m.id} className="row">
+                    <input
+                      type="checkbox"
+                      checked={area.settings.shared_with.includes(m.id)}
+                      onChange={(e) => atlas.send({ type: "atlas.area.share", area: area.id, member: m.id, shared: e.target.checked })}
+                    />{" "}
+                    {m.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="row">
             <button className="btn sm" onClick={() => go(`area:${area.id}`)}>
               Open

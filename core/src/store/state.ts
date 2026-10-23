@@ -98,7 +98,11 @@ export type StateName =
   /** When a stranger was last told whose assistant this is, so it's said once a day. */
   | "channel_told"
   /** The faces (§7.2): each one's settings. */
-  | "faces";
+  | "faces"
+  /** Members (§7.1): who shares this Atlas, their roles and invites. */
+  | "members"
+  /** In a member's own agent: who they are, and whose Atlas they share. */
+  | "member_of";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];
