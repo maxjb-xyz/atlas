@@ -5,14 +5,15 @@
 // model is told the accounts, and can pick one when the owner says to.
 
 import type { Area } from "./store/areas";
-import { accountName, type Installed, methodsOf, providing } from "./extensions";
+import { accountName, type Installed, methodsOf, providing, ready } from "./extensions";
 import type { Sql } from "./store/db";
 import { readSettings } from "./store/settings";
 
-/** The owner's mail accounts that can send, oldest first. */
-export const mailAccounts = (sql: Sql): Installed[] => providing(sql, "mail").filter((e) => methodsOf(e).includes("mail"));
+/** The owner's mail accounts that can send (signed in), oldest first. */
+export const mailAccounts = (sql: Sql): Installed[] => providing(sql, "mail").filter((e) => methodsOf(e).includes("mail") && ready(sql, e));
 /** The owner's calendars, oldest first. */
-export const calendarAccounts = (sql: Sql): Installed[] => providing(sql, "calendar").filter((e) => methodsOf(e).includes("calendar"));
+export const calendarAccounts = (sql: Sql): Installed[] =>
+  providing(sql, "calendar").filter((e) => methodsOf(e).includes("calendar") && ready(sql, e));
 
 /** An account in words: "Gmail (you@work.com)". */
 export const accountText = (e: Installed): string => (accountName(e) ? `${e.name} (${accountName(e)})` : e.name);

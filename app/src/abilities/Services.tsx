@@ -394,6 +394,7 @@ function ServiceOpen({ atlas, s, onBack }: { atlas: Atlas; s: Service; onBack: (
           </div>
         </div>
         <div className="svc-right">
+          {v && v.state !== "available" && (v.accounts.length > 1 || v.more) && <Accounts atlas={atlas} svc={v} dev={dev} />}
           <div className="two">
             <Hears s={s} />
             <CanDo atlas={atlas} s={s} />
@@ -538,7 +539,104 @@ function Code({ code }: { code: string }) {
 }
 
 /** Its key or sign-in, its settings, its setup (shown once) and a live test. */
-function Connection({ atlas, e, dev }: { atlas: Atlas; e: ExtensionView; dev: boolean }) {
+/** Whether an account is set up enough to use: its keys in, and signed in when it signs in. */
+export const signedIn = (e: ExtensionView) => e.secrets.every((x) => x.optional || x.set) && (!e.signin || e.signin.signed_in);
+
+/**
+ * A service's accounts (§17): each with its name (what it signed into, or the
+ * owner's), its state, and, opened, its own sign-in; another can be added.
+ * The first account's sign-in is the card's own, above. With more than one
+ * mail account, one is where new mail as the owner goes from by default.
+ */
+export function Accounts({ atlas, svc, dev }: { atlas: Atlas; svc: NonNullable<Service["svc"]>; dev: boolean }) {
+  const view = atlas.state.view!;
+  const [open, setOpen] = useState<string | null>(null);
+  const [naming, setNaming] = useState<{ id: string; name: string } | null>(null);
+  const exts = svc.accounts.map((a) => ({ a, e: view.extensions.find((x) => x.id === a.ext) })).filter((x) => x.e);
+  const mail = exts.some((x) => x.e!.provides.includes("mail"));
+  const allMail = view.extensions.filter((x) => x.state === "on" && x.provides.includes("mail") && signedIn(x));
+  const byDefault = view.settings.accounts.mail || allMail[0]?.id || "";
+  // A new account opens on its sign-in.
+  const [count, setCount] = useState(exts.length);
+  useEffect(() => {
+    if (exts.length > count) setOpen(exts.at(-1)!.a.ext);
+    setCount(exts.length);
+  }, [exts.length]);
+  return (
+    <div className="card2 dim pad" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span style={{ fontWeight: 600 }}>Accounts</span>
+      <span className="aside">Each signs in on its own. Atlas reads them all; a reply goes from the one its mail came to.</span>
+      <div className="lines">
+        {exts.map(({ a, e }, i) => (
+          <div key={a.ext}>
+            <div className="line">
+              <StateDot state={extState(e!).state} />
+              {naming?.id === a.ext ? (
+                <form
+                  className="row grow"
+                  onSubmit={(ev) => {
+                    ev.preventDefault();
+                    atlas.send({ type: "atlas.ext.account.name", id: a.ext, name: naming.name });
+                    setNaming(null);
+                  }}
+                >
+                  <input
+                    className="grow"
+                    autoFocus
+                    value={naming.name}
+                    placeholder="Work, Personal…"
+                    onChange={(x) => setNaming({ id: a.ext, name: x.target.value })}
+                  />
+                  <button className="btn s" type="submit">
+                    Save
+                  </button>
+                </form>
+              ) : (
+                <span className="grow" style={{ minWidth: 0 }}>
+                  <span className="clip">{a.name ?? `Account ${i + 1}`}</span>
+                  <span className="aside"> · {extState(e!).said}</span>
+                  {dev && <span className="mono aside"> · {a.ext}</span>}
+                </span>
+              )}
+              {mail && allMail.length > 1 && e!.state === "on" && signedIn(e!) && (
+                <button
+                  className={`tbtn ${byDefault === a.ext ? "on" : ""}`}
+                  title="New mail as you goes from this one, unless an area says another"
+                  onClick={() => atlas.send({ type: "atlas.settings.update", patch: { accounts: { mail: a.ext } } })}
+                >
+                  {byDefault === a.ext ? "Sends new mail" : "Send new mail from it"}
+                </button>
+              )}
+              <button className="tbtn" onClick={() => setNaming({ id: a.ext, name: a.name ?? "" })}>
+                Name
+              </button>
+              {i > 0 && (
+                <>
+                  <button className="tbtn" onClick={() => setOpen(open === a.ext ? null : a.ext)}>
+                    {open === a.ext ? "Close" : "Sign-in"}
+                  </button>
+                  <button className="tbtn" onClick={() => atlas.send({ type: "atlas.ext.remove", id: a.ext })}>
+                    Remove
+                  </button>
+                </>
+              )}
+            </div>
+            {open === a.ext && <Connection atlas={atlas} e={e!} dev={dev} />}
+          </div>
+        ))}
+      </div>
+      {svc.more && (
+        <div className="row" style={{ marginTop: 6 }}>
+          <button className="btn s" onClick={() => atlas.send({ type: "atlas.ext.account.add", id: svc.accounts[0]?.ext ?? svc.id })}>
+            <Icon name="plus" size={12} /> Add another account
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Connection({ atlas, e, dev }: { atlas: Atlas; e: ExtensionView; dev: boolean }) {
   const [change, setChange] = useState(false);
   const [settings, setSettings] = useState<Record<string, string>>(() => Object.fromEntries(e.settings.map((x) => [x.name, x.value])));
   const setup = atlas.state.extSetup[e.id];

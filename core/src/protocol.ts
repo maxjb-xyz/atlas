@@ -141,7 +141,8 @@ export interface AreaView {
   /** A color the owner picked instead of the palette's (#rrggbb), and the area's icon: a line icon's name or "file:<id>" (§6.4). */
   custom_color: string | null;
   icon: string | null;
-  settings: { tone: string; shared_with: string[] };
+  /** `mail`: which mail account new mail here goes from, by extension id; empty is the default. */
+  settings: { tone: string; shared_with: string[]; mail: string };
   messages: number;
   records: number;
   last_seen: number | null;

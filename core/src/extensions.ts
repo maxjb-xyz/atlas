@@ -739,6 +739,13 @@ export async function postAllowed(sql: Sql, e: Installed, key: string, req: ExtR
   return same(given, hex(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(req.body)))) ? null : "the signature doesn't match";
 }
 
+/** Whether it's set up enough to be asked: its keys are in, and, with a sign-in, it's signed in. An account just added isn't, yet. */
+export function ready(sql: Sql, e: Installed): boolean {
+  const have = extSecrets(sql, e.id);
+  if ((e.manifest.secrets ?? []).some((x) => !x.optional && !have[x.name])) return false;
+  return !e.manifest.signin || Boolean(have.refresh_token || have.access_token);
+}
+
 // --- the looks on the clock ------------------------------------------------------------------------------
 
 /** When each extension that looks is next due, and the soonest. */

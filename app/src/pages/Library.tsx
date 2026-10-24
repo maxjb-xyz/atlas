@@ -9,6 +9,7 @@ import type { Atlas } from "../connection";
 import { Composer } from "../Shell";
 import { StageSheet } from "../StageViews";
 import { fileBase64 } from "../settings/parts";
+import { signedIn } from "../abilities/Services";
 import { AREA_ICON_PATHS, AreaChip, areaColor, AreaDot, Empty, Icon, Picker, pressable, Sheet, shortDay, Stage, Toggle } from "../ui";
 
 type LibTab = "overview" | "places" | "memory" | "areas" | "files";
@@ -521,7 +522,13 @@ function SharedAreas({ atlas }: { atlas: Atlas }) {
   );
 }
 
+/** A mail account in words: "Google · you@work.com". */
+const accountLabel = (x: { name: string; account: string | null }) => (x.account ? `${x.name} · ${x.account}` : x.name);
+
 function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; others: AreaView[]; go: (d: string) => void }) {
+  // With more than one mail account, an area can send from one of them (§6.2). A reply always goes from the one its mail came to.
+  const mailAccounts = (atlas.state.view?.extensions ?? []).filter((x) => x.state === "on" && x.provides.includes("mail") && signedIn(x));
+  const defaultMail = atlas.state.view?.settings.accounts.mail ?? "";
   const [open, setOpen] = useState(false);
   // Only the owner shares areas, with members who've joined (§7.1).
   const members = atlas.state.view?.me ? [] : (atlas.state.view?.members ?? []).filter((m) => m.joined_at);
@@ -576,6 +583,24 @@ function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; ot
               placeholder="Formal with clients"
             />
           </label>
+          {mailAccounts.length > 1 && (
+            <div className="field">
+              <span>New mail here goes from</span>
+              <Picker
+                label={`New mail in ${area.name} goes from`}
+                value={mailAccounts.some((x) => x.id === area.settings.mail) ? area.settings.mail : ""}
+                options={[
+                  {
+                    value: "",
+                    label: `Your default (${accountLabel(mailAccounts.find((x) => x.id === defaultMail) ?? mailAccounts[0]!)})`,
+                  },
+                  ...mailAccounts.map((x) => ({ value: x.id, label: accountLabel(x) })),
+                ]}
+                onPick={(mail) => atlas.send({ type: "atlas.area.update", id: area.id, settings: { mail } })}
+                width={320}
+              />
+            </div>
+          )}
           {members.length > 0 && (
             <div className="field">
               <span>Shared with: they see and add to what's in it</span>

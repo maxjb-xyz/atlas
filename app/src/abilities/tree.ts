@@ -9,7 +9,7 @@ import type { Atlas } from "../connection";
 import { modelName } from "../settings/Brains";
 import type { IconName, Place } from "../ui";
 import { ago, clock, shortDay } from "../ui";
-import { type Look, type Service, services } from "./model";
+import { extState, type Look, type Service, services } from "./model";
 
 export type CardId = "brains" | "senses" | "channels" | "others" | "hands" | "services" | "skills" | "exits";
 
@@ -23,7 +23,9 @@ export type Panel =
   | { kind: "sender"; id: string }
   | { kind: "search"; id: string }
   | { kind: "webhooks" }
-  | { kind: "note"; text: string; to?: [Place, string]; label?: string };
+  | { kind: "note"; text: string; to?: [Place, string]; label?: string }
+  /** Another account's own sign-in (§17). */
+  | { kind: "account"; ext: string };
 
 /** Something that does a job: a service, a brain, a part of Atlas, a device, a skill. */
 export interface Hand {
@@ -81,7 +83,7 @@ const fromService = (x: Service, panel?: Panel): Hand => ({
 });
 
 /** Set up first, then the ones to add. */
-const order = (hs: Hand[]) => [...hs.filter((h) => h.added), ...hs.filter((h) => !h.added)];
+const setUpFirst = (hs: Hand[]) => [...hs.filter((h) => h.added), ...hs.filter((h) => !h.added)];
 
 /** A job's state on the map: what's set up says it; nothing set up is off. */
 export function jobState(j: Job): Look {
@@ -97,6 +99,24 @@ export function cards(atlas: Atlas, dev: boolean): Card[] {
   const view = s.view!;
   const st = view.settings;
   const all = services(view, s.mcpServers, s.services);
+  // A service with more than one account is a hand per account, each named for it ("Google · Work").
+  const expand = (h: Hand): Hand[] => {
+    const accounts = h.svc?.svc?.accounts ?? [];
+    if (!h.added || accounts.length < 2) return [h];
+    return accounts.map((a, i) => {
+      const e = view.extensions.find((x) => x.id === a.ext);
+      const st = e ? extState(e) : { state: h.state, said: h.by };
+      return {
+        ...h,
+        key: `${h.key}:${a.ext}`,
+        name: `${h.name} · ${a.name ?? `account ${i + 1}`}`,
+        by: st.said,
+        state: st.state,
+        ...(i > 0 ? { panel: { kind: "account" as const, ext: a.ext } } : {}),
+      };
+    });
+  };
+  const order = (hs: Hand[]) => setUpFirst(hs.flatMap(expand));
   const gives = (p: string) => all.filter((x) => x.ext?.provides.includes(p));
   const builtin = (b: Service["builtin"]) => all.find((x) => x.builtin === b);
 

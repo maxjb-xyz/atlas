@@ -7,7 +7,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { seams } from "../src/agent";
 import { CalendarSense } from "../src/agent/calendar";
-import { ExtensionError, type ExtensionHost, addAccount, install, saveData } from "../src/extensions";
+import { ExtensionError, type ExtensionHost, addAccount, install, saveData, setExtSecrets } from "../src/extensions";
 import { createArea, setScope, updateArea } from "../src/store/areas";
 import { emailSend, mailAccount } from "../src/tools/mail";
 import { accountsLine } from "../src/accounts";
@@ -46,6 +46,11 @@ describe("two calendar accounts", () => {
       install(sql, { id: "icloud", source: "bundled" });
       const second = addAccount(sql, "icloud");
       expect(second.id).toBe("icloud--2");
+      const host0 = { call: async () => ({ events: [] }), address: () => null } as unknown as ExtensionHost;
+      // An account just added isn't signed in, so it isn't asked: it can't count as a refusal.
+      setExtSecrets(sql, "icloud", { app_password: "one" });
+      expect(new CalendarSense(sql, () => {}, host0).providers().map((e) => e.id)).toEqual(["icloud"]);
+      setExtSecrets(sql, "icloud--2", { app_password: "two" });
       const events: Record<string, CalendarEvent[]> = {
         icloud: [ev("home-1", "Dentist", 3, "Home")],
         "icloud--2": [ev("work-1", "Standup", 1, "Work"), ev("work-2", "Review", 5, "Work")],
@@ -91,6 +96,7 @@ describe("two mail accounts", () => {
       install(sql, { id: "gmail", source: "bundled" });
       saveData(sql, "gmail", { email: "me@home.example" });
       saveData(sql, addAccount(sql, "gmail").id, { email: "me@work.example" });
+      for (const id of ["gmail", "gmail--2"]) setExtSecrets(sql, id, { access_token: "ya29.x" });
       const work = createArea(sql, { name: "Keyframes", by: "owner" });
       const sent: Array<{ via: string; from: string }> = [];
       const ctx = {

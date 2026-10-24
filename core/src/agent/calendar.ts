@@ -6,7 +6,7 @@
 // That guard is the core's, whatever the provider.
 
 import { othersOf } from "../contacts";
-import { accountName, ExtensionError, type ExtensionHost, type Installed, methodsOf, providing } from "../extensions";
+import { accountName, ExtensionError, type ExtensionHost, type Installed, methodsOf, providing, ready } from "../extensions";
 import { pick } from "../providers";
 import { type Calendar, type CalendarEvent, CalendarError, type CalendarRange, type CalendarSource } from "../calendar/types";
 import type { Sql } from "../store/db";
@@ -46,7 +46,8 @@ export class CalendarSense {
 
   /** The calendars that are on: every account of every service that gives one, oldest first. */
   providers(): Installed[] {
-    return providing(this.sql, "calendar").filter((e) => methodsOf(e).includes("calendar"));
+    // One that isn't signed in yet (an account just added) isn't asked, so it can't count as a refusal.
+    return providing(this.sql, "calendar").filter((e) => methodsOf(e).includes("calendar") && ready(this.sql, e));
   }
 
   /** The first calendar, if one is on. */

@@ -6,7 +6,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Atlas } from "../connection";
 import { Icon, logoFor, LogoMark, type Place, StateDot } from "../ui";
-import { AtlasEmail, Calendars, ChatLink, Location, Phone, SearchUse, SenderUse, SvcLogo, Webhooks } from "./Services";
+import { AtlasEmail, Calendars, ChatLink, Connection, Location, Phone, SearchUse, SenderUse, SvcLogo, Webhooks } from "./Services";
 import type { Card, Hand } from "./tree";
 
 /** Where a card was on the map when it was opened, so the zoomed view grows out of it and shrinks back into it. */
@@ -133,6 +133,18 @@ export function Zoomed({
                   </button>
                 ))}
                 {!j.hands.length && j.empty && <span className="aside hand-empty">{j.empty}</span>}
+                {/* Another account of a service that's set up here (§17): its own sign-in opens under the line. */}
+                {[...new Map(j.hands.filter((h) => h.added && h.svc?.svc?.more).map((h) => [h.svc!.key, h.svc!])).values()].map((x) => (
+                  <button
+                    key={`more:${x.key}`}
+                    className="hand add"
+                    onClick={() => atlas.send({ type: "atlas.ext.account.add", id: x.svc!.accounts[0]?.ext ?? x.key })}
+                    title={`Add another ${x.name} account`}
+                  >
+                    <Icon name="plus" size={12} />
+                    <span className="hand-name">Another {x.name} account</span>
+                  </button>
+                ))}
                 {j.add && (
                   <button className="hand add" onClick={() => go(j.add!.to[0], j.add!.to[1])}>
                     <Icon name="plus" size={12} />
@@ -197,6 +209,9 @@ function HandPanel({ atlas, h, go }: { atlas: Atlas; h: Hand; go: (p: Place, d?:
           {p.kind === "location" && <Location atlas={atlas} view={view} />}
           {p.kind === "email" && <AtlasEmail atlas={atlas} view={view} />}
           {p.kind === "sender" && <SenderUse atlas={atlas} view={view} id={p.id} />}
+          {p.kind === "account" && view.extensions.some((x) => x.id === p.ext) && (
+            <Connection atlas={atlas} e={view.extensions.find((x) => x.id === p.ext)!} dev={false} />
+          )}
           {p.kind === "search" && <SearchUse atlas={atlas} view={view} id={p.id} />}
           {p.kind === "webhooks" && <Webhooks atlas={atlas} view={view} />}
           {p.kind === "note" && (

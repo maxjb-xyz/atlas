@@ -33,7 +33,7 @@ export interface Service {
 
 /** What each thing an extension gives is, in plain words. */
 export const GIVES: Record<string, { about: string; hears?: string; does?: string; group: string }> = {
-  mail: { about: "Your mail", hears: "New mail, and replies you wait for", group: "mail" },
+  mail: { about: "Your mail", hears: "New mail, and replies you wait for", does: "Sends mail as you, after you say yes", group: "mail" },
   sense: { about: "What happens there", hears: "What changes there that matters to you", group: "work" },
   calendar: { about: "Your calendar", hears: "Your events as they change", does: "Reads and moves events", group: "mail" },
   contacts: { about: "Your contacts", does: "Brings in the people you know", group: "mail" },
