@@ -541,6 +541,8 @@ export interface SettingsView {
   settings: import("./store/settings").Settings;
   secrets: {
     elevenlabs_api_key: boolean;
+    /** Atlas's own sealing of secrets (§20): on, or why not; and a value that couldn't be opened, with the fix. */
+    sealed: { state: "on" | "missing" | "short"; unreadable: string | null };
   };
   /**
    * The calendar (§10.1): which extension provides it, and `refused` when it last refused the sign-in, how many

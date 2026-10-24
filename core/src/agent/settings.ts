@@ -1,6 +1,7 @@
 // What Settings shows (values, whether each secret is set, sign-in state and
 // brain health) and its live tests (§22: every check is a live test).
 
+import { dataKeyView } from "../store/sealed";
 import { sensesView } from "../intake";
 import { openTasks, taskView } from "../tasks";
 import { zoneOf } from "../time";
@@ -50,6 +51,7 @@ export function settingsView(
     settings,
     secrets: {
       elevenlabs_api_key: Boolean(getSecret(sql, "elevenlabs_api_key")),
+      sealed: dataKeyView(),
     },
     calendar: {
       provider: provider ? { id: provider.id, name: provider.name } : null,

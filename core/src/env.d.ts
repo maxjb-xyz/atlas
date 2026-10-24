@@ -9,5 +9,7 @@ interface Env {
   ASSETS: Fetcher;
   PersonAgent: DurableObjectNamespace<import("./index").PersonAgent>;
   ATLAS_OWNER_SECRET?: string;
+  /** This deployment's own key for sealing secrets (store/sealed.ts, VISION §20): at least 32 characters, kept safe. */
+  ATLAS_DATA_KEY?: string;
   ATLAS_TEST?: string;
 }

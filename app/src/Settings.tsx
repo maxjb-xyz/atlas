@@ -180,7 +180,7 @@ export function SettingsPage({
                 {section === "skills" && <Skills atlas={atlas} />}
                 {section === "permissions" && <Permissions atlas={atlas} view={view} />}
                 {section === "notifications" && <Notifications atlas={atlas} draft={draft} edit={edit} view={view} />}
-                {section === "data" && <Data atlas={atlas} onSignOut={onSignOut} onSetup={onSetup} />}
+                {section === "data" && <Data atlas={atlas} view={view} onSignOut={onSignOut} onSetup={onSetup} />}
               </>
             )}
           </div>
@@ -2711,11 +2711,28 @@ export function AddPasskey() {
   );
 }
 
-function Data({ atlas, onSignOut, onSetup }: { atlas: Atlas; onSignOut: () => void; onSetup: () => void }) {
+function Data({ atlas, view, onSignOut, onSetup }: { atlas: Atlas; view: SettingsView; onSignOut: () => void; onSetup: () => void }) {
   const [ended, setEnded] = useState(false);
+  const sealed = view.secrets.sealed;
   return (
     <>
       <Head title="Your data" sub="Everything Atlas keeps lives in your own Cloudflare account." />
+      <Row label="Your secrets">
+        {sealed.unreadable ? (
+          <p className="err small">A secret can't be read. {sealed.unreadable}</p>
+        ) : sealed.state === "on" ? (
+          <p className="small">Your keys, sign-ins and vault are locked with this Atlas's own key, on top of Cloudflare's encryption.</p>
+        ) : (
+          <p className="small">
+            {sealed.state === "short"
+              ? "ATLAS_DATA_KEY is shorter than 32 characters, so it isn't used. "
+              : "Your keys, sign-ins and vault are protected only by Cloudflare's encryption. "}
+            To lock them with Atlas's own key too, add a secret named ATLAS_DATA_KEY to your Worker in Cloudflare (Workers, your Atlas,
+            Settings, Variables and Secrets): 32 or more random characters, with a copy kept somewhere safe. Atlas locks everything on its
+            next start.
+          </p>
+        )}
+      </Row>
       <Row label="Setup">
         <div className="row">
           <button className="btn" onClick={onSetup}>

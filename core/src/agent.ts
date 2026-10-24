@@ -2,6 +2,7 @@
 // log, records, agenda, settings and live connections. Text and voice share
 // one socket and one loop, so voice is the same mind (§11).
 
+import { useDataKey } from "./store/sealed";
 import { DurableObjectOAuthClientProvider } from "agents/mcp/do-oauth-client-provider";
 import { Agent, type Connection, type ConnectionContext, getAgentByName, type WSMessage } from "agents";
 import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } from "agents/voice";
@@ -63,7 +64,7 @@ import { type Actor, append, forRun, get as getRow, type LogRow, logTo, type Sur
 import { indexNewMessages } from "./store/memory";
 import { getState, setState } from "./store/state";
 import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
-import { type BrainChoice, getSecret, readSettings, type Settings, setSecret, writeSettings } from "./store/settings";
+import { type BrainChoice, getSecret, readSettings, sealSecrets, type Settings, setSecret, writeSettings } from "./store/settings";
 import { addLocalDays, isoLocal, isValidZone, longLocal, parseWhen, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import { calendarMove, calendarRead } from "./tools/calendar";
 import { emailSend } from "./tools/mail";
@@ -383,6 +384,7 @@ interface ConverseOpts {
 export class PersonAgent extends VoiceAgent implements HelperHost {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    useDataKey(env.ATLAS_DATA_KEY);
     // The voice layer wraps onMessage and answers its own messages (a typed turn, a call) before Atlas sees them.
     // A paired device speaks only the device protocol, so its socket goes around the voice layer entirely.
     const voiced = this.onMessage;
@@ -416,6 +418,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   override async onStart(): Promise<void> {
     migrate(this.#sql);
+    const sealed = sealSecrets(this.#sql);
+    if (sealed) console.log(JSON.stringify({ at: "sealed.start", sealed }));
     sweepStaleRuns(this.#sql, 0);
     const changed = () => this.#broadcast({ type: "atlas.view", view: this.#view() });
     this.#ext = new ExtensionHost({

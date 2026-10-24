@@ -2,6 +2,7 @@
 // see and change in the app. Secrets are kept apart and never sent to the
 // app or the model; the app only learns whether each one is set.
 
+import { dataKeyView, isSealed, open, seal } from "./sealed";
 import { z } from "zod";
 import { parse, type Sql } from "./db";
 import { getState } from "./state";
@@ -176,8 +177,9 @@ export function writeSettings(sql: Sql, patch: SettingsPatch): string[] {
 }
 
 // --- secrets -------------------------------------------------------------
-// M0 keeps a handful of keys in the agent's own storage (encrypted at rest by
-// Cloudflare). The vault (§15) replaces this in M3.
+// Keys, tokens and the vault (§15), in the agent's own storage: encrypted at
+// rest by Cloudflare, and sealed by Atlas with this deployment's own key
+// (store/sealed.ts, §20), so a copy of storage doesn't carry them.
 
 export type SecretName =
   | "elevenlabs_api_key"
@@ -209,7 +211,8 @@ export type SecretName =
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];
-  return row ? parse<T | null>(row.value, null) : null;
+  const value = row ? open(name, row.value) : null;
+  return value === null ? null : parse<T | null>(value, null);
 }
 
 export function setSecret(sql: Sql, name: SecretName, value: unknown): void {
@@ -217,7 +220,33 @@ export function setSecret(sql: Sql, name: SecretName, value: unknown): void {
     sql.exec(`DELETE FROM secrets WHERE name = ?`, name);
     return;
   }
-  sql.exec(`INSERT OR REPLACE INTO secrets (name, value, updated_at) VALUES (?, ?, ?)`, name, JSON.stringify(value), Date.now());
+  // A value that can't be opened (the key was changed) is never written over: reading it gave null, so a write
+  // would replace what's there (a whole vault) with a fresh value. Putting the old key back brings it all back.
+  const was = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0]?.value;
+  if (was !== undefined && isSealed(was) && open(name, was) === null)
+    throw new Error(`Not saved, so nothing is lost: ${dataKeyView().unreadable ?? `${name} can't be opened with this deployment's key.`}`);
+  sql.exec(
+    `INSERT OR REPLACE INTO secrets (name, value, updated_at) VALUES (?, ?, ?)`,
+    name,
+    seal(name, JSON.stringify(value)),
+    Date.now(),
+  );
+}
+
+/**
+ * Seals every secret still kept as it was before sealing (§20), once this
+ * deployment has its key: on the first start after the update that added
+ * sealing, and after the owner sets ATLAS_DATA_KEY. Returns how many it sealed.
+ */
+export function sealSecrets(sql: Sql): number {
+  if (dataKeyView().state !== "on") return 0;
+  let n = 0;
+  for (const r of sql.exec<{ name: string; value: string }>(`SELECT name, value FROM secrets`).toArray()) {
+    if (isSealed(r.value)) continue;
+    sql.exec(`UPDATE secrets SET value = ? WHERE name = ?`, seal(r.name, r.value), r.name);
+    n++;
+  }
+  return n;
 }
 
 /** Every stored secret string, for the scrubber at the exits (§4.4). */
@@ -247,8 +276,10 @@ export function secretValues(sql: Sql): string[] {
   }
   for (const h of hooks) if (typeof h.url === "string" && h.url.length >= 8) out.push(h.url);
   // Extensions' secrets (§17): keys, passwords and sign-in tokens never leave either.
-  for (const r of sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name LIKE 'ext:%'`).toArray()) {
-    for (const v of Object.values(parse<Record<string, unknown>>(r.value, {}))) if (typeof v === "string" && v.length >= 8) out.push(v);
+  for (const r of sql.exec<{ name: string; value: string }>(`SELECT name, value FROM secrets WHERE name LIKE 'ext:%'`).toArray()) {
+    const value = open(r.name, r.value);
+    for (const v of Object.values(parse<Record<string, unknown>>(value ?? "{}", {})))
+      if (typeof v === "string" && v.length >= 8) out.push(v);
   }
   // The vault's secret values (§15): passwords, card numbers and codes, keys and seeds never leave.
   for (const e of getSecret<Array<{ values?: Record<string, unknown>; totp?: unknown }>>(sql, "vault") ?? []) {
