@@ -111,8 +111,8 @@ SIDEBAR = r"""
 TOOLBAR = r"""
   <header style="height: 48px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 16px; border-bottom: 1px solid var(--sep); background: var(--win); position: relative; z-index: 5;">
     <button type="button" class="it" style="height: 28px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--sep2); background: var(--win); display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;">
-      <span style="display: inline-flex; gap: 2px;"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--P);"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--K);"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--U);"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--F);"></span></span>
-      All areas<svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M6 9l6 6 6-6"></path></svg></button>
+      <span style="display: inline-flex; gap: 2px;"><sc-for list="{{scopeDots}}" as="sd" hint-placeholder-count="4"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{sd}};"></span></sc-for></span>
+      {{scopeName}}<svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M6 9l6 6 6-6"></path></svg></button>
     <span style="flex: 1;"></span>
     <div style="position: relative;">
       <button type="button" class="it" onClick="{{toggleJobs}}" aria-expanded="{{jobsOpen}}" style="height: 28px; padding: 0 9px; border-radius: 6px; border: 1px solid {{jobsBd}}; background: {{jobsBg}}; display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;"><span class="mono spin" aria-hidden="true" style="color: var(--ac); width: 9px;"></span>2 jobs running</button>
@@ -201,6 +201,7 @@ SHELL_JS = r"""
     var jobsOpen = !!self.state.jobsOpen;
   return {
     tc: self.props.theme === 'Dark' ? 'dk' : 'lt',
+    scopeDots: ['var(--P)', 'var(--K)', 'var(--U)', 'var(--F)'], scopeName: 'All areas',
     nav: NAV.map(function (n) { var on = n.name === active; return { name: n.name, d: n.d, badge: n.badge || '', gap: n.gap || 0, bg: on ? 'var(--sel)' : 'transparent', fw: on ? 500 : 400, ic: on ? 'var(--tx)' : 'var(--tx2)' }; }),
     pinned: [
       { n: 'Keyframes', isArea: true, c: 'var(--K)', meta: '' },
