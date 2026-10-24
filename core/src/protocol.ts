@@ -486,6 +486,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
     token: z.string().max(4_000).optional(),
   }),
   z.object({ type: z.literal("atlas.mcp.remove"), id: z.string().max(64) }),
+  /** Connect an MCP server again, as it was added: Try again on its card. */
+  z.object({ type: z.literal("atlas.mcp.retry"), id: z.string().max(64) }),
   /**
    * Abilities → Services (§17): the cards; what installing one would add (fetched and checked first); installing
    * every part; the one key that covers its parts; removing it; saying yes to an update that reaches or holds

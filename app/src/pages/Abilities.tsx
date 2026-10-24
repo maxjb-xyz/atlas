@@ -39,8 +39,12 @@ export function Abilities({
     atlas.send({ type: "atlas.mcp" });
     atlas.send({ type: "atlas.skills" });
   }, [atlas.voice.connected]);
+  // The catalog's cards (§17), asked for again whenever an extension or an MCP server changes underneath.
+  useEffect(() => {
+    if (atlas.voice.connected) atlas.send({ type: "atlas.services" });
+  }, [atlas.voice.connected, s.view?.extensions, s.mcpServers]);
   const view = s.view;
-  const all = view ? services(view, s.mcpServers) : [];
+  const all = view ? services(view, s.mcpServers, s.services) : [];
   const on = all.filter((x) => x.installed).length;
   const skills = (s.skills ?? []).filter((k) => k.state === "active");
   const nodes = view?.nodes ?? [];

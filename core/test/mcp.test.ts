@@ -72,6 +72,12 @@ function fakeMcp(): McpClient {
     async remove(id) {
       servers = servers.filter((s) => s.id !== id);
     },
+    async retry(id) {
+      const s = servers.find((x) => x.id === id);
+      if (!s) throw new Error("That server isn't added any more: add it again in Abilities → Services.");
+      if (s.state === "failed") throw new Error(`It still didn't connect: ${s.error ?? "it gave no reason"}`);
+      return { state: s.state };
+    },
     async call(server, tool, args): Promise<McpResult> {
       calls.push({ server, tool, args });
       if (tool === "search_issues") return { content: [{ type: "text", text: `ENG-12 Fix the login page (${String(args.query)})` }] };
@@ -344,5 +350,25 @@ describe("MCP in a run", () => {
     seams.mcp = undefined;
     const res = await SELF.fetch("http://atlas.test/mcp/callback?code=abc&state=forged");
     expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+});
+
+describe("an MCP server that didn't connect", () => {
+  it("is tried again as it was added, keeps its place when it fails again, and says why in the service's words", async () => {
+    servers = [
+      {
+        ...linear(),
+        id: "gh1",
+        name: "GitHub",
+        url: "https://api.githubcopilot.com/mcp/",
+        state: "failed",
+        error: "HTTP 401: Bad credentials",
+        tools: [],
+      },
+    ];
+    const s = await connect();
+    s.send({ type: "atlas.mcp.retry", id: "gh1" });
+    expect((await s.next("atlas.error")).message).toBe("It still didn't connect: HTTP 401: Bad credentials");
+    expect(servers.map((x) => x.id)).toEqual(["gh1"]);
   });
 });

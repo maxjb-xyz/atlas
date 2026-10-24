@@ -91,6 +91,10 @@ export interface State {
   skills: import("../../core/src/protocol").SkillView[] | null;
   /** Connected MCP servers (§9.2), once asked for. */
   mcpServers: import("../../core/src/protocol").McpServerView[] | null;
+  /** The services catalog (§17): one card per service, whatever is underneath, and the indexes it reads. */
+  services: import("../../core/src/protocol").ServiceView[] | null;
+  /** The last thing a service's install, key, removal or update said. */
+  serviceNote: { id: string; ok: boolean; text: string } | null;
   /** The page Keep just made, so the view can say where it went. */
   kept: { id: string; name: string } | null;
   /** Bumped when the situation changes, so Now and the situation, weather and place views ask again. */
@@ -145,6 +149,8 @@ const initial: State = {
   workspaceOut: null,
   skills: null,
   mcpServers: null,
+  services: null,
+  serviceNote: null,
   kept: null,
   situationVersion: 0,
   extSetup: {},
@@ -309,6 +315,10 @@ function reduce(s: State, a: Action): State {
       return { ...s, skills: m.skills };
     case "atlas.mcp.servers":
       return { ...s, mcpServers: m.servers };
+    case "atlas.services":
+      return { ...s, services: m.services };
+    case "atlas.service.done":
+      return { ...s, serviceNote: { id: m.id, ok: m.ok, text: m.text } };
     case "atlas.workspace.out": {
       const prev = s.workspaceOut?.run_id === m.run_id ? s.workspaceOut.text : "";
       return { ...s, workspaceOut: { run_id: m.run_id, text: (prev + m.text).slice(-40_000) } };

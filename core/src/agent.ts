@@ -428,6 +428,18 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     useDataKey(env.ATLAS_DATA_KEY);
+    // Why a server didn't connect: the SDK keeps it only for a server being added, not one reconnecting after a sleep,
+    // so Atlas keeps the last reason each server gave, to show on its card (CLAUDE.md: failures explain themselves).
+    this.mcp.onObservabilityEvent((e) => {
+      if (e.type !== "mcp:client:connect") return;
+      const p = e.payload as { url?: string; state?: string; error?: string };
+      if (!p.url) return;
+      const all = getState<Record<string, { error: string; at: number }>>(ctx.storage.sql, "mcp_errors") ?? {};
+      if (p.error) all[p.url] = { error: p.error.slice(0, 500), at: Date.now() };
+      else if (p.state === "connected" || p.state === "ready") delete all[p.url];
+      else return;
+      setState(ctx.storage.sql, "mcp_errors", all);
+    });
     // The voice layer wraps onMessage and answers its own messages (a typed turn, a call) before Atlas sees them.
     // A paired device speaks only the device protocol, so its socket goes around the voice layer entirely.
     const voiced = this.onMessage;
@@ -1599,6 +1611,20 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         await this.#mcpServers(3_000);
         this.#send(connection, { type: "atlas.mcp.servers", servers: this.#mcpView() });
         return;
+      case "atlas.mcp.retry": {
+        const c = this.#mcpClient();
+        try {
+          if (!c) throw new Error("This deployment has no MCP client.");
+          await c.retry(msg.id);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(JSON.stringify({ at: "mcp.retry", id: msg.id, error: message }));
+          this.#send(connection, { type: "atlas.error", message });
+        }
+        this.#broadcast({ type: "atlas.mcp.servers", servers: this.#mcpView() });
+        this.#servicesChanged();
+        return;
+      }
       case "atlas.mcp.add":
       case "atlas.mcp.remove": {
         const c = this.#mcpClient();
@@ -4650,7 +4676,11 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
           url: s.server_url,
           state: s.state,
           auth_url: s.auth_url,
-          error: s.error,
+          error:
+            s.error ??
+            (s.state === "failed"
+              ? (mcpErrors(this.#sql)[s.server_url] ?? mcpErrors(this.#sql)[new URL(s.server_url).href] ?? null)
+              : null),
           instructions: s.instructions,
           tools: st.tools.filter((t) => t.serverId === id) as unknown as McpTool[],
         }));
@@ -4659,6 +4689,14 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
         // A sign-in comes back to the app's own address, where the Worker hands it to this agent.
         const origin = getState<string>(this.#sql, "origin");
         if (!origin) throw new Error("Open Atlas in the app once first, so it knows its own address for a sign-in to come back to.");
+        const same = Object.entries(this.getMcpServers().servers).filter(([, s]) => s.server_url === url || s.server_url === new URL(url).href);
+        // Added again without a token: connect the one that's there, with what it was added with, rather than drop it.
+        if (!token && same.length) {
+          const r = await this.#sdkMcp!.retry(same[0]![0]);
+          return { id: same[0]![0], state: r.state };
+        }
+        // A new token replaces the server it was for: added again from scratch, not reconnected with the old one.
+        for (const [id] of token ? same : []) await this.removeMcpServer(id).catch(() => {});
         let r: Awaited<ReturnType<typeof this.addMcpServer>>;
         try {
           r = await this.addMcpServer(name, url, {
@@ -4676,7 +4714,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
           const said = err instanceof Error ? err.message : String(err);
           if (/dynamic client registration/i.test(said)) {
             throw new Error(
-              `${said}. ${name} doesn't let apps sign themselves up to sign in, so it needs a token instead: make one in ${name}'s settings (for GitHub, a personal access token), then add it in Settings → Connections → MCP servers with the token.`,
+              `${said}. ${name} doesn't let apps sign themselves up to sign in, so it needs a token instead: make one in ${name}'s settings (for GitHub, a personal access token), then add it in Abilities → Services with the token.`,
             );
           }
           throw err;
@@ -4684,6 +4722,16 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
         return r.state === "authenticating" ? { id: r.id, state: r.state, auth_url: r.authUrl } : { id: r.id, state: r.state };
       },
       remove: (id) => this.removeMcpServer(id),
+      retry: async (id) => {
+        if (!this.mcp.mcpConnections[id]) throw new Error("That server isn't added any more: add it again in Abilities → Services.");
+        const r = await this.mcp.connectToServer(id);
+        if (r.state === "failed") throw new Error(`It still didn't connect: ${"error" in r ? r.error : "it gave no reason"}`);
+        if (r.state === "connected") {
+          const d = await this.mcp.discoverIfConnected(id);
+          if (d && !d.success) throw new Error(`It connected, but listing its tools failed: ${d.error}`);
+        }
+        return { state: r.state };
+      },
       call: async (server, tool, args) =>
         (await this.mcp.callTool({ serverId: server, name: tool, arguments: args })) as unknown as McpResult,
       read: async (server, uri) => (await this.mcp.readResource({ serverId: server, uri })) as unknown as McpResource,
@@ -5292,6 +5340,12 @@ interface SocketState {
 }
 
 /** The header the Worker puts on a paired device's socket, after checking its token. */
+/** The last reason each MCP server gave for not connecting, by its address. */
+const mcpErrors = (sql: Sql) => {
+  const all = getState<Record<string, { error: string; at: number }>>(sql, "mcp_errors") ?? {};
+  return Object.fromEntries(Object.entries(all).map(([url, e]) => [url, e.error]));
+};
+
 export const NODE_HEADER = "x-atlas-node";
 /** Set by the Worker on a phone call's voice socket (§16.1), after checking the stream's address: which call it is. */
 export const CALL_HEADER = "x-atlas-call";

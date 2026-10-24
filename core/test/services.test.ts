@@ -174,6 +174,12 @@ function fakeMcp(): McpClient {
     async remove(id) {
       servers = servers.filter((s) => s.id !== id);
     },
+    async retry(id) {
+      const s = servers.find((x) => x.id === id);
+      if (!s) throw new Error("That server isn't added any more: add it again in Abilities → Services.");
+      if (s.state === "failed") throw new Error(`It still didn't connect: ${s.error ?? "it gave no reason"}`);
+      return { state: s.state };
+    },
     async call() {
       return { content: [{ type: "text", text: "ok" }] };
     },
@@ -463,6 +469,12 @@ describe("one card per service", () => {
       expect.objectContaining({ name: "list_issues", via: "mcp", asks: "never" }),
       expect.objectContaining({ name: "create_issue", via: "mcp", asks: "until_trusted" }),
     ]);
+    // Its tools gone (removed by hand, say), installing again connects them with the key its extension holds.
+    servers = [];
+    added.length = 0;
+    s.send({ type: "atlas.service.install", id: "linear" });
+    expect((await s.next("atlas.service.done", (m) => m.id === "linear")).text).toContain("its MCP server, with the key it already has");
+    expect(added).toEqual([{ name: "Linear", url: "https://mcp.linear.app/mcp", token: "lin_api_123456789" }]);
     // Removing it takes every part away.
     s.send({ type: "atlas.service.remove", id: "linear" });
     await s.next("atlas.service.done", (m) => m.id === "linear");

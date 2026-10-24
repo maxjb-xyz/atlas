@@ -40,7 +40,7 @@ function groups(atlas: Atlas, dev: boolean): Group[] {
   const s = atlas.state;
   const view = s.view!;
   const st = view.settings;
-  const svcs = services(view, s.mcpServers);
+  const svcs = services(view, s.mcpServers, s.services);
 
   // Brains: each provider in the chains, with what it's used for.
   const main = st.brains.main;

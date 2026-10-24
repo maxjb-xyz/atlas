@@ -10,7 +10,7 @@ import type { ExtensionView, McpServerView, SettingsView } from "../../../core/s
 import type { Atlas } from "../connection";
 import { SecretField, TestRow } from "../settings/parts";
 import { useDetail } from "../theme";
-import { ago, dayTime, Icon, Logo, pressable, QrCode, StateDot, Toggle, useNow } from "../ui";
+import { ago, dayTime, Icon, Logo, logoFor, pressable, QrCode, StateDot, Toggle, useNow } from "../ui";
 import { CHIPS, extState, GIVES, type Service, services } from "./model";
 
 export function Services({
@@ -27,7 +27,7 @@ export function Services({
   const view = atlas.state.view!;
   const [chip, setChip] = useState("all");
   const [q, setQ] = useState("");
-  const all = services(view, atlas.state.mcpServers);
+  const all = services(view, atlas.state.mcpServers, atlas.state.services);
   const shown = open ? all.find((s) => s.key === open) : null;
   if (shown) return <ServiceOpen atlas={atlas} s={shown} onBack={() => go("services")} />;
 
@@ -123,6 +123,19 @@ function SvcLogo({ s, size = 34 }: { s: Service; size?: number }) {
         <Icon name="globe" size={Math.round(size * 0.5)} />
       </span>
     );
+  // The catalog's own logo when the app has none for it.
+  if (s.icon && !logoFor(s.logo) && !logoFor(s.name))
+    return (
+      <span className="logo" style={{ width: size, height: size, borderRadius: size > 40 ? 11 : 8 }}>
+        <img
+          className={`lg ${s.svc?.icon_invert ? "inv" : ""}`}
+          src={s.icon}
+          width={Math.round(size * 0.58)}
+          height={Math.round(size * 0.58)}
+          alt=""
+        />
+      </span>
+    );
   return <Logo of={s.logo} name={s.name} size={size} />;
 }
 
@@ -209,6 +222,14 @@ function ServiceOpen({ atlas, s, onBack }: { atlas: Atlas; s: Service; onBack: (
   const dev = more || at("developer");
   const view = atlas.state.view!;
   const e = s.ext;
+  const v = s.svc;
+  const note = atlas.state.serviceNote?.id === s.key ? atlas.state.serviceNote : null;
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setBusy(false), [note, v?.state]);
+  const act = (m: Parameters<Atlas["send"]>[0]) => {
+    setBusy(true);
+    atlas.send(m);
+  };
   return (
     <div className="sheet-in rise">
       <button className="back" onClick={onBack}>
@@ -236,8 +257,47 @@ function ServiceOpen({ atlas, s, onBack }: { atlas: Atlas; s: Service; onBack: (
               />
             )}
           </div>
+          {v?.error && (v.error.part !== "mcp" || !s.mcp) && (
+            <div className="card2 pad bad-card">
+              <span style={{ fontWeight: 600 }}>{v.error.part === "mcp" ? "Its tools didn't connect" : "Its last call failed"}</span>
+              <span className="small" style={{ overflowWrap: "anywhere" }}>
+                {v.error.text}
+              </span>
+              {v.error.at && <span className="aside">{dayTime(v.error.at)}</span>}
+            </div>
+          )}
+          {note && <p className={`small ${note.ok ? "ok" : "err"}`}>{note.text}</p>}
+          {v && v.setup.kind === "key" && v.state !== "available" && (!(e?.secrets.some((x) => x.set) ?? false) || dev) && (
+            <div className="card2 dim pad" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <span style={{ fontWeight: 600 }}>{v.setup.label}</span>
+              <span className="aside">{v.setup.help}</span>
+              <SecretField
+                label={v.setup.label}
+                set={v.setup.set}
+                onSave={(key) => key && act({ type: "atlas.service.key", id: s.key, key })}
+              />
+              {v.setup.covers.length > 1 && <span className="aside">One key covers its events and its tools.</span>}
+            </div>
+          )}
           {e && <Connection atlas={atlas} e={e} dev={dev} />}
-          {s.mcp && <McpConnection atlas={atlas} m={s.mcp} />}
+          {s.mcp && <McpConnection atlas={atlas} m={s.mcp} svc={v} />}
+          {v?.parts.mcp && !s.mcp && v.state !== "available" && (
+            <div className="card2 dim pad">
+              <span style={{ fontWeight: 600 }}>Its tools aren't connected</span>
+              <span className="aside">
+                {v.setup.kind === "key" && !v.setup.set && e?.secrets.some((x) => x.set)
+                  ? " Connect them with the key it already has."
+                  : v.setup.kind === "key"
+                    ? " Add its key above, and Atlas connects them."
+                    : " Connect them to sign in."}
+              </span>
+              <div className="row" style={{ marginTop: 8 }}>
+                <button className="btn s" disabled={busy} onClick={() => act({ type: "atlas.service.install", id: s.key })}>
+                  {busy ? "Connecting" : "Connect them"}
+                </button>
+              </div>
+            </div>
+          )}
           {s.builtin === "email" && <AtlasEmail atlas={atlas} view={view} />}
           {(e || s.builtin === "search") && (
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -272,7 +332,17 @@ function ServiceOpen({ atlas, s, onBack }: { atlas: Atlas; s: Service; onBack: (
             </div>
           )}
           <div className="row" style={{ paddingTop: 4 }}>
-            {e && (e.state === "available" || e.state === "draft") && (
+            {v && v.state === "available" && (
+              <button className="btnp s" disabled={busy} onClick={() => act({ type: "atlas.service.install", id: s.key })}>
+                {busy ? "Setting it up" : "Set it up"}
+              </button>
+            )}
+            {v?.update && (
+              <button className="btnp s" disabled={busy} onClick={() => act({ type: "atlas.service.update", id: s.key })}>
+                Update to {v.update.version}
+              </button>
+            )}
+            {!v && e && (e.state === "available" || e.state === "draft") && (
               <button className="btnp s" onClick={() => atlas.send({ type: "atlas.ext.install", id: e.id })}>
                 {e.state === "draft" ? "Install it" : "Set it up"}
               </button>
@@ -282,7 +352,18 @@ function ServiceOpen({ atlas, s, onBack }: { atlas: Atlas; s: Service; onBack: (
                 {e.state === "on" ? "Turn off" : "Turn on"}
               </button>
             )}
-            {e && e.state !== "available" && (
+            {v && v.state !== "available" && !v.id.startsWith("mcp:") && (
+              <button
+                className="btn s"
+                onClick={() => {
+                  atlas.send({ type: "atlas.service.remove", id: s.key });
+                  onBack();
+                }}
+              >
+                {v.state === "draft" ? "Throw it away" : "Remove"}
+              </button>
+            )}
+            {!v && e && e.state !== "available" && (
               <button
                 className="btn s"
                 onClick={() => {
@@ -293,7 +374,7 @@ function ServiceOpen({ atlas, s, onBack }: { atlas: Atlas; s: Service; onBack: (
                 {e.state === "draft" ? "Throw it away" : "Remove"}
               </button>
             )}
-            {s.mcp && (
+            {s.mcp && (!v || v.id.startsWith("mcp:")) && (
               <button
                 className="btn s"
                 onClick={() => {
@@ -345,7 +426,7 @@ function Hears({ s }: { s: Service }) {
           </div>
         ))}
         {/* TODO(stage 5): each kind of thing it hears, with a count this week and its own switch, once the manifest names them. */}
-        {s.mcp && <p className="aside line">Nothing: an MCP server only answers when Atlas asks.</p>}
+        {s.mcp && !heard.length && <p className="aside line">Nothing: an MCP server only answers when Atlas asks.</p>}
         {!heard.length && !s.mcp && <p className="aside line">Nothing on its own. Atlas uses it when it needs it.</p>}
       </div>
     </div>
@@ -639,12 +720,22 @@ export function ExtensionCard({ atlas, e }: { atlas: Atlas; e: ExtensionView }) 
   );
 }
 
-function McpConnection({ atlas, m }: { atlas: Atlas; m: McpServerView }) {
+function McpConnection({ atlas, m, svc }: { atlas: Atlas; m: McpServerView; svc?: Service["svc"] }) {
   const { at } = useDetail();
+  const [token, setToken] = useState("");
+  const failed = m.state === "failed";
+  const why = m.error ?? (svc?.error?.part === "mcp" ? svc.error.text : null);
+  const byToken = !svc || svc.parts.mcp?.signin !== "oauth";
   return (
     <div className="card2 dim pad" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <span style={{ fontWeight: 600 }}>
-        {m.state === "ready" ? "Connected" : m.state === "authenticating" ? "Sign in to connect it" : "Connecting"}
+        {m.state === "ready"
+          ? `Its tools: ${m.tools.length} connected`
+          : m.state === "authenticating"
+            ? "Sign in to connect its tools"
+            : failed
+              ? "Its tools didn't connect"
+              : "Connecting its tools"}
       </span>
       {m.auth_url && (
         <a
@@ -657,7 +748,42 @@ function McpConnection({ atlas, m }: { atlas: Atlas; m: McpServerView }) {
           Sign in
         </a>
       )}
-      {m.error && <span className="err small">{m.error}</span>}
+      {failed && (
+        <span className="err small" style={{ overflowWrap: "anywhere" }}>
+          {why ?? "It gave no reason. Try again to hear what it says now."}
+        </span>
+      )}
+      {failed && (
+        <div className="row">
+          <button className="btn s" onClick={() => atlas.send({ type: "atlas.mcp.retry", id: m.id })}>
+            Try again
+          </button>
+        </div>
+      )}
+      {failed && byToken && (
+        <form
+          className="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!token.trim()) return;
+            if (svc && !svc.id.startsWith("mcp:")) atlas.send({ type: "atlas.service.key", id: svc.id, key: token.trim() });
+            else atlas.send({ type: "atlas.mcp.add", name: m.name, url: m.url, token: token.trim() });
+            setToken("");
+          }}
+        >
+          <input
+            className="mono grow"
+            type="password"
+            autoComplete="off"
+            value={token}
+            placeholder="A new token, if the old one stopped working"
+            onChange={(e) => setToken(e.target.value)}
+          />
+          <button className="btn s" type="submit" disabled={!token.trim()}>
+            Use it
+          </button>
+        </form>
+      )}
       {at("developer") && (
         <span className="mono aside" style={{ wordBreak: "break-all" }}>
           {m.url}

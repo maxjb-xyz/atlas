@@ -12,6 +12,8 @@ export type StateName =
   | "skill_pairs_offered"
   /** When the owner last opened Atlas or a push from it (§14: something urgent seen since needs no follow-up). */
   | "owner_seen_at"
+  /** The last reason each MCP server gave for not connecting, by address: the SDK forgets it on a reconnect. */
+  | "mcp_errors"
   /** Phone calls (§16.1): the one-time keys a call's stream must carry, each until it's used or runs out. */
   | "call_tokens"
   /** Phone calls Atlas placed lately, for its cap. */

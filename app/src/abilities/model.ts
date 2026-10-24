@@ -1,7 +1,7 @@
 // What Abilities shows, built from what's installed and its state (§17, docs/ui §8):
 // one service per extension, MCP server and built-in, whatever is underneath.
 
-import type { ExtensionView, McpServerView, SettingsView } from "../../../core/src/protocol";
+import type { ExtensionView, McpServerView, ServiceView, SettingsView } from "../../../core/src/protocol";
 import { ago } from "../ui";
 
 export type Look = "on" | "asleep" | "needs" | "off";
@@ -24,6 +24,10 @@ export interface Service {
   groups: string[];
   ext?: ExtensionView;
   mcp?: McpServerView;
+  /** The catalog's card, when the catalog has come: its parts, its one setup, its error. */
+  svc?: ServiceView;
+  /** Its own logo from the catalog, as a data URI, when the app has none of its own. */
+  icon?: string | null;
   builtin?: "email" | "search" | "webhooks";
 }
 
@@ -73,9 +77,75 @@ export function mcpState(m: McpServerView): { state: Look; said: string } {
   return { state: "asleep", said: "Connecting" };
 }
 
-export function services(view: SettingsView, mcp: McpServerView[] | null): Service[] {
+/** Which filter chip each catalog category falls under. */
+const GROUP: Record<string, string> = {
+  mail: "mail",
+  calendar: "mail",
+  chat: "chat",
+  work: "work",
+  notes: "work",
+  money: "work",
+  search: "work",
+  home: "work",
+  custom: "work",
+  coding: "coding",
+  maps: "maps",
+  weather: "maps",
+  location: "maps",
+};
+
+const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
+
+/** A catalog card's state in words: what's wrong says why, in the service's own words, not just that something is. */
+function svcState(v: ServiceView, ext?: ExtensionView): { state: Look; said: string } {
+  if (v.state === "error" && v.error) return { state: "needs", said: `Failing: ${clip(v.error.text, 90)}` };
+  if (v.state === "error") return { state: "needs", said: "Failing, and it didn't say why" };
+  // Its extension works with its key, and only its tools wait to be connected with it.
+  if (v.state === "setup" && v.setup.kind === "key" && ext?.secrets.some((x) => x.set) && v.parts.mcp)
+    return { state: "needs", said: "Works; its tools aren't connected" };
+  if (v.state === "setup")
+    return {
+      state: "needs",
+      said: v.setup.kind === "key" ? "Needs its key" : "Waiting for you to sign in",
+    };
+  if (v.state === "draft") return { state: "needs", said: "Waiting for you to read it" };
+  if (v.state === "off") return { state: "off", said: "Turned off" };
+  if (v.state === "available") return { state: "off", said: "Not set up" };
+  if (ext) return extState(ext);
+  if (v.last_heard) return { state: "on", said: `Worked ${ago(v.last_heard)}` };
+  return { state: "on", said: "On" };
+}
+
+export function services(view: SettingsView, mcp: McpServerView[] | null, catalog?: ServiceView[] | null): Service[] {
   const out: Service[] = [];
-  for (const e of view.extensions) {
+  if (catalog) {
+    for (const v of catalog) {
+      const ext = v.parts.extension ? view.extensions.find((e) => e.id === v.parts.extension!.id) : undefined;
+      const server = v.parts.mcp?.id ? (mcp ?? []).find((m) => m.id === v.parts.mcp!.id) : undefined;
+      const gives = (ext?.provides ?? []).map((p) => GIVES[p]).filter((g) => g != null);
+      out.push({
+        key: v.id,
+        name: v.name,
+        about: gives.length
+          ? gives
+              .slice(0, 2)
+              .map((g, i) => (i ? g.about[0]!.toLowerCase() + g.about.slice(1) : g.about))
+              .join(" and ")
+          : clip(v.hears.summary ?? v.does.summary ?? "", 40) || "A service",
+        does: v.about,
+        ...svcState(v, ext),
+        cost: v.cost ? "costs" : "free",
+        logo: v.parts.extension?.id ?? v.id,
+        icon: v.icon,
+        installed: v.state !== "available",
+        groups: [GROUP[v.category] ?? "work"],
+        ...(ext ? { ext } : {}),
+        ...(server ? { mcp: server } : {}),
+        svc: v,
+      });
+    }
+  }
+  for (const e of catalog ? [] : view.extensions) {
     const gives = e.provides.map((p) => GIVES[p]).filter((g) => g != null);
     const s = extState(e);
     out.push({
@@ -97,7 +167,7 @@ export function services(view: SettingsView, mcp: McpServerView[] | null): Servi
       ext: e,
     });
   }
-  for (const m of mcp ?? []) {
+  for (const m of catalog ? [] : (mcp ?? [])) {
     out.push({
       key: `mcp:${m.id}`,
       name: m.name,

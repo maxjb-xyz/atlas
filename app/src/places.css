@@ -1488,3 +1488,11 @@ button.card2:hover {
   gap: 12px;
   margin: 10px 0;
 }
+
+/* A service's last failure, in its own words (§17: failures explain themselves). */
+.bad-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-color: var(--bad);
+}

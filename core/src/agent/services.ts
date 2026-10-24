@@ -447,7 +447,13 @@ export class ServiceDesk {
       const servers = c?.servers() ?? [];
       const waitsForKey = s.setup.kind === "key" && s.setup.mcp;
       if (!c) throw new Error("This deployment has no MCP client.");
-      if (!servers.some((x) => sameUrl(x.url, s.mcp!.url)) && !waitsForKey && s.mcp.signin !== "token") {
+      // One key covers both parts (§17): when its extension already holds it, the MCP server connects with it too.
+      const extId = s.extension ? ("bundled" in s.extension ? s.extension.bundled : s.extension.id) : null;
+      const held = s.setup.kind === "key" && s.setup.secret && extId ? extSecrets(sql, extId)[s.setup.secret] : undefined;
+      if (!servers.some((x) => sameUrl(x.url, s.mcp!.url)) && waitsForKey && held) {
+        const r = await c.add({ name: s.name, url: s.mcp.url, token: held });
+        done.push(r.state === "failed" ? "its MCP server, which didn't connect" : "its MCP server, with the key it already has");
+      } else if (!servers.some((x) => sameUrl(x.url, s.mcp!.url)) && !waitsForKey && s.mcp.signin !== "token") {
         const r = await c.add({ name: s.name, url: s.mcp.url });
         done.push(r.state === "authenticating" ? "its MCP server, waiting for you to sign in" : "its MCP server");
       } else if (waitsForKey || s.mcp.signin === "token") done.push("its MCP server, once you add the key");
