@@ -992,7 +992,8 @@ Pages and stage views are built from the same components, so asking "What's goin
 - **The scope switcher is a focus, not a profile.** Picking an area does three things:
   - the pages filter to it;
   - Atlas leads with that area's context, accounts and tone;
-  - non-urgent pings from other areas wait.
+  - non-urgent pings from other areas wait;
+  - the stage's rails and the diamond take the area's color, so you can see the focus at a glance (M7).
 
   Atlas still knows everything.
 - **You see the guess.** The composer shows the area Atlas guessed before you send, and tapping any chip moves the item.
@@ -1010,11 +1011,11 @@ Pages and stage views are built from the same components, so asking "What's goin
 
 | Level | What you see |
 |---|---|
-| Simple | Plain sentences and receipt chips |
+| Simple | Plain sentences and receipt chips. Settings and Abilities speak in plain words too ("Atlas thinks with ChatGPT, on your Plus plan"), with no model ids, speeds, prices per token or mono metadata |
 | Detailed | Steps inline as they run, in mono, with live status |
 | Developer | Full receipts open in place on any item (inputs, raw results, model, tokens, cost, timing, IDs), plus logs and a live terminal into the sandbox |
 
-One switch, remembered per device. Hold a key to peek one level deeper on any single item.
+One switch, remembered per device. Hold a key to peek one level deeper on any single item. **Simple is the default** (decided 2026-10-24, for M7): the owner found the app reading as a technical product, and Atlas is for people who never want to see a model id. Every Simple screen has "Show details" one step away, and the soul (the diamond, the stage frame, receipts, ember) is the same at every level.
 
 ### 21.6 Stage views
 
@@ -1093,7 +1094,11 @@ Atlas makes things you keep: a shoot plan, a trip itinerary, a quote, a study gu
 
 Atlas should feel like the future: alive, fast, a little magical.
 
-- **Atlas's mark.** The diamond, drawn as four ASCII facet layers, breathes on Now and in voice mode. It moves with the actual audio as Atlas listens, thinks and speaks. It is never an orb, a glow or a gradient.
+- **Atlas's mark.** The diamond, drawn in characters, lives on Now and in voice mode (decided 2026-10-24, for M7; the prototype is [docs/ui/source/diamond.html](docs/ui/source/diamond.html)):
+  - **In color:** its four facets take the four area colors of "All areas"; scoped to one area, the whole diamond takes that area's color.
+  - **Lit:** a light circles it slowly, so the facets brighten and fade in turn through a ramp of characters.
+  - **Alive with what Atlas is doing:** a sweep of light now and then while idle, ripples with your voice while listening, a shimmer while thinking, a pulse with its own voice while speaking. It moves with the actual audio.
+  - It is never an orb, a glow or a gradient: only characters and their color. Reduced motion shows one still frame.
 - **Visual language** (details in [docs/ui/README.md](docs/ui/README.md#5-visual-language)):
   - **The frame:** a dotted stage grid between dashed rails, with square nodes at intersections.
   - **Atlas's selection:** an ember outline with square handles and a mono tag (for example "MOVED · WAS WED 3 PM") marks what Atlas just changed.
@@ -1101,6 +1106,8 @@ Atlas should feel like the future: alive, fast, a little magical.
   - **Meters:** ASCII meters.
   - **Type:** Inter, with Inter Tight for titles and Geist Mono for small labels and receipts, used sparingly.
   - **Ember is rare:** it marks what needs you and what Atlas changed.
+  - **Color carries meaning** (decided 2026-10-24, for M7). Areas are the color system: area chips are tinted, a person's avatar takes the color of the area you know them from, the week's load is stacked in area colors, and a scoped stage takes its area's color. Outside services show their real logos in their own colors, and meters take the color of what they measure. Nothing is colored only to decorate, and there are still no gradients or glows.
+- **Real things, not decoration** (decided 2026-10-24, for M7): people's photos from the address book where they have one, a small map of the way to what's next, and the weather on Now. Each extension and catalog entry carries its service's own logo (§17).
 - **Morphs.**
   - A receipt in the console unfolds into its full view on the stage.
   - One view morphs into the next with shared elements: the event you were discussing becomes the item in the draft.
