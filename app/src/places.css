@@ -179,7 +179,7 @@ button.card2:hover {
   object-fit: contain;
   flex: none;
 }
-[data-theme="graphite"] .lg.inv {
+[data-tone="dark"] .lg.inv {
   filter: invert(1) brightness(1.1);
 }
 

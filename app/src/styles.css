@@ -14,7 +14,7 @@
   --sel: #2c2a27;
   --tx: #f1efea;
   --tx2: #aaa69e;
-  --tx3: #918d86;
+  --tx3: #98948d;
   --ac: #ff6a3d;
   --acs: rgba(255, 106, 61, 0.08);
   --dot: rgba(241, 239, 234, 0.07);
@@ -54,7 +54,7 @@
   --sel: #e7e5df;
   --tx: #191817;
   --tx2: #5c5954;
-  --tx3: #6f6b65;
+  --tx3: #67635d;
   --ac: #e8501b;
   --acs: rgba(232, 80, 27, 0.08);
   --dot: rgba(25, 24, 23, 0.09);
@@ -80,6 +80,129 @@
   --d4: #8f2412;
   --sh: 0 14px 40px -18px rgba(0, 0, 0, 0.22);
   color-scheme: light;
+}
+
+/* Terminal (§21.9): green phosphor on near-black, set in mono, the ember kept for what's active. */
+[data-theme="terminal"] {
+  --bg: #070a07;
+  --win: #0b0f0b;
+  --side: #090c09;
+  --sep: #1c2a1c;
+  --sep2: #284028;
+  --dash: #2e482e;
+  --hover: #121a12;
+  --sel: #172317;
+  --tx: #d4f5d4;
+  --tx2: #9fd49f;
+  --tx3: #82b882;
+  --ac: #ff7a45;
+  --acs: rgba(255, 122, 69, 0.09);
+  --dot: rgba(212, 245, 212, 0.07);
+  --btn: #d4f5d4;
+  --btntx: #070a07;
+  --m1: rgba(212, 245, 212, 0.95);
+  --m2: rgba(212, 245, 212, 0.6);
+  --m3: rgba(212, 245, 212, 0.32);
+  --m4: rgba(212, 245, 212, 0.16);
+  --ok: #5be08f;
+  --bad: #ff7a45;
+  --a0: #f0458a;
+  --a1: #f5a524;
+  --a2: #3b82f6;
+  --a3: #10b981;
+  --a4: #8b5cf6;
+  --a5: #06b6d4;
+  --a6: #84cc16;
+  --a7: #94a3b8;
+  --d1: #ffb48c;
+  --d2: #ff6a3d;
+  --d3: #e2442a;
+  --d4: #b02e1d;
+  --sh: 0 18px 48px -16px rgba(0, 0, 0, 0.7);
+  color-scheme: dark;
+}
+[data-theme="terminal"] body,
+[data-theme="terminal"] .disp {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  letter-spacing: 0;
+}
+/* Midnight (§21.9): a deep blue night, cooler than Graphite. */
+[data-theme="midnight"] {
+  --bg: #090d18;
+  --win: #0e1322;
+  --side: #0b101d;
+  --sep: #1f2740;
+  --sep2: #2b3553;
+  --dash: #313c5c;
+  --hover: #151c31;
+  --sel: #1b233c;
+  --tx: #e9edf7;
+  --tx2: #aeb7cc;
+  --tx3: #939db6;
+  --ac: #ff7346;
+  --acs: rgba(255, 115, 70, 0.09);
+  --dot: rgba(233, 237, 247, 0.07);
+  --btn: #e9edf7;
+  --btntx: #0e1322;
+  --m1: rgba(233, 237, 247, 0.95);
+  --m2: rgba(233, 237, 247, 0.6);
+  --m3: rgba(233, 237, 247, 0.32);
+  --m4: rgba(233, 237, 247, 0.16);
+  --ok: #4fd197;
+  --bad: #ff7346;
+  --a0: #f0458a;
+  --a1: #f5a524;
+  --a2: #3b82f6;
+  --a3: #10b981;
+  --a4: #8b5cf6;
+  --a5: #06b6d4;
+  --a6: #84cc16;
+  --a7: #94a3b8;
+  --d1: #ffb48c;
+  --d2: #ff6a3d;
+  --d3: #e2442a;
+  --d4: #b02e1d;
+  --sh: 0 18px 48px -16px rgba(0, 0, 0, 0.7);
+  color-scheme: dark;
+}
+/* High contrast (§21.9): white on black, every line drawn, every text at 7:1 or more. */
+[data-theme="high-contrast"] {
+  --bg: #000000;
+  --win: #000000;
+  --side: #000000;
+  --sep: #8a8a8a;
+  --sep2: #a6a6a6;
+  --dash: #a6a6a6;
+  --hover: #1c1c1c;
+  --sel: #2a2a2a;
+  --tx: #ffffff;
+  --tx2: #f2f2f2;
+  --tx3: #d6d6d6;
+  --ac: #ff9466;
+  --acs: rgba(255, 148, 102, 0.16);
+  --dot: rgba(255, 255, 255, 0.14);
+  --btn: #ffffff;
+  --btntx: #000000;
+  --m1: #ffffff;
+  --m2: rgba(255, 255, 255, 0.82);
+  --m3: rgba(255, 255, 255, 0.6);
+  --m4: rgba(255, 255, 255, 0.4);
+  --ok: #66f0ad;
+  --bad: #ff9466;
+  --a0: #ff6aa5;
+  --a1: #ffc04d;
+  --a2: #6ea8ff;
+  --a3: #3ee0a8;
+  --a4: #b18cff;
+  --a5: #3fd6f0;
+  --a6: #b0e64a;
+  --a7: #c8d2e0;
+  --d1: #ffc7a8;
+  --d2: #ff9466;
+  --d3: #ff6a3d;
+  --d4: #e2442a;
+  --sh: 0 0 0 1px #8a8a8a;
+  color-scheme: dark;
 }
 
 * {
@@ -2044,7 +2167,7 @@ button.chip:hover {
    (the dataviz reference palette: CVD ΔE ≥ 8.4, normal-vision ΔE ≥ 19.3). Light-mode slots 3–5 sit under
    3:1 on white, so every chart ships a legend and a table view. Never cycled: a ninth series folds. */
 :root,
-[data-theme="graphite"] {
+[data-tone="dark"] {
   --s1: #3987e5;
   --s2: #d95926;
   --s3: #199e70;
@@ -2054,7 +2177,7 @@ button.chip:hover {
   --s7: #9085e9;
   --s8: #e66767;
 }
-[data-theme="daylight"] {
+[data-tone="light"] {
   --s1: #2a78d6;
   --s2: #eb6834;
   --s3: #1baf7a;

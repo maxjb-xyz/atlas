@@ -7,7 +7,7 @@ import { PRESETS, type Preset } from "../../../core/src/character";
 import type { SettingsView } from "../../../core/src/protocol";
 import type { Settings as SettingsT } from "../../../core/src/store/settings";
 import type { Atlas } from "../connection";
-import { useDetail, useLook } from "../theme";
+import { readTheme, themeNow, useDetail, useLook } from "../theme";
 import { Diamond, Icon, Picker, pressable, Seg, Toggle } from "../ui";
 import type { Edit } from "./index";
 import { Head, Line, SecretField, TestRow } from "./parts";
@@ -354,17 +354,63 @@ const THEMES = [
     win: "#ffffff",
     sep: "#e7e5df",
     tx: "#191817",
-    tx3: "#6f6b65",
+    tx3: "#67635d",
     ac: "#e8501b",
+  },
+  {
+    id: "terminal",
+    name: "Terminal",
+    sub: "Green on black, in mono",
+    bg: "#070a07",
+    side: "#090c09",
+    win: "#0b0f0b",
+    sep: "#1c2a1c",
+    tx: "#d4f5d4",
+    tx3: "#82b882",
+    ac: "#ff7a45",
+  },
+  {
+    id: "midnight",
+    name: "Midnight",
+    sub: "Deep blue dark",
+    bg: "#090d18",
+    side: "#0b101d",
+    win: "#0e1322",
+    sep: "#1f2740",
+    tx: "#e9edf7",
+    tx3: "#939db6",
+    ac: "#ff7346",
+  },
+  {
+    id: "high-contrast",
+    name: "High contrast",
+    sub: "White on black, 7:1 or more",
+    bg: "#000000",
+    side: "#000000",
+    win: "#000000",
+    sep: "#8a8a8a",
+    tx: "#ffffff",
+    tx3: "#d6d6d6",
+    ac: "#ff9466",
   },
 ] as const;
 
 function Look({ draft, edit }: { draft: SettingsT; edit: Edit }) {
   const [look, setLook] = useLook();
-  const { detail, set } = useDetail();
+  const { detail, set, at } = useDetail();
   const following = look.theme === "system";
-  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  const current = following ? (dark ? "graphite" : "daylight") : look.theme;
+  const current = look.theme === "custom" ? "custom" : themeNow(look);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const takeFile = async (f: File | undefined) => {
+    if (!f) return;
+    try {
+      const custom = readTheme(await f.text());
+      setFileError(null);
+      setLook({ theme: "custom", custom });
+    } catch (err) {
+      setFileError(err instanceof Error ? err.message : String(err));
+    }
+  };
   // Every zone the browser knows, so the time zone is picked, not typed.
   const zones = (() => {
     try {
@@ -376,7 +422,6 @@ function Look({ draft, edit }: { draft: SettingsT; edit: Edit }) {
   return (
     <>
       <Line label="Theme">
-        {/* TODO(stage 8): Terminal, Midnight and High contrast join these once they're built (VISION §21.9). */}
         <div className="theme-grid">
           {THEMES.map((t) => (
             <button key={t.id} className="theme-card" onClick={() => setLook({ theme: t.id })} aria-pressed={current === t.id}>
@@ -436,7 +481,39 @@ function Look({ draft, edit }: { draft: SettingsT; edit: Edit }) {
               <span className="aside">{t.sub}</span>
             </button>
           ))}
+          <label className="theme-card" aria-pressed={current === "custom"}>
+            <span
+              className="theme-pic dash"
+              style={{ display: "grid", placeItems: "center", outlineColor: current === "custom" ? "var(--tx)" : "transparent" }}
+            >
+              <Icon name="plus" size={16} />
+            </span>
+            <span className="row" style={{ gap: 6, fontWeight: 500 }}>
+              {look.custom?.name ?? "Your own"}
+              {current === "custom" && <Icon name="check" size={12} style={{ color: "var(--ok)" }} />}
+            </span>
+            <span className="aside">
+              {look.custom
+                ? current === "custom"
+                  ? "Its dark and light follow the system"
+                  : "Pick it again, or add another file"
+                : "A theme file of your own"}
+            </span>
+            <input type="file" accept=".json,application/json" hidden onChange={(e) => void takeFile(e.target.files?.[0])} />
+          </label>
+          {look.custom && current !== "custom" && (
+            <button className="tbtn" onClick={() => setLook({ theme: "custom" })}>
+              Use {look.custom.name}
+            </button>
+          )}
         </div>
+        {fileError && <p className="err small">{fileError}</p>}
+        {at("developer") && (
+          <p className="aside">
+            A theme file is JSON: a name, and dark and light tokens laid over Graphite and Daylight, like{" "}
+            <span className="mono">{'{"name": "Forest", "dark": {"ac": "#4cc48f", "bg": "#0c1410"}, "light": {"ac": "#2e9a6b"}}'}</span>.
+          </p>
+        )}
         <div className="row" style={{ gap: 10 }}>
           <Toggle on={following} label="Follow the system" onChange={(on) => setLook({ theme: on ? "system" : current })} />
           <span style={{ fontSize: 12.5 }}>Follow the system</span>

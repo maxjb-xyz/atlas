@@ -30,7 +30,7 @@ function framed(page: McpAppPage): string {
   return `<!doctype html><html><head>${meta}</head><body>${page.html}</body></html>`;
 }
 
-const theme = () => (document.documentElement.dataset.theme === "daylight" ? "light" : "dark");
+const theme = () => (document.documentElement.dataset.tone === "light" ? "light" : "dark");
 
 export function McpAppFrame({ atlas, call, title }: { atlas: Atlas; call: string; title: string }) {
   const frame = useRef<HTMLIFrameElement | null>(null);
@@ -138,7 +138,7 @@ export function McpAppFrame({ atlas, call, title }: { atlas: Atlas; call: string
     const watch = new MutationObserver(
       () => ready && post({ method: "ui/notifications/host-context-changed", params: { theme: theme() } }),
     );
-    watch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    watch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-tone"] });
     window.addEventListener("message", onMessage);
     window.addEventListener("atlas:mcp", onAnswer);
     return () => {

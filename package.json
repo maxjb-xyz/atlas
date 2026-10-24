@@ -11,7 +11,7 @@
     "build": "npm run extensions && npm run build -w app",
     "typecheck": "npm run typecheck -ws --if-present && tsc -p extensions --noEmit",
     "test": "npm test -w core",
-    "check": "npm run extensions && npm run typecheck && npm test && npm run build",
+    "check": "npm run extensions && npm run typecheck && node scripts/contrast.mjs && npm test && npm run build",
     "dev": "npm run build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
     "bench": "npm run bench -w bench --",
