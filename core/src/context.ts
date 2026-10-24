@@ -4,6 +4,8 @@
 // surface), then every message since that summary. Compaction (§4.1) keeps
 // that last part in bounds; recall finds the rest, on demand.
 
+import { codingLines } from "./agent/coding";
+import { lookedAt } from "./agent/helpers";
 import { type McpServer, serversLine } from "./mcp";
 import { listPages } from "./pages";
 import { listFiles } from "./files";
@@ -315,17 +317,25 @@ function exitsContext(sql: Sql, tz: string, now: Date): string {
 function jobsLine(sql: Sql, now: Date): string {
   const running = sql
     .exec<{ id: string; title: string; created_at: number; source: string }>(
-      `SELECT id, title, created_at, source FROM agenda WHERE kind = 'job' AND state IN ('scheduled', 'running') ORDER BY created_at LIMIT 10`,
+      `SELECT id, title, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND state IN ('scheduled', 'running') ORDER BY created_at LIMIT 10`,
     )
     .toArray();
-  if (!running.length) return "";
+  const coding = codingLines(sql, now);
+  const codingText = coding.length
+    ? `Coding jobs (answer "how's the job?" from these; jobs_look has more, job_answer passes the owner's words on):\n${coding.join("\n")}`
+    : "";
+  if (!running.length) return codingText;
   const lines = running.map((j) => {
-    const run = parse<{ detail?: { helper_run?: string } }>(j.source, {}).detail?.helper_run;
+    const detail = parse<{ detail?: { helper_run?: string; research?: boolean } }>(j.source, {}).detail;
+    const run = detail?.helper_run;
     const steps = run ? sql.exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE run_id = ? AND kind = 'tool.call'`, run).one().n : 0;
     const mins = Math.max(0, Math.round((now.getTime() - j.created_at) / 60_000));
-    return `- ${j.title} (id ${j.id}): started ${mins ? `${mins} min` : "under a minute"} ago, ${steps} lookup${steps === 1 ? "" : "s"} so far`;
+    const read = detail?.research && run ? lookedAt(sql, run) : null;
+    return `- ${j.title} (id ${j.id}${detail?.research ? ", a long research job" : ""}): started ${mins ? `${mins} min` : "under a minute"} ago, ${steps} lookup${steps === 1 ? "" : "s"} so far${read ? ` (${read.toLowerCase()})` : ""}`;
   });
-  return `Helpers working now (you get each one's result when it's done, and finish the task then):\n${lines.join("\n")}`;
+  return [`Helpers working now (you get each one's result when it's done, and finish the task then):\n${lines.join("\n")}`, codingText]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /** What a run is told about areas: the hat, its tone, and the owner's other areas. */

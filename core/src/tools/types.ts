@@ -57,6 +57,8 @@ export interface ToolContext {
   via: string;
   /** Hands work to a helper (§8.1); null where helpers aren't allowed, such as inside a helper. */
   helpers: HelperDeskApi | null;
+  /** Coding jobs (§8.2): start one, pass the owner's words to one, see how they're doing. Absent where jobs can't be reached. */
+  coding?: CodingApi | null;
   /**
    * The way out for actions that may need the owner's OK (§12): the outbox
    * does it now when the kind allows, or it waits as an approval card. Null
@@ -179,7 +181,18 @@ export interface RunResult {
 
 /** The workspace (§9.1) as tools reach it. */
 export interface WorkspaceApi {
-  run(command: string, o: { run_id: string; timeout_s: number }): Promise<RunResult>;
+  /** `cwd` is /workspace by default, or a coding job's folder; `rules` are keys for this command only (a git token behind a nonce). */
+  run(
+    command: string,
+    o: {
+      run_id: string;
+      timeout_s: number;
+      cwd?: string;
+      rules?: import("../workspace").KeyRule[];
+      env?: Record<string, string>;
+      as?: string;
+    },
+  ): Promise<RunResult>;
   read(path: string): Promise<{ ok: true; bytes: ArrayBuffer } | { ok: false; error: string }>;
   /** A link to a server on `port` in the workspace, for a day. */
   preview(port: number): Promise<{ url: string; expires: number }>;
@@ -196,9 +209,26 @@ export interface ExitApi {
 
 export interface HelperDeskApi {
   /** Starts a job; `asked_in` is the run that asked. Throws, with the reason, if the helper can't start. */
-  start(o: { title: string; brief: string; tools: string[]; asked_in: string }): Promise<{ id: string }>;
+  start(o: { title: string; brief: string; tools: string[]; asked_in: string; research?: boolean }): Promise<{ id: string }>;
   /** The job's result, or null if it's still running after `ms` (it's then reported when it ends). */
   wait(id: string, ms: number): Promise<{ state: "done" | "failed" | "cancelled"; text: string; error?: string } | null>;
+}
+
+/** What the owner's runs can do with coding jobs (§8.2). */
+export interface CodingApi {
+  repos(): Promise<Array<{ repo: string; about?: string; default_branch: string; pushed_at?: string }>>;
+  /** Starts a job; throws, with the reason, when it can't (no coding agent set up, no code host, a repo it can't see). */
+  start(o: {
+    title: string;
+    repo: string;
+    task: string;
+    agent?: string;
+    base?: string;
+    asked_in: string;
+  }): Promise<{ id: string; agent: string; branch: string }>;
+  /** The owner's words for a job: an answer to its question, or a change of direction while it works. */
+  answer(id: string, text: string): Promise<{ ok: boolean; text: string }>;
+  look(id?: string): unknown[];
 }
 
 export interface ToolResult {

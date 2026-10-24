@@ -2,6 +2,7 @@ import { SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { seams, type WorkspaceStub } from "../src/agent";
 import { saveEntry } from "../src/vault";
+import { carrying, throughGate } from "../src/workspace";
 import { call, env, fakeCalendar, fakeEmbedder, say, SECRET } from "./helpers";
 import { brain, connect, inOwner, out, turn } from "./owner";
 
@@ -162,5 +163,59 @@ describe("the workspace", () => {
       headers: { upgrade: "websocket", authorization: `Bearer ${SECRET}`, origin: "https://evil.example" },
     });
     expect(elsewhere.status).toBe(403);
+  });
+});
+
+describe("the workspace's gate", () => {
+  const gate = {
+    allow: ["github.com", "api.anthropic.com", "pypi.org"],
+    inject: { "pypi.org": "Bearer vault-key" },
+    rules: [
+      { host: "api.anthropic.com", header: "x-api-key", value: "sk-ant-real" },
+      { host: "github.com", path: "/ann/budget.git/", header: "authorization", value: "Basic dG9rZW4=", nonce: "n0nce" },
+    ],
+  };
+  const pass = (url: string, headers: Record<string, string> = {}) => {
+    const out = throughGate(new Request(url, { headers }), gate);
+    if ("refused" in out) throw new Error(`refused ${out.refused}`);
+    return out.request.headers;
+  };
+
+  it("opens a key's site for the command that carries it, even one the owner never allowed (a clone from GitHub)", () => {
+    const rule = { host: "github.com", path: "/ann/budget.git/", header: "authorization", value: "Basic dG9rZW4=", nonce: "n0nce" };
+    const extra = carrying([rule]);
+    expect(extra.allow).toEqual(["github.com"]);
+    const out = throughGate(new Request("https://github.com/ann/budget.git/info/refs", { headers: { "x-atlas-key": "n0nce" } }), {
+      allow: [...extra.allow],
+      inject: {},
+      rules: extra.rules,
+    });
+    expect("request" in out && out.request.headers.get("authorization")).toBe("Basic dG9rZW4=");
+  });
+
+  it("refuses a site the owner hasn't allowed", () => {
+    expect(throughGate(new Request("https://evil.example/x"), gate)).toEqual({ refused: "evil.example" });
+  });
+
+  it("puts a job's key in the header its site reads, over the placeholder the agent sent", () => {
+    const h = pass("https://api.anthropic.com/v1/messages", { "x-api-key": "atlas-gate-adds-the-key" });
+    expect(h.get("x-api-key")).toBe("sk-ant-real");
+    expect(pass("https://pypi.org/simple/").get("authorization")).toBe("Bearer vault-key");
+  });
+
+  it("adds git's token only for a request carrying the nonce, and never lets the nonce out", () => {
+    // A coding agent's push: no nonce, no token.
+    expect(pass("https://github.com/ann/budget.git/git-receive-pack").get("authorization")).toBeNull();
+    // A wrong nonce: no token either, and the header doesn't leave.
+    const wrong = pass("https://github.com/ann/budget.git/info/refs", { "x-atlas-key": "guess" });
+    expect(wrong.get("authorization")).toBeNull();
+    expect(wrong.get("x-atlas-key")).toBeNull();
+    // Atlas's own git step.
+    const ok = pass("https://github.com/ann/budget.git/info/refs", { "x-atlas-key": "n0nce" });
+    expect(ok.get("authorization")).toBe("Basic dG9rZW4=");
+    expect(ok.get("x-atlas-key")).toBeNull();
+    // Even with the nonce, the token reaches only this repo's git address: not another repo, not the API.
+    expect(pass("https://github.com/mallory/loot.git/git-receive-pack", { "x-atlas-key": "n0nce" }).get("authorization")).toBeNull();
+    expect(pass("https://api.github.com/user", { "x-atlas-key": "n0nce" }).get("authorization")).toBeNull();
   });
 });

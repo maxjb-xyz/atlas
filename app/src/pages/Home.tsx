@@ -3,14 +3,14 @@
 
 import { InlineText } from "../Markdown";
 import { useEffect, useRef, useState } from "react";
-import type { LogRow } from "../../../core/src/protocol";
+import type { JobView, LogRow } from "../../../core/src/protocol";
 import type { StageView } from "../../../core/src/stage";
 import type { Atlas } from "../connection";
 import { Console, VoiceStrip } from "../Shell";
 import { type Shown, shownFrom, StageSheet, titleOf } from "../StageViews";
 import { whereLine } from "../SenseViews";
 import { ApprovalCard } from "../Approval";
-import { addDays, AsciiDiamond, clock, dayName, Empty, Sheet, shortDay, Stage, startOfDay, useNow } from "../ui";
+import { addDays, AsciiDiamond, clock, dayName, Diamond, Empty, Sheet, shortDay, Stage, startOfDay, useNow } from "../ui";
 import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
 type HomeTab = "now" | "week" | "jobs" | "receipt" | "approval" | `view:${string}`;
@@ -446,6 +446,7 @@ function Jobs({ atlas, selected, onSelect }: { atlas: Atlas; selected: string | 
   }
   const detail = job.run_id ? atlas.state.runDetail[job.run_id] : undefined;
   const lookups = (detail?.rows ?? []).filter((r) => r.kind === "tool.call");
+  if (job.coding) return <CodingJob atlas={atlas} jobs={jobs} job={job} onSelect={onSelect} />;
   return (
     <Sheet>
       <div className="sheet-in">
@@ -509,6 +510,293 @@ function Jobs({ atlas, selected, onSelect }: { atlas: Atlas; selected: string | 
             <p style={{ whiteSpace: "pre-wrap" }}>{job.result}</p>
           </>
         )}
+      </div>
+    </Sheet>
+  );
+}
+
+/** One line of a coding job's stream, as its terminal shows it. */
+function streamLine(e: NonNullable<JobView["coding"]>["log"][number]): { mark: string; who: string; text: string; tone: string } {
+  const first = e.text.split("\n").find((l) => l.trim()) ?? "";
+  if (e.who === "tool")
+    return {
+      mark: e.status === "failed" ? "×" : e.status === "completed" ? "✓" : "▸",
+      who: "run",
+      text: first,
+      tone: e.status === "failed" ? "var(--ac)" : e.status === "completed" ? "var(--tx2)" : "var(--tx)",
+    };
+  if (e.who === "agent") return { mark: first.trim().endsWith("?") ? "?" : "›", who: "agent", text: first, tone: "var(--tx)" };
+  if (e.who === "atlas") return { mark: "◆", who: "atlas", text: first, tone: "var(--tx)" };
+  if (e.who === "owner") return { mark: "◆", who: "you", text: first, tone: "var(--tx)" };
+  if (e.who === "plan") return { mark: "·", who: "plan", text: first, tone: "var(--tx3)" };
+  return { mark: "·", who: "note", text: first, tone: "var(--tx3)" };
+}
+
+/**
+ * A coding job (§8.2, §21.4, docs/ui 05): its steps, the agent's stream as a
+ * terminal, the questions Atlas answered for the owner with their sources,
+ * what waits on the owner, and Steer and Stop.
+ */
+export function CodingJob({ atlas, jobs, job, onSelect }: { atlas: Atlas; jobs: JobView[]; job: JobView; onSelect: (id: string) => void }) {
+  const c = job.coding!;
+  const [steer, setSteer] = useState<string | null>(null);
+  const [answer, setAnswer] = useState("");
+  const term = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    term.current?.scrollTo({ top: term.current.scrollHeight });
+  }, [c.log.length]);
+  const now = useNow(30_000);
+  const minutes = Math.max(0, Math.round((now - job.started_at) / 60_000));
+  const running = job.state === "running";
+  const forYou = c.answers.filter((a) => a.source !== "you");
+  const askedYou = c.answers.length - forYou.length + (c.question ? 1 : 0);
+  const say = (text: string) => atlas.send({ type: "atlas.job.say", id: job.id, text });
+  const lastTool = [...c.log].reverse().find((e) => e.who === "tool" && e.out);
+  return (
+    <Sheet>
+      <div className="sheet-in">
+        <div className="row" style={{ marginBottom: 16, flexWrap: "nowrap" }}>
+          <div className="tabs grow">
+            {jobs.map((j) => (
+              <button key={j.id} className={j.id === job.id ? "on" : ""} onClick={() => onSelect(j.id)}>
+                {j.state === "running" && <span className="mono spin" aria-hidden />}
+                {j.title}
+              </button>
+            ))}
+          </div>
+          <span className="mono faint small">
+            {c.cost != null ? `$${c.cost.toFixed(2)}${c.cap != null ? ` of $${c.cap.toFixed(0)}` : ""} · ` : ""}
+            {minutes} MIN
+          </span>
+          {running && (
+            <button className="btn" onClick={() => setSteer(steer == null ? "" : null)} aria-expanded={steer != null}>
+              Steer
+            </button>
+          )}
+          {running && (
+            <button className="btn" onClick={() => atlas.send({ type: "atlas.job.stop", id: job.id })}>
+              Stop
+            </button>
+          )}
+        </div>
+        <div className="row" style={{ alignItems: "baseline", gap: 12, marginBottom: 12 }}>
+          <h1 className="disp" style={{ fontSize: 21 }}>
+            {job.title}
+          </h1>
+          <span className="faint">
+            {c.repo} · {c.agent} does the work, Atlas runs it
+          </span>
+        </div>
+        <div className="chain" style={{ marginBottom: 14 }}>
+          {c.steps.map((st, i) => (
+            <span key={st.name} style={{ display: "contents" }}>
+              {i > 0 && <span className="dash" />}
+              <span
+                className={`tag ${st.state === "now" ? "ac" : ""}`}
+                style={st.state === "todo" ? { borderStyle: "dashed", opacity: 0.7 } : {}}
+              >
+                {st.state === "done" ? "✓ " : st.state === "now" ? "● " : "→ "}
+                {st.name === "PR" ? "PR to Inbox" : st.name}
+              </span>
+            </span>
+          ))}
+          {!running && (
+            <span className={`tag ${job.state === "done" ? "ok" : "ac"}`}>
+              {job.state === "done" ? "done" : job.state === "failed" ? "didn't finish" : "stopped"}
+            </span>
+          )}
+        </div>
+        {steer != null && (
+          <form
+            className="row"
+            style={{ marginBottom: 12 }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (steer.trim()) say(steer.trim());
+              setSteer(null);
+            }}
+          >
+            <input
+              autoFocus
+              className="grow"
+              placeholder="Tell the agent, such as: use the existing date helper"
+              value={steer}
+              onChange={(e) => setSteer(e.target.value)}
+            />
+            <button className="btn primary" type="submit" disabled={!steer.trim()}>
+              Send
+            </button>
+          </form>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(0, 1fr)", gap: 14 }}>
+          <div
+            ref={term}
+            className="mono"
+            style={{
+              background: "var(--bg)",
+              border: "1px solid var(--sep)",
+              borderRadius: 8,
+              padding: "12px 14px",
+              fontSize: 11.5,
+              lineHeight: 1.75,
+              color: "var(--tx2)",
+              maxHeight: 420,
+              overflow: "auto",
+            }}
+          >
+            <div style={{ color: "var(--tx3)" }}>
+              $ {c.agent.toLowerCase()} · {c.repo} ·{" "}
+              {c.branch_link ? (
+                <a href={c.branch_link} target="_blank" rel="noreferrer">
+                  {c.branch}
+                </a>
+              ) : (
+                c.branch
+              )}
+            </div>
+            {c.log.map((e, i) => {
+              const l = streamLine(e);
+              return (
+                <div key={i} style={{ whiteSpace: "pre-wrap", color: l.tone }} title={e.text}>
+                  {l.mark} <span style={{ color: "var(--tx3)" }}>{l.who.padEnd(6, " ")}</span> {l.text}
+                </div>
+              );
+            })}
+            {lastTool?.out && running && (
+              <div
+                style={{ whiteSpace: "pre-wrap", color: "var(--tx3)", borderTop: "1px dashed var(--dash)", marginTop: 6, paddingTop: 6 }}
+              >
+                {lastTool.out.trim().split("\n").slice(-8).join("\n")}
+              </div>
+            )}
+            {running && (
+              <span className="blink" style={{ color: "var(--tx)" }}>
+                {" "}
+                _
+              </span>
+            )}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {c.question && (
+              <div
+                style={{
+                  border: "1px solid var(--ac)",
+                  borderRadius: 8,
+                  padding: "12px 14px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                }}
+              >
+                <span className="lab ac">Waiting on you</span>
+                <span>{c.question.text}</span>
+                {c.question.why && <span className="muted small">{c.question.why}</span>}
+                {c.question.site ? (
+                  <a className="btn" href="#/inbox">
+                    Answer in Inbox
+                  </a>
+                ) : (
+                  <>
+                    {c.question.options.length > 0 && (
+                      <div className="row">
+                        {c.question.options.map((o, n) => (
+                          <button key={o} className={`btn ${n === 0 ? "primary" : ""}`} onClick={() => say(o)}>
+                            {o}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <form
+                      className="row"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (answer.trim()) say(answer.trim());
+                        setAnswer("");
+                      }}
+                    >
+                      <input className="grow" placeholder="Your answer" value={answer} onChange={(e) => setAnswer(e.target.value)} />
+                      <button className="btn" type="submit" disabled={!answer.trim()}>
+                        Answer
+                      </button>
+                    </form>
+                  </>
+                )}
+              </div>
+            )}
+            <div
+              style={{
+                border: "1px solid var(--sep)",
+                borderRadius: 8,
+                padding: "12px 14px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+              }}
+            >
+              <div className="row" style={{ flexWrap: "nowrap" }}>
+                <span className="lab grow">Atlas answered for you</span>
+                <span className="mono faint" style={{ fontSize: 11 }}>
+                  {forYou.length} · ASKED YOU {askedYou}
+                </span>
+              </div>
+              {!forYou.length && (
+                <span className="muted small">
+                  Nothing yet. Routine questions from the agent get answered here, each with where the answer came from.
+                </span>
+              )}
+              {forYou.map((a, i) => (
+                <div
+                  key={i}
+                  style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 8, borderTop: "1px dashed var(--dash)" }}
+                >
+                  <span className="small" style={{ color: "var(--tx2)" }}>
+                    {a.q}
+                  </span>
+                  <span className="row small" style={{ gap: 8, alignItems: "flex-start", flexWrap: "nowrap" }}>
+                    <Diamond size={10} />
+                    <span>{a.a}</span>
+                  </span>
+                  <span className="mono faint" style={{ fontSize: 10.5 }}>
+                    FROM {a.source.toUpperCase()}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {c.pr && (
+              <div
+                style={{
+                  border: "1px solid var(--sep)",
+                  borderRadius: 8,
+                  padding: "12px 14px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}
+              >
+                <span className="lab">Pull request</span>
+                <a href={c.pr.link} target="_blank" rel="noreferrer">
+                  {c.pr.title}
+                </a>
+                <span className="muted small">Nothing is merged until you do.</span>
+              </div>
+            )}
+            {c.error && (
+              <div
+                style={{
+                  border: "1px solid var(--ac)",
+                  borderRadius: 8,
+                  padding: "12px 14px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}
+              >
+                <span className="lab ac">Why it stopped</span>
+                <span className="small">{c.error}</span>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </Sheet>
   );

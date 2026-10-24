@@ -2986,6 +2986,8 @@ const PROVIDES: Record<string, string> = {
   maps: "maps and routes",
   weather: "the weather",
   search: "web search",
+  coding: "a coding agent for coding jobs",
+  code: "your code, for coding jobs",
 };
 
 /**

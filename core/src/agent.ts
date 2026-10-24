@@ -7,7 +7,9 @@ import { Agent, type Connection, type ConnectionContext, getAgentByName, type WS
 import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } from "agents/voice";
 import { CalendarSense } from "./agent/calendar";
 import { correctAreas, discoveryPrompt, readyToDiscover, startDiscovered, tagPending, triedDiscovery, unfiled } from "./agent/areas";
-import { HelperDesk } from "./agent/helpers";
+import { HelperDesk, helperBrain, RESEARCH_BUDGET } from "./agent/helpers";
+import { CodingDesk, getJob, type JobWorkspace, type PullRequest } from "./agent/coding";
+import { codingTools } from "./tools/coding";
 import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup";
 import { history as logHistory, historyStats, inbox, inboxDone, listRecords, runDetail, stagePage } from "./agent/views";
 import { correctRecord, createRecord, findRecords, forgetRecord, getRecord } from "./store/records";
@@ -195,8 +197,17 @@ class NamedOAuthProvider extends DurableObjectOAuthClientProvider {
 }
 
 /** What the agent asks of the workspace's Durable Object (core/src/workspace.ts), or of a fake in tests. */
-export interface WorkspaceStub {
-  run(o: { command: string; timeout_s: number; allow: string[]; inject: Record<string, string> }): Promise<ReadableStream<Uint8Array>>;
+export interface WorkspaceStub extends Partial<JobWorkspace> {
+  run(o: {
+    command: string;
+    timeout_s: number;
+    allow: string[];
+    inject: Record<string, string>;
+    cwd?: string;
+    rules?: import("./workspace").KeyRule[];
+    env?: Record<string, string>;
+    as?: string;
+  }): Promise<ReadableStream<Uint8Array>>;
   read(path: string): Promise<{ ok: true; bytes: ArrayBuffer } | { ok: false; error: string }>;
   list(): Promise<Array<{ path: string; size: number; dir: boolean }> | null>;
   preview(port: number): Promise<{ token: string; expires: number }>;
@@ -248,6 +259,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     emailSend,
     ...sharedTools,
     areaLook,
+    ...codingTools,
   ],
   atlas: [
     calendarRead,
@@ -383,6 +395,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #calendar!: CalendarSense;
   #chatgpt!: ChatGPTSignIn;
   #helpers!: HelperDesk;
+  /** Coding jobs (§8.2): the agent in the workspace, and Atlas as the middleman. */
+  #coding!: CodingDesk;
   #automations!: AutomationDesk;
   #senses!: SenseDesk;
   /** Extensions (§17): the host that runs them sandboxed, and the desk that hands what they bring to the core. */
@@ -444,8 +458,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       },
       report: (item, result) => this.#tellJob(item, result),
       rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
-      jobsChanged: (jobs) => this.#broadcast({ type: "atlas.jobs", jobs }),
+      jobsChanged: () => this.#jobsChanged(),
     });
+    this.#coding = new CodingDesk(this.#codingHost());
+    void this.#coding.resume().catch(() => {});
     // Results that ended with nobody told before a restart are told now.
     for (const { item, result } of this.#helpers.unreported()) this.#tellJob(item, result);
     void this.#helpers.tidy();
@@ -486,6 +502,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         await this.#channels.send(ext, { chat: l.chat, text });
         return true;
       },
+      pullRequest: (a) => this.#coding.opened(a as PullRequest),
       faceReply: async (a) => {
         const face = getFace(this.#sql, a.face);
         if (!face) return { ok: false, text: "That face isn't there any more." };
@@ -591,6 +608,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       notes: () => this.#notes(),
       owner: ({ text, note, via }) => this.#textTurn(text, `chat-${via.message}`, note ?? undefined, via),
       decide: (id, yes) => this.#decide(id, { yes, by: "button" }),
+      job: async (id, option) => {
+        const q = getJob(this.#sql, id)?.question;
+        const text = q && !q.site ? q.options[option] : undefined;
+        if (!text) return { ok: false, text: "That question was already answered." };
+        const out = await this.#coding.answer(id, text, "chat");
+        this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+        return out;
+      },
       face: async (o) => this.#faces.take(o),
       hasFace: (ext, msg) => faceFor(this.#sql, ext.id, { kind: "telegram", value: msg.from.handle ?? msg.from.id }) != null,
       changed,
@@ -852,7 +877,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           running: runningRuns(this.#sql)
             .filter((r) => r.surface !== "none")
             .map((r) => ({ run_id: r.id, surface: r.surface, ...(this.#live.get(r.id) ?? {}) })),
-          jobs: this.#helpers.list(),
+          jobs: this.#jobs(),
           areas: this.#areasView(),
           scope: getScope(this.#sql),
         });
@@ -1549,8 +1574,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
         return;
       case "atlas.job.stop":
-        if (!this.#helpers.stop(msg.id)) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
+        if (getJob(this.#sql, msg.id)) {
+          if (!(await this.#coding.stop(msg.id))) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
+        } else if (!this.#helpers.stop(msg.id)) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
         return;
+      case "atlas.job.say": {
+        const out = await this.#coding.answer(msg.id, msg.text, "app");
+        if (out.ok) append(this.#sql, { actor: "owner", kind: "settings.change", body: { job: msg.id, said: msg.text.slice(0, 300) } });
+        else this.#send(connection, { type: "atlas.error", message: out.text });
+        this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+        return;
+      }
     }
   }
 
@@ -2132,6 +2166,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** Woken by the scheduler (a Durable Object alarm) when an agenda item is due. */
   async onAgendaDue(payload: { id: string }): Promise<void> {
+    // A coding job's wake moves it on (§8.2). It runs beside the clock, not in it: it reads the agent for most of a minute.
+    if (getItem(this.#sql, payload.id)?.kind === "job" && getJob(this.#sql, payload.id)) {
+      void this.keepAliveWhile(() => this.#coding.wake(payload.id)).catch((err: unknown) =>
+        console.error(JSON.stringify({ at: "coding.wake", job: payload.id, error: err instanceof Error ? err.message : String(err) })),
+      );
+      return;
+    }
     // A job's wake is its helper's lease running out: if the job hasn't ended, the helper was lost.
     if (getItem(this.#sql, payload.id)?.kind === "job") {
       await this.keepAliveWhile(() => this.#helpers.lost(payload.id));
@@ -2282,15 +2323,24 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** A helper's job ended while nobody was waiting for it: tell the owner what it found. */
   async #reportJob(item: AgendaItem, result: { state: "done" | "failed"; text: string }): Promise<void> {
+    const research = item.source.detail?.research === true;
     const note =
-      result.state === "done"
-        ? `[Atlas's helper, not the owner] The job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nFinish what the owner asked for with it: if they wanted to see something (a chart, a table, a comparison), show it; if they wanted a file (a spreadsheet, a document), make it. Then tell them what it found, the way you'd say it, as short as it can be while complete.`
-        : `[Atlas's helper, not the owner] The job "${item.title}" you started didn't finish: ${result.text}. Tell the owner in one or two sentences, with what you'd need to try again.`;
+      result.state === "done" && research
+        ? `[Atlas's helper, not the owner] The research job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nLand it: show it as a research view (show, kind research, with the sources it read), and save it as a page with page_save, the answer in Markdown with the same research view in a \`view\` block, so the owner keeps it. Then tell them the finding in a sentence or two and that the page is in Library.`
+        : result.state === "done"
+          ? `[Atlas's helper, not the owner] The job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nFinish what the owner asked for with it: if they wanted to see something (a chart, a table, a comparison), show it; if they wanted a file (a spreadsheet, a document), make it. Then tell them what it found, the way you'd say it, as short as it can be while complete.`
+          : `[Atlas's helper, not the owner] The job "${item.title}" you started didn't finish: ${result.text}. Tell the owner in one or two sentences, with what you'd need to try again.`;
     const fallback =
       result.state === "done" ? `Finished: ${item.title}.\n\n${result.text}` : `"${item.title}" didn't finish: ${result.text}`;
     // The report finishes the owner's task, so it can put a view on the stage (a chart from the helper's numbers)
     // and make the file that was asked for (a spreadsheet), in the workspace if it isn't text.
-    await this.#atlasSays(`job:${item.id}`, note, fallback, "normal", 8, [...TOOLS.atlas, show, ...fileTools, ...workspaceTools]);
+    await this.#atlasSays(`job:${item.id}`, note, fallback, "normal", 8, [
+      ...TOOLS.atlas,
+      show,
+      ...pageTools,
+      ...fileTools,
+      ...workspaceTools,
+    ]);
     this.#helpers.reported(item.id);
   }
 
@@ -2551,13 +2601,23 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           return { id: e.id, name: e.name, hosts: e.manifest.hosts };
         },
       },
+      coding: {
+        repos: () => this.#coding.repos(),
+        start: async (o) => {
+          const job = await this.#coding.start(o);
+          return { id: job.id, agent: getExt(this.#sql, job.agent)?.name ?? job.agent, branch: job.branch };
+        },
+        answer: (id, text) => this.#coding.answer(id, text, "run"),
+        look: (id) => this.#coding.look(id),
+      },
       helpers: {
         start: async (o) => {
           const job = await this.#helpers.start({
             ...o,
-            system: helperSystem(settings, now),
+            system: o.research ? `${helperSystem(settings, now)}\n\n${RESEARCH_BRIEF}` : helperSystem(settings, now),
             chain: settings.brains.main,
             askedIn: o.asked_in,
+            ...(o.research ? { budget: RESEARCH_BUDGET } : {}),
           });
           return { id: job.id };
         },
@@ -2568,19 +2628,28 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   // --- helpers' calls to their parent (§8.1) -------------------------------------------
 
+  // A coding job's looks (§8.2) are helpers too, named after their job ("<job>_d3"); their calls go to its desk.
+
   async helperBrain(jobId: string, choice: BrainChoice, req: Omit<BrainRequest, "signal">): Promise<BrainEvent[]> {
+    if (this.#coding.owns(jobId)) return this.#coding.brain(jobId, choice, req);
     return this.#helpers.brain(jobId, choice, req);
   }
 
   async helperTool(jobId: string, name: string, input: unknown): Promise<ToolResult> {
+    if (this.#coding.owns(jobId)) return this.keepAliveWhile(() => this.#coding.tool(jobId, name, input));
     return this.#helpers.tool(jobId, name, input);
   }
 
   async helperLog(jobId: string, row: Append): Promise<LogRow> {
+    if (this.#coding.owns(jobId)) return this.#coding.log(jobId, row);
     return this.#helpers.log(jobId, row);
   }
 
   async helperDone(jobId: string, outcome: HelperOutcome): Promise<void> {
+    if (this.#coding.owns(jobId)) {
+      await this.keepAliveWhile(() => this.#coding.done(jobId, outcome));
+      return;
+    }
     await this.keepAliveWhile(() => this.#helpers.done(jobId, outcome));
   }
 
@@ -2728,7 +2797,37 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** For tests: the jobs as the app sees them. */
   async apiJobs(): Promise<JobView[]> {
-    return this.#helpers.list();
+    return this.#jobs();
+  }
+
+  /** For tests: a coding job's wake, waited for, and its state. */
+  async apiCodingWake(id: string): Promise<import("./agent/coding").CodingJob | null> {
+    await this.#coding.wake(id);
+    return getJob(this.#sql, id);
+  }
+
+  /** For tests: Stop on a coding job, as from the app. */
+  async apiJobStop(id: string): Promise<boolean> {
+    return this.#coding.stop(id);
+  }
+
+  /** For tests: Inbox as the app sees it. */
+  async apiInbox(): Promise<import("./protocol").InboxItem[]> {
+    return inbox(this.#sql);
+  }
+
+  /** For tests: the owner's words for a coding job, as from the app. */
+  async apiJobSay(id: string, text: string): Promise<{ ok: boolean; text: string }> {
+    return this.#coding.answer(id, text, "app");
+  }
+
+  /** Every job the app shows: coding jobs and helpers', newest first. */
+  #jobs(): JobView[] {
+    return [...this.#coding.list(), ...this.#helpers.list()].sort((a, b) => b.started_at - a.started_at).slice(0, 30);
+  }
+
+  #jobsChanged(): void {
+    this.#broadcast({ type: "atlas.jobs", jobs: this.#jobs() });
   }
 
   // --- compaction ----------------------------------------------------------------
@@ -3692,7 +3791,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     run: async (command, o) => {
       const ws = this.#ws();
       if (!ws) throw new Error("This deployment has no workspace: the Workspace container isn't bound to the Worker.");
-      const stream = await ws.run({ command, timeout_s: o.timeout_s, ...this.#wsGate() });
+      const stream = await ws.run({
+        command,
+        timeout_s: o.timeout_s,
+        ...this.#wsGate(),
+        ...(o.cwd ? { cwd: o.cwd } : {}),
+        ...(o.rules?.length ? { rules: o.rules } : {}),
+        ...(o.env ? { env: o.env } : {}),
+        ...(o.as ? { as: o.as } : {}),
+      });
       const out: RunResult = { exit: -1, output: "", ms: 0, blocked: [], notes: [] };
       const show = (text: string) => this.#broadcast({ type: "atlas.workspace.out", run_id: o.run_id, text });
       show(`$ ${command}\n`);
@@ -3745,6 +3852,121 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     },
     sites: () => getState<string[]>(this.#sql, "workspace_sites") ?? [],
   };
+
+  /** What the coding desk needs of this agent (§8.2): the workspace, extensions, brains, the clock, the owner and the outbox. */
+  #codingHost(): import("./agent/coding").CodingHost {
+    const sql = this.#sql;
+    return {
+      sql,
+      ws: () => {
+        const w = this.#ws();
+        return w?.jobAgent ? (w as JobWorkspace) : null;
+      },
+      exec: async (o) => {
+        const r = await this.#workspaceApi.run(o.command, {
+          run_id: o.run_id ?? "coding",
+          timeout_s: o.timeout_s,
+          cwd: o.cwd,
+          ...(o.rules ? { rules: o.rules } : {}),
+          ...(o.env ? { env: o.env } : {}),
+          ...(o.as ? { as: o.as } : {}),
+        });
+        return { exit: r.exit, output: r.output, blocked: r.blocked };
+      },
+      ext: (id, method, args) => this.#ext.call(id, method, args),
+      chatgpt: () => this.#chatgpt.token(),
+      launch: async (job) => {
+        const child = await this.dynamicAgents.get(HelperAgent, job.id);
+        await child.begin(job);
+      },
+      abort: (id) => {
+        try {
+          this.dynamicAgents.abort(HelperAgent, id, "Replaced or stopped.");
+        } catch (err) {
+          console.error(JSON.stringify({ at: "coding.abort", id, error: err instanceof Error ? err.message : String(err) }));
+        }
+      },
+      discard: (id) => this.dynamicAgents.delete(HelperAgent, id),
+      watch: async (id, at) => {
+        const item = getItem(sql, id);
+        if (!item) return;
+        if (item.schedule_id) await this.cancelSchedule(item.schedule_id).catch(() => false);
+        const s = await this.schedule(new Date(at), "onAgendaDue", { id });
+        setScheduleId(sql, id, s.id);
+      },
+      brain: (choice, req, chain) => helperBrain({ router: this.#router, makeBrain: (c) => this.#makeBrain(c) }, choice, req, chain),
+      toolContext: (runId) => {
+        const settings = readSettings(sql);
+        return {
+          ...this.#toolContext(settings, new Date(), "helper", null),
+          helpers: null,
+          exit: null,
+          automations: null,
+          browser: null,
+          workspace: null,
+          mcp: null,
+          extensions: null,
+          coding: null,
+          run_id: runId,
+        };
+      },
+      decider: () => {
+        const settings = readSettings(sql);
+        const now = new Date();
+        const tz = zoneOf(settings);
+        return {
+          name: settings.assistant_name,
+          owner: settings.owner_name.trim() || "the owner",
+          now: `${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}`,
+          chain: settings.brains.main,
+        };
+      },
+      identity: () => {
+        const origin = getState<string>(sql, "origin");
+        const host = origin ? new URL(origin).hostname : "localhost";
+        return { name: readSettings(sql).assistant_name, email: `atlas@${host}` };
+      },
+      report: (item, result) => this.#tellJob(item, result),
+      ask: async ({ job, question, row }) => {
+        this.#broadcast({ type: "atlas.inbox.items", items: inbox(sql) });
+        const text = `${job.title} needs you: ${question.text}`;
+        const settings = readSettings(sql);
+        const l = links(sql)[settings.notifications.reach];
+        // On the owner's chat (§16.1), the question comes with its choices as buttons; else a push to Inbox.
+        if (l && settings.notifications.reach !== "push") {
+          const ok = await this.#channels
+            .send(settings.notifications.reach, {
+              chat: l.chat,
+              text: `${text}${question.why ? `\n\n${question.why}` : ""}`,
+              ...(question.options.length
+                ? { buttons: question.options.map((label, i) => ({ label: label.slice(0, 60), data: `job:${job.id}:${i}` })) }
+                : {}),
+            })
+            .then(
+              () => true,
+              () => false,
+            );
+          if (ok) return;
+        }
+        await this.#outbox.notify({ id: row.id, run_id: row.run_id ?? null, text }, "now", { url: "/#/inbox" });
+      },
+      site: async (o) => {
+        if ((getState<string[]>(sql, "workspace_sites") ?? []).some((h) => o.host === h || o.host.endsWith(`.${h}`)))
+          return { allowed: true };
+        const out = await this.#exit.request(
+          { kind: "site", host: o.host, name: `Let the workspace reach ${o.host}`, why: o.why },
+          { run_id: o.run_id, source_log_id: null },
+        );
+        const waiting = (out.output as { waiting_for_ok?: string } | null)?.waiting_for_ok;
+        if (waiting) return { approval: waiting };
+        if (out.ok) return { allowed: true };
+        throw new Error(String((out.output as { error?: string } | null)?.error ?? "The site couldn't be asked for."));
+      },
+      publish: (a, runId) => this.#outbox.perform(a as unknown as Action, { run_id: runId, by: "trusted" }),
+      rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
+      changed: () => this.#jobsChanged(),
+    };
+  }
 
   /** The workspace as its view shows it: up or asleep, its files while up, the sites it may reach, and what ran lately. */
   async #workspacePage(): Promise<WorkspaceStagePage> {
@@ -4176,6 +4398,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       finish(this.#sql, id, "cancelled", null, { by: "owner", via: o.by });
       countDecline(this.#sql, actions);
       this.#approvalSettled(id);
+      if (this.#coding.waitsOn(id)) void this.keepAliveWhile(() => this.#coding.settled(id, false));
       return { ok: true, text: "Declined. Nothing was done." };
     }
     // An edit made in the card is what goes out (§12.2), and it doesn't count as approved as-is.
@@ -4232,6 +4455,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     // Atlas finishes what it was doing, or says it's done. Only a yes said by voice or in text needs nothing more:
     // it's already part of a run that carries on by itself. A task asked on a chat carries on in that chat.
     const inRun = o.by === "voice" || o.by === "chat";
+    // A coding job asked for it (§8.2): the job carries on, not a turn in the owner's thread.
+    if (this.#coding.waitsOn(id)) {
+      void this.keepAliveWhile(() => this.#coding.settled(id, ok));
+      return { ok, text: results.map((r) => r.text).join(" ") };
+    }
     if (!inRun) {
       const chat = item.source.detail?.chat as unknown as ChatVia | undefined;
       // What it did and gave back goes with the yes, so the run reports it instead of asking again for what's done.
@@ -4261,6 +4489,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (!item || item.kind !== "approval" || item.state !== "scheduled" || item.due_at > Date.now()) return;
     finish(this.#sql, id, "failed", null, { expired: true });
     const row = this.#approvalSettled(id);
+    if (this.#coding.waitsOn(id)) void this.keepAliveWhile(() => this.#coding.settled(id, false));
     if (row && !this.#looking()) {
       await this.#outbox.notify(
         { id: row.id, run_id: item.source.run_id ?? null, text: `Your OK for ${item.title} ran out, so it didn't happen.` },
@@ -4417,6 +4646,10 @@ function summary(body: Record<string, unknown>): string {
 const yieldNow = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 /** A helper's instructions: no personality, one job, hand back the result (§8.1). */
+/** What a long research job's helper is told besides a helper's usual brief. */
+const RESEARCH_BRIEF =
+  "This is a long research job: you have hours, so take them. Search from several angles, read the sources themselves rather than their snippets, compare them, and notice where they disagree. Hand back a full answer: the finding or the pick first, then why, with each claim marked with its source's number, and the list of sources you read (title, address, and what each one adds, in a line).";
+
 function helperSystem(settings: Settings, now: Date): string {
   const name = settings.assistant_name;
   const owner = settings.owner_name.trim() || "the owner";

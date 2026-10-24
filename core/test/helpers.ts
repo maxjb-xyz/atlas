@@ -237,6 +237,8 @@ import { seams } from "../src/agent/seams";
 import { allowedHost, fill, textual } from "../src/extensions";
 import { type Extension, useFetch } from "../../extensions/sdk";
 import brave from "../../extensions/brave";
+import claudeCode from "../../extensions/claude-code";
+import codex from "../../extensions/codex";
 import exa from "../../extensions/exa";
 import github from "../../extensions/github";
 import gmail from "../../extensions/gmail";
@@ -252,6 +254,8 @@ import telegram from "../../extensions/telegram";
 
 export const EXTENSIONS: Record<string, Extension> = {
   brave,
+  "claude-code": claudeCode,
+  codex,
   exa,
   github,
   gmail,

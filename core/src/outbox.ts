@@ -220,6 +220,8 @@ export interface Channels {
   chat?(text: string): Promise<boolean>;
   /** Sends a face's answer in the owner's name, once they've OK'd it (§7.2). */
   faceReply?(a: Extract<Action, { kind: "face_reply" }>): Promise<{ ok: boolean; text: string }>;
+  /** Opens a coding job's pull request on its code host (§8.2), and says where. */
+  pullRequest?(a: Extract<Action, { kind: "pull_request" }>): Promise<{ number: number; link: string }>;
   /** Puts a call to an offline device on the clock, to run when it's back. */
   later?(c: {
     node: string;
@@ -453,6 +455,28 @@ export class Outbox {
     }
     if (a.kind === "mcp_add") return this.#connect(a, o);
     if (a.kind === "email") return this.#mail(a, o);
+    if (a.kind === "pull_request") {
+      if (!this.channels.pullRequest) return { ok: false, text: "Pull requests can't be opened from here." };
+      if (scrub(`${a.title}\n${a.body}`, this.secrets()) !== `${a.title}\n${a.body}`)
+        return { ok: false, text: "The pull request's words held one of your secrets, so it wasn't opened." };
+      try {
+        const pr = await this.channels.pullRequest(a);
+        this.receipt(o.run_id, {
+          channel: "code",
+          to: a.repo,
+          text: a.title,
+          link: pr.link,
+          by: o.by,
+          ok: true,
+          checks: { secrets: "passed" },
+        });
+        return { ok: true, text: pr.link };
+      } catch (err) {
+        const text = `Couldn't open the pull request on ${a.repo}: ${err instanceof Error ? err.message : String(err)}`;
+        this.receipt(o.run_id, { channel: "code", to: a.repo, text: a.title, by: o.by, ok: false, error: text });
+        return { ok: false, text };
+      }
+    }
     if (a.kind === "face_reply") {
       if (!this.channels.faceReply) return { ok: false, text: "A face's answer can't be sent from here." };
       if (scrub(a.text, this.secrets()) !== a.text) return { ok: false, text: "The answer held one of your secrets, so it wasn't sent." };

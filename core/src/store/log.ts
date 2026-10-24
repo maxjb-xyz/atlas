@@ -24,6 +24,8 @@ export type LogKind =
   | "context.summary"
   /** What a helper handed back when its job ended (§8.1). */
   | "job.result"
+  /** A coding job's question for the owner (§8.2), which Inbox shows until it's answered. */
+  | "job.question"
   /** An area was created, changed, merged or archived, or the owner moved an item's areas (§6). */
   | "area.change"
   /** An automation was made, changed, turned on or paused, or deleted (§13). */

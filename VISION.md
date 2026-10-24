@@ -334,8 +334,8 @@ On Cloudflare, helpers are the Agents SDK's sub-agents (dynamic agents, with the
 ### 8.2 Coding jobs: Atlas as the middleman
 
 A coding job runs whichever coding agent you choose (Claude Code, Codex, OpenCode, Gemini CLI, or others) over ACP, the Agent Client Protocol.
-- **Where it runs:** in a Cloudflare Sandbox, or on your own machine through a node.
-- **Repos:** from GitHub or Cloudflare Artifacts.
+- **Where it runs:** always in the workspace (§9.1), the owner's own container on Cloudflare, never on a node (decided 2026-10-23, for M6). The coding agent is a process there, with the workspace's network rules: it reaches only the sites allowed, and its key is added at the gate, outside the container.
+- **Repos:** from GitHub, through its extension (§17), which clones, pushes the branch and opens the pull request (decided 2026-10-23, for M6).
 - **Plans:** Codex runs on your ChatGPT plan. Claude Code needs an API key or whatever Anthropic's terms allow at the time (§18).
 
 Atlas acts as the middleman:
@@ -682,7 +682,7 @@ A node is a device that dials out to Atlas and offers local senses and hands.
 
 Kinds of node:
 - **Phone app:** location, push notifications, voice, health data, contacts, Shortcuts, SMS on Android.
-- **Desktop app:** files, notifications, the voice overlay, local commands, iMessage on a Mac, coding jobs on your own repos.
+- **Desktop app:** files, notifications, the voice overlay, local commands, iMessage on a Mac. Coding jobs don't run here; they run in the workspace (§8.2).
 - **Home node** (a Raspberry Pi, a NAS, an old laptop): Home Assistant and home devices, cameras, an optional local model.
 - **Browser extension:** the page you're on, and acting in your signed-in browser with your permission.
 
@@ -778,7 +778,7 @@ Everything installs from the app: browse, preview what it can touch, install, un
 | Multi-step automations | The person agent itself: each automation's next run is an agenda item, and its steps run as one of the agent's runs (decided in M2; Workflows weren't needed) |
 | Workspace | Sandboxes: shell, interpreters, files, preview URLs, network rules, credential injection, terminals |
 | Browser | Browser Run: live view, human in the loop, recordings |
-| Repos | Artifacts (git-compatible) |
+| Repos | GitHub, through its extension (§8.2); Artifacts (git-compatible) later, for a project with no GitHub repo |
 | Code Mode and extensions | Dynamic Workers |
 | Decide and extract | Workers AI: Clef, Clairic |
 | Embeddings and search | Workers AI embeddings and full-text search, kept in each person's agent beside their records (a Vectorize index if one person's memory outgrows that) |

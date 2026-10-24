@@ -12,6 +12,7 @@
 // starts, so files outlive the container.
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import { BRIDGE_JS, BRIDGE_KEY_HEADER, BRIDGE_PATH, BRIDGE_PORT, BRIDGE_VERSION } from "./bridge";
 
 const IMAGE = "cloudflare/debian-trixie";
 /** How long the container stays up after the last use. Container time is billed while it waits. */
@@ -45,6 +46,58 @@ const KEEP_LIMIT = 200_000_000;
 /** The most of a command's output that comes back. */
 const OUTPUT_LIMIT = 200_000;
 const BACKUP = (ws: string) => `workspace/${ws}.tgz`;
+/**
+ * A job's own folder: its repo, its agent's home, the agent's log. Outside
+ * /workspace (a job keeps itself, jobSave), and owned by the job's own user:
+ * its agent and every command Atlas runs on its work run as that user, which
+ * can't read /workspace, other jobs or root's processes.
+ */
+const JOBS = "/srv/jobs";
+const jobDir = (id: string) => `${JOBS}/${id}`;
+/** Where Atlas copies a job's commits to push them: root's only. */
+const PUSH = "/srv/push";
+/** A job's user: its own name and ids, made the first time it's needed in a container. */
+const userOf = (id: string) => `aj${id.replace(/[^a-z0-9]/g, "").slice(-12)}`;
+const JOB_SAVE = (ws: string, id: string, what: "repo.bundle" | "home.tgz") => `jobs/${ws}/${id}/${what}`;
+/** A job's saved home bigger than this isn't kept (it says so). */
+const HOME_LIMIT = 50_000_000;
+/** Where coding agents are installed: outside /workspace, so they don't count against its copy. */
+const AGENTS = "/opt/atlas/agents";
+/** npm's registry, opened to the workspace while an agent installs. */
+const NPM_HOSTS = ["registry.npmjs.org"];
+/** A job's work kept in R2 bigger than this isn't kept (it says so): it's read into memory to keep it. */
+const SAVE_LIMIT = 40_000_000;
+/** A job's entry on the gate lasts this long unless its agent is read again. */
+const JOB_GATE_MS = 20 * 60_000;
+const safeId = (id: string) => {
+  if (!/^[a-z0-9_]{3,64}$/.test(id)) throw new Error(`"${id}" isn't a job id the workspace takes.`);
+  return id;
+};
+
+/** A coding agent to run: the npm package with its ACP server, and the command it installs. */
+export interface AgentSpec {
+  package: string;
+  /** More packages to install beside it, pinned (the agent's own binary, so its version can't drift). */
+  with?: string[];
+  bin: string;
+  args?: string[];
+}
+
+/** How a job's agent is doing, as the bridge says. */
+export interface AgentStatus {
+  running: boolean;
+  exit: number | null;
+  signal: string | null;
+  /** The last line's number. */
+  last: number;
+  /** The end of what it printed on stderr: the reason, when it ended. */
+  stderr: string;
+}
+
+export type JobRead =
+  | ({ ok: true; lines: Array<{ seq: number; text: string }> } & AgentStatus)
+  /** The container (or its bridge, or this job's agent) is gone: asleep, restarted or lost. */
+  | { ok: false; gone: true; why: string };
 
 const CERTS = "/etc/ssl/certs/ca-certificates.crt";
 const GATE_CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
@@ -82,11 +135,34 @@ const ENV: Record<string, string> = {
   PIP_CERT: CERTS,
   NODE_EXTRA_CA_CERTS: GATE_CA,
   GIT_SSL_CAINFO: CERTS,
+  // Codex's own binary reads its certificates from here.
+  CODEX_CA_CERTIFICATE: CERTS,
 };
 
 /** One line of a run's stream. */
 export type RunEvent =
   { note: string } | { out: string } | { done: { exit: number; ms: number; blocked: string[]; kept: string } } | { error: string };
+
+/**
+ * A key the gate adds to a site's requests, in the header that site reads
+ * (`authorization` for most, `x-api-key` for some). With `nonce`, only a
+ * request carrying it in `x-atlas-key` gets the key: Atlas's own git steps
+ * carry one, so a coding agent running beside them can't use the token.
+ */
+export interface KeyRule {
+  host: string;
+  header: string;
+  value: string;
+  nonce?: string;
+  /** Only requests to this exact host whose path starts with this (one repo's git address): not its subdomains or other paths. */
+  path?: string;
+}
+
+/** What a running job adds to the gate while it runs: its agent's model site, with its key. */
+export interface JobGate {
+  allow: string[];
+  rules: KeyRule[];
+}
 
 interface Gate {
   /** The workspace's name, so a refusal can be noted there. */
@@ -95,9 +171,24 @@ interface Gate {
   allow: string[];
   /** A header value to add to a host's requests (a vault key, as "Bearer …"). */
   inject: Record<string, string>;
+  /** Keys in other headers, or only for requests that carry a nonce. */
+  rules?: KeyRule[];
 }
 
 const allowed = (host: string, allow: string[]) => allow.some((a) => host === a || host.endsWith(`.${a}`));
+const covers = (host: string, h: string) => host === h || host.endsWith(`.${h}`);
+/**
+ * What a command carrying keys adds to the gate while it runs: the keys, and
+ * their sites, which it has to reach (a clone needs the code host even when
+ * the owner never opened it to the workspace). The site is open to anything
+ * in the container for that while; the key still goes only with the nonce.
+ */
+export function carrying(rules: KeyRule[]): { allow: string[]; rules: KeyRule[] } {
+  return { allow: [...new Set(rules.map((r) => r.host))], rules };
+}
+
+/** The header Atlas's own commands carry their nonce in. The gate takes it off before the request leaves. */
+export const NONCE_HEADER = "x-atlas-key";
 
 /**
  * Every request the container makes comes here (§9.1, §15). An approved
@@ -107,20 +198,90 @@ const allowed = (host: string, allow: string[]) => allow.some((a) => host === a 
  */
 export class WorkspaceEgress extends WorkerEntrypoint<Env, Gate> {
   override async fetch(req: Request): Promise<Response> {
-    const host = new URL(req.url).hostname.toLowerCase();
-    const gate = this.ctx.props;
-    if (!allowed(host, gate.allow)) {
-      await this.env.WORKSPACE.getByName(gate.ws)
-        .noteBlocked(host)
+    const out = throughGate(req, this.ctx.props);
+    if ("refused" in out) {
+      await this.env.WORKSPACE.getByName(this.ctx.props.ws)
+        .noteBlocked(out.refused)
         .catch(() => {});
-      return new Response(`Atlas's workspace can't reach ${host}: the owner hasn't allowed it yet.\n`, { status: 403 });
+      return new Response(`Atlas's workspace can't reach ${out.refused}: the owner hasn't allowed it yet.\n`, { status: 403 });
     }
-    const key = Object.entries(gate.inject).find(([h]) => host === h || host.endsWith(`.${h}`))?.[1];
-    if (!key) return fetch(req);
-    const r = new Request(req);
-    r.headers.set("authorization", key);
-    return fetch(r);
+    const res = await fetch(out.request);
+    // A refusal of Atlas's own command (or of a keyed request) is kept with the site's own words, for its error.
+    if (res.status >= 400 && (out.keyed || out.nonce)) {
+      const url = new URL(out.request.url);
+      const keep = [
+        "retry-after",
+        "x-ratelimit-limit",
+        "x-ratelimit-remaining",
+        "x-ratelimit-reset",
+        "x-ratelimit-resource",
+        "x-github-request-id",
+        "www-authenticate",
+        "server",
+      ];
+      const note: GateNote = {
+        host: url.hostname,
+        path: url.pathname,
+        keyed: out.keyed,
+        nonce: out.nonce,
+        status: res.status,
+        words: (
+          await res
+            .clone()
+            .text()
+            .catch(() => "")
+        )
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 400),
+        headers: Object.fromEntries(keep.map((h) => [h, res.headers.get(h)]).filter((x): x is [string, string] => x[1] != null)),
+      };
+      console.error(JSON.stringify({ at: "workspace.gate", ...note }));
+      await this.env.WORKSPACE.getByName(this.ctx.props.ws)
+        .noteGate(note)
+        .catch(() => {});
+    }
+    return res;
   }
+}
+
+/**
+ * What the gate does to one request: refuses a site that isn't allowed, or
+ * lets it out with its keys put in. A key behind a nonce goes only with a
+ * request carrying that nonce, and the nonce never leaves the gate.
+ */
+export function throughGate(
+  req: Request,
+  gate: Omit<Gate, "ws">,
+): { refused: string } | { request: Request; keyed: boolean; nonce: boolean } {
+  const host = new URL(req.url).hostname.toLowerCase();
+  if (!allowed(host, gate.allow)) return { refused: host };
+  const nonce = req.headers.get(NONCE_HEADER);
+  const path = new URL(req.url).pathname;
+  const rules = (gate.rules ?? []).filter(
+    (r) => (r.path ? host === r.host && path.startsWith(r.path) : covers(host, r.host)) && (!r.nonce || r.nonce === nonce),
+  );
+  const key = Object.entries(gate.inject).find(([h]) => covers(host, h))?.[1];
+  if (!key && !rules.length && nonce == null) return { request: req, keyed: false, nonce: false };
+  const r = new Request(req);
+  r.headers.delete(NONCE_HEADER);
+  if (key) r.headers.set("authorization", key);
+  for (const rule of rules) r.headers.set(rule.header, rule.value);
+  return { request: r, keyed: Boolean(key || rules.length), nonce: nonce != null };
+}
+
+/** What the gate saw of a request Atlas's own command made that the site refused: so the failure can say what happened. */
+export interface GateNote {
+  host: string;
+  path: string;
+  /** A key was added to it. */
+  keyed: boolean;
+  /** It carried a nonce (Atlas's own command), matching or not. */
+  nonce: boolean;
+  status: number;
+  /** What the site said: its words, and its rate-limit headers. */
+  words: string;
+  headers: Record<string, string>;
 }
 
 interface Saved {
@@ -184,32 +345,86 @@ export class Workspace extends DurableObject<Env> {
     this.#blocked.add(host);
   }
 
+  /** A site refused one of Atlas's own or keyed requests: kept for the command's error. */
+  async noteGate(note: GateNote): Promise<void> {
+    this.#gateNotes = [...this.#gateNotes, note].slice(-10);
+  }
+
+  #gateNotes: GateNote[] = [];
+
+  /** The gate's notes since `since`, in words: what it added and what the site said. */
+  #gateSaid(since: number): string {
+    const notes = this.#gateNotes.slice(since);
+    if (!notes.length) return "";
+    const n = notes.at(-1)!;
+    const headers = Object.entries(n.headers)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(", ");
+    return ` (the gate ${n.keyed ? "added git's key" : n.nonce ? "had a nonce but no key matched it" : "added no key"}; ${n.host} answered ${n.status} to ${n.path}${n.words ? `, saying "${n.words}"` : ""}${headers ? `; ${headers}` : ""})`;
+  }
+
   /** Whether the container is up now. */
   async status(): Promise<{ running: boolean; ready: boolean }> {
     const saved = await this.#saved();
     return { running: Boolean(this.ctx.container?.running), ready: saved.snapshot?.base === BASE };
   }
 
+  /** Runs a command and waits for all it prints. `stderr: "pipe"` keeps errors out of what it prints, for bytes kept as they are (a bundle, a tarball). */
   async #exec(
     cmd: string,
-    o: { stdin?: ReadableStream; timeoutS?: number } = {},
-  ): Promise<{ exit: number; out: string; bytes: ArrayBuffer }> {
-    const p = await this.#c.exec(["bash", "-lc", o.timeoutS ? `timeout -k 5 ${o.timeoutS} bash -lc ${sh(cmd)}` : cmd], {
-      env: ENV,
+    o: { stdin?: ReadableStream; timeoutS?: number; stderr?: "pipe"; as?: string } = {},
+  ): Promise<{ exit: number; out: string; bytes: ArrayBuffer; err: string }> {
+    const timed = o.timeoutS ? `timeout -k 5 ${o.timeoutS} bash -lc ${sh(cmd)}` : cmd;
+    const user = o.as ? await this.#jobUser(o.as) : null;
+    const p = await this.#c.exec(["bash", "-lc", user ? `runuser -u ${user.name} -- bash -lc ${sh(timed)}` : timed], {
+      env: { ...ENV, ...(user ? { HOME: `${jobDir(o.as!)}/home` } : {}) },
       cwd: "/",
-      stderr: "combined",
+      stderr: o.stderr ?? "combined",
       ...(o.stdin ? { stdin: o.stdin } : {}),
     });
-    const r = await p.output();
-    return { exit: r.exitCode, out: new TextDecoder().decode(r.stdout), bytes: r.stdout };
+    const r = (await p.output()) as { exitCode: number; stdout: ArrayBuffer; stderr?: ArrayBuffer };
+    return {
+      exit: r.exitCode,
+      out: new TextDecoder().decode(r.stdout),
+      bytes: r.stdout,
+      err: r.stderr ? new TextDecoder().decode(r.stderr) : "",
+    };
   }
 
-  async #gate(allow: string[], inject: Record<string, string>): Promise<void> {
+  /**
+   * The container has one gate, made of: the owner's sites and vault keys;
+   * what each command running now adds (an install's npm, a git step's key
+   * behind its nonce), until it ends; and each running job's model site and
+   * key, while its entry's lease holds (renewed as the job's agent is read).
+   */
+  async #gate(): Promise<void> {
+    this.#base ??= (await this.ctx.storage.get<{ allow: string[]; inject: Record<string, string> }>("base_gate")) ?? {
+      allow: [],
+      inject: {},
+    };
+    const now = Date.now();
+    const jobs = Object.values((await this.ctx.storage.get<Record<string, JobGate & { until?: number }>>("job_gates")) ?? {}).filter(
+      (j) => (j.until ?? 0) > now,
+    );
+    const extra = [...this.#extra.values()];
+    // The gate can't tell who's asking, so while a job's agent runs, the owner's vault keys stay off it: an agent could
+    // otherwise reach their sites with them. The owner's own commands then reach those sites without the key.
+    this.#keysOff = jobs.length > 0 && Object.keys(this.#base.inject).length > 0;
+    if (jobs.length) {
+      const next = Math.min(...jobs.map((j) => j.until ?? now));
+      await this.ctx.storage.setAlarm(next + 1_000).catch(() => {});
+    }
     const gw = (this.ctx.exports as unknown as { WorkspaceEgress(o: { props: Gate }): Fetcher }).WorkspaceEgress({
-      props: { ws: this.#name, allow, inject },
+      props: {
+        ws: this.#name,
+        allow: [...new Set([...this.#base.allow, ...extra.flatMap((e) => e.allow), ...jobs.flatMap((j) => j.allow)])],
+        inject: jobs.length ? {} : this.#base.inject,
+        rules: [...extra.flatMap((e) => e.rules), ...jobs.flatMap((j) => j.rules)],
+      },
     });
     await this.#c.interceptOutboundHttps("*", gw);
     await this.#c.interceptAllOutboundHttp(gw);
+    this.#gated = true;
   }
 
   /**
@@ -244,7 +459,8 @@ export class Workspace extends DurableObject<Env> {
           ...(snap ? { containerSnapshot: { id: snap.id } } : { image: IMAGE }),
           entrypoint: ["sleep", "infinity"],
           enableInternet: false,
-          instance: "basic",
+          // A coding job builds and tests real projects: half a vCPU and 4 GB (the smallest, lite, has 256 MB).
+          instance: "standard-1",
         });
         await this.#c.setInactivityTimeout(IDLE_MS);
         const ok = await this.#exec("true").then(
@@ -265,7 +481,10 @@ export class Workspace extends DurableObject<Env> {
       if (!ok) throw new Error("The workspace container didn't start.");
       // The gate's certificate appears once a gate is registered, so register one (setup's package sites, or nothing) first.
       const settingUp = !(await this.#saved()).snapshot;
-      await this.#gate(settingUp ? SETUP_HOSTS : [], {});
+      // Setting up reaches Debian's package sites only, for this step.
+      if (settingUp) this.#extra.set("setup", { allow: SETUP_HOSTS, rules: [] });
+      await this.#gate();
+      this.#extra.delete("setup");
       if (settingUp) {
         // The managed image has no CA bundle (no ca-certificates package), so the packages come first,
         // over plain HTTP: apt checks every package's signature, and HTTPS would need the bundle it's installing.
@@ -287,6 +506,9 @@ export class Workspace extends DurableObject<Env> {
         const r = await this.#exec("tar xzf - -C /", { stdin: backup.body });
         if (r.exit !== 0) await say(`Couldn't put /workspace back from its copy: ${r.out.slice(-300)}`);
       }
+      // Jobs' users can't read the owner's files, each other's folders, or where Atlas pushes from.
+      const fence = await this.#exec(`chmod 700 /workspace && mkdir -p ${JOBS} ${PUSH} && chmod 711 ${JOBS} && chmod 700 ${PUSH}`);
+      if (fence.exit !== 0) throw new Error(`The workspace couldn't set its folders' rights: ${fence.out.slice(-300)}`);
       const mark = await this.#exec(`echo ${sh(BASE)} > ${READY}`);
       if (mark.exit !== 0) throw new Error(`The workspace couldn't mark itself ready: ${mark.out.slice(-300)}`);
       this.#ready = true;
@@ -327,21 +549,43 @@ export class Workspace extends DurableObject<Env> {
     timeout_s: number;
     allow: string[];
     inject: Record<string, string>;
+    /** Where it runs: /workspace, or a job's folder. */
+    cwd?: string;
+    /** Keys for this command only, such as a git token behind a nonce. */
+    rules?: KeyRule[];
+    /** More environment for this command (a git setting carrying a nonce: the environment, unlike the command line, only root can read). */
+    env?: Record<string, string>;
+    /** Runs as this job's user, in its folder: anything the job's agent wrote runs with no more than the agent's rights. */
+    as?: string;
   }): Promise<ReadableStream<Uint8Array>> {
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const w = writable.getWriter();
     const enc = new TextEncoder();
     const send = (e: RunEvent) => w.write(enc.encode(`${JSON.stringify(e)}\n`));
+    const key = `run:${crypto.randomUUID()}`;
     void (async () => {
       const t0 = Date.now();
       try {
         await this.#up((note) => send({ note }));
-        await this.#gate(o.allow, o.inject);
+        const cwd = o.cwd ?? "/workspace";
+        if (cwd !== "/workspace" && !cwd.startsWith(`${JOBS}/`) && !cwd.startsWith(`${PUSH}/`))
+          throw new Error(`Commands run in /workspace or a job's folder, not ${cwd}.`);
+        if (o.as && !cwd.startsWith(`${jobDir(safeId(o.as))}`)) throw new Error("A job's commands run in its own folder.");
+        // What's in a command's own environment (a nonce) never goes to a job's user.
+        if (o.as && o.env && Object.keys(o.env).length) throw new Error("A job's commands don't take an environment of their own.");
+        await this.#setBase({ allow: o.allow, inject: o.inject });
+        if (o.rules?.length) this.#extra.set(key, carrying(o.rules));
+        await this.#gate();
         this.#blocked.clear();
-        const p = await this.#c.exec(["bash", "-lc", `cd /workspace && timeout -k 5 ${o.timeout_s} bash -lc ${sh(o.command)}`], {
-          env: ENV,
-          stderr: "combined",
-        });
+        const inner = `cd ${sh(cwd)} && timeout -k 5 ${o.timeout_s} bash -lc ${sh(o.command)}`;
+        const user = o.as ? await this.#jobUser(o.as) : null;
+        const p = await this.#c.exec(
+          ["bash", "-lc", user ? `runuser -u ${user.name} -- bash -lc ${sh(inner)}` : `mkdir -p ${sh(cwd)} && ${inner}`],
+          {
+            env: { ...ENV, ...(user ? { HOME: `${jobDir(o.as!)}/home` } : {}), ...(o.env ?? {}) },
+            stderr: "combined",
+          },
+        );
         let sent = 0;
         const reader = p.stdout!.getReader();
         const dec = new TextDecoder();
@@ -355,27 +599,480 @@ export class Workspace extends DurableObject<Env> {
           }
         }
         const exit = await p.exitCode;
+        // A key behind a nonce is for this command only.
+        if (this.#extra.delete(key)) await this.#gate();
         const kept = await this.#keep();
+        if (this.#keysOff) await send({ note: "Your vault keys aren't added to the workspace's requests while a coding job runs." });
         await send({ done: { exit, ms: Date.now() - t0, blocked: [...this.#blocked], kept } });
       } catch (err) {
         console.error(JSON.stringify({ at: "workspace.run", error: err instanceof Error ? err.message : String(err) }));
         await send({ error: err instanceof Error ? err.message : String(err) });
       } finally {
+        if (this.#extra.delete(key)) await this.#gate().catch(() => {});
         await w.close().catch(() => {});
       }
     })();
     return readable;
   }
 
-  /** The gate for what the owner does in the terminal: the same sites and keys as Atlas's commands. */
-  async setGate(gate: { allow: string[]; inject: Record<string, string> }): Promise<void> {
-    this.#lastGate = gate;
+  // --- coding jobs (§8.2) -------------------------------------------------------------------------------
+
+  /** The bridge in the container (core/src/bridge.ts), started if it isn't running. Only while the container is up. */
+  async #bridge(): Promise<Fetcher> {
+    const port = this.#c.getTcpPort(BRIDGE_PORT);
+    const key = await this.#bridgeKey();
+    const health = async () =>
+      port
+        .fetch("http://bridge/health", { headers: { [BRIDGE_KEY_HEADER]: key } })
+        .then(async (r) => (r.ok ? ((await r.json()) as { version: string; jobs: string[] }) : null))
+        .catch(() => null);
+    const h = await health();
+    // An older bridge with agents running keeps going until they end; replacing it would stop them.
+    if (h && (h.version === BRIDGE_VERSION || h.jobs.length)) return port;
+    const write = await this.#exec(`mkdir -p /opt/atlas && cat > ${BRIDGE_PATH} && chmod 700 ${BRIDGE_PATH}`, {
+      stdin: new Response(BRIDGE_JS).body!,
+    });
+    if (write.exit !== 0) throw new Error(`Couldn't put the bridge in the workspace: ${write.out.slice(-300)}`);
+    if (h) {
+      await port
+        .fetch("http://bridge/exit", { method: "POST", headers: { [BRIDGE_KEY_HEADER]: await this.#bridgeKey() } })
+        .catch(() => null);
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    // Started on its own, with nothing of this command's held open: only the exit code is waited for, never the
+    // bridge, which runs until the container stops.
+    const p = await this.#c.exec(
+      [
+        "bash",
+        "-lc",
+        `command -v node >/dev/null || { echo "The workspace has no node to run the bridge."; exit 1; }; setsid nohup node ${BRIDGE_PATH} </dev/null >/var/log/atlas-bridge.log 2>&1 &`,
+      ],
+      // Its key goes in its environment, which only root can read: no job's agent can drive it.
+      { env: { ...ENV, ATLAS_BRIDGE_KEY: await this.#bridgeKey() }, cwd: "/" },
+    );
+    const exit = await p.exitCode;
+    if (exit !== 0) throw new Error("The workspace has no node to run the bridge.");
+    for (let i = 0; i < 40; i++) {
+      if ((await health())?.version === BRIDGE_VERSION) return port;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    const log = await this.#exec("tail -20 /var/log/atlas-bridge.log");
+    throw new Error(`The bridge didn't start in the workspace: ${log.out.slice(-500) || "it printed nothing"}`);
   }
 
-  #lastGate: { allow: string[]; inject: Record<string, string> } = { allow: [], inject: {} };
+  async #bridgeCall<T>(path: string, init?: { body: unknown }): Promise<T> {
+    const port = await this.#bridge();
+    const headers = { [BRIDGE_KEY_HEADER]: await this.#bridgeKey() };
+    const res = await port.fetch(`http://bridge${path}`, init ? { method: "POST", body: JSON.stringify(init.body), headers } : { headers });
+    const out = (await res.json().catch(() => ({ error: `The bridge answered ${res.status} with something that isn't JSON.` }))) as T & {
+      error?: string;
+    };
+    if (!res.ok || out.error) throw new Error(out.error ?? `The bridge answered ${res.status}.`);
+    return out;
+  }
+
+  /** The bridge's key, made once and kept. */
+  async #bridgeKey(): Promise<string> {
+    this.#key ??= await this.ctx.storage.get<string>("bridge_key");
+    if (!this.#key) {
+      this.#key = [...crypto.getRandomValues(new Uint8Array(24))].map((b) => b.toString(16).padStart(2, "0")).join("");
+      await this.ctx.storage.put("bridge_key", this.#key);
+    }
+    return this.#key;
+  }
+
+  #key: string | undefined;
+
+  /** A job's own user, made the first time it's needed in this container. */
+  async #jobUser(id: string): Promise<{ name: string; uid: number; gid: number }> {
+    const name = userOf(safeId(id));
+    const r = await this.#exec(
+      `id -u ${name} >/dev/null 2>&1 || useradd -M -U -d ${sh(`${jobDir(id)}/home`)} -s /bin/bash ${name} 2>&1; echo "$(id -u ${name}) $(id -g ${name})"`,
+    );
+    const [uid, gid] = r.out.trim().split("\n").at(-1)!.trim().split(/\s+/).map(Number);
+    if (!Number.isInteger(uid) || !Number.isInteger(gid) || !uid)
+      throw new Error(`The workspace couldn't make the job's user: ${r.out.slice(-300)}`);
+    return { name, uid: uid!, gid: gid! };
+  }
+
+  /** Installs a coding agent if this container doesn't have it yet, and says where its command is. */
+  async #install(agent: AgentSpec, say: (note: string) => Promise<void>): Promise<string> {
+    const pinned = /^(@[a-z0-9._-]+\/)?[a-z0-9._-]+@[0-9A-Za-z.+-]+$/;
+    const all = [agent.package, ...(agent.with ?? [])];
+    if (!all.every((x) => pinned.test(x)) || !/^[a-z0-9._-]+$/.test(agent.bin))
+      throw new Error(`The coding agent ${agent.package} isn't named as pinned npm packages and a command.`);
+    const dir = `${AGENTS}/${agent.package.replace(/[^a-zA-Z0-9.-]+/g, "_")}`;
+    const bin = `${dir}/node_modules/.bin/${agent.bin}`;
+    if ((await this.#exec(`test -x ${sh(bin)}`)).exit === 0) return bin;
+    await say(`Installing ${agent.package} in the workspace (a minute or two, the first time after it sleeps).`);
+    const key = `install:${crypto.randomUUID()}`;
+    this.#extra.set(key, { allow: NPM_HOSTS, rules: [] });
+    try {
+      await this.#gate();
+      const r = await this.#exec(
+        `mkdir -p ${sh(dir)} && cd ${sh(dir)} && npm install --no-audit --no-fund --loglevel=error ${all.map(sh).join(" ")} 2>&1 | tail -30; test -x ${sh(bin)}`,
+        { timeoutS: 900 },
+      );
+      if (r.exit !== 0) throw new Error(`Installing ${agent.package} in the workspace failed: ${r.out.slice(-800)}`);
+      return bin;
+    } finally {
+      this.#extra.delete(key);
+      await this.#gate().catch(() => {});
+    }
+  }
+
+  /**
+   * Starts a job's coding agent through the bridge, unless it's already
+   * running there. The job's folder must be ready (its repo cloned or put
+   * back). The agent runs with exactly `env`, plus the container's own
+   * certificate settings, and the gate carries its key while the job runs.
+   */
+  async jobAgent(o: {
+    id: string;
+    agent: AgentSpec;
+    env: Record<string, string>;
+    gate: JobGate;
+  }): Promise<AgentStatus & { already: boolean; notes: string[] }> {
+    const id = safeId(o.id);
+    const notes: string[] = [];
+    const say = async (n: string) => void notes.push(n);
+    await this.#up(say);
+    await this.#setJobGate(id, o.gate);
+    const bin = await this.#install(o.agent, say);
+    await this.#gate();
+    const dir = jobDir(id);
+    const user = await this.#jobUser(id);
+    const own = await this.#exec(
+      // Only the folder and its home are given to the user here, never a tree it could have planted links in: the repo
+      // was made by root in a staging folder and handed over there (jobClone).
+      `mkdir -p ${sh(`${dir}/home`)} && chown -h ${user.uid}:${user.gid} ${sh(dir)} ${sh(`${dir}/home`)} && chmod 700 ${sh(dir)}`,
+    );
+    if (own.exit !== 0) throw new Error(`The workspace couldn't give the job its folder: ${own.out.slice(-300)}`);
+    const env: Record<string, string> = {
+      ...ENV,
+      PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      HOME: `${dir}/home`,
+      ...o.env,
+    };
+    const out = await this.#bridgeCall<AgentStatus & { already: boolean }>("/start", {
+      body: { id, command: [bin, ...(o.agent.args ?? [])], cwd: `${dir}/repo`, env, log: `${dir}/agent.log`, uid: user.uid, gid: user.gid },
+    });
+    return { ...out, notes };
+  }
+
+  /** Writes lines to a job's agent. */
+  async jobSend(id: string, lines: string[]): Promise<AgentStatus> {
+    return this.#bridgeCall<AgentStatus>(`/send?id=${safeId(id)}`, { body: { lines } });
+  }
+
+  /**
+   * The lines a job's agent printed after `after`, waiting up to `wait_ms`
+   * for one. Never starts the container: when it's asleep or the agent is
+   * gone, says so. `gate` keeps the job's key on the gate (a sign-in's token
+   * that was renewed, and the entry's lease); each read is also the
+   * Durable Object's activity that keeps the container up while the job works.
+   */
+  async jobRead(id: string, after: number, wait_ms: number, gate?: JobGate): Promise<JobRead> {
+    safeId(id);
+    if (!this.ctx.container?.running) return { ok: false, gone: true, why: "The workspace is asleep, so the agent isn't running." };
+    if (gate) {
+      const had = (await this.ctx.storage.get<Record<string, JobGate & { until?: number }>>("job_gates"))?.[id];
+      const changed = JSON.stringify({ allow: had?.allow, rules: had?.rules }) !== JSON.stringify({ allow: gate.allow, rules: gate.rules });
+      if (changed || !had?.until || had.until - Date.now() < JOB_GATE_MS / 2) await this.#setJobGate(id, gate);
+      // After a deploy, the gate's handler is still the old version's until it's set again.
+      if (changed || !this.#gated) await this.#gate();
+    }
+    try {
+      const r = await this.#bridgeCall<{ lines: Array<{ seq: number; text: string }> } & AgentStatus>(
+        `/read?id=${id}&after=${after}&wait=${Math.max(0, Math.min(25_000, wait_ms))}`,
+      );
+      return { ok: true, ...r };
+    } catch (err) {
+      return { ok: false, gone: true, why: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Stops a job's agent and everything it started, and takes its key off the gate. Its folder stays until the job is dropped. */
+  async jobStop(id: string): Promise<void> {
+    safeId(id);
+    await this.#setJobGate(id, null);
+    if (!this.ctx.container?.running) return;
+    await this.#gate().catch(() => {});
+    await this.#bridgeCall(`/stop?id=${id}`, { body: {} }).catch(() => {});
+    // Anything of the job's user still running (a server it left behind, a process that left its group) goes too,
+    // so nothing of the agent's runs beside Atlas's next command.
+    const name = userOf(id);
+    await this.#exec(
+      `uid=$(id -u ${name} 2>/dev/null) || exit 0; for i in 1 2 3 4 5; do left=""; for p in /proc/[0-9]*; do [ "$(stat -c %u "$p" 2>/dev/null)" = "$uid" ] && { kill -9 "\${p#/proc/}" 2>/dev/null; left=1; }; done; [ -z "$left" ] && break; sleep 0.3; done; true`,
+    ).catch(() => {});
+  }
+
+  /**
+   * Keeps a job where a new container can find it: its commits since `base`
+   * and the work not yet committed (as a commit of its own, `refs/atlas/wip`)
+   * in a git bundle, and its agent's home as a tarball, both in R2.
+   */
+  async jobSave(id: string, o: { base: string }): Promise<{ ok: boolean; note: string }> {
+    safeId(id);
+    if (!/^[0-9a-f]{7,64}$/.test(o.base)) throw new Error(`"${o.base}" isn't a commit.`);
+    if (!this.ctx.container?.running) return { ok: false, note: "The workspace is asleep; nothing new to keep." };
+    const dir = jobDir(id);
+    const file = `${dir}/keep.bundle`;
+    const bundle = await this.#exec(
+      [
+        `cd ${sh(`${dir}/repo`)}`,
+        // Everything in the folder, as git sees it (ignored files stay out), as a commit beside the branch.
+        `export GIT_INDEX_FILE=${dir}/keep.index`,
+        `rm -f "$GIT_INDEX_FILE" && git read-tree HEAD && git -c core.hooksPath=/dev/null add -A >/dev/null 2>&1`,
+        `tree=$(git write-tree) && wip=$(git -c user.name=Atlas -c user.email=atlas@localhost commit-tree "$tree" -p HEAD -m "Work in progress, kept by Atlas") && git update-ref refs/atlas/wip "$wip"`,
+        `rm -f "$GIT_INDEX_FILE" && unset GIT_INDEX_FILE`,
+        `(git bundle create ${file} --branches refs/atlas/wip ^${o.base} >/dev/null 2>&1 || git bundle create ${file} --branches refs/atlas/wip >/dev/null 2>&1)`,
+        `s=$(stat -c %s ${file}) && if [ "$s" -gt ${SAVE_LIMIT} ]; then rm -f ${file}; echo "The job's work is $((s / 1000000)) MB, over the ${SAVE_LIMIT / 1_000_000} MB that's kept; ignore big generated files in .gitignore." >&2; exit 3; fi`,
+        `cat ${file}; rm -f ${file}`,
+      ].join(" && "),
+      { timeoutS: 120, stderr: "pipe", as: id },
+    );
+    if (bundle.exit !== 0) return { ok: false, note: `Couldn't keep the job's repo: ${bundle.err.slice(-300) || `exit ${bundle.exit}`}` };
+    await this.env.FILES.put(JOB_SAVE(this.#name, id, "repo.bundle"), bundle.bytes);
+    const size = Number((await this.#exec(`du -sb ${sh(`${dir}/home`)} 2>/dev/null | cut -f1`, { as: id })).out.trim()) || 0;
+    if (size > HOME_LIMIT)
+      return {
+        ok: true,
+        note: `The agent's home is ${Math.round(size / 1e6)} MB, too big to keep; a new container starts its session over.`,
+      };
+    // The agent may be writing its session as this reads it: a file that changed meanwhile is still kept (tar's exit 1).
+    const home = await this.#exec(`mkdir -p ${sh(`${dir}/home`)} && tar czf - --warning=no-file-changed -C ${sh(dir)} home; [ $? -le 1 ]`, {
+      timeoutS: 60,
+      stderr: "pipe",
+      as: id,
+    });
+    if (home.exit !== 0)
+      return { ok: true, note: `The agent's home wasn't kept this time: ${home.err.slice(-200) || `exit ${home.exit}`}` };
+    await this.env.FILES.put(JOB_SAVE(this.#name, id, "home.tgz"), home.bytes);
+    return { ok: true, note: "" };
+  }
+
+  /**
+   * Puts a job back after its container was lost: into a repo already
+   * cloned at the job's base, its saved commits, its branch checked out
+   * with the work in progress on top (files the agent deleted stay
+   * deleted), and its agent's home. Says whether there was anything to put back.
+   */
+  async jobRestore(id: string, o: { branch: string }): Promise<{ restored: boolean; note: string }> {
+    safeId(id);
+    if (!/^[A-Za-z0-9._/-]{1,120}$/.test(o.branch)) throw new Error(`"${o.branch}" isn't a branch name.`);
+    await this.#up(async () => {});
+    const dir = jobDir(id);
+    const bundle = await this.env.FILES.get(JOB_SAVE(this.#name, id, "repo.bundle"));
+    if (!bundle) return { restored: false, note: "Nothing of this job was kept yet." };
+    // Its folder is the job's user's; what was kept is put back as that user, never as root.
+    const user = await this.#jobUser(id);
+    const own = await this.#exec(
+      `mkdir -p ${sh(`${dir}/home`)} && chown -h ${user.uid}:${user.gid} ${sh(dir)} ${sh(`${dir}/home`)} && chmod 700 ${sh(dir)}`,
+    );
+    if (own.exit !== 0) throw new Error(`The workspace couldn't give the job its folder: ${own.out.slice(-300)}`);
+    const put = await this.#exec(
+      [
+        `cd ${sh(`${dir}/repo`)}`,
+        `cat > ${sh(`${dir}/keep.bundle`)}`,
+        `git fetch -q --update-head-ok ${sh(`${dir}/keep.bundle`)} '+refs/heads/*:refs/heads/*' '+refs/atlas/wip:refs/atlas/wip'`,
+        `git checkout -q -f -B ${sh(o.branch)} refs/heads/${sh(o.branch)}`,
+        `git read-tree -u --reset refs/atlas/wip && git reset -q`,
+        `rm -f ${sh(`${dir}/keep.bundle`)}`,
+      ].join(" && "),
+      { stdin: bundle.body, timeoutS: 120, as: id },
+    );
+    if (put.exit !== 0) throw new Error(`Couldn't put the job's work back: ${put.out.slice(-400)}`);
+    const home = await this.env.FILES.get(JOB_SAVE(this.#name, id, "home.tgz"));
+    if (home) {
+      const h = await this.#exec(`tar xzf - -C ${sh(dir)}`, { stdin: home.body, as: id });
+      if (h.exit !== 0)
+        return { restored: true, note: `The agent's home didn't come back (${h.out.slice(-200)}), so its session starts over.` };
+    }
+    return { restored: true, note: home ? "" : "The agent's home wasn't kept, so its session starts over." };
+  }
+
+  /**
+   * Pushes a job's commit to its code host, from a copy of root's own: the
+   * commit's objects copied out of the job's repo as data (no command of the
+   * repo's, no config, no alternates), into a fresh repo only root can
+   * reach, pushed to the code host's address with git's key behind a nonce
+   * that's in git's environment, not on any command line. The job's agent is
+   * stopped first.
+   */
+  async jobPush(o: {
+    id: string;
+    sha: string;
+    url: string;
+    branch: string;
+    env: Record<string, string>;
+    rules: KeyRule[];
+  }): Promise<{ exit: number; out: string }> {
+    const id = safeId(o.id);
+    if (!/^[0-9a-f]{40}$/.test(o.sha)) throw new Error(`"${o.sha}" isn't a commit.`);
+    if (!/^[A-Za-z0-9._/-]{1,120}$/.test(o.branch)) throw new Error(`"${o.branch}" isn't a branch name.`);
+    if (!/^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9_./-]+$/.test(o.url)) throw new Error(`"${o.url}" isn't a git address Atlas pushes to.`);
+    await this.jobStop(id);
+    const d = `${PUSH}/${id}-${crypto.randomUUID().slice(0, 8)}`;
+    const since = this.#gateNotes.length;
+    const git = jobDir(id) + "/repo/.git";
+    const key = `push:${d}`;
+    this.#extra.set(key, carrying(o.rules));
+    try {
+      await this.#gate();
+      const p = await this.#c.exec(
+        [
+          "bash",
+          "-lc",
+          [
+            `set -e; mkdir -p -m 700 ${PUSH}; git init -q --bare ${sh(d)}`,
+            `cp -r --no-dereference ${sh(`${git}/objects/.`)} ${sh(`${d}/objects/`)}`,
+            `rm -rf ${sh(`${d}/objects/info`)}; find ${sh(`${d}/objects`)} -type l -delete`,
+            `if [ -f ${sh(`${git}/shallow`)} ]; then grep -E '^[0-9a-f]{40}$' ${sh(`${git}/shallow`)} > ${sh(`${d}/shallow`)} || true; fi`,
+            `git --git-dir=${sh(d)} update-ref refs/atlas/publish ${o.sha}`,
+            `git --git-dir=${sh(d)} -c core.hooksPath=/dev/null push -q --force ${sh(o.url)} ${sh(`refs/atlas/publish:refs/heads/${o.branch}`)} 2>&1; s=$?; rm -rf ${sh(d)}; exit $s`,
+          ].join("\n"),
+        ],
+        { env: { ...ENV, ...o.env }, cwd: "/", stderr: "combined" },
+      );
+      const r = await p.output();
+      const out = new TextDecoder().decode(r.stdout).slice(-2_000);
+      return { exit: r.exitCode, out: r.exitCode === 0 ? out : `${out.trim()}${this.#gateSaid(since)}` };
+    } finally {
+      this.#extra.delete(key);
+      await this.#gate().catch(() => {});
+    }
+  }
+
+  /**
+   * Gets a job's repo: fetched by root in a staging folder only root can
+   * reach (git's key behind its nonce, in git's environment), given to the
+   * job's user there, then moved into the job's folder in place of whatever
+   * was there. Nothing of the job's user runs meanwhile. Says the commit it's at.
+   */
+  async jobClone(o: {
+    id: string;
+    url: string;
+    /** A branch or a commit. */
+    what: string;
+    branch: string;
+    name: string;
+    email: string;
+    env: Record<string, string>;
+    rules: KeyRule[];
+  }): Promise<{ exit: number; out: string }> {
+    const id = safeId(o.id);
+    if (!/^[A-Za-z0-9._/-]{1,120}$/.test(o.branch) || !/^[A-Za-z0-9._/-]{1,120}$/.test(o.what))
+      throw new Error("That isn't a branch or commit.");
+    if (!/^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9_./-]+$/.test(o.url)) throw new Error(`"${o.url}" isn't a git address Atlas clones from.`);
+    await this.#up(async () => {});
+    await this.jobStop(id);
+    const user = await this.#jobUser(id);
+    const key = `clone:${id}`;
+    this.#extra.set(key, carrying(o.rules));
+    try {
+      await this.#gate();
+      for (let attempt = 0; ; attempt++) {
+        const since = this.#gateNotes.length;
+        const r = await this.#cloneOnce(id, o, user);
+        if (r.exit === 0) return r;
+        const last = this.#gateNotes.at(-1);
+        const wait = Number(last?.headers["retry-after"] ?? 0);
+        // Asked to wait a little: once, as asked.
+        if (attempt === 0 && last?.status === 429 && this.#gateNotes.length > since && wait > 0 && wait <= 60) {
+          await new Promise((res) => setTimeout(res, wait * 1000));
+          continue;
+        }
+        return { exit: r.exit, out: `${r.out.trim()}${this.#gateSaid(since)}` };
+      }
+    } finally {
+      this.#extra.delete(key);
+      await this.#gate().catch(() => {});
+    }
+  }
+
+  async #cloneOnce(
+    id: string,
+    o: { url: string; what: string; branch: string; name: string; email: string; env: Record<string, string> },
+    user: { uid: number; gid: number },
+  ): Promise<{ exit: number; out: string }> {
+    const dir = jobDir(id);
+    const stage = `${PUSH}/clone-${id}-${crypto.randomUUID().slice(0, 8)}`;
+    {
+      const p = await this.#c.exec(
+        [
+          "bash",
+          "-lc",
+          [
+            `set -e; mkdir -p -m 700 ${PUSH}; mkdir -m 700 ${sh(stage)}; cd ${sh(stage)}`,
+            `git init -q repo; cd repo; git remote add origin ${sh(o.url)}`,
+            `timeout -k 5 600 git -c core.hooksPath=/dev/null fetch -q --depth 50 origin ${sh(o.what)} 2>&1`,
+            `git checkout -q -b ${sh(o.branch)} FETCH_HEAD`,
+            `git config user.name ${sh(o.name)}; git config user.email ${sh(o.email)}`,
+            `git rev-parse HEAD; cd ${sh(stage)}`,
+            `chown -R -h ${user.uid}:${user.gid} repo`,
+            `mkdir -p ${sh(dir)}; chown -h ${user.uid}:${user.gid} ${sh(dir)}; chmod 700 ${sh(dir)}`,
+            `rm -rf ${sh(`${dir}/repo`)}; mv repo ${sh(`${dir}/repo`)}; cd /; rm -rf ${sh(stage)}`,
+          ].join("\n"),
+        ],
+        { env: { ...ENV, ...o.env }, cwd: "/", stderr: "combined" },
+      );
+      const r = await p.output();
+      if (r.exitCode !== 0) await this.#exec(`rm -rf ${sh(stage)}`).catch(() => {});
+      return { exit: r.exitCode, out: new TextDecoder().decode(r.stdout).slice(-2_000) };
+    }
+  }
+
+  /** Whether the job's folder is in the running container, so it doesn't need putting back. */
+  async jobHere(id: string): Promise<boolean> {
+    safeId(id);
+    if (!this.ctx.container?.running) return false;
+    return (await this.#exec(`test -d ${sh(`${jobDir(id)}/repo/.git`)}`)).exit === 0;
+  }
+
+  /** Forgets a job: its agent, its folder and what was kept of it. */
+  async jobDrop(id: string): Promise<void> {
+    safeId(id);
+    await this.jobStop(id);
+    if (this.ctx.container?.running) await this.#exec(`rm -rf ${sh(jobDir(id))}`);
+    await this.env.FILES.delete([JOB_SAVE(this.#name, id, "repo.bundle"), JOB_SAVE(this.#name, id, "home.tgz")]);
+  }
+
+  async #setJobGate(id: string, gate: JobGate | null): Promise<void> {
+    const all = (await this.ctx.storage.get<Record<string, JobGate & { until?: number }>>("job_gates")) ?? {};
+    if (gate) all[id] = { ...gate, until: Date.now() + JOB_GATE_MS };
+    else delete all[id];
+    await this.ctx.storage.put("job_gates", all);
+  }
+
+  /** The gate for what the owner does in the terminal: the same sites and keys as Atlas's commands. */
+  async setGate(gate: { allow: string[]; inject: Record<string, string> }): Promise<void> {
+    await this.#setBase(gate);
+  }
+
+  /** The owner's sites and vault keys, as Atlas's last command had them: kept, since a deploy forgets what's in memory. */
+  async #setBase(gate: { allow: string[]; inject: Record<string, string> }): Promise<void> {
+    if (JSON.stringify(gate) === JSON.stringify(this.#base)) return;
+    this.#base = gate;
+    await this.ctx.storage.put("base_gate", gate);
+  }
+
+  #base: { allow: string[]; inject: Record<string, string> } | null = null;
+  /** What running commands add to the gate while they run (an install's npm, a git step's key), by command. */
+  #extra = new Map<string, { allow: string[]; rules: KeyRule[] }>();
+  /** The gate was set by this instance (a deploy leaves the old version's handler until it's set again). */
+  #gated = false;
+  /** The owner's vault keys are off the gate while a job runs. */
+  #keysOff = false;
+
+  /** A job's entry on the gate ran out: the gate is set again without it. */
+  override async alarm(): Promise<void> {
+    if (this.ctx.container?.running) await this.#gate().catch(() => {});
+  }
 
   /** A link to a server listening on `port` in the workspace, for a day. */
   async preview(port: number): Promise<{ token: string; expires: number }> {
+    if (port === BRIDGE_PORT) throw new Error("That port is Atlas's own, not something to preview.");
     const token = [...crypto.getRandomValues(new Uint8Array(18))].map((b) => b.toString(16).padStart(2, "0")).join("");
     const expires = Date.now() + PREVIEW_MS;
     const all = ((await this.ctx.storage.get<Record<string, Preview>>("previews")) ?? {}) as Record<string, Preview>;
@@ -405,7 +1102,7 @@ export class Workspace extends DurableObject<Env> {
     void (async () => {
       try {
         await this.#up(async (note) => say(note));
-        await this.#gate(this.#lastGate.allow, this.#lastGate.inject);
+        await this.#gate();
         const cols = Number(url.searchParams.get("cols")) || 100;
         const rows = Number(url.searchParams.get("rows")) || 30;
         const p = await this.#c.exec(["tmux", "new-session", "-A", "-s", "main"], {

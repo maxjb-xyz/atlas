@@ -291,6 +291,17 @@ const MIGRATIONS: string[] = [
     error_at INTEGER
   );
   `,
+  // 13. M6: coding jobs (§8.2). Each one's state beside its agenda item (same id): where it is, the agent's
+  // session and the last line read from it, what it said and did, the questions answered, and its pull request.
+  `
+  CREATE TABLE coding (
+    id TEXT PRIMARY KEY,
+    phase TEXT NOT NULL,
+    data TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX coding_phase ON coding(phase, updated_at);
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

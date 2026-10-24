@@ -28,6 +28,7 @@ export const delegate = defineTool({
     "By default it works in the background: tell the owner in a sentence that it's on it, and end your turn, so they can keep talking to you. When it's done you get its result and finish the task then (a chart or table they asked for, you show then).",
     "Set `wait` true only for a quick job whose answer you need to finish this turn; it waits at most 45 seconds, then carries on in the background.",
     "Helpers can only look: they can't change anything or save anything.",
+    "Set `research` true for a long research job the owner gave time to ('research the best way to do X; take your time'): the helper reads and compares widely for up to a few hours, in the background, and its result comes back with its sources for a research view and a page.",
   ].join(" "),
   input: z.object({
     title: z
@@ -38,6 +39,7 @@ export const delegate = defineTool({
     task: z.string().min(1).max(4_000).describe("The complete brief."),
     tools: z.array(z.enum(HELPER_TOOL_NAMES)).min(1).optional().describe("The lookups it may use. Default: all of them."),
     wait: z.boolean().optional().describe("Wait up to 45 seconds for the result in this turn. Default false."),
+    research: z.boolean().optional().describe("A long research job, with hours to read and compare. Default false."),
   }),
   async run(input, ctx) {
     if (!ctx.helpers) return fail("Helpers can't start helpers of their own.");
@@ -46,9 +48,10 @@ export const delegate = defineTool({
       brief: input.task,
       tools: input.tools ?? HELPER_TOOL_NAMES,
       asked_in: ctx.run_id,
+      ...(input.research ? { research: true } : {}),
     });
     // The turn ends and the line moves on, so the owner can keep talking while it works.
-    if (!input.wait) {
+    if (!input.wait || input.research) {
       return {
         ok: true,
         output: {
