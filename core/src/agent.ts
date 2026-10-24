@@ -372,6 +372,8 @@ const TEST_TOOLS: Tool[] = [
  */
 const VOICE_HISTORY_TOKENS = 12_000;
 
+/** The most of a job's question's content that goes on a chat with it; the rest waits in Inbox. */
+const CHAT_CONTENT = 12_000;
 /** How long a brain gets to start answering before the next one is tried. */
 const FIRST_EVENT_MS = { main: 25_000, voice: 6_000 };
 /**
@@ -3442,7 +3444,14 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
         return file.name;
       },
       ask: ({ job, question, row }) =>
-        this.#askOwner({ id: job.id, title: job.title, text: question.text, options: question.options, row }),
+        this.#askOwner({
+          id: job.id,
+          title: job.title,
+          text: question.text,
+          ...(question.content ? { content: question.content } : {}),
+          options: question.options,
+          row,
+        }),
       report: (item, result) => this.#tellJob(item, result),
       brains: () => {
         const settings = readSettings(sql);
@@ -3507,17 +3516,29 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
   }
 
   /** Brings the owner a job's question (§8.2, §8.3): on their chat with its choices as buttons, else a push to Inbox. */
-  async #askOwner(o: { id: string; title: string; text: string; why?: string; options: string[]; row: LogRow }): Promise<void> {
+  async #askOwner(o: {
+    id: string;
+    title: string;
+    text: string;
+    why?: string;
+    /** What they're asked to look at (a checkpoint's script): it goes with the question, since the chat is all they see. */
+    content?: string;
+    options: string[];
+    row: LogRow;
+  }): Promise<void> {
     const sql = this.#sql;
     this.#broadcast({ type: "atlas.inbox.items", items: inbox(sql) });
     const text = `${o.title} needs you: ${o.text}`;
     const ext = route(sql, "soon").find((c) => c !== "push" && links(sql)[c]);
     const l = ext ? links(sql)[ext] : undefined;
     if (ext && l) {
+      const shown = o.content
+        ? `\n\n${o.content.length > CHAT_CONTENT ? `${o.content.slice(0, CHAT_CONTENT)}…\n\n(The rest is in Inbox.)` : o.content}`
+        : "";
       const ok = await this.#channels
         .send(ext, {
           chat: l.chat,
-          text: `${text}${o.why ? `\n\n${o.why}` : ""}`,
+          text: `${text}${o.why ? `\n\n${o.why}` : ""}${shown}`,
           ...(o.options.length ? { buttons: o.options.map((label, i) => ({ label: label.slice(0, 60), data: `job:${o.id}:${i}` })) } : {}),
         })
         .then(

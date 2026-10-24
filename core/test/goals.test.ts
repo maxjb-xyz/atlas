@@ -197,6 +197,26 @@ describe("jobs Atlas owns (§8.3)", () => {
       expect((await desk.site(job.id, { host: "pixabay.com", why: "Songs." })).text).toContain("can reach pixabay.com");
     }));
 
+  it("show the owner what a checkpoint is about, and refuse one with nothing to look at", () =>
+    withSql(async (sql) => {
+      const { desk, st } = testDesk(sql, [
+        async (d, j) => {
+          const empty = await d.checkpoint(j.id, { step: "s2", text: "Here's the storyboard. Approve it?" });
+          expect(empty).toMatchObject({ ok: false, text: expect.stringContaining("put what the owner should look at in content") });
+          return (await d.checkpoint(j.id, { step: "s2", text: "Approve the storyboard?", content: "0:00 The diamond.\n0:03 Meet Atlas." }))
+            .text;
+        },
+      ]);
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      expect(st.asked).toEqual(["Approve the storyboard?"]);
+      // Asked where they are, Atlas can show it as it is.
+      expect(desk.look(job.id)[0]).toMatchObject({
+        waiting_on_owner: "Approve the storyboard?",
+        what_to_look_at: "0:00 The diamond.\n0:03 Meet Atlas.",
+      });
+    }));
+
   it("pause when a brain runs out partway, and go on with another one only when the owner says", () =>
     withSql(async (sql) => {
       const { desk, st } = testDesk(sql, [

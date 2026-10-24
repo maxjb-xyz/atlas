@@ -102,7 +102,7 @@ export const jobsLook = defineTool({
   kind: "look",
   status: "Checking on the job.",
   description:
-    "How coding jobs are doing, from their state: the step each is on, the last thing its agent did, what it's waiting on, how long it's run and what it's cost, and its pull request once there is one. Use it for 'how's the budget app job?'; answer in a sentence or two.",
+    "How coding jobs and the jobs you own are doing, from their state: the step each is on, the last thing done, what it's waiting on (with what the owner is asked to look at, in full, and each step's result), how long it's run and what it's cost, and a coding job's pull request once there is one. Use it for 'how's the budget app job?' (answer in a sentence or two) and when the owner asks to see what a job is waiting on: show it to them as it is.",
   input: z.object({ id: z.string().max(64).optional().describe("One job's id; default all of them from the last day.") }),
   async run(input, ctx) {
     if (!ctx.coding) return fail("Coding jobs can't be reached from here.");

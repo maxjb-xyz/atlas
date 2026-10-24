@@ -102,7 +102,13 @@ export const jobCheckpoint = defineTool({
   input: z.object({
     step: z.string().max(8).optional().describe("The checkpoint step it's for, if any."),
     text: z.string().min(1).max(600).describe("The question, as you'd ask it."),
-    content: z.string().max(20_000).optional().describe("What they should look at, in full."),
+    content: z
+      .string()
+      .max(20_000)
+      .optional()
+      .describe(
+        "What they should look at, in full: the whole script, the storyboard shot by shot, the quotes side by side. They see only this and the question, wherever they are, so never ask about something that isn't here; read it from the folder first if a step wrote it there.",
+      ),
     options: z.array(z.string().min(1).max(60)).max(4).optional(),
   }),
   async run(input, ctx) {

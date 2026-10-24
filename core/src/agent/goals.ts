@@ -469,7 +469,14 @@ export class GoalDesk {
   ): Promise<{ ok: boolean; text: string }> {
     const job = getGoal(this.h.sql, id);
     if (!job || ENDED.includes(job.phase)) return { ok: false, text: "That job has ended." };
-    if (o.step && !job.plan.some((s) => s.id === o.step)) return { ok: false, text: `There's no step ${o.step}.` };
+    const at = o.step ? job.plan.find((s) => s.id === o.step) : undefined;
+    if (o.step && !at) return { ok: false, text: `There's no step ${o.step}.` };
+    // The owner sees only the question and `content`: a checkpoint with nothing to look at would ask them to approve nothing.
+    if (at?.kind === "checkpoint" && !o.content?.trim())
+      return {
+        ok: false,
+        text: `${at.id} is a checkpoint: put what the owner should look at in content, in full (the whole script or storyboard, read from the folder if a step wrote it there). They see nothing else.`,
+      };
     const plan = o.step ? job.plan.map((s) => (s.id === o.step ? { ...s, state: "doing" as const } : s)) : job.plan;
     await this.#ask(
       { ...job, plan },
@@ -674,6 +681,10 @@ export class GoalDesk {
       folder: g.folder,
       plan: g.plan.filter((s) => s.state !== "skipped").map((s) => `${s.id} [${s.state}] ${s.title}`),
       ...(g.question ? { waiting_on_owner: g.question.text } : {}),
+      // What the question asks them to look at, so it can be shown or sent where they are.
+      ...(g.question?.content ? { what_to_look_at: clip(g.question.content, 12_000) } : {}),
+      ...(g.question?.options.length ? { options: g.question.options } : {}),
+      results: g.plan.filter((s) => s.result).map((s) => `${s.id} ${s.title}: ${clip(s.result!, 1_500)}`),
       used: `${g.spent.looks} looks, ${g.spent.steps} steps`,
       last: g.log.at(-1)?.text ?? null,
       ...(g.result ? { result: g.result } : {}),
