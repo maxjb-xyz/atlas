@@ -60,6 +60,16 @@ const ext: Extension = {
     const out = await cal.move!(m.id, { start: m.start, end: m.end });
     return { ...out, ...(state !== undefined ? { state: state as never } : {}) };
   },
+  async add(ctx, e) {
+    let state: CalendarCopy | null | undefined;
+    const event = await source(ctx, [], (c) => (state = c)).add!(e);
+    return { event, ...(state !== undefined ? { state: state as never } : {}) };
+  },
+  async remove(ctx, m) {
+    let state: CalendarCopy | null | undefined;
+    const event = await source(ctx, [], (c) => (state = c)).remove!(m.id);
+    return { event, ...(state !== undefined ? { state: state as never } : {}) };
+  },
   async test(ctx) {
     let state: CalendarCopy | null | undefined;
     const c = await source(ctx, [], (x) => (state = x)).check();

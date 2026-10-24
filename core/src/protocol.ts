@@ -72,6 +72,8 @@ export interface CalendarEventView {
   end: string;
   all_day: boolean;
   location?: string;
+  /** Which account it's on (its extension's id). */
+  account?: string;
   /** Its areas (§6.3): set by the owner, sorted by Clef, or the area its calendar is named after. */
   areas: string[];
 }
@@ -142,7 +144,7 @@ export interface AreaView {
   custom_color: string | null;
   icon: string | null;
   /** `mail`: which mail account new mail here goes from, by extension id; empty is the default. */
-  settings: { tone: string; shared_with: string[]; mail: string };
+  settings: { tone: string; shared_with: string[]; mail: string; calendars: string[] };
   messages: number;
   records: number;
   last_seen: number | null;
@@ -327,6 +329,16 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Accounts (§17): another account of a service that's set up, and a name for one ("Work"). */
   z.object({ type: z.literal("atlas.ext.account.add"), id: z.string().max(40) }),
   z.object({ type: z.literal("atlas.ext.account.name"), id: z.string().max(40), name: z.string().max(60) }),
+  /**
+   * Which areas an account, or one calendar in it, is for (§6.2): new mail there goes from it, new events there go on
+   * it, and its events are theirs. `calendar` names one of the account's calendars; without it, the whole account.
+   */
+  z.object({
+    type: z.literal("atlas.ext.account.areas"),
+    id: z.string().max(40),
+    calendar: z.string().max(120).optional(),
+    areas: z.array(z.string().max(64)).max(30),
+  }),
   /** An extension's secrets (an empty or null value removes one) and settings, as its manifest names them. */
   z.object({
     type: z.literal("atlas.ext.secrets"),
@@ -389,7 +401,13 @@ export const ClientMessage = z.discriminatedUnion("type", [
     name: z.string().min(1).max(60).optional(),
     about: z.string().max(500).optional(),
     state: z.enum(["active", "dormant", "archived"]).optional(),
-    settings: z.object({ tone: z.string().max(300).optional(), mail: z.string().max(40).optional() }).optional(),
+    settings: z
+      .object({
+        tone: z.string().max(300).optional(),
+        mail: z.string().max(40).optional(),
+        calendars: z.array(z.string().max(160)).max(20).optional(),
+      })
+      .optional(),
   }),
   z.object({ type: z.literal("atlas.area.merge"), from: z.string().max(64), into: z.string().max(64) }),
   /**
@@ -657,6 +675,8 @@ export interface SettingsView {
       id: string;
       name: string;
       account: string | null;
+      /** Its calendars, by name, as read so far. */
+      calendars: string[];
       refused: { at: number; message: string; tries: number; next_try: number; note: string } | null;
     }>;
   };

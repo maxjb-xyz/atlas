@@ -78,9 +78,11 @@ export type Undo =
   | { kind: "skill.restore"; id: string }
   /** Moves a calendar event back to where it was. */
   | { kind: "calendar.move"; id: string; title: string; start: string; end: string }
+  /** Takes off the calendar an event Atlas added. */
+  | { kind: "calendar.remove"; id: string; title: string }
   /** Puts Speaking up back the way it was before Atlas changed it. */
   | { kind: "speaking.restore"; before: unknown }
-  /** Puts back which mail account new mail goes from: the owner's default (no area) or one area's. */
+  /** Puts back which account new mail goes from: the owner's default (no area) or one area's. */
   | { kind: "account.restore"; area: string | null; before: string }
   /** Takes back an extension tool's change (§17): its `undo` tool, with the input the call gave back for it. */
   | { kind: "tool.undo"; ext: string; tool: string; name: string; input: Json };

@@ -420,6 +420,22 @@ export interface CalendarEvent {
   notes?: string;
   /** Who it's with: the organizer and those invited, as the invite names them (not rooms or other resources). */
   people?: EventPerson[];
+  /** Which account it's on (its extension's id), as Atlas reads it; an extension leaves it out. */
+  account?: string;
+}
+
+/** A new event, as Atlas adds it (§10.1): no attendees, so adding one invites no one. */
+export interface NewEvent {
+  title: string;
+  /** UTC ISO time, or a plain date when all_day. */
+  start: string;
+  /** Exclusive end, in the same form as `start`. */
+  end: string;
+  all_day: boolean;
+  location?: string;
+  notes?: string;
+  /** Which of the account's calendars, by name; its first (or main) one when left out. */
+  calendar?: string;
 }
 
 /** A contact from an address book. */
@@ -571,6 +587,10 @@ export interface Extension {
   ): Promise<{ events: CalendarEvent[]; as_of?: number; state?: Json; calendars?: string[] }>;
   /** Moves an event on the calendar to a new start and end (same forms as the event's), and says what it was before. */
   move?(ctx: Ctx, m: { id: string; start: string; end: string }): Promise<{ before: CalendarEvent; event: CalendarEvent; state?: Json }>;
+  /** Adds an event to one of the account's calendars, and says what it is now. */
+  add?(ctx: Ctx, e: NewEvent): Promise<{ event: CalendarEvent; state?: Json }>;
+  /** Removes an event (all of it, for a repeat), and says what it was. */
+  remove?(ctx: Ctx, m: { id: string }): Promise<{ event: CalendarEvent; state?: Json }>;
   /** The address book: cards, or vCard text (RFC 6350), which the core reads. */
   contacts?(ctx: Ctx): Promise<{ cards?: Card[]; vcards?: string }>;
   geocode?(ctx: Ctx, q: { q: string; near?: Point }): Promise<Found[]>;

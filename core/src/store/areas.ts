@@ -15,6 +15,11 @@ export const AreaSettings = z.object({
   shared_with: z.array(z.string().max(40)).max(20).default([]),
   /** Accounts (§6.2): which of the owner's mail accounts new mail here goes from, by extension id. Empty is the default. */
   mail: z.string().max(40).default(""),
+  /**
+   * The calendars that are this area's (§6.2): a whole account ("gmail--2") or one calendar in it ("gmail--2::Work").
+   * Their events are this area's, and new events here go on the first.
+   */
+  calendars: z.array(z.string().max(160)).max(20).default([]),
 });
 export type AreaSettings = z.infer<typeof AreaSettings>;
 

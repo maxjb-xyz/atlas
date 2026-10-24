@@ -5,7 +5,7 @@
 // expands recurring events, so each instance arrives as its own VEVENT
 // (identified by UID plus RECURRENCE-ID).
 
-import { moveIn, parseEvents } from "./ical";
+import { moveIn, newEvent, parseEvents } from "./ical";
 import {
   CalendarError,
   type CalendarCheck,
@@ -13,6 +13,7 @@ import {
   type CalendarRange,
   type CalendarSource,
   type ICloudCredentials,
+  type NewEvent,
 } from "./types";
 import { type DavResponse, find, findAll, multistatus, textOf, type XmlNode } from "./xml";
 
@@ -245,7 +246,45 @@ class CalDavClient {
    * (If-Match its etag), so a change made meanwhile in another app is never
    * overwritten.
    */
-  async put(url: string, ics: string, etag: string | null): Promise<void> {
+  /** Writes a new calendar object, only if nothing is at its address yet (If-None-Match), so nothing is overwritten. */
+  async create(url: string, ics: string): Promise<void> {
+    return this.put(url, ics, null, true);
+  }
+
+  /** Removes a calendar object, only if it's still the version read (If-Match its etag). */
+  async remove(url: string, etag: string | null): Promise<void> {
+    let res: Response;
+    try {
+      res = await this.#fetch(url, {
+        method: "DELETE",
+        headers: { Authorization: this.#auth, "User-Agent": USER_AGENT, ...(etag ? { "If-Match": etag } : {}) },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err) {
+      throw new CalendarError(
+        `Couldn't reach iCloud Calendar at ${new URL(url).host} (${err instanceof Error ? err.message : String(err)}).`,
+        "network",
+      );
+    }
+    if (res.ok || res.status === 404) return;
+    if (res.status === 412)
+      throw new CalendarError(
+        "The event changed in iCloud since Atlas read it, so it wasn't removed. Read the calendar again.",
+        "protocol",
+      );
+    if (res.status === 401) throw new CalendarError(`${AUTH_REASON} (HTTP 401 at ${new URL(url).host})`, "auth");
+    const said = (await res.text().catch(() => ""))
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 160);
+    throw new CalendarError(
+      `iCloud Calendar didn't remove it (HTTP ${res.status}${said ? `: ${said}` : ""}).`,
+      res.status >= 500 ? "network" : "protocol",
+    );
+  }
+
+  async put(url: string, ics: string, etag: string | null, fresh = false): Promise<void> {
     let res: Response;
     try {
       res = await this.#fetch(url, {
@@ -255,6 +294,7 @@ class CalDavClient {
           "Content-Type": "text/calendar; charset=utf-8",
           "User-Agent": USER_AGENT,
           ...(etag ? { "If-Match": etag } : {}),
+          ...(fresh ? { "If-None-Match": "*" } : {}),
         },
         body: ics,
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -512,7 +552,65 @@ export function icloudCalendar(creds: ICloudCredentials, opts: CalDavOptions = {
     return { before, event };
   }
 
-  return { list, held, check, move };
+  /** The calendar a new event goes on: the one named, else the first one shown that isn't a reminders list. */
+  function target(c: CalendarCopy, name?: string): CopiedCalendar {
+    const shown = c.calendars.filter((x) => visible(x.name));
+    const want = name?.trim().toLowerCase();
+    const cal = want ? shown.find((x) => x.name.trim().toLowerCase() === want) : shown[0];
+    if (!cal)
+      throw new CalendarError(
+        want
+          ? `There's no calendar called "${name}" in iCloud. Its calendars: ${shown.map((x) => x.name).join(", ")}.`
+          : "iCloud has no calendar to add it to.",
+        "protocol",
+      );
+    return cal;
+  }
+
+  /**
+   * Adds an event: a new calendar object in the calendar, written only if
+   * nothing is at its address yet. No attendees, so no one is invited.
+   */
+  async function add(e: NewEvent): Promise<CalendarEvent> {
+    let c = copy;
+    if (!c || Date.now() - c.synced_at > FRESH_MS) c = await syncOnce();
+    const cal = target(c, e.calendar);
+    const uid = `${crypto.randomUUID()}@atlas`;
+    const ics = newEvent(uid, e);
+    await client.create(new URL(`${encodeURIComponent(uid)}.ics`, cal.url.endsWith("/") ? cal.url : `${cal.url}/`).toString(), ics);
+    const event = parseEvents(ics, cal.name, tz)[0]!;
+    const next: CalendarCopy = {
+      ...c,
+      calendars: c.calendars.map((x) => (x === cal ? { ...x, tag: null, events: [...x.events, event] } : x)),
+    };
+    copy = next;
+    opts.store?.save(next);
+    return event;
+  }
+
+  /** Removes an event Atlas can see: the whole of it (a repeating one isn't removed one occurrence at a time). */
+  async function remove(id: string): Promise<CalendarEvent> {
+    let c = copy;
+    if (!c || Date.now() - c.synced_at > FRESH_MS) c = await syncOnce();
+    const [uid, occurrence] = id.split("::");
+    const cal = c.calendars.find((x) => x.events.some((e) => e.id === id));
+    const before = cal?.events.find((e) => e.id === id);
+    if (!cal || !before) throw new CalendarError("That event isn't on the calendar any more. Read the calendar again.", "protocol");
+    if (occurrence)
+      throw new CalendarError(`"${before.title}" repeats; Atlas doesn't remove one occurrence of a repeating event.`, "protocol");
+    const found = await client.multistatus("REPORT", cal.url, uidQuery(uid!), "1");
+    const r = found.responses.find((x) => textOf(x.props, "calendar-data"));
+    if (r) await client.remove(new URL(r.href, found.url).toString(), textOf(r.props, "getetag")?.trim() || null);
+    const next: CalendarCopy = {
+      ...c,
+      calendars: c.calendars.map((x) => (x === cal ? { ...x, tag: null, events: x.events.filter((e) => e.id !== id) } : x)),
+    };
+    copy = next;
+    opts.store?.save(next);
+    return before;
+  }
+
+  return { list, held, check, move, add, remove };
 }
 
 /** Runs `fn` over `items`, at most `n` at a time, keeping the order of results. */

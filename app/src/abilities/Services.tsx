@@ -10,7 +10,7 @@ import type { ExtensionView, McpServerView, SettingsView } from "../../../core/s
 import type { Atlas } from "../connection";
 import { SecretField, TestRow } from "../settings/parts";
 import { useDetail } from "../theme";
-import { ago, dayTime, Icon, Logo, logoFor, pressable, QrCode, StateDot, Toggle, useNow } from "../ui";
+import { ago, AreaChip, dayTime, Icon, Logo, logoFor, pressable, QrCode, StateDot, Toggle, useNow } from "../ui";
 import { CHIPS, extState, GIVES, type Service, services } from "./model";
 
 export function Services({
@@ -556,6 +556,11 @@ export function Accounts({ atlas, svc, dev }: { atlas: Atlas; svc: NonNullable<S
   const mail = exts.some((x) => x.e!.provides.includes("mail"));
   const allMail = view.extensions.filter((x) => x.state === "on" && x.provides.includes("mail") && signedIn(x));
   const byDefault = view.settings.accounts.mail || allMail[0]?.id || "";
+  const areas = atlas.state.areas.filter((x) => x.state !== "archived");
+  const calendarsOf = Object.fromEntries(view.calendar.providers.map((p) => [p.id, p.calendars]));
+  const defaultCal = view.settings.accounts.calendar;
+  // An account is in an area when the area's new mail goes from it, or the whole account is among the area's calendars.
+  const accountAreas = (ext: string) => areas.filter((x) => x.settings.mail === ext || x.settings.calendars.includes(ext)).map((x) => x.id);
   // A new account opens on its sign-in.
   const [count, setCount] = useState(exts.length);
   useEffect(() => {
@@ -565,7 +570,10 @@ export function Accounts({ atlas, svc, dev }: { atlas: Atlas; svc: NonNullable<S
   return (
     <div className="card2 dim pad" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <span style={{ fontWeight: 600 }}>Accounts</span>
-      <span className="aside">Each signs in on its own. Atlas reads them all; a reply goes from the one its mail came to.</span>
+      <span className="aside">
+        Each signs in on its own. Put one in an area, or just one of its calendars: new mail and events there use it, and its events are
+        that area's.
+      </span>
       <div className="lines">
         {exts.map(({ a, e }, i) => (
           <div key={a.ext}>
@@ -602,10 +610,20 @@ export function Accounts({ atlas, svc, dev }: { atlas: Atlas; svc: NonNullable<S
                 <button
                   className={`tbtn ${byDefault === a.ext ? "on" : ""}`}
                   title="New mail as you goes from this one, unless an area says another"
-                  onClick={() => atlas.send({ type: "atlas.settings.update", patch: { accounts: { mail: a.ext } } })}
+                  onClick={() =>
+                    atlas.send({ type: "atlas.settings.update", patch: { accounts: { ...view.settings.accounts, mail: a.ext } } })
+                  }
                 >
                   {byDefault === a.ext ? "Sends new mail" : "Send new mail from it"}
                 </button>
+              )}
+              {/* The areas this account is for: mail there goes from it, and its events are theirs. */}
+              {areas.length > 0 && e!.state === "on" && (
+                <AreaChip
+                  ids={accountAreas(a.ext)}
+                  areas={areas}
+                  onMove={(ids) => atlas.send({ type: "atlas.ext.account.areas", id: a.ext, areas: ids })}
+                />
               )}
               <button className="tbtn" onClick={() => setNaming({ id: a.ext, name: a.name ?? "" })}>
                 Name
@@ -622,6 +640,36 @@ export function Accounts({ atlas, svc, dev }: { atlas: Atlas; svc: NonNullable<S
               )}
             </div>
             {open === a.ext && <Connection atlas={atlas} e={e!} dev={dev} />}
+            {/* Each of its calendars can be put in an area of its own, and one is where new events go. */}
+            {e!.provides.includes("calendar") && (calendarsOf[a.ext] ?? []).length > 0 && (
+              <div className="lines" style={{ paddingLeft: 22 }}>
+                {(calendarsOf[a.ext] ?? []).map((name) => {
+                  const ref = `${a.ext}::${name}`;
+                  return (
+                    <div className="line" key={ref}>
+                      <Icon name="calendar" size={13} style={{ color: "var(--tx3)" }} />
+                      <span className="grow small clip">{name}</span>
+                      {areas.length > 0 && (
+                        <AreaChip
+                          ids={areas.filter((x) => x.settings.calendars.includes(ref)).map((x) => x.id)}
+                          areas={areas}
+                          onMove={(ids) => atlas.send({ type: "atlas.ext.account.areas", id: a.ext, calendar: name, areas: ids })}
+                        />
+                      )}
+                      <button
+                        className={`tbtn ${defaultCal === ref ? "on" : ""}`}
+                        title="New events go here, unless an area says another"
+                        onClick={() =>
+                          atlas.send({ type: "atlas.settings.update", patch: { accounts: { ...view.settings.accounts, calendar: ref } } })
+                        }
+                      >
+                        {defaultCal === ref ? "Gets new events" : "New events here"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         ))}
       </div>

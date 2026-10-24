@@ -1,8 +1,8 @@
 // What the iCloud extension's CalDAV reader works with.
 
-import { Failure, type CalendarEvent } from "../sdk";
+import { Failure, type CalendarEvent, type NewEvent } from "../sdk";
 
-export type { CalendarEvent, EventPerson } from "../sdk";
+export type { CalendarEvent, EventPerson, NewEvent } from "../sdk";
 
 export interface CalendarRange {
   start: Date;
@@ -20,6 +20,8 @@ export interface CalendarSource {
   held?(range: CalendarRange): { events: CalendarEvent[]; as_of: number } | null;
   check(): Promise<CalendarCheck>;
   move?(id: string, to: { start: string; end: string }): Promise<{ before: CalendarEvent; event: CalendarEvent }>;
+  add?(e: NewEvent): Promise<CalendarEvent>;
+  remove?(id: string): Promise<CalendarEvent>;
 }
 
 export interface ICloudCredentials {

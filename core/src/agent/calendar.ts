@@ -8,7 +8,14 @@
 import { othersOf } from "../contacts";
 import { accountName, ExtensionError, type ExtensionHost, type Installed, methodsOf, providing, ready } from "../extensions";
 import { pick } from "../providers";
-import { type Calendar, type CalendarEvent, CalendarError, type CalendarRange, type CalendarSource } from "../calendar/types";
+import {
+  type Calendar,
+  type CalendarEvent,
+  CalendarError,
+  type CalendarRange,
+  type CalendarSource,
+  type NewEvent,
+} from "../calendar/types";
 import type { Sql } from "../store/db";
 import { append } from "../store/log";
 import type { Settings } from "../store/settings";
@@ -50,6 +57,27 @@ export class CalendarSense {
     return providing(this.sql, "calendar").filter((e) => methodsOf(e).includes("calendar") && ready(this.sql, e));
   }
 
+  /** The calendars each account has, as read so far (a calendar with no events in a read shows once it has some). */
+  names(): Record<string, string[]> {
+    return getState<Record<string, string[]>>(this.sql, "calendar_names") ?? {};
+  }
+
+  /** Notes the calendars a read saw, for each account. */
+  #saw(events: Array<{ account?: string; calendar: string }>): void {
+    const all = this.names();
+    let changed = false;
+    for (const e of events) {
+      if (!e.account) continue;
+      const had = all[e.account] ?? [];
+      if (had.includes(e.calendar)) continue;
+      all[e.account] = [...had, e.calendar].slice(0, 30);
+      changed = true;
+    }
+    if (!changed) return;
+    setState(this.sql, "calendar_names", all);
+    this.changed();
+  }
+
   /** The first calendar, if one is on. */
   provider() {
     return pick(this.sql, "calendar", "calendar");
@@ -79,8 +107,19 @@ export class CalendarSense {
       read: async (range) => {
         const out = await c.calendar.read(range);
         for (const e of out.events) this.#from.set(e.id, c.id);
-        return out;
+        const events = out.events.map((e) => ({ ...e, account: c.id }));
+        this.#saw(events);
+        return { ...out, events };
       },
+      ...(c.calendar.add
+        ? {
+            add: async (e: NewEvent) => {
+              const made = await c.calendar.add!(e);
+              this.#from.set(made.id, c.id);
+              return made;
+            },
+          }
+        : {}),
     };
   }
 
@@ -104,7 +143,7 @@ export class CalendarSense {
           }
           for (const e of g.value.events) {
             this.#from.set(e.id, c.id);
-            events.push(e);
+            events.push({ ...e, account: c.id });
           }
           if (g.value.stale) stale.push({ as_of: g.value.stale.as_of, why: `${c.name}: ${g.value.stale.why}` });
         });
@@ -113,6 +152,7 @@ export class CalendarSense {
           throw first.reason instanceof CalendarError ? new CalendarError(missing.join(" "), first.reason.code) : first.reason;
         }
         events.sort((a, b) => startMs(a) - startMs(b));
+        this.#saw(events);
         return {
           events,
           ...(stale.length ? { stale: { as_of: Math.min(...stale.map((x) => x.as_of)), why: stale.map((x) => x.why).join(" ") } } : {}),
@@ -126,6 +166,20 @@ export class CalendarSense {
           throw new CalendarError("Atlas doesn't know which calendar that event is on yet: read the calendar, then move it.", "protocol");
         if (!c.calendar.move) throw new CalendarError(`${c.name} can't move events.`, "protocol");
         return c.calendar.move(eventId, to);
+      },
+      // A new event goes on the account asked for, else the first that can add one.
+      add: async (e, on) => {
+        const c = (on ? each.find((x) => x.id === on) : undefined) ?? each.find((x) => x.calendar.add);
+        if (!c?.calendar.add) throw new CalendarError("None of the calendars can add events.", "protocol");
+        const made = await c.calendar.add(e);
+        this.#from.set(made.id, c.id);
+        return made;
+      },
+      remove: async (eventId) => {
+        const c = each.find((x) => x.id === this.#from.get(eventId));
+        if (!c?.calendar.remove)
+          throw new CalendarError("Atlas doesn't know which calendar that event is on yet: read the calendar, then remove it.", "protocol");
+        return c.calendar.remove(eventId);
       },
       check: async () => {
         const got = await Promise.allSettled(each.map((c) => c.calendar.check()));
@@ -164,6 +218,22 @@ export class CalendarSense {
       move: async (eventId, to) => {
         try {
           return await this.host.call<{ before: CalendarEvent; event: CalendarEvent }>(id, "move", [{ id: eventId, ...to }]);
+        } catch (err) {
+          const code = err instanceof ExtensionError && (err.code === "auth" || err.code === "network") ? err.code : "protocol";
+          throw new CalendarError(err instanceof Error ? err.message : String(err), code);
+        }
+      },
+      add: async (e) => {
+        try {
+          return (await this.host.call<{ event: CalendarEvent }>(id, "add", [e])).event;
+        } catch (err) {
+          const code = err instanceof ExtensionError && (err.code === "auth" || err.code === "network") ? err.code : "protocol";
+          throw new CalendarError(err instanceof Error ? err.message : String(err), code);
+        }
+      },
+      remove: async (eventId) => {
+        try {
+          return (await this.host.call<{ event: CalendarEvent }>(id, "remove", [{ id: eventId }])).event;
         } catch (err) {
           const code = err instanceof ExtensionError && (err.code === "auth" || err.code === "network") ? err.code : "protocol";
           throw new CalendarError(err instanceof Error ? err.message : String(err), code);
@@ -302,6 +372,33 @@ export class CalendarSense {
                   throw new CalendarError(this.note(this.#refused(id, name, err), settings), "auth");
                 throw err;
               }
+            },
+          }
+        : {}),
+      // Adding and removing wait out a refusal too, and are never done from the copy.
+      ...(source.add
+        ? {
+            add: async (e: NewEvent) => {
+              const waiting = this.refusal(id);
+              if (waiting && waiting.next_try > Date.now()) throw new CalendarError(this.note(waiting, settings), "auth");
+              try {
+                const out = await source.add!(e);
+                this.#accepted(id, name);
+                return { ...out, account: id };
+              } catch (err) {
+                if (err instanceof CalendarError && err.code === "auth")
+                  throw new CalendarError(this.note(this.#refused(id, name, err), settings), "auth");
+                throw err;
+              }
+            },
+          }
+        : {}),
+      ...(source.remove
+        ? {
+            remove: async (eventId: string) => {
+              const waiting = this.refusal(id);
+              if (waiting && waiting.next_try > Date.now()) throw new CalendarError(this.note(waiting, settings), "auth");
+              return source.remove!(eventId);
             },
           }
         : {}),

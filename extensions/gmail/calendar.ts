@@ -4,7 +4,7 @@
 // answer from it when Google can't be asked. A sign-in made before the
 // calendar was part of it says to sign in again, rather than failing quietly.
 
-import { type CalendarEvent, type EventPerson, Failure, get, http, json } from "../sdk";
+import { type CalendarEvent, type EventPerson, Failure, get, http, json, type NewEvent } from "../sdk";
 
 const API = "https://www.googleapis.com/calendar/v3";
 /** At most this many calendars, and events from each, in one read. */
@@ -88,14 +88,14 @@ function eventOf(calendar: { id: string; name: string }, e: GEvent): CalendarEve
 }
 
 /** The account's calendars, by id and the name the owner sees, without the ones they leave out. */
-export async function calendars(ctx: Auth, hidden: string[] = []): Promise<Array<{ id: string; name: string }>> {
-  const out = await read<{ items?: Array<{ id: string; summary?: string; summaryOverride?: string; hidden?: boolean }> }>(
-    await get(`${API}/users/me/calendarList?maxResults=50`, { headers: auth(ctx) }),
-  );
+export async function calendars(ctx: Auth, hidden: string[] = []): Promise<Array<{ id: string; name: string; primary?: boolean }>> {
+  const out = await read<{
+    items?: Array<{ id: string; summary?: string; summaryOverride?: string; hidden?: boolean; primary?: boolean; accessRole?: string }>;
+  }>(await get(`${API}/users/me/calendarList?maxResults=50`, { headers: auth(ctx) }));
   const leave = new Set(hidden.map((h) => h.trim().toLowerCase()));
   return (out.items ?? [])
     .filter((c) => !c.hidden)
-    .map((c) => ({ id: c.id, name: (c.summaryOverride ?? c.summary ?? c.id).trim() }))
+    .map((c) => ({ id: c.id, name: (c.summaryOverride ?? c.summary ?? c.id).trim(), ...(c.primary ? { primary: true } : {}) }))
     .filter((c) => !leave.has(c.name.toLowerCase()))
     .slice(0, MAX_CALENDARS);
 }
@@ -163,4 +163,46 @@ export async function moveEvent(
   const now = eventOf(cal, await read<GEvent>(res));
   if (!now) throw new Failure("Google Calendar didn't say where the event is now.", "protocol");
   return { before, event: now };
+}
+
+/** Adds an event to the account's main calendar, or the one named. No attendees, so no one is invited. */
+export async function addEvent(ctx: Auth, e: NewEvent): Promise<CalendarEvent> {
+  const all = await calendars(ctx);
+  const want = e.calendar?.trim().toLowerCase();
+  const cal = want ? all.find((c) => c.name.toLowerCase() === want) : (all.find((c) => c.primary) ?? all[0]);
+  if (!cal)
+    throw new Failure(
+      want
+        ? `There's no calendar called "${e.calendar}" in Google. Its calendars: ${all.map((c) => c.name).join(", ")}.`
+        : "Google has no calendar to add it to.",
+      "protocol",
+    );
+  const when = (v: string) => (e.all_day ? { date: v.slice(0, 10) } : { dateTime: v });
+  const res = await http(`${API}/calendars/${encodeURIComponent(cal.id)}/events?sendUpdates=none`, {
+    method: "POST",
+    headers: { ...auth(ctx), "content-type": "application/json" },
+    body: JSON.stringify({
+      summary: e.title,
+      start: when(e.start),
+      end: when(e.end),
+      ...(e.location ? { location: e.location } : {}),
+      ...(e.notes ? { description: e.notes } : {}),
+    }),
+  });
+  const made = eventOf(cal, await read<GEvent>(res));
+  if (!made) throw new Failure("Google Calendar didn't say what it added.", "protocol");
+  return made;
+}
+
+/** Removes an event (all of a repeat's occurrences when it's the series), and says what it was. */
+export async function removeEvent(ctx: Auth, id: string): Promise<CalendarEvent> {
+  const { event, calendar } = parts(id);
+  const base = `${API}/calendars/${encodeURIComponent(calendar)}/events/${encodeURIComponent(event)}`;
+  const names = await calendars(ctx);
+  const cal = { id: calendar, name: names.find((c) => c.id === calendar)?.name ?? calendar };
+  const was = eventOf(cal, await read<GEvent>(await get(base, { headers: auth(ctx) })));
+  if (!was) throw new Failure("That event was already removed.", "protocol");
+  const res = await http(`${base}?sendUpdates=none`, { method: "DELETE", headers: auth(ctx) });
+  if (!res.ok && res.status !== 410 && res.status !== 404) await read(res);
+  return was;
 }

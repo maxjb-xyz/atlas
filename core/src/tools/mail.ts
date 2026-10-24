@@ -183,7 +183,7 @@ export const mailAccount = defineTool({
       };
     }
     const before = readSettings(ctx.sql).accounts.mail;
-    writeSettings(ctx.sql, { accounts: { mail: e.id } });
+    writeSettings(ctx.sql, { accounts: { ...readSettings(ctx.sql).accounts, mail: e.id } });
     append(ctx.sql, { actor: "atlas", kind: "settings.change", run_id: ctx.run_id, body: { keys: ["accounts"], why: "asked in chat" } });
     return {
       ok: true,

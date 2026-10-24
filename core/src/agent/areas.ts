@@ -338,7 +338,7 @@ interface EventAsk {
   calendar: string;
   location?: string;
 }
-type EventLike = { id: string; title: string; calendar: string; location?: string };
+type EventLike = { id: string; title: string; calendar: string; location?: string; account?: string };
 
 const EVENTS_KEPT = 1_000;
 const EVENTS_WAITING = 200;
@@ -350,9 +350,10 @@ const eventText = (e: { title: string; calendar: string; location?: string }) =>
   `A calendar event, "${e.title}", on the owner's "${e.calendar}" calendar${e.location ? `, at ${e.location.split("\n")[0]}` : ""}.`;
 
 /**
- * Each event's areas (§6.3): what the owner set, else what Clef said, else
- * the area its calendar is named after (the School calendar is School, no
- * call needed). An event none of those covers waits for Clef's next pass,
+ * Each event's areas (§6.3): what the owner set for it, else the areas its
+ * account is in (the account's card, or the area's row), else what Clef
+ * said, else the area its calendar is named after (the School calendar is
+ * School, no call needed). An event none of those covers waits for Clef's next pass,
  * with no area until then (if unsure, nothing).
  */
 export function eventAreas(sql: Sql, events: EventLike[]): string[][] {
@@ -362,9 +363,15 @@ export function eventAreas(sql: Sql, events: EventLike[]): string[][] {
   const waiting = getState<EventAsk[]>(sql, "events_untagged") ?? [];
   const queued = new Set(waiting.map((w) => w.series));
   const add: EventAsk[] = [];
+  // A calendar the owner put in an area (a whole account, or one calendar in it): its events are that area's.
+  const byRef = new Map<string, string[]>();
+  for (const a of listAreas(sql)) for (const ref of a.settings.calendars) byRef.set(ref, [...(byRef.get(ref) ?? []), a.id]);
   const out = events.map((e) => {
     const series = seriesOf(e.id);
     const k = known[series];
+    if (k?.by === "owner") return k.areas.filter((a) => live.has(a));
+    const fromAccount = e.account ? (byRef.get(`${e.account}::${e.calendar}`) ?? byRef.get(e.account)) : undefined;
+    if (fromAccount?.length) return fromAccount;
     if (k) return k.areas.filter((a) => live.has(a));
     const named = byName.get(e.calendar.trim().toLowerCase());
     if (named) return [named];

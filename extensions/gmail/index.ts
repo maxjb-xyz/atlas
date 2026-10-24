@@ -10,7 +10,7 @@
 
 import { type Extension, type Item, type Json, get, http, json, tidy } from "../sdk";
 import { base64url, buildMail, decodeWords, fromBase64url, htmlText } from "../lib/mail";
-import { type CalendarCopy, calendars, heldEvents, keep, listEvents, moveEvent } from "./calendar";
+import { addEvent, type CalendarCopy, calendars, heldEvents, keep, listEvents, moveEvent, removeEvent } from "./calendar";
 
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 /** At most about this many new messages are read in one look; the rest wait for the next. */
@@ -265,6 +265,12 @@ const ext: Extension = {
   },
   async move(ctx, m) {
     return moveEvent(ctx, m);
+  },
+  async add(ctx, e) {
+    return { event: await addEvent(ctx, e) };
+  },
+  async remove(ctx, m) {
+    return { event: await removeEvent(ctx, m.id) };
   },
   async test(ctx) {
     const p = await profile(ctx);

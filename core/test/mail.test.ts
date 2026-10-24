@@ -122,6 +122,14 @@ function fakeGmail() {
           const b = JSON.parse(String(init.body)) as { start: unknown; end: unknown };
           return Response.json({ ...items.find((e) => e.id === decodeURIComponent(evs[2]!))!, start: b.start, end: b.end });
         }
+        if (!evs[2] && init?.method === "POST") {
+          state.patched.push(`add ${calId} ${u.search} ${String(init.body)}`);
+          return Response.json({ id: "new1", ...(JSON.parse(String(init.body)) as object) });
+        }
+        if (evs[2] && init?.method === "DELETE") {
+          state.patched.push(`delete ${calId}/${decodeURIComponent(evs[2])} ${u.search}`);
+          return new Response(null, { status: 204 });
+        }
         if (evs[2]) return Response.json(items.find((e) => e.id === decodeURIComponent(evs[2]!)) ?? {});
         return Response.json({ items });
       }
@@ -296,6 +304,25 @@ describe("Gmail", () => {
       `work#cal/standup_20261026 ${JSON.stringify({ start: { dateTime: to.start }, end: { dateTime: to.end } })}`,
     ]);
     expect(moved.event.start).toBe(to.start);
+
+    // Adding goes on the main calendar unless one is named, invites no one, and comes off again.
+    gm.state.patched.length = 0;
+    const added = await runExt<{ event: CalendarEvent }>(
+      gmail,
+      "add",
+      [{ title: "Edit", start: to.start, end: to.end, all_day: false, calendar: "Work" }],
+      o,
+    );
+    expect(added.event).toMatchObject({ id: "new1::new1::work#cal", title: "Edit", calendar: "Work" });
+    expect(gm.state.patched[0]).toBe(
+      `add work#cal ?sendUpdates=none ${JSON.stringify({ summary: "Edit", start: { dateTime: to.start }, end: { dateTime: to.end } })}`,
+    );
+    await expect(runExt(gmail, "add", [{ title: "x", start: to.start, end: to.end, all_day: false, calendar: "Nope" }], o)).rejects.toThrow(
+      /no calendar called "Nope"/,
+    );
+    const removed = await runExt<{ event: CalendarEvent }>(gmail, "remove", [{ id: "standup::standup_20261026::work#cal" }], o);
+    expect(removed.event.title).toBe("Standup");
+    expect(gm.state.patched.at(-1)).toBe("delete work#cal/standup_20261026 ?sendUpdates=none");
 
     // A sign-in made before the calendar was asked for.
     gm.state.noCalendar = true;

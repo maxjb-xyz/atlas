@@ -10,6 +10,8 @@ import { CalendarSense } from "../src/agent/calendar";
 import { ExtensionError, type ExtensionHost, addAccount, install, saveData, setExtSecrets } from "../src/extensions";
 import { createArea, setScope, updateArea } from "../src/store/areas";
 import { emailSend, mailAccount } from "../src/tools/mail";
+import { calendarAdd } from "../src/tools/calendar";
+import { eventAreas } from "../src/agent/areas";
 import { accountsLine } from "../src/accounts";
 import { hat } from "../src/context";
 import type { CalendarEvent } from "../src/calendar/types";
@@ -137,5 +139,52 @@ describe("two mail accounts", () => {
       await use({ account: "me@work.example" });
       await send(mail);
       expect(sent.at(-1)!.via).toBe("gmail--2");
+    }));
+});
+
+describe("calendars in areas", () => {
+  it("put new events on the area's calendar, the named one when asked, and take their area from the calendar they're on", () =>
+    withSql(async (sql) => {
+      seams.calendar = undefined;
+      install(sql, { id: "icloud", source: "bundled" });
+      addAccount(sql, "icloud");
+      for (const id of ["icloud", "icloud--2"]) setExtSecrets(sql, id, { app_password: id });
+      const work = createArea(sql, { name: "Keyframes", by: "owner" });
+      updateArea(sql, work.id, { settings: { ...work.settings, calendars: ["icloud--2::Shoots"] } }, "owner");
+      const added: string[] = [];
+      const host = {
+        call: async (id: string, method: string, args: unknown[]) => {
+          if (method === "calendar") return { events: [ev(`${id}-1`, "Thing", 1, id === "icloud" ? "Home" : "Shoots")] };
+          if (method === "add") {
+            const e = args[0] as { title: string; start: string; end: string; calendar?: string };
+            added.push(`${id}:${e.calendar ?? "(first)"}:${e.title}`);
+            return {
+              event: { id: `${id}-new`, title: e.title, start: e.start, end: e.end, all_day: false, calendar: e.calendar ?? "Home" },
+            };
+          }
+          throw new Error(`no ${method}`);
+        },
+        address: () => null,
+      } as unknown as ExtensionHost;
+      const sense = new CalendarSense(sql, () => {}, host);
+      const calendar = sense.source(readSettings(sql))!;
+      const ctx = { sql, run_id: "run_c", tz: "America/New_York", now: new Date(), calendar } as never;
+      type Run = (input: unknown, ctx: never) => Promise<{ ok: boolean; receipt?: { undo?: unknown } }>;
+      const add = (input: unknown) => (calendarAdd.run as unknown as Run)(input, ctx);
+
+      // Outside any area: the first account, its first calendar.
+      expect((await add({ title: "Dentist", start: "2026-11-02T15:00" })).ok).toBe(true);
+      // In Keyframes: its calendar, Shoots, on the second account; Undo takes it off.
+      setScope(sql, work.id);
+      const shoot = await add({ title: "Reel shoot", start: "2026-11-03T10:00" });
+      expect(shoot.receipt?.undo).toEqual({ kind: "calendar.remove", id: "icloud--2-new", title: "Reel shoot" });
+      // Named by the owner.
+      await add({ title: "Gym", start: "2026-11-04T07:00", account: "icloud", calendar: "Home" });
+      expect(added).toEqual(["icloud:(first):Dentist", "icloud--2:Shoots:Reel shoot", "icloud:Home:Gym"]);
+
+      // Events read from Shoots are Keyframes', with no call to Clef; the rest wait for it.
+      const read = await calendar.read({ start: new Date(), end: new Date(Date.now() + 86_400_000) });
+      expect(eventAreas(sql, read.events)).toEqual([[], [work.id]]);
+      expect(sense.names()).toEqual({ icloud: ["Home"], "icloud--2": ["Shoots"] });
     }));
 });

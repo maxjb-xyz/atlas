@@ -94,7 +94,7 @@ import {
   writeSettings,
 } from "./store/settings";
 import { addLocalDays, isoLocal, isValidZone, longLocal, parseWhen, shortLocal, startOfLocalDay, zoneOf } from "./time";
-import { calendarMove, calendarRead } from "./tools/calendar";
+import { calendarAdd, calendarMove, calendarRead } from "./tools/calendar";
 import { emailSend, mailAccount } from "./tools/mail";
 import { delegate } from "./tools/delegate";
 import { memoryTools, recall } from "./tools/memory";
@@ -262,6 +262,7 @@ const TOOLS: Record<Actor, Tool[]> = {
   owner: [
     calendarRead,
     calendarMove,
+    calendarAdd,
     ...agendaTools,
     ...memoryTools,
     delegate,
@@ -1315,6 +1316,28 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         }
         this.#areasChanged();
         return;
+      case "atlas.ext.account.areas": {
+        const e = getExt(this.#sql, msg.id);
+        if (!e) {
+          this.#send(connection, { type: "atlas.error", message: "That account isn't set up any more." });
+          return;
+        }
+        // Mail: the area's one account. Calendars: the whole account, or one calendar in it, among the area's.
+        const ref = msg.calendar ? `${e.id}::${msg.calendar}` : e.id;
+        const mail = !msg.calendar && e.manifest.provides.includes("mail");
+        const cal = e.manifest.provides.includes("calendar");
+        for (const a of listAreas(this.#sql)) {
+          const on = msg.areas.includes(a.id);
+          const next = { ...a.settings };
+          if (mail) next.mail = on ? e.id : a.settings.mail === e.id ? "" : a.settings.mail;
+          if (cal) next.calendars = on ? [...new Set([...a.settings.calendars, ref])] : a.settings.calendars.filter((x) => x !== ref);
+          if (JSON.stringify(next) !== JSON.stringify(a.settings)) updateArea(this.#sql, a.id, { settings: next }, "owner");
+        }
+        append(this.#sql, { actor: "owner", kind: "settings.change", body: { account: ref, areas: msg.areas } });
+        this.#areasChanged();
+        this.#broadcast({ type: "atlas.calendar.changed" });
+        return;
+      }
       case "atlas.event.areas": {
         const row = correctEventAreas(this.#sql, msg.event, msg.areas);
         this.#broadcast({ type: "atlas.rows", rows: [row] });
@@ -1327,8 +1350,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       case "atlas.areas.set":
         try {
           if (msg.type === "atlas.area.create") createArea(this.#sql, { name: msg.name, about: msg.about, by: "owner" });
-          else if (msg.type === "atlas.area.update") updateArea(this.#sql, msg.id, msg, "owner");
-          else if (msg.type === "atlas.area.merge") mergeAreas(this.#sql, msg.from, msg.into, "owner");
+          else if (msg.type === "atlas.area.update") {
+            updateArea(this.#sql, msg.id, msg, "owner");
+            // An area's calendar account changes which events are its own.
+            if (msg.settings?.calendars !== undefined) this.#broadcast({ type: "atlas.calendar.changed" });
+          } else if (msg.type === "atlas.area.merge") mergeAreas(this.#sql, msg.from, msg.into, "owner");
           else {
             const row = correctAreas(this.#sql, msg.ref as Tagged, msg.areas);
             const changed = msg.ref.startsWith("log:") ? [msg.ref.slice(4)] : [];

@@ -60,7 +60,13 @@ export function settingsView(
       // Every calendar account, each with its own refusal (§17).
       providers: parts.calendar.providers().map((p) => {
         const r = parts.calendar.refusal(p.id);
-        return { id: p.id, name: p.name, account: accountName(p), refused: r ? { ...r, note: parts.calendar.note(r, settings) } : null };
+        return {
+          id: p.id,
+          name: p.name,
+          account: accountName(p),
+          calendars: parts.calendar.names()[p.id] ?? [],
+          refused: r ? { ...r, note: parts.calendar.note(r, settings) } : null,
+        };
       }),
     },
     extensions: parts.extensions?.views() ?? [],

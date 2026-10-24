@@ -1,8 +1,9 @@
 // Accounts (VISION §6.2, §17): when the owner has more than one mail or
 // calendar account, which one Atlas uses. A reply goes from the account its
 // mail came in on; anything new goes from the account the area names, else
-// the owner's default, else the first. Calendars are all read together. The
-// model is told the accounts, and can pick one when the owner says to.
+// the owner's default, else the first; new events the same way. Calendars
+// are all read together. The model is told the accounts, and can pick one
+// when the owner says to.
 
 import type { Area } from "./store/areas";
 import { accountName, type Installed, methodsOf, providing, ready } from "./extensions";
@@ -26,6 +27,32 @@ export function mailAccountFor(sql: Sql, areas: Area[]): Installed | null {
     readSettings(sql).accounts.mail,
   );
 }
+
+/** A calendar as areas and settings name it: a whole account ("gmail--2"), or one calendar in it ("gmail--2::Work"). */
+export const CAL_SEP = "::";
+export function calendarRef(ref: string): { account: string; calendar?: string } {
+  const i = ref.indexOf(CAL_SEP);
+  return i < 0 ? { account: ref } : { account: ref.slice(0, i), calendar: ref.slice(i + CAL_SEP.length) };
+}
+
+/**
+ * Where new events go: the area's first calendar, else the owner's default,
+ * else the first account that can add, with its own main calendar.
+ */
+export function calendarTargetFor(sql: Sql, areas: Area[]): { account: Installed; calendar?: string } | null {
+  const can = calendarAccounts(sql).filter((e) => methodsOf(e).includes("add"));
+  for (const ref of [...areas.flatMap((a) => a.settings.calendars), readSettings(sql).accounts.calendar]) {
+    if (!ref) continue;
+    const r = calendarRef(ref);
+    const account = can.find((e) => e.id === r.account);
+    if (account) return { account, ...(r.calendar ? { calendar: r.calendar } : {}) };
+  }
+  return can[0] ? { account: can[0] } : null;
+}
+
+/** A calendar target in words: "Google (you@work.com), Work". */
+export const targetText = (t: { account: Installed; calendar?: string }) =>
+  `${accountText(t.account)}${t.calendar ? `, ${t.calendar}` : ""}`;
 
 function pickFor(all: Installed[], fromAreas: string[], fallback: string): Installed | null {
   for (const id of [...fromAreas, fallback]) {
@@ -58,6 +85,11 @@ export function accountsLine(sql: Sql, areas: Area[]): string {
       `The owner has ${mail.length} mail accounts: ${mail.map(accountText).join(", ")}. A reply goes from the account its mail came to; new mail as them goes from ${accountText(now)} here, unless they say another (email_send's from).`,
     );
   }
-  if (cals.length > 1) out.push(`Their calendars, read together: ${cals.map(accountText).join(", ")}.`);
+  if (cals.length > 1) {
+    const now = calendarTargetFor(sql, areas);
+    out.push(
+      `Their calendars, read together: ${cals.map(accountText).join(", ")}.${now ? ` New events go on ${targetText(now)} here, unless they say another (calendar_add's account and calendar).` : ""}`,
+    );
+  }
   return out.join(" ");
 }

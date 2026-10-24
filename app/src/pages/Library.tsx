@@ -529,6 +529,19 @@ function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; ot
   // With more than one mail account, an area can send from one of them (§6.2). A reply always goes from the one its mail came to.
   const mailAccounts = (atlas.state.view?.extensions ?? []).filter((x) => x.state === "on" && x.provides.includes("mail") && signedIn(x));
   const defaultMail = atlas.state.view?.settings.accounts.mail ?? "";
+  // Every calendar account, whole, and each calendar in it, for an area to call its own.
+  const providers = atlas.state.view?.calendar.providers ?? [];
+  const accountOf = (id: string) => providers.find((p) => p.id === id);
+  const calLabel = (ref: string) => {
+    const [id, ...rest] = ref.split("::");
+    const p = accountOf(id!);
+    const who = p ? accountLabel(p) : id!;
+    return rest.length ? `${rest.join("::")} (${who})` : `All of ${who}`;
+  };
+  const calendarRefs = providers.flatMap((p) => [
+    { value: p.id, label: calLabel(p.id) },
+    ...p.calendars.map((c) => ({ value: `${p.id}::${c}`, label: calLabel(`${p.id}::${c}`) })),
+  ]);
   const [open, setOpen] = useState(false);
   // Only the owner shares areas, with members who've joined (§7.1).
   const members = atlas.state.view?.me ? [] : (atlas.state.view?.members ?? []).filter((m) => m.joined_at);
@@ -599,6 +612,46 @@ function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; ot
                 onPick={(mail) => atlas.send({ type: "atlas.area.update", id: area.id, settings: { mail } })}
                 width={320}
               />
+            </div>
+          )}
+          {calendarRefs.length > 0 && (
+            <div className="field">
+              <span>Its calendars: their events are this area's, and new events here go on the first</span>
+              <div className="row" style={{ gap: 6 }}>
+                {area.settings.calendars.map((ref) => (
+                  <span key={ref} className="tag">
+                    {calLabel(ref)}
+                    <button
+                      className="icon"
+                      aria-label={`Take ${calLabel(ref)} out of ${area.name}`}
+                      onClick={() =>
+                        atlas.send({
+                          type: "atlas.area.update",
+                          id: area.id,
+                          settings: { calendars: area.settings.calendars.filter((x) => x !== ref) },
+                        })
+                      }
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                {calendarRefs.some((r) => !area.settings.calendars.includes(r.value)) && (
+                  <Picker
+                    label={`Add a calendar to ${area.name}`}
+                    value=""
+                    options={[
+                      { value: "", label: area.settings.calendars.length ? "Add another" : "Add a calendar" },
+                      ...calendarRefs.filter((r) => !area.settings.calendars.includes(r.value)),
+                    ]}
+                    onPick={(ref) =>
+                      ref &&
+                      atlas.send({ type: "atlas.area.update", id: area.id, settings: { calendars: [...area.settings.calendars, ref] } })
+                    }
+                    width={320}
+                  />
+                )}
+              </div>
             </div>
           )}
           {members.length > 0 && (

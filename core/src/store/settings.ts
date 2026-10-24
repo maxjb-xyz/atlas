@@ -182,10 +182,13 @@ export const Settings = z.object({
   maps: z.object({ provider: z.string().min(1).max(40).default("osm") }).default({ provider: "osm" }),
   /**
    * Accounts (§6.2, §17): with more than one, which one new mail goes from,
-   * by extension id ("gmail--2"). Empty is the first. An area can name its
-   * own (Library → Areas).
+   * by extension id ("gmail--2"), and which calendar new events go on: an
+   * account, or one calendar in it ("gmail--2::Work"). Empty is the first.
+   * An area can name its own (Library → Areas, or the account's card).
    */
-  accounts: z.object({ mail: z.string().max(40).default("") }).default({ mail: "" }),
+  accounts: z
+    .object({ mail: z.string().max(40).default(""), calendar: z.string().max(160).default("") })
+    .default({ mail: "", calendar: "" }),
   /**
    * Speaking up (§10.3): whether Atlas may tell the owner things on its own.
    * `noticing` covers whatever its senses notice (a move, a change on the

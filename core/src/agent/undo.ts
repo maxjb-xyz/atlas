@@ -6,7 +6,7 @@ import { getSkill, restoreSkill, setSkillState } from "../skills";
 import { finish, getItem } from "../store/agenda";
 import type { Sql } from "../store/db";
 import { append, get as getRow, type LogRow, type Receipt, type Undo } from "../store/log";
-import { SettingsPatch, writeSettings } from "../store/settings";
+import { readSettings, SettingsPatch, writeSettings } from "../store/settings";
 import { forgetRecord, getRecord, restoreRecord, revertRecord } from "../store/records";
 import type { ToolContext } from "../tools/types";
 import { deletePage, getPage, pageVersion, savePage } from "../pages";
@@ -95,6 +95,20 @@ export async function undoReceipt(
       });
       return { ok: true, row, agenda: false };
     }
+    case "calendar.remove": {
+      if (!calendar?.remove) return { ok: false, message: "The calendar isn't connected now, so the event can't be taken off from here." };
+      try {
+        await calendar.remove(undo.id);
+      } catch (err) {
+        return { ok: false, message: `Couldn't take ${undo.title} off the calendar: ${err instanceof Error ? err.message : String(err)}` };
+      }
+      const row = append(sql, {
+        actor: "owner",
+        kind: "calendar.change",
+        body: { change: "removed", id: undo.id, title: undo.title, ...mark },
+      });
+      return { ok: true, row, agenda: false };
+    }
     case "tool.undo": {
       if (!tool) return { ok: false, message: `${undo.name} can't be undone from here.` };
       const out = await tool(undo, logId);
@@ -114,7 +128,7 @@ export async function undoReceipt(
         const a = getArea(sql, undo.area);
         if (!a) return { ok: false, message: "That area is gone." };
         updateArea(sql, a.id, { settings: { ...a.settings, mail: undo.before } }, "owner");
-      } else writeSettings(sql, { accounts: { mail: undo.before } });
+      } else writeSettings(sql, { accounts: { ...readSettings(sql).accounts, mail: undo.before } });
       const row = append(sql, { actor: "owner", kind: "settings.change", body: { keys: ["accounts"], ...mark } });
       return { ok: true, row, agenda: false };
     }
