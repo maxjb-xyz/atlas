@@ -2,10 +2,11 @@
 // passwords and cards (the vault, §15), updates, and your data: whether
 // Atlas's own key locks your secrets (§20), setup, and signing out.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { SettingsView } from "../../../core/src/protocol";
 import { FIELDS, type VaultKind } from "../../../core/src/vault-fields";
 import type { Atlas } from "../connection";
+import { Markdown } from "../Markdown";
 import { useDetail } from "../theme";
 import { Icon, LogoMark, Seg, shortDay } from "../ui";
 import { AddPasskey, Head } from "./parts";
@@ -129,17 +130,7 @@ export function Account({
       {vault && <Vault atlas={atlas} view={view} />}
 
       <div className="two" style={{ marginTop: 14 }}>
-        <div className="card2 pad">
-          <div className="card-head">
-            <span className="h2">Updates</span>
-            <span className="aside">{at("developer") ? `This is Atlas ${__ATLAS_VERSION__}.` : "Atlas, as you deployed it."}</span>
-          </div>
-          {/* TODO(core, stage 2): releases from the daily look, "Update now" and "Roll back" through Cloudflare's API, and updating on its own. */}
-          <p className="muted small">
-            When a new Atlas is out, it shows here with what changed, to install in one click. Until then, updates come from your copy of
-            the repository.
-          </p>
-        </div>
+        <Updates atlas={atlas} view={view} />
 
         <div className="card2 pad">
           <div className="card-head">
@@ -202,6 +193,145 @@ export function Account({
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * Updates (§23.2): which Atlas this is, the newest release and what's in it,
+ * Update now and Roll back through Cloudflare's API, and each step's outcome
+ * in Cloudflare's own words. The first time, the token they need.
+ */
+function Updates({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const { at } = useDetail();
+  const u = view.updates;
+  const note = atlas.state.tests.updates;
+  const [token, setToken] = useState("");
+  const [sent, setSent] = useState(false);
+  useEffect(() => setSent(false), [note]);
+  const send = (msg: Parameters<Atlas["send"]>[0]) => {
+    setSent(true);
+    atlas.send(msg);
+  };
+  const run = u.run;
+  const working = sent || u.busy || run?.state === "running" || run?.state === "deploying";
+  const newest = u.newest;
+  const running = u.running.version === "unknown" ? "Atlas" : `Atlas ${u.running.version}`;
+  return (
+    <div className="card2 pad" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="card-head">
+        <span className="h2">Updates</span>
+        <span className="aside">
+          {u.ready && newest
+            ? `${newest.tag} is ready.`
+            : `This is ${running}${at("developer") && u.running.version_id ? ` (${u.running.version_id.slice(0, 8)})` : ""}.`}
+        </span>
+        <span className="grow" />
+        <button className="btn s" disabled={working} onClick={() => send({ type: "atlas.updates.look" })}>
+          Look now
+        </button>
+      </div>
+
+      {newest ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span className="row" style={{ gap: 8, alignItems: "baseline" }}>
+            <span style={{ fontWeight: 500 }}>{newest.name}</span>
+            <span className="aside">Out {shortDay(newest.published_at)}</span>
+            {!u.ready && <span className="okdot">You have it</span>}
+          </span>
+          {newest.notes.trim() ? (
+            <div className="small" style={{ maxHeight: 180, overflow: "auto" }}>
+              <Markdown text={newest.notes} />
+            </div>
+          ) : (
+            <span className="aside">It came with no notes.</span>
+          )}
+        </div>
+      ) : (
+        <p className="muted small">
+          {u.looked_at ? "There's no release yet." : "Atlas looks for a new release once a day."}
+          {u.looked_at ? ` Looked ${shortDay(u.looked_at)}.` : ""}
+        </p>
+      )}
+      {u.look_error && <span className="err small">Couldn't look: {u.look_error}</span>}
+      {u.ready && newest?.problem && <span className="small">{newest.problem}</span>}
+
+      {!u.token ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span className="small">To install from here, Atlas needs a Cloudflare token that can change your Workers.</span>
+          <a className="btn s" style={{ alignSelf: "flex-start" }} href={u.token_link} target="_blank" rel="noreferrer">
+            Make the token on Cloudflare
+          </a>
+          <div className="row" style={{ flexWrap: "nowrap" }}>
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={token}
+              aria-label="Your Cloudflare token for updates"
+              placeholder="Paste the token"
+              onChange={(e) => setToken(e.target.value)}
+            />
+            <button
+              className="btnp s"
+              disabled={working || token.trim().length < 8}
+              onClick={() => {
+                send({ type: "atlas.updates.token", token: token.trim() });
+                setToken("");
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="row">
+          {u.ready && newest && (
+            <button
+              className="btnp s"
+              disabled={working || Boolean(newest.problem)}
+              onClick={() => send({ type: "atlas.updates.install", tag: newest.tag })}
+            >
+              Update now
+            </button>
+          )}
+          {u.rollback && (
+            <button className="btn s" disabled={working} onClick={() => send({ type: "atlas.updates.rollback" })}>
+              Roll back to {u.rollback.label}
+            </button>
+          )}
+          {run?.needs_force && u.rollback && (
+            <button className="btn s err" disabled={working} onClick={() => send({ type: "atlas.updates.rollback", force: true })}>
+              Roll back anyway
+            </button>
+          )}
+          <span className="grow" />
+          {at("detailed") && u.script && <span className="aside">To your Worker {u.script}</span>}
+          <button className="tbtn" disabled={working} onClick={() => send({ type: "atlas.updates.token", token: null })}>
+            Forget the token
+          </button>
+        </div>
+      )}
+
+      {run && (
+        <div className="lines solid">
+          <span className="aside">
+            {run.kind === "update" ? `Updating to ${run.label}` : `Rolling back to ${run.label}`}
+            {run.state === "deploying" ? ": restarting on it" : run.state === "done" ? ": done" : run.state === "failed" ? ": stopped" : ""}
+            {`, ${shortDay(run.started_at)}`}
+          </span>
+          {run.steps.map((s, i) => (
+            <div className="line" key={i} style={{ alignItems: "flex-start", padding: "4px 0", minHeight: 0 }}>
+              <span className={s.ok ? "okdot" : "idledot"} aria-label={s.ok ? "Done" : "Failed"} />
+              <span className={`small grow ${s.ok ? "" : "err"}`}>{s.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {u.foreign && <span className="err small">{u.foreign.text}</span>}
+      {note && !note.ok && !run && <span className="err small">{note.message}</span>}
+      {note && note.ok && <span className="ok small">{note.message}</span>}
+      <span className="aside">Your data stays as it is either way: it only ever grows.</span>
+    </div>
   );
 }
 

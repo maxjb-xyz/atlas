@@ -25,6 +25,7 @@ import { here, nearest, pins } from "../location";
 import { accountName, installed, providing } from "../extensions";
 import type { ExtensionDesk } from "./extensions";
 import type { MailDesk } from "./mail";
+import type { UpdateDesk } from "./updates";
 import { faces } from "../faces";
 import { members } from "../members";
 import { getRecord } from "../store/records";
@@ -34,7 +35,14 @@ import type { LocationView } from "../protocol";
 
 export function settingsView(
   sql: Sql,
-  parts: { chatgpt: ChatGPTSignIn; calendar: CalendarSense; router: BrainRouter; extensions: ExtensionDesk; mail?: MailDesk },
+  parts: {
+    chatgpt: ChatGPTSignIn;
+    calendar: CalendarSense;
+    router: BrainRouter;
+    extensions: ExtensionDesk;
+    mail?: MailDesk;
+    updates?: UpdateDesk;
+  },
 ): SettingsView {
   const passkeys = (getState<StoredPasskey[]>(sql, "passkeys") ?? [])
     .filter((p) => !p.member)
@@ -121,6 +129,20 @@ export function settingsView(
     nodes: nodes(sql).map(nodeView),
     senses: sensesView(sql),
     tasks: openTasks(sql).map(taskView),
+    updates: parts.updates?.view() ?? {
+      running: { version: "unknown", commit: null, version_id: null },
+      token: false,
+      token_link: "",
+      script: null,
+      looked_at: null,
+      look_error: null,
+      newest: null,
+      ready: false,
+      run: null,
+      rollback: null,
+      foreign: null,
+      busy: false,
+    },
   };
 }
 

@@ -73,6 +73,8 @@ export class CloudflareError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /** Cloudflare's own error codes, such as 10220 for a rollback past a changed secret. */
+    readonly codes: number[] = [],
   ) {
     super(message);
   }
@@ -102,7 +104,11 @@ export async function cf<T>(f: typeof fetch, token: string, path: string, init: 
     const said =
       (body?.errors ?? []).map((e) => `${e.message ?? "error"}${e.code ? ` (${e.code})` : ""}`).join("; ") || `HTTP ${res.status}`;
     const method = (init.method ?? "GET").toUpperCase();
-    throw new CloudflareError(`Cloudflare said: ${said} (HTTP ${res.status}, ${method} ${path.split("?")[0]})`, res.status);
+    throw new CloudflareError(
+      `Cloudflare said: ${said} (HTTP ${res.status}, ${method} ${path.split("?")[0]})`,
+      res.status,
+      (body?.errors ?? []).map((e) => e.code ?? 0).filter((c) => c > 0),
+    );
   }
   return body?.result as T;
 }

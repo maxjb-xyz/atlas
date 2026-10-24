@@ -271,6 +271,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
             "errand",
             "looks",
             "index",
+            "updates",
             "device",
           ].includes(a.kind),
       )

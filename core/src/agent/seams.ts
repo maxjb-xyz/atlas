@@ -29,6 +29,8 @@ export const seams: {
   browser: import("../browser").BrowserDriver | null | undefined;
   /** The workspace: undefined uses its Durable Object, null means none. */
   workspace: import("../agent").WorkspaceStub | null | undefined;
+  /** Which Atlas is running (§23.2): undefined reads the app's version.json and the version metadata binding. */
+  running: import("../updates").Running | undefined;
   /** Connected MCP servers: undefined uses the Agents SDK's client, null means none. */
   mcp: import("../mcp").McpClient | null | undefined;
   /**
@@ -57,6 +59,7 @@ export const seams: {
   websearch: undefined,
   browser: undefined,
   workspace: undefined,
+  running: undefined,
   mcp: undefined,
   extension: null,
 };

@@ -371,6 +371,8 @@ function reduce(s: State, a: Action): State {
       return { ...s, channelCode: { ext: m.ext, code: m.code, expires: m.expires } };
     case "atlas.mail":
       return { ...s, tests: { ...s.tests, mail: { ok: m.ok, message: m.text } } };
+    case "atlas.updates":
+      return { ...s, tests: { ...s.tests, updates: { ok: m.ok, message: m.text } } };
     case "atlas.contacts.imported":
       return { ...s, tests: { ...s.tests, contacts: { ok: m.ok, message: m.text } } };
     case "atlas.sense.hook":

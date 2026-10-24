@@ -88,17 +88,20 @@ export function SettingsPage({
   const metaOf = (id: Section) =>
     id === "notifications" && view && at("developer") && view.settings.notifications.budget
       ? `${view.push.today}/${view.settings.notifications.budget}`
-      : id === "account" && at("developer")
-        ? __ATLAS_VERSION__
-        : "";
+      : id === "account" && view?.updates.ready
+        ? "Update"
+        : id === "account" && at("developer")
+          ? __ATLAS_VERSION__
+          : "";
+  const ready = view?.updates.ready && view.updates.newest ? `An update is ready: ${view.updates.newest.tag}` : "";
 
   return (
     <Stage
       label="Settings"
       tabs={[{ id: section, label: name }]}
       tab={section}
-      // TODO(core, stage 2): "An update is ready" once the Updates page knows of releases; until then, which Atlas this is.
-      meta={at("developer") ? `Atlas ${__ATLAS_VERSION__}` : ""}
+      // "An update is ready" when the daily look found a newer release (§23.2); otherwise, at Developer, which Atlas this is.
+      meta={ready || (at("developer") ? `Atlas ${__ATLAS_VERSION__}` : "")}
       dock={
         <div className="dock slim">
           {dirty && (

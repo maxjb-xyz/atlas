@@ -30,8 +30,11 @@ jobs:
 
       - run: npm ci
 
-      # The same check every commit passes, so a release is never less tested than main.
+      # The same check every commit passes, so a release is never less tested than main. The app is built with
+      # the release's tag as its version, which the Updates page compares with the newest release.
       - run: npm run check
+        env:
+          ATLAS_VERSION: ${{ github.event.release.tag_name || github.sha }}
 
       - name: Bundle
         run: node scripts/release.mjs "${{ github.event.release.tag_name || github.sha }}" release
