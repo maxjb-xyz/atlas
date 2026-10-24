@@ -267,6 +267,16 @@ Waiting for the owner's OK (smoke test step 1 in [docs/M7.md](../M7.md)). The de
 - **Atlas settings has five sections:** Atlas (character, voice, look), Brains (roles as chains, named brains, what each kind of work uses, providers with live limits, a model picker from the provider's catalog), Notifications (where things go, a list per urgency, quiet hours, focus, the budget, and Atlas's suggestions), Permissions (each kind of action, the locked floors, your own rules, and what Atlas no longer asks for), and Account (passkeys, the vault, updates and your data).
 - **The app's own controls:** toggles, segmented choices and pickers. At most one short line under anything, sentence-case labels, and mono only for times, counts and meters.
 
+**Color, real logos and plain words** (proposed 2026-10-24, after the owner found the UI colorless and too technical):
+- **Real logos** for every outside service, in their own colors: from CC0 icon sets (Iconify's logos, Simple Icons) and the vendors' own icons where those don't have one (Outlook, Telnyx, OwnTracks). They're in [`source/builder/logos.json`](source/builder/logos.json). A black logo is inverted in the dark theme. In the app, each extension and catalog entry carries its own icon.
+- **Color carries meaning, never decoration.** Areas are the color system: area chips are tinted, and a person's avatar takes the color of the area you know them from. Logos bring their brands' colors. Meters take the color of what they measure (Claude's orange, Cloudflare's). Ember stays rare: only what needs you and what Atlas just changed. Still no gradients or glows.
+- **Simple is the default detail level** (VISION §21.5). It speaks in plain words ("Thinks with", "Keeps you safe", "Atlas thinks with ChatGPT, on your Plus plan") and hides model ids, speeds, prices per million tokens and mono metadata. Detailed and Developer show the rest, the way these screens first did. The soul stays at every level: the diamond, the stage frame, receipts and ember.
+
+| Simple (the default) | Developer |
+|---|---|
+| ![Map, simple](screenshots/m7/abilities-map.png) | ![Map, developer](screenshots/m7/abilities-map-developer.png) |
+| ![Brains, simple](screenshots/m7/settings-brains.png) | ![Brains, developer](screenshots/m7/settings-brains-developer.png) |
+
 | | |
 |---|---|
 | ![Map](screenshots/m7/abilities-map.png) | ![Services](screenshots/m7/abilities-services.png) |

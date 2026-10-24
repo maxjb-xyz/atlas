@@ -242,6 +242,41 @@ BODY = r"""
               </div>
             </sc-if>
 
+            <!-- ============ BRAINS, SIMPLE ============ -->
+            <sc-if value="{{isBrainsSimple}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: flex; flex-direction: column; gap: 14px; padding-top: 4px;">
+                <div style="border: 1px solid var(--sep); border-radius: 10px; background: var(--bg); padding: 18px 20px; display: flex; align-items: center; gap: 18px;">
+                  <span class="logo" style="width: 56px; height: 56px; border-radius: 14px;"><img class="lg {{bs.main.inv}}" src="{{bs.main.lg}}" width="30" height="30" alt=""></span>
+                  <span style="display: flex; flex-direction: column; gap: 4px; flex: 1;">
+                    <span class="disp" style="font-size: 19px; font-weight: 600;">Atlas thinks with ChatGPT, on your Plus plan.</span>
+                    <span style="color: var(--tx2);">If ChatGPT is busy, Claude takes over for that answer. Voice uses Workers AI, because it starts talking fastest.</span>
+                  </span>
+                  <button type="button" class="btn">Change</button>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;">
+                  <sc-for list="{{bs.provs}}" as="p" hint-placeholder-count="3">
+                    <div style="border: 1px solid var(--sep); border-radius: 10px; background: var(--win); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+                      <span style="display: flex; align-items: center; gap: 10px;"><span class="logo" style="width: 32px; height: 32px;"><img class="lg {{p.inv}}" src="{{p.lg}}" width="18" height="18" alt=""></span><span style="display: flex; flex-direction: column; flex: 1;"><span style="font-weight: 600;">{{p.n}}</span><span style="font-size: 12px; color: var(--tx3);">{{p.how}}</span></span><span style="width: 7px; height: 7px; border-radius: 50%; background: var(--F);"></span></span>
+                      <span style="font-size: 13.5px;">{{p.line}}</span>
+                      <span style="height: 6px; border-radius: 3px; background: var(--sep); overflow: hidden; display: block;"><span style="display: block; height: 6px; width: {{p.pct}}%; border-radius: 3px; background: {{p.c}};"></span></span>
+                      <span style="font-size: 12px; color: var(--tx3);">{{p.foot}}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <span style="font-weight: 600; padding-bottom: 4px;">For different kinds of work</span>
+                  <sc-for list="{{bs.kinds}}" as="k" hint-placeholder-count="4">
+                    <div class="row" style="display: grid; grid-template-columns: 220px minmax(0, 1fr) auto; align-items: center; gap: 16px; height: 46px; border-top: 1px solid var(--sep); padding: 0 6px; margin: 0 -6px; border-radius: 6px;">
+                      <span style="display: flex; flex-direction: column;"><span style="font-weight: 500;">{{k.n}}</span><span style="font-size: 12px; color: var(--tx3);">{{k.what}}</span></span>
+                      <span style="display: flex; align-items: center; gap: 8px; color: var(--tx2);"><sc-for list="{{k.by}}" as="b" hint-placeholder-count="2"><span style="display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px 0 7px; border-radius: 13px; border: 1px solid var(--sep2); background: var(--win); color: var(--tx); font-size: 12.5px;"><img class="lg {{b.inv}}" src="{{b.lg}}" width="14" height="14" alt="">{{b.n}}</span><sc-if value="{{b.then}}" hint-placeholder-val="{{false}}"><span style="font-size: 12px; color: var(--tx3);">then</span></sc-if></sc-for></span>
+                      <span style="font-size: 12px; color: var(--tx3);">{{k.week}}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; padding-top: 2px;"><span style="font-size: 12.5px; color: var(--tx3);">Models, fallbacks and limits for each role are in the details.</span><button type="button" class="btn" style="height: 26px; font-size: 12px;">Show details</button></div>
+              </div>
+            </sc-if>
+
             <!-- ============ BRAINS ============ -->
             <sc-if value="{{isBrains}}" hint-placeholder-val="{{false}}">
               <div class="rise" style="display: flex; flex-direction: column;">
@@ -493,6 +528,22 @@ JS = r"""
     var st = this.state;
     var sec = st.sec || 'atlas';
     function set(k, v) { var s = {}; s[k] = v; self.setState(s); }
+    LOGOS_JS
+    function lb(k, n, then) { return { lg: L[k].uri, inv: L[k].inv, n: n, then: !!then }; }
+    var bsimple = {
+      main: { lg: L.openai.uri, inv: L.openai.inv },
+      provs: [
+        { lg: L.openai.uri, inv: L.openai.inv, n: 'ChatGPT', how: 'Your Plus plan', line: 'Most of today’s plan is left', pct: 62, c: 'var(--tx2)', foot: '62% used · resets at 4:10 pm' },
+        { lg: L.claude.uri, inv: L.claude.inv, n: 'Claude', how: 'By Anthropic key', line: '$18.40 of your $100 this month', pct: 18, c: '#d97757', foot: 'At $100 it stops and asks you' },
+        { lg: L.cloudflare.uri, inv: L.cloudflare.inv, n: 'Workers AI', how: 'Comes with Cloudflare', line: 'Free so far today', pct: 41, c: '#f38020', foot: '41% of the free allowance · resets 8 pm' }
+      ],
+      kinds: [
+        { n: 'Quick jobs', what: 'Lookups and small helpers', by: [lb('cloudflare', 'Workers AI', true), lb('openai', 'ChatGPT')], week: '1,906 this week' },
+        { n: 'Hard problems', what: 'Research, plans, checking a job’s work', by: [lb('openai', 'ChatGPT', true), lb('claude', 'Claude')], week: '48 this week' },
+        { n: 'Long reading', what: 'Whole documents and long threads', by: [lb('claude', 'Claude')], week: '6 this week' },
+        { n: 'Learning skills', what: 'What it keeps after a conversation', by: [lb('cloudflare', 'Workers AI')], week: '12 this week' }
+      ]
+    };
     function cells(n, f) { var a = []; for (var i = 0; i < n; i++) a.push({ k: f(i) }); return a; }
     function seg(key, opts, def) {
       var cur = st[key] || def;
@@ -676,7 +727,7 @@ JS = r"""
 
     var H = {
       atlas: ['Atlas', 'Who Atlas is, how it sounds, and how it looks.', ''],
-      brains: ['Brains', 'Which models think for Atlas. If one is down or out, the next in its chain takes over.', 'Add a provider'],
+      brains: ['Brains', 'Who does Atlas’s thinking, and what it costs.', 'Add a provider'],
       notifications: ['Notifications', 'How Atlas reaches you when you aren’t already talking.', 'Send a test'],
       permissions: ['Permissions', 'When Atlas asks first. Each area can raise or lower these; Health asks for everything.', ''],
       account: ['Account', 'How you sign in, your secrets, updates and your data.', '']
@@ -690,7 +741,7 @@ JS = r"""
       traits: traits, sample: sample, voices: voices, segs: segs,
       bargeCls: tg('barge', true), toggleBarge: flip('barge', true),
       themes: themes, accents: accents, lookSegs: lookSegs, followCls: tg('follow', true), toggleFollow: flip('follow', true),
-      isBrains: sec === 'brains', roles: roles, named: named, usedFor: usedFor, provs: provs,
+      isBrains: sec === 'brains' && st.level === 'developer', isBrainsSimple: sec === 'brains' && st.level !== 'developer', bs: bsimple, roles: roles, named: named, usedFor: usedFor, provs: provs,
       pickProv: pickProv, pickRows: pickRows, pickNote: pickNote, pickCostHd: pickCostHd, pickFoot: pickFoot,
       isNotif: sec === 'notifications', showSugg: !accepted && !st.dismissed, acceptSugg: function () { set('accepted', true); }, dismissSugg: function () { set('dismissed', true); },
       order: order, urg: urg, dayCells: dayCells, budget: budget,
@@ -704,8 +755,9 @@ JS = r"""
 
 if __name__ == '__main__':
     from shell import diamond
+    from shell import logos_js
     body = BODY.replace('DIAMOND', diamond(9, 16))
-    out = page(title='Atlas · Settings', active='Settings', label='Settings', body=body, js=JS,
+    out = page(title='Atlas · Settings', active='Settings', label='Settings', body=body, js=JS.replace('LOGOS_JS', logos_js()),
                placeholder='Change anything by asking, like: don’t call me before 9 am',
                sheet_height=690, extra_css=CSS,
                state="{ sec: 'atlas', atab: 'Character', warmth: 4, humor: 3, directness: 4, initiative: 3 }")

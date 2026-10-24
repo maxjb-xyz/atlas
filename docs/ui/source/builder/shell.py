@@ -4,7 +4,17 @@ page(...) returns a complete .dc.html string. Every page uses the same sidebar,
 toolbar, stage frame and slim composer, so a change here reaches every page
 after re-running the page builders (build_all.py).
 """
-import json, html
+import json, html, os
+
+# Real logos for outside services (docs/ui/source/builder/logos.json, made from CC0 icon sets
+# and the vendors' own icons). Each is {uri, inv}: inv marks a black logo, inverted in the dark theme.
+LOGOS = json.load(open(os.path.join(os.path.dirname(__file__), 'logos.json')))
+
+
+def logos_js():
+    """The logos as a JS object, for a page's renderVals: L.gmail.uri, L.gmail.inv."""
+    return 'var L = %s;\n' % json.dumps({k: {'uri': v['uri'], 'inv': 'inv' if v.get('inv') else ''} for k, v in LOGOS.items()})
+
 
 FONTS = '<link rel="preconnect" href="https://fonts.googleapis.com">\n<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&amp;family=Inter+Tight:wght@500;600;700&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">'
 
@@ -42,6 +52,13 @@ button{cursor:pointer}
 a{color:inherit}
 .sr{position:absolute;left:-9999px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+.lg{display:block;object-fit:contain;flex:none}
+.dk .lg.inv{filter:invert(1) brightness(1.1)}
+.logo{border-radius:8px;border:1px solid var(--sep2);background:var(--win);display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box}
+.ach{height:20px;padding:0 8px;border-radius:10px;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;white-space:nowrap;background:rgba(var(--rgb),.13);color:var(--c)}
+.ach::before{content:'';width:6px;height:6px;border-radius:2px;background:var(--c)}
+.avc{border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:600;flex:none;background:rgba(var(--rgb),.2);color:var(--c)}
+
 """
 
 DIAMOND = '<svg viewBox="290 128 444 768" width="{w}" height="{h}" aria-hidden="true" style="flex: none;"><polygon points="512,128.96 290.84,418.52 512,505.16" style="fill: var(--m1);"></polygon><polygon points="512,128.96 512,505.16 733.16,418.52" style="fill: var(--m2);"></polygon><polygon points="512,895.04 290.84,418.52 512,505.16" style="fill: var(--m3);"></polygon><polygon points="512,895.04 512,505.16 733.16,418.52" style="fill: var(--m4);"></polygon></svg>'

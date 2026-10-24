@@ -51,7 +51,7 @@ BODY = r"""
             </div>
             <sc-for list="{{people}}" as="p" hint-placeholder-count="10">
               <div class="row" onClick="{{p.open}}" style="cursor: pointer; display: grid; grid-template-columns: 30px minmax(0, 1fr) 104px 80px 196px 116px 112px; gap: 14px; align-items: center; padding: 0 22px; height: 47px; border-bottom: 1px solid var(--sep);">
-                <span class="av" style="width: 30px; height: 30px; font-size: 10.5px;">{{p.i}}</span>
+                <span class="avc" style="width: 30px; height: 30px; font-size: 10.5px; --c: {{p.ac}}; --rgb: {{p.argb}};">{{p.i}}</span>
                 <span style="display: flex; flex-direction: column; min-width: 0;">
                   <span style="display: flex; align-items: center; gap: 7px;"><span style="font-weight: 500;">{{p.n}}</span><sc-if value="{{p.tag}}" hint-placeholder-val="{{false}}"><span style="font-size: 11px; color: var(--tx3); border: 1px solid var(--sep2); border-radius: 4px; padding: 0 5px; line-height: 15px;">{{p.tag}}</span></sc-if></span>
                   <span style="font-size: 12px; color: var(--tx3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{p.rel}}</span>
@@ -61,7 +61,7 @@ BODY = r"""
                   <sc-for list="{{p.ch}}" as="c" hint-placeholder-count="3"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" aria-label="{{c.l}}" style="color: {{c.c}}; opacity: {{c.op}};"><path d="{{c.d}}"></path></svg></sc-for>
                 </span>
                 <span style="display: inline-flex; align-items: center; gap: 12px; min-width: 0; overflow: hidden;">
-                  <sc-for list="{{p.areas}}" as="a" hint-placeholder-count="1"><span class="chip"><span class="sq" style="background: {{a.c}};"></span>{{a.n}}</span></sc-for>
+                  <sc-for list="{{p.areas}}" as="a" hint-placeholder-count="1"><span class="ach" style="--c: {{a.c}}; --rgb: {{a.rgb}};">{{a.n}}</span></sc-for>
                 </span>
                 <span style="display: flex; flex-direction: column;"><span class="num" style="font-size: 12.5px; color: {{p.lc}};">{{p.last}}</span><span style="font-size: 11.5px; color: var(--tx3);">{{p.via}}</span></span>
                 <span style="display: inline-flex; align-items: center; gap: 8px;"><span aria-hidden="true" style="display: inline-flex; gap: 2px;"><sc-for list="{{p.segs}}" as="g" hint-placeholder-count="5"><span style="width: 4px; height: 10px; background: {{g}};"></span></sc-for></span><span class="num" style="font-size: 12px; color: var(--tx2);">{{p.k}}</span></span>
@@ -372,7 +372,8 @@ JS = r"""
       web: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
       msg: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'
     };
-    function chip(n) { return { n: n, c: A[n] }; }
+    var RGB = { Personal: 'var(--Prgb)', Keyframes: 'var(--Krgb)', UCF: 'var(--Urgb)', Fitness: 'var(--Frgb)', Health: 'var(--Hrgb)', Home: '45,170,160' };
+    function chip(n) { return { n: n, c: A[n], rgb: RGB[n] || '145,141,134' }; }
     function segc(opts, cur, key) {
       return opts.map(function (o, k) {
         var on = o === cur;
@@ -396,7 +397,7 @@ JS = r"""
         var has = chans.indexOf(c) >= 0;
         return { d: G[c], l: { mail: 'Email', phone: 'Phone', tg: 'Telegram' }[c], c: c === usual ? 'var(--tx)' : 'var(--tx3)', op: has ? 1 : 0 };
       });
-      return { i: i, n: n, rel: rel, trust: trust, tbs: trust === 'Unknown' ? 'dashed' : 'solid', tfg: trust === 'Unknown' ? 'var(--tx3)' : 'var(--tx2)',
+      return { i: i, n: n, ac: A[as[0]] || 'var(--tx2)', argb: RGB[as[0]] || '145,141,134', rel: rel, trust: trust, tbs: trust === 'Unknown' ? 'dashed' : 'solid', tfg: trust === 'Unknown' ? 'var(--tx3)' : 'var(--tx2)',
         ch: ch, areas: as.map(chip), last: last, via: via, lc: o.today ? 'var(--tx)' : 'var(--tx2)', k: k + ' facts', segs: segs, tag: o.tag || '',
         open: o.open || function () {} };
     }
