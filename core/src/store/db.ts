@@ -309,6 +309,12 @@ const MIGRATIONS: string[] = [
   ALTER TABLE skills ADD COLUMN vec_model TEXT;
   ALTER TABLE skills ADD COLUMN files TEXT NOT NULL DEFAULT '[]';
   `,
+  // 15. M7: each area's look, picked by the owner (§6.4): a color of their own beside the palette index, and an
+  // icon (a line icon's name, or "file:<id>" for a logo they uploaded to the files store).
+  `
+  ALTER TABLE areas ADD COLUMN custom_color TEXT;
+  ALTER TABLE areas ADD COLUMN icon TEXT;
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */
