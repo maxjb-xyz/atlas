@@ -83,19 +83,7 @@ import { memoryTools, recall } from "./tools/memory";
 import { agendaList, agendaTools } from "./tools/agenda";
 import { show } from "./tools/show";
 import { approve, deleteForGood, webhookCall } from "./tools/exits";
-import {
-  type Action,
-  actionsOf,
-  ASKS,
-  countApproval,
-  countDecline,
-  isTrusted,
-  kindOf,
-  needsHold,
-  requestApproval,
-  setTrust,
-  titleOf,
-} from "./approvals";
+import { type Action, actionsOf, countApproval, countDecline, needsHold, permits, requestApproval, setTrust, titleOf } from "./approvals";
 import { removeWebhook, saveWebhook, webhooks } from "./webhooks";
 import { AutomationDesk } from "./agent/automations";
 import { automationTools } from "./tools/automations";
@@ -1731,7 +1719,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    * A face's words out, where the conversation is. In the owner's name, each
    * answer waits for their OK on a card, until they trust that face (§7.2).
    */
-  async #faceSend(o: { conv: string; where: Where; text: string; face: Face; approved?: boolean }): Promise<void> {
+  async #faceSend(o: { conv: string; where: Where; text: string; face: Face; person?: string | null; approved?: boolean }): Promise<void> {
     if (o.face.speaks_as === "owner" && !o.approved && !o.conv.startsWith("test:")) {
       const runId = startRun(this.#sql, { actor: "atlas", trigger: `face:${o.face.id}`, surface: "none", role: "main" });
       await this.#exit.request(
@@ -1742,6 +1730,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           conv: o.conv,
           where: o.where as never,
           text: o.text,
+          ...(o.person ? { person: o.person } : {}),
         },
         { run_id: runId, source_log_id: null },
       );
@@ -4440,12 +4429,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         }
       }
       const readWeb = this.#readTheWeb(c.run_id);
+      const go = permits(this.#sql, action, {
+        permissions: readSettings(this.#sql).permissions,
+        read_web: readWeb,
+        sites: this.#workspaceApi.sites(),
+      });
       // An automation the owner turned on may call the webhooks they saw in it (§13.1: allowed to).
       if (!readWeb && auto && action.kind === "webhook" && auto.allowed.includes(action.name.toLowerCase())) {
         const out = await this.#outbox.perform(action, { run_id: c.run_id, by: "automation" });
         return { ok: out.ok, output: out.ok ? { done: out.text } : { error: out.text } };
       }
-      if (action.kind === "mcp" && !readWeb && isTrusted(this.#sql, action)) {
+      if (action.kind === "mcp" && go) {
         const out = await this.#mcpRun(action.server, action.tool, action.arguments, { run_id: c.run_id, by: "trusted" });
         return {
           ok: out.ok,
@@ -4455,7 +4449,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           receipt: { text: `${out.ok ? "Done" : "Didn't work"} · ${action.name}`, ...(out.view ? { view: out.view } : {}) },
         };
       }
-      if (ASKS[kindOf(action)].asks === "never" || (!readWeb && isTrusted(this.#sql, action))) {
+      if (go) {
         const out = await this.#outbox.perform(action, { run_id: c.run_id, by: "trusted" });
         return {
           ok: out.ok,
@@ -4643,7 +4637,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     for (const a of actions) results.push(await this.#outbox.perform(a, { run_id: item.source.run_id ?? null, by: "approved" }));
     const ok = results.every((r) => r.ok);
     finish(this.#sql, id, "done", null, { by: "owner", via: o.by, edited, ok, results: results.map((r) => r.text) });
-    const offers = countApproval(this.#sql, actions, !edited && ok);
+    const offers = countApproval(this.#sql, actions, !edited && ok, readSettings(this.#sql).permissions);
     if (offers.length) append(this.#sql, { actor: "atlas", kind: "settings.change", body: { trust: "offered", keys: offers } });
     if (actions.some((a) => a.kind === "delete")) this.#broadcast({ type: "atlas.records.changed" });
     this.#approvalSettled(id);

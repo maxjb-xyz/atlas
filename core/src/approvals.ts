@@ -7,7 +7,11 @@
 
 import { createItem, type AgendaItem, getItem } from "./store/agenda";
 import type { Json, Sql } from "./store/db";
+import type { Settings } from "./store/settings";
 import { getState, setState } from "./store/state";
+
+/** The owner's rules for when Atlas asks (§12.3). */
+export type Permissions = Settings["permissions"];
 
 /**
  * What kind of action a tool takes, which decides when Atlas asks first
@@ -87,6 +91,8 @@ export type Action =
       conv: string;
       where: Record<string, Json>;
       text: string;
+      /** The person it's to, when Atlas knows them (§12.3: a face replying to a known contact). */
+      person?: string;
     }
   /**
    * A mail (§16.2): as the owner, from their own mail (`via` is the
@@ -182,9 +188,64 @@ export interface Trust {
 
 export const trustTable = (sql: Sql): Record<string, Trust> => getState<Record<string, Trust>>(sql, "trust") ?? {};
 
-export function isTrusted(sql: Sql, a: Action): boolean {
+export function isTrusted(sql: Sql, a: Action, p?: Permissions): boolean {
   const key = trustKey(a);
-  return key != null && ASKS[kindOf(a)].asks === "until_trusted" && trustTable(sql)[key]?.trusted_at != null;
+  if (key == null || ASKS[kindOf(a)].asks !== "until_trusted") return false;
+  const table = trustTable(sql);
+  if (table[key]?.trusted_at != null) return true;
+  // One service at a time (§12.3): any of its tools trusted trusts them all.
+  if (a.kind === "mcp" && p?.mcp === "per_service") {
+    const prefix = `mcp:${a.server}:`;
+    return Object.entries(table).some(([k, t]) => k.startsWith(prefix) && t.trusted_at != null);
+  }
+  return false;
+}
+
+/** Whether approving this one counts toward Atlas offering to stop asking: not when a rule says it always asks, or never does. */
+export function earnsTrust(a: Action, p?: Permissions): boolean {
+  if (!trustKey(a) || ASKS[kindOf(a)].asks !== "until_trusted") return false;
+  if (!p) return true;
+  if (a.kind === "email" && a.as === "owner" && p.email_as_you === "always") return false;
+  if (a.kind === "node" && p.device_tools === "always") return false;
+  if (a.kind === "face_reply" && a.person && p.faces_known === "send") return false;
+  return p.outside === "until_trusted";
+}
+
+const onSites = (host: string, sites: string[]) => sites.some((s) => host === s || host.endsWith(`.${s}`));
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * Whether Atlas does this now or asks first (§12.1, §12.3): the kind's
+ * default, then the owner's rules, under floors no rule moves. Money and
+ * what can't be undone always ask; so does connecting a new service, and,
+ * unless the owner said otherwise, anything once a run has read the web.
+ * `sites` are the websites the owner allowed (§9.1).
+ */
+export function permits(sql: Sql, a: Action, o: { permissions: Permissions; read_web: boolean; sites: string[] }): boolean {
+  const p = o.permissions;
+  // Sending a form can't be taken back, so it asks, unless the owner allowed forms on sites they chose.
+  // The site list is the guard there, as it is for the vault, so reading the page doesn't change it.
+  if (a.kind === "browser") return p.forms === "allowed_sites" && onSites(hostOf(a.url), o.sites);
+  // Growing Atlas's own abilities always has the owner's OK (§9.2), and a vault login asks the first time on each site (§15).
+  if (a.kind === "mcp_add" || a.kind === "vault") return false;
+  const kind = kindOf(a);
+  if (ASKS[kind].asks === "never") return true;
+  if (kind === "irreversible") return false;
+  // What it read could be steering it (§20): it asks before anything leaves, unless the owner trusts what they trust.
+  if (o.read_web && p.after_web === "ask") return false;
+  if (a.kind === "site") return p.sites === "any";
+  if (a.kind === "email" && a.as === "owner" && p.email_as_you === "always") return false;
+  if (a.kind === "node" && p.device_tools === "always") return false;
+  if (a.kind === "face_reply" && a.person && p.faces_known === "send") return true;
+  if (p.outside === "always") return false;
+  if (p.outside === "never") return true;
+  return isTrusted(sql, a, p);
 }
 
 export function setTrust(sql: Sql, key: string, trusted: boolean): Trust | null {
@@ -197,12 +258,12 @@ export function setTrust(sql: Sql, key: string, trusted: boolean): Trust | null 
 }
 
 /** Counts an approval toward earned trust. Returns the keys Atlas should now offer to stop asking for. */
-export function countApproval(sql: Sql, actions: Action[], asIs: boolean): string[] {
+export function countApproval(sql: Sql, actions: Action[], asIs: boolean, p?: Permissions): string[] {
   const all = trustTable(sql);
   const offers: string[] = [];
   for (const a of actions) {
     const key = trustKey(a);
-    if (!key || ASKS[kindOf(a)].asks !== "until_trusted") continue;
+    if (!key || !earnsTrust(a, p)) continue;
     const t = all[key] ?? { name: a.name, as_is: 0, offered: false, trusted_at: null };
     t.name = a.name;
     t.as_is = asIs ? t.as_is + 1 : 0;

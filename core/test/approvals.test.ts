@@ -1,7 +1,8 @@
 import { runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
-import { countApproval, TRUST_AFTER } from "../src/approvals";
+import { type Action, countApproval, earnsTrust, permits, setTrust, TRUST_AFTER } from "../src/approvals";
+import { Settings } from "../src/store/settings";
 import type { ServerMessage } from "../src/protocol";
 import { migrate, type Sql } from "../src/store/db";
 import type { LogRow } from "../src/store/log";
@@ -294,6 +295,125 @@ describe("approvals", () => {
     const done = await s.next("atlas.rows", (m) => m.rows.some((r) => r.kind === "delivery"));
     expect(done.rows.find((r) => r.kind === "delivery")!.body).toMatchObject({ ok: false, checks: { secrets: "failed" } });
     expect(calls).toEqual([]);
+    s.close();
+  });
+});
+
+describe("your own rules (§12.3)", () => {
+  const rules = (p: Partial<Settings["permissions"]> = {}) => Settings.parse({ permissions: p }).permissions;
+  const hook: Action = { kind: "webhook", webhook: "wh_rules", name: "Porch light" };
+  const mail = (as: "owner" | "atlas"): Action => ({
+    kind: "email",
+    name: "Mail Doug",
+    as,
+    via: "gmail",
+    from: "me@example.com",
+    to: ["doug@acme.com"],
+    subject: "Thursday",
+    text: "See you then.",
+  });
+  const form: Action = { kind: "browser", ref: "12", name: "Send the form", url: "https://forms.example.com/rsvp", what: "RSVP yes" };
+  const site: Action = { kind: "site", host: "api.example.com", name: "Reach api.example.com", why: "the docs" };
+  const reply: Action = {
+    kind: "face_reply",
+    name: "Front desk's answer as you",
+    face: "f1",
+    conv: "c1",
+    where: {},
+    text: "Hi",
+    person: "rec_doug",
+  };
+  const del: Action = { kind: "delete", record: "rec_1", name: "the note", fact: "x" };
+  const mcpTool = (tool: string): Action => ({
+    kind: "mcp",
+    server: "mcp_linear",
+    name: `${tool} on Linear`,
+    tool,
+    arguments: {},
+    destructive: false,
+    what: "",
+    where: "Linear",
+  });
+  const base = { read_web: false, sites: ["example.com"] };
+
+  it("start as Atlas behaved before: outside actions ask until trusted, sites and forms ask, the web makes everything ask", () =>
+    inOwner((_a, sql) => {
+      const p = rules();
+      for (const a of [hook, mail("owner"), form, site, reply]) expect(permits(sql, a, { ...base, permissions: p })).toBe(false);
+      expect(earnsTrust(mail("owner"), p)).toBe(true);
+    }));
+
+  it("let the owner loosen what they choose, and never what can't be undone, a new service or a vault login", () =>
+    inOwner((_a, sql) => {
+      const loose = rules({ outside: "never", sites: "any", forms: "allowed_sites", faces_known: "send" });
+      const go = (a: Action, o: Partial<typeof base> = {}) => permits(sql, a, { ...base, ...o, permissions: loose });
+      expect(go(hook)).toBe(true);
+      expect(go(site)).toBe(true);
+      expect(go(form)).toBe(true);
+      // Only on the sites the owner allowed.
+      expect(go({ ...form, url: "https://elsewhere.test/submit" } as Action)).toBe(false);
+      expect(go(reply)).toBe(true);
+      // A face reply to someone Atlas doesn't know still asks under its own rule.
+      const { person: _, ...stranger } = reply as Extract<Action, { kind: "face_reply" }>;
+      expect(permits(sql, stranger, { ...base, permissions: rules({ faces_known: "send" }) })).toBe(false);
+      // Floors.
+      expect(go(del)).toBe(false);
+      expect(go({ kind: "mcp_add", name: "Linear", url: "https://mcp.linear.app", why: "issues" })).toBe(false);
+      expect(
+        go({
+          kind: "vault",
+          entry: "v1",
+          name: "Bank",
+          host: "bank.example.com",
+          url: "https://bank.example.com",
+          card: false,
+          fields: {},
+        }),
+      ).toBe(false);
+      // After reading the web, everything leaving asks, unless the owner said trusted things can go.
+      expect(go(hook, { read_web: true })).toBe(false);
+      expect(permits(sql, hook, { ...base, read_web: true, permissions: rules({ outside: "never", after_web: "trusted" }) })).toBe(true);
+      // Nothing to earn when nothing asks.
+      expect(earnsTrust(hook, loose)).toBe(false);
+    }));
+
+  it("let the owner tighten mail in their name and tools on their devices, and stop offering trust for them", () =>
+    inOwner((_a, sql) => {
+      const tight = rules({ email_as_you: "always", device_tools: "always" });
+      expect(earnsTrust(mail("owner"), tight)).toBe(false);
+      expect(earnsTrust(mail("atlas"), tight)).toBe(true);
+      const node: Action = { kind: "node", node: "n1", device: "Mac", name: "Run ls", tool: "shell", input: { cmd: "ls" }, what: "ls" };
+      expect(earnsTrust(node, tight)).toBe(false);
+      // Already trusted, mail as the owner still asks.
+      const key = "email:owner:doug@acme.com";
+      for (let i = 0; i < TRUST_AFTER; i++) countApproval(sql, [mail("owner")], true);
+      setTrust(sql, key, true);
+      expect(permits(sql, mail("owner"), { ...base, permissions: rules() })).toBe(true);
+      expect(permits(sql, mail("owner"), { ...base, permissions: tight })).toBe(false);
+      setTrust(sql, key, false);
+    }));
+
+  it("trust a whole MCP service once one of its tools is trusted, when the owner says so", () =>
+    inOwner((_a, sql) => {
+      for (let i = 0; i < TRUST_AFTER; i++) countApproval(sql, [mcpTool("create_issue")], true);
+      setTrust(sql, "mcp:mcp_linear:create_issue", true);
+      expect(permits(sql, mcpTool("create_issue"), { ...base, permissions: rules() })).toBe(true);
+      expect(permits(sql, mcpTool("update_issue"), { ...base, permissions: rules() })).toBe(false);
+      expect(permits(sql, mcpTool("update_issue"), { ...base, permissions: rules({ mcp: "per_service" }) })).toBe(true);
+      setTrust(sql, "mcp:mcp_linear:create_issue", false);
+    }));
+
+  it("do an outside action without a card once the owner says Atlas doesn't need to ask", async () => {
+    const s = await connect();
+    await addHook(s, "Porch light");
+    s.send({ type: "atlas.settings.update", patch: { permissions: { ...rules(), outside: "never" } } });
+    await s.next("atlas.view", (m) => m.view.settings.permissions.outside === "never");
+    brain([call("webhook_call", { webhook: "Porch light" }), say("The porch light's on.")]);
+    const [receipt] = await turn(s, "porch light on");
+    expect(receipt!.body.receipt).toEqual({ text: "Done · Porch light" });
+    expect(calls).toHaveLength(1);
+    s.send({ type: "atlas.settings.update", patch: { permissions: rules() } });
+    await s.next("atlas.view", (m) => m.view.settings.permissions.outside === "until_trusted");
     s.close();
   });
 });

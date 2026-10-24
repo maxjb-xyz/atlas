@@ -60,6 +60,31 @@ export const Settings = z.object({
       uses: z.object(Object.fromEntries(WORK_KINDS.map((k) => [k, z.string().max(24).nullable().default(null)]))).prefault({}),
     })
     .prefault({}),
+  /**
+   * The owner's own rules for when Atlas asks (§12.3). Each starts as Atlas
+   * behaved before there were rules; the floors (money, what can't be undone,
+   * a vault login's first time on a site) aren't here because they can't move.
+   */
+  permissions: z
+    .object({
+      /** Outside actions without a rule of their own: always ask, ask until trusted, or don't ask. */
+      outside: z.enum(["always", "until_trusted", "never"]).default("until_trusted"),
+      /** Websites the workspace reaches (§9.1): asked for each site, or any site. */
+      sites: z.enum(["each", "any"]).default("each"),
+      /** Sending forms in the browser: asks, or sends on the sites the owner allowed. */
+      forms: z.enum(["ask", "allowed_sites"]).default("ask"),
+      /** Once a run has read the web (§20): everything that leaves asks, or what's trusted goes as usual. */
+      after_web: z.enum(["ask", "trusted"]).default("ask"),
+      /** Mail in the owner's name: asks until each set of recipients is trusted, or always asks. */
+      email_as_you: z.enum(["per_recipient", "always"]).default("per_recipient"),
+      /** A face speaking as the owner to someone Atlas knows: asks until trusted, or sends. */
+      faces_known: z.enum(["until_trusted", "send"]).default("until_trusted"),
+      /** MCP tools: trusted one tool at a time, or trusting one trusts the whole service. */
+      mcp: z.enum(["per_tool", "per_service"]).default("per_tool"),
+      /** Tools on the owner's devices (§16.3): ask until trusted, or always ask. */
+      device_tools: z.enum(["until_trusted", "always"]).default("until_trusted"),
+    })
+    .prefault({}),
   voice: z
     .object({
       speech_in: z.enum(["workers-ai-flux", "elevenlabs-scribe"]).default("workers-ai-flux"),
@@ -159,6 +184,7 @@ export const SettingsPatch = z.object({
   timezone: f.timezone.unwrap().optional(),
   brains: f.brains.unwrap().optional(),
   named_brains: f.named_brains.unwrap().optional(),
+  permissions: f.permissions.unwrap().optional(),
   voice: f.voice.unwrap().optional(),
   character: f.character.unwrap().optional(),
   pins: f.pins.unwrap().optional(),
