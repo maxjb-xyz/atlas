@@ -58,12 +58,12 @@ import {
   type SettingsView,
   type SkillView,
 } from "./protocol";
-import { type AgendaItem, createItem, due, finish, getItem, lease, setScheduleId, upcoming } from "./store/agenda";
+import { type AgendaItem, createItem, due, finish, getItem, lease, rearm, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, newId, parse, type Sql } from "./store/db";
 import { type Actor, append, forRun, get as getRow, type LogRow, logTo, type Surface, thread } from "./store/log";
 import { indexNewMessages } from "./store/memory";
 import { getState, setState } from "./store/state";
-import { endRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
+import { endRun, getRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
 import { type BrainChoice, getSecret, readSettings, sealSecrets, type Settings, setSecret, writeSettings } from "./store/settings";
 import { addLocalDays, isoLocal, isValidZone, longLocal, parseWhen, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import { calendarMove, calendarRead } from "./tools/calendar";
@@ -98,7 +98,7 @@ import { vaultFill } from "./tools/vault";
 import { fileRead, fileTools } from "./tools/files";
 import { workspaceTools } from "./tools/workspace";
 import { codeRun } from "./tools/code";
-import { skillRead, skillTools } from "./tools/skills";
+import { reviewTools, skillRead, skillTools, unpackSkill } from "./tools/skills";
 import { mcpCall, mcpToolset, mcpTools } from "./tools/mcp";
 import {
   APP_MIME,
@@ -120,12 +120,16 @@ import {
   ensureSkillChecks,
   findSkill,
   listSkills,
+  meaningOf,
   noteCheck,
   parseSkillMd,
   restoreSkill,
+  samePairs,
   saveSkill,
   setSkillState,
+  setSkillVec,
   skillMd,
+  skillsWithoutVec,
   skillVersions,
   tidySkills,
 } from "./skills";
@@ -352,6 +356,26 @@ const OWNER_ONLY = new Set<string>([
   "atlas.workspace.restart",
   "atlas.workspace.site.remove",
 ]);
+
+/** How long a conversation stays quiet before the review looks back over it for skills (§9.3). */
+const SKILL_REVIEW_QUIET_MS = 10 * 60_000;
+/** A stretch of talk with fewer tool calls than this took no working out, so there's nothing to learn from it. */
+const SKILL_REVIEW_MIN_TOOLS = 4;
+
+/** What the review is asked (§9.3). It's Atlas's own run, so it says what it kept in its last words, for the log. */
+const SKILL_REVIEW_NOTE = [
+  "Look back over your conversation with the owner since your last look, and keep what's worth keeping as skills, the way a person writes down how they did something. You can only read and write skills here.",
+  "First: a skill you followed that turned out wrong or incomplete. Patch it now: skill_read it, then skill_save with a patch that replaces the passage that was wrong.",
+  "Most important: the owner correcting how you work ('don't do X', 'always Y', a format they want). Put it in the skill it belongs to, or start one for that kind of task.",
+  "Then: a method that took working out and that the owner was happy with. Improve the skill that covers that kind of task, or save a new one named for the kind of task, not this one case.",
+  "Lessons, not logs: the steps and what to watch for, not the story of this conversation. Keep the owner's private details out unless the skill needs them.",
+  "Don't keep: one-off tasks, failures because a service was down, guesses that weren't tested, or what a skill already says.",
+  "If there's nothing worth keeping, say 'Nothing to keep.' and stop. Otherwise end with a line saying what you kept.",
+].join("\n");
+
+/** What the review is asked when the tidy-up found skills that read alike (§9.3: duplicates are merged). */
+const SKILL_MERGE_NOTE =
+  "These skills read like the same method. For each pair: if they are, improve the better one (skill_save with a patch) so it says everything the other taught, then skill_merge the other into it. If they're different methods, leave them, and say why in a line.";
 
 /** A chat run that takes longer than this sends a short note saying what it's doing (§16.1). */
 const CHAT_NOTE_MS = 6_000;
@@ -2208,6 +2232,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       await this.keepAliveWhile(() => this.#checkSkills(item));
       return;
     }
+    if (item.kind === "skill_review") {
+      await this.keepAliveWhile(() => this.#inLine(() => this.#reviewSkills(item)));
+      return;
+    }
     if (item.kind === "situation") {
       await this.keepAliveWhile(() => this.#senses.tick(item));
       return;
@@ -2932,6 +2960,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     this.#broadcast({ type: "atlas.run", run_id: runId, state: res.state, surface: channel });
     void this.#tendMemory();
     void this.#maybeCompact();
+    if (getRun(this.#sql, runId)?.actor === "owner")
+      void this.#queueSkillReview().catch((err: unknown) =>
+        console.error(JSON.stringify({ at: "skills.review.queue", error: err instanceof Error ? err.message : String(err) })),
+      );
   }
 
   // --- memory upkeep -----------------------------------------------------------
@@ -2979,6 +3011,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (decider) await this.#tendAreas(decider);
     // Skills nobody has used for months leave the index; they're archived, never deleted (§9.3).
     tidySkills(this.#sql);
+    if (embedder) await this.#tendSkills(embedder);
   }
 
   /** Tags what's new with areas, and starts new areas when enough fits none (§6.3). */
@@ -3733,7 +3766,119 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       updated_at: s.updated_at,
       versions: skillVersions(this.#sql, s.id).map((v) => ({ n: v.n, at: v.at, by: v.by, note: v.note })),
       md: skillMd(s),
+      files: s.files,
     }));
+  }
+
+  /**
+   * After a conversation with the owner, a review waits until it's gone
+   * quiet, then looks back over it for skills (§9.3). Each new turn pushes it
+   * later, so it runs once per stretch of talk.
+   */
+  async #queueSkillReview(): Promise<void> {
+    const due = Date.now() + SKILL_REVIEW_QUIET_MS;
+    const open = upcoming(this.#sql, 300).find((i) => i.kind === "skill_review" && i.state === "scheduled" && !i.source.detail?.merge);
+    if (open) {
+      await this.#clock.unschedule(open);
+      const again = rearm(this.#sql, open.id, due);
+      if (again) await this.#clock.schedule(again);
+      return;
+    }
+    await this.#clock.schedule(
+      createItem(this.#sql, { kind: "skill_review", title: "Look back for skills", due_at: due, source: { via: "skills" } }),
+    );
+  }
+
+  /**
+   * The review (§9.3): one of Atlas's own runs, with only the skill tools,
+   * looking back over the conversation since the last one. It's the one kind
+   * of Atlas's own run that may write skills, and it writes only skills.
+   * A stretch of talk that used few tools has nothing to learn from, so it
+   * ends without a run. With `merge` in its detail, it's the tidy-up asking
+   * it to fold skills that read like the same method into one.
+   */
+  async #reviewSkills(item: AgendaItem): Promise<void> {
+    const since = getState<number>(this.#sql, "skill_review_seq") ?? 0;
+    const last = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) AS seq FROM log`).one().seq;
+    const used = this.#sql
+      .exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM log WHERE seq > ? AND kind = 'tool.call' AND run_id IN (SELECT id FROM runs WHERE actor = 'owner')`,
+        since,
+      )
+      .one().n;
+    const merge = (item.source.detail?.merge as string[][] | undefined) ?? [];
+    if (used < SKILL_REVIEW_MIN_TOOLS && !merge.length) {
+      setState(this.#sql, "skill_review_seq", last);
+      finish(this.#sql, item.id, "done", null, { skipped: `${used} tool calls since the last review` });
+      return;
+    }
+    const runId = startRun(this.#sql, { actor: "atlas", trigger: "skill_review", surface: "none", role: "main" });
+    const note = merge.length ? `${SKILL_MERGE_NOTE}\n${merge.map((p) => `- ${p.join(" and ")}`).join("\n")}` : SKILL_REVIEW_NOTE;
+    const res: LoopResult = await this.#converse({
+      runId,
+      actor: "atlas",
+      sourceLogId: null,
+      surface: "none",
+      role: "main",
+      input: note,
+      beforeSeq: last + 1,
+      budget: { steps: 12, ms: 180_000 },
+      emit: (e) => {
+        if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });
+      },
+      tools: reviewTools,
+      silentOk: true,
+    }).catch((err: unknown) => ({
+      state: "failed" as const,
+      text: "",
+      steps: 0,
+      brain: null,
+      fallback: false,
+      interrupted: false,
+      usage: { input: 0, output: 0 },
+      error: err instanceof Error ? err.message : String(err),
+    }));
+    endRun(this.#sql, runId, res.state, res.steps, {
+      ...(res.error ? { error: res.error } : {}),
+      ...(res.brain ? { brain: brainKey(res.brain) } : {}),
+      usage: res.usage as never,
+      ...(res.text.trim() ? { note: res.text.trim().slice(0, 500) } : {}),
+    });
+    if (!merge.length) setState(this.#sql, "skill_review_seq", last);
+    finish(this.#sql, item.id, res.state === "failed" ? "failed" : "done", runId, res.error ? { error: res.error } : {});
+    this.#broadcast({ type: "atlas.skills", skills: this.#skillViews() });
+  }
+
+  /**
+   * In the nightly tidy (§9.3): takes the meaning of skills that don't have
+   * one yet (pasted ones, ones saved before), then asks the review to merge
+   * any two that read like the same method, once per pair.
+   */
+  async #tendSkills(embedder: Embedder): Promise<void> {
+    const todo = skillsWithoutVec(this.#sql, embedder.model).slice(0, 32);
+    if (todo.length) {
+      try {
+        const vs = await embedder.embed(todo.map(meaningOf));
+        todo.forEach((s, i) => setSkillVec(this.#sql, s.id, embedder.model, vs[i]!));
+      } catch (err) {
+        console.error(JSON.stringify({ at: "skills.embed", error: err instanceof Error ? err.message : String(err) }));
+        return;
+      }
+    }
+    const seen = new Set(getState<string[]>(this.#sql, "skill_pairs_offered") ?? []);
+    const fresh = samePairs(this.#sql, embedder.model)
+      .map(([a, b]) => [a.name, b.name].sort())
+      .filter((p) => !seen.has(p.join("|")));
+    if (!fresh.length) return;
+    setState(this.#sql, "skill_pairs_offered", [...seen, ...fresh.map((p) => p.join("|"))].slice(-200));
+    await this.#clock.schedule(
+      createItem(this.#sql, {
+        kind: "skill_review",
+        title: "Merge skills that read alike",
+        due_at: Date.now(),
+        source: { via: "skills", detail: { merge: fresh } },
+      }),
+    );
   }
 
   /**
@@ -3746,7 +3891,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     for (const s of listSkills(this.#sql).filter((x) => x.check)) {
       let r: { ok: boolean; output: string };
       try {
-        const out = await this.#workspaceApi.run(s.check, { run_id: item.id, timeout_s: 120 });
+        const cwd = s.files.length ? await unpackSkill(this.#workspaceApi, this.#bucket(), s, item.id) : undefined;
+        const out = await this.#workspaceApi.run(s.check, { run_id: item.id, timeout_s: 120, ...(cwd ? { cwd } : {}) });
         r = { ok: out.exit === 0, output: out.output };
       } catch (err) {
         r = { ok: false, output: err instanceof Error ? err.message : String(err) };

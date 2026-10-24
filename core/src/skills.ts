@@ -1,11 +1,15 @@
 // Skills (§9.3): know-how Atlas writes down and finds again, in the
 // SKILL.md format (Agent Skills), so skills from Claude Code, Codex, Hermes
-// and OpenClaw work unchanged. Each one's one-line description sits in the
-// index every run sees; its body is read when it's needed. A skill is
-// patched, not rewritten: every version is kept, and any one can be brought
-// back. A skill can carry a quick check that runs in the workspace; a
-// weekly pass re-runs the checks and flags broken ones. Skills nobody uses
-// for a long while are archived, never deleted.
+// and OpenClaw work unchanged, folders and all. Each one's one-line
+// description sits in the index every run sees; its body is read when it's
+// needed. A skill is patched, not rewritten: a change replaces the passage
+// that was wrong, every version is kept, and any one can be brought back. A
+// new skill that reads like one Atlas already has is refused with that
+// skill's name, so there's one skill per method. A skill can carry a quick
+// check that runs in the workspace; a weekly pass re-runs the checks and
+// flags broken ones. Skills nobody uses for a long while are archived,
+// never deleted. Most skills are learned by a review after a conversation
+// goes quiet (agent.ts), not mid-turn.
 
 import { newId, parse, type Sql } from "./store/db";
 import { append, type LogRow } from "./store/log";
@@ -28,6 +32,8 @@ export interface Skill {
   last_used: number | null;
   /** The last check: when, whether it passed, and what it printed when it didn't. */
   checked: { at: number; ok: boolean; output: string } | null;
+  /** The files in its folder beside the SKILL.md (references/, scripts/, templates/, assets/), kept in R2. */
+  files: SkillFile[];
   created_at: number;
   updated_at: number;
 }
@@ -42,14 +48,37 @@ export interface SkillVersion {
   check: string;
 }
 
+export interface SkillFile {
+  /** Inside the skill's folder: "scripts/fill.py", "references/fields.md". */
+  path: string;
+  size: number;
+}
+
+/** A skill's file in R2. */
+export const skillFileKey = (id: string, path: string) => `skills/${id}/${path}`;
+
+/** A folder's file path, as the standard lays a skill out. */
+export const FILE_PATH = /^(references|scripts|templates|assets|examples)\/[A-Za-z0-9._\-/]{1,160}$/;
+
+/**
+ * How close two skills' meanings must be to count as the same method: a new
+ * skill this close to one Atlas has is refused, and two this close are
+ * offered to the review to merge.
+ */
+export const SAME_METHOD = 0.86;
+
 /** Skills unused this long are archived by the tidy-up (they stay searchable, out of the index). */
 export const ARCHIVE_AFTER_MS = 120 * 86_400_000;
 
-const fromRow = (r: Record<string, unknown>): Skill => ({
-  ...(r as unknown as Skill),
-  areas: parse<string[]>(String(r.areas ?? "[]"), []),
-  checked: parse<Skill["checked"]>(String(r.checked ?? "null"), null),
-});
+const fromRow = (r: Record<string, unknown>): Skill => {
+  const { vec: _vec, vec_model: _model, ...rest } = r;
+  return {
+    ...(rest as unknown as Skill),
+    areas: parse<string[]>(String(r.areas ?? "[]"), []),
+    checked: parse<Skill["checked"]>(String(r.checked ?? "null"), null),
+    files: parse<SkillFile[]>(String(r.files ?? "[]"), []),
+  };
+};
 
 export function listSkills(sql: Sql, o: { all?: boolean } = {}): Skill[] {
   return sql
@@ -126,12 +155,18 @@ export function saveSkill(
     uses: old?.uses ?? 0,
     last_used: old?.last_used ?? null,
     checked: old && old.check === check ? old.checked : null,
+    files: old?.files ?? [],
     created_at: old?.created_at ?? now,
     updated_at: now,
   };
   sql.exec(
-    `INSERT OR REPLACE INTO skills (id, name, description, body, "check", areas, made_by, state, version, uses, last_used, checked, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    // An upsert, not a replace: a replace would drop the skill's files and its meaning's vector.
+    `INSERT INTO skills (id, name, description, body, "check", areas, made_by, state, version, uses, last_used, checked, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, body = excluded.body,
+       "check" = excluded."check", areas = excluded.areas, state = excluded.state, version = excluded.version,
+       checked = excluded.checked, updated_at = excluded.updated_at,
+       vec = CASE WHEN skills.description = excluded.description THEN skills.vec ELSE NULL END`,
     skill.id,
     skill.name,
     skill.description,
@@ -166,6 +201,87 @@ export function saveSkill(
     body: { change: old ? "patched" : "made", id: skill.id, name, version: skill.version, note },
   });
   return { skill, change: old ? "patched" : "made", row };
+}
+
+/**
+ * Replaces passages in a skill's body: each `old` must appear exactly once,
+ * so a patch changes only what was wrong. Says plainly when one doesn't fit.
+ */
+export function patchBody(body: string, edits: Array<{ old: string; new: string }>): string {
+  let out = body;
+  for (const e of edits) {
+    const n = e.old ? out.split(e.old).length - 1 : 0;
+    if (n === 0) throw new Error(`The skill doesn't say "${e.old.slice(0, 80)}". Read it with skill_read and quote the passage exactly.`);
+    if (n > 1) throw new Error(`"${e.old.slice(0, 80)}" appears ${n} times in the skill. Quote more around it, so it's one place.`);
+    out = out.replace(e.old, () => e.new);
+  }
+  return out;
+}
+
+/** The text a skill's meaning is taken from: its name and what it's for. */
+export const meaningOf = (s: { name: string; description: string }) => `${s.name.replace(/-/g, " ")}: ${s.description}`;
+
+export function setSkillVec(sql: Sql, id: string, model: string, vec: Float32Array): void {
+  sql.exec(`UPDATE skills SET vec = ?, vec_model = ? WHERE id = ?`, vec.buffer as ArrayBuffer, model, id);
+}
+
+/** Active skills whose meaning wasn't taken with this model yet. */
+export function skillsWithoutVec(sql: Sql, model: string): Skill[] {
+  return sql.exec(`SELECT * FROM skills WHERE state = 'active' AND (vec IS NULL OR vec_model IS NOT ?)`, model).toArray().map(fromRow);
+}
+
+function vecs(sql: Sql, model: string): Array<{ skill: Skill; vec: Float32Array }> {
+  return sql
+    .exec(`SELECT * FROM skills WHERE state = 'active' AND vec IS NOT NULL AND vec_model = ?`, model)
+    .toArray()
+    .map((r) => ({ skill: fromRow(r), vec: new Float32Array(r.vec as ArrayBuffer) }));
+}
+
+const dot = (a: Float32Array, b: Float32Array) => {
+  let s = 0;
+  for (let i = 0; i < Math.min(a.length, b.length); i++) s += a[i]! * b[i]!;
+  return s;
+};
+
+/** The active skill closest in meaning to `vec` (vectors are unit length), and how close. */
+export function nearestSkill(sql: Sql, vec: Float32Array, model: string, except?: string): { skill: Skill; score: number } | null {
+  let best: { skill: Skill; score: number } | null = null;
+  for (const v of vecs(sql, model)) {
+    if (v.skill.id === except) continue;
+    const score = dot(vec, v.vec);
+    if (!best || score > best.score) best = { skill: v.skill, score };
+  }
+  return best;
+}
+
+/** Pairs of active skills that read like the same method, for the review to merge. */
+export function samePairs(sql: Sql, model: string, threshold = SAME_METHOD): Array<[Skill, Skill]> {
+  const all = vecs(sql, model);
+  const out: Array<[Skill, Skill]> = [];
+  for (let i = 0; i < all.length; i++)
+    for (let j = i + 1; j < all.length; j++) if (dot(all[i]!.vec, all[j]!.vec) >= threshold) out.push([all[i]!.skill, all[j]!.skill]);
+  return out;
+}
+
+export function setSkillFiles(sql: Sql, id: string, files: SkillFile[]): void {
+  sql.exec(`UPDATE skills SET files = ?, updated_at = ? WHERE id = ?`, JSON.stringify(files), Date.now(), id);
+}
+
+/**
+ * Whether learning works (§9.3: measured): how many skills there are, how
+ * many Atlas learned in the last 30 days, and how often its own were opened.
+ */
+export function skillStats(sql: Sql, now = Date.now()): { skills: number; learned_month: number; opened: number } {
+  const r = sql
+    .exec<{ skills: number; learned: number | null; opened: number | null }>(
+      `SELECT COUNT(*) AS skills,
+              SUM(CASE WHEN made_by = 'atlas' AND created_at >= ? THEN 1 ELSE 0 END) AS learned,
+              SUM(CASE WHEN made_by = 'atlas' THEN uses ELSE 0 END) AS opened
+       FROM skills WHERE state = 'active'`,
+      now - 30 * 86_400_000,
+    )
+    .one();
+  return { skills: r.skills, learned_month: r.learned ?? 0, opened: r.opened ?? 0 };
 }
 
 /** Brings back an older version as a new one (history only grows). */

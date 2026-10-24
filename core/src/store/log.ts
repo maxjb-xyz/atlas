@@ -74,6 +74,8 @@ export type Undo =
   | { kind: "page.undo"; id: string; version: number }
   /** Undoes a skill's version `version`: back to the one before, or archived when it was the first. */
   | { kind: "skill.undo"; id: string; version: number }
+  /** Brings back a skill the review merged into another (§9.3). */
+  | { kind: "skill.restore"; id: string }
   /** Moves a calendar event back to where it was. */
   | { kind: "calendar.move"; id: string; title: string; start: string; end: string }
   /** Puts Speaking up back the way it was before Atlas changed it. */

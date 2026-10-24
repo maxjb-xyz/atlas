@@ -14,6 +14,8 @@ export type AgendaKind =
   | "approval"
   | "automation"
   | "skills"
+  /** A look back over a conversation that went quiet, keeping what's worth keeping as skills (§9.3). */
+  | "skill_review"
   /** Something to do when you're near the right kind of place (§10.3), with no time unless it has a deadline. */
   | "errand"
   /** A rhythm moment (§10.3): start of day, evening, or a look before leaving for an event. */

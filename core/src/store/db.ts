@@ -302,6 +302,13 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX coding_phase ON coding(phase, updated_at);
   `,
+  // 14. M7: skills (§9.3). Each one's meaning as a vector (to refuse a near-duplicate and to find ones to merge),
+  // the model that made it, and the files in its folder (references, scripts, templates, assets), kept in R2.
+  `
+  ALTER TABLE skills ADD COLUMN vec BLOB;
+  ALTER TABLE skills ADD COLUMN vec_model TEXT;
+  ALTER TABLE skills ADD COLUMN files TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

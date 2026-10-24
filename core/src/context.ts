@@ -227,7 +227,7 @@ export function hat(sql: Sql, beforeSeq?: number): Area[] {
 function skillsLine(sql: Sql): string {
   const skills = listSkills(sql).slice(0, 60);
   return skills.length
-    ? `Your skills (open one with skill_read before a task it covers; improve it with skill_save when it was wrong):\n${skills
+    ? `Your skills (open one with skill_read before a task it covers; when it was wrong, patch it with skill_save):\n${skills
         .map((s) => `- ${s.name}: ${s.description}${s.checked && !s.checked.ok ? " (its last check failed)" : ""}`)
         .join("\n")}`
     : "";

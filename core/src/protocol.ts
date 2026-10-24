@@ -510,6 +510,8 @@ export interface SkillView {
   versions: Array<{ n: number; at: number; by: "owner" | "atlas"; note: string }>;
   /** The whole thing as a SKILL.md, to edit or take elsewhere. */
   md: string;
+  /** The files in its folder beside the SKILL.md. */
+  files: Array<{ path: string; size: number }>;
 }
 
 /** A connected MCP server as Settings shows it (§9.2): never its token. */

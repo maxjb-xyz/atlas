@@ -72,6 +72,12 @@ export async function undoReceipt(
           : restoreSkill(sql, s.id, undo.version - 1, "owner", `Undid version ${undo.version}.`);
       return row ? { ok: true, row, agenda: false } : { ok: false, message: "There was nothing to undo." };
     }
+    case "skill.restore": {
+      const s = getSkill(sql, undo.id);
+      if (!s) return { ok: false, message: "That skill isn't there any more." };
+      const row = setSkillState(sql, s.id, "active", "owner", "Brought back.");
+      return row ? { ok: true, row, agenda: false } : { ok: false, message: `${s.name} is already in use.` };
+    }
     case "calendar.move": {
       if (!calendar?.move) return { ok: false, message: "The calendar isn't connected now, so the event can't be moved back from here." };
       try {

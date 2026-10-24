@@ -210,3 +210,175 @@ describe("skills in a run", () => {
     );
   });
 });
+
+describe("skills learned better (M7)", () => {
+  beforeEach(async () => {
+    await inOwner((_a, sql) => {
+      sql.exec(`DELETE FROM agenda WHERE kind = 'skill_review'`);
+      sql.exec(`DELETE FROM state WHERE key IN ('skill_review_seq', 'skill_pairs_offered')`);
+    });
+  });
+
+  it("patches only the passage that was wrong, refuses a near-duplicate, and keeps a folder of files", async () => {
+    const s = await connect();
+    const desc = "File work expense reimbursements on the expenses site. Use when the owner asks to claim expenses.";
+    brain([call("skill_save", { name: "file-reimbursements", description: desc, body: STEPS }), say("Kept.")]);
+    await turn(s, "thanks, that worked");
+
+    // A second skill for the same method is refused, with the one to improve instead.
+    brain([
+      call("skill_save", { name: "claim-expenses", description: `Claim expenses: ${desc}`, body: STEPS }),
+      say("I'll improve the one I have."),
+    ]);
+    const dup = await turn(s, "remember how to claim expenses");
+    expect(out(dup.results[0]!)).toMatch(/This reads like your skill .{0,2}file-reimbursements/);
+    expect(await inOwner((_a, sql) => findSkill(sql, "claim-expenses"))).toBeNull();
+
+    // A patch replaces only the passage that was wrong; a passage it doesn't have is refused plainly.
+    brain([
+      call("skill_save", {
+        name: "file-reimbursements",
+        patch: [{ old: "the date field wants DD/MM/YYYY", new: "the date field wants YYYY-MM-DD since the redesign" }],
+        note: "The site's date format changed.",
+      }),
+      call("skill_save", { name: "file-reimbursements", patch: [{ old: "a passage it never had", new: "x" }] }, "call_bad_patch"),
+      say("Fixed."),
+    ]);
+    const patched = await turn(s, "the dates are the other way round now");
+    expect(patched.results[0]!.body.receipt).toMatchObject({ text: "Improved a skill · file-reimbursements · version 2" });
+    expect(out(patched.results[1]!)).toContain("doesn't say");
+    const skill = await inOwner((_a, sql) => findSkill(sql, "file-reimbursements")!);
+    expect(skill.body).toBe(STEPS.replace("the date field wants DD/MM/YYYY", "the date field wants YYYY-MM-DD since the redesign"));
+    expect(skill.description).toBe(desc);
+
+    // Its folder: a script, listed by skill_read, read by skill_file; a path outside the folder is refused.
+    brain([
+      call("skill_save", {
+        name: "file-reimbursements",
+        files: [{ path: "scripts/receipts.py", content: "print('receipts')" }],
+      }),
+      call("skill_save", { name: "file-reimbursements", files: [{ path: "../secrets.txt", content: "x" }] }, "call_bad_path"),
+      call("skill_read", { name: "file-reimbursements" }),
+      call("skill_file", { name: "file-reimbursements", path: "scripts/receipts.py" }),
+      say("Saved the script with it."),
+    ]);
+    const files = await turn(s, "keep the receipts script with it");
+    expect(out(files.results[1]!)).toContain("isn't a path in a skill's folder");
+    expect(out(files.results[2]!)).toContain("scripts/receipts.py");
+    expect(out(files.results[3]!)).toContain("print('receipts')");
+    expect(files.results[0]!.body.receipt).toMatchObject({ text: "Updated a skill's files · file-reimbursements" });
+    expect(files.results[0]!.body.receipt).not.toHaveProperty("undo");
+
+    // Its check runs in its folder, put in the workspace first.
+    checks = [];
+    brain([
+      call("skill_save", { name: "file-reimbursements", check: "python3 scripts/receipts.py" }),
+      call("skill_check", { name: "file-reimbursements" }),
+      say("It still works."),
+    ]);
+    await turn(s, "check the reimbursements skill still works");
+    const commands = checks.map((c) => c.command);
+    expect(commands.some((c) => c.includes("base64 -d /workspace/skills/file-reimbursements/scripts/receipts.py.b64"))).toBe(true);
+    expect(commands.at(-1)).toBe("python3 scripts/receipts.py");
+  });
+
+  it("looks back over a conversation once it goes quiet, with only the skill tools, and skips talk that took no working out", async () => {
+    const s = await connect();
+    const recall = (n: number) => call("recall", { query: `expenses ${n}` }, `call_recall_${n}`);
+    brain([recall(1), recall(2), recall(3), recall(4), say("Done: filed, with the dates the right way round.")]);
+    await turn(s, "file this week's expenses, and the dates go year first now");
+    const item = await inOwner((_a, sql) =>
+      sql.exec<{ id: string; due_at: number }>(`SELECT id, due_at FROM agenda WHERE kind = 'skill_review' AND state = 'scheduled'`).one(),
+    );
+    expect(item.due_at).toBeGreaterThan(Date.now() + 9 * 60_000);
+
+    // Once quiet, the review runs as Atlas's own run, sees the conversation, and keeps a skill.
+    const b = brain([
+      call("skill_save", {
+        name: "file-reimbursements",
+        description: "File work expense reimbursements on the expenses site. Use when the owner asks to claim expenses.",
+        body: STEPS,
+      }),
+      say("Kept: file-reimbursements, with the date format the owner gave."),
+    ]);
+    await inOwner(async (agent, sql) => {
+      sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1, item.id);
+      await agent.onAgendaDue({ id: item.id });
+    });
+    expect(b.requests[0]!.tools.map((t) => t.name).sort()).toEqual(["skill_file", "skill_merge", "skill_read", "skill_save"]);
+    expect(JSON.stringify(b.requests[0]!.messages)).toContain("the dates go year first now");
+    expect(JSON.stringify(b.requests[0]!.messages)).toContain("Look back over your conversation with the owner");
+    const after = await inOwner((_a, sql) => ({
+      skill: findSkill(sql, "file-reimbursements"),
+      run: sql.exec<{ actor: string; state: string }>(`SELECT actor, state FROM runs WHERE trigger = 'skill_review'`).one(),
+      item: sql.exec<{ state: string }>(`SELECT state FROM agenda WHERE id = ?`, item.id).one().state,
+    }));
+    expect(after.skill).toMatchObject({ made_by: "atlas", version: 1 });
+    expect(after.run).toEqual({ actor: "atlas", state: "replied" });
+    expect(after.item).toBe("done");
+
+    // A stretch of talk with no working out is skipped without a run.
+    brain([say("Sure.")]);
+    await turn(s, "thanks");
+    const quiet = await inOwner((_a, sql) =>
+      sql.exec<{ id: string }>(`SELECT id FROM agenda WHERE kind = 'skill_review' AND state = 'scheduled'`).one(),
+    );
+    brain([]); // the script is empty: a run would fail the test
+    await inOwner(async (agent, sql) => {
+      sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1, quiet.id);
+      await agent.onAgendaDue({ id: quiet.id });
+    });
+    expect(
+      await inOwner((_a, sql) => sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM runs WHERE trigger = 'skill_review'`).one().n),
+    ).toBe(1);
+  });
+
+  it("asks the review to merge two skills that read like the same method, once", async () => {
+    await inOwner((_a, sql) => {
+      saveSkill(sql, {
+        name: "rent-camera-gear",
+        description: "Rent camera lenses for a shoot from the rental shops, comparing price and pickup.",
+        body: "1. Ask each rental shop for a quote.",
+        by: "atlas",
+      });
+      saveSkill(sql, {
+        name: "hire-lenses",
+        description: "Hire camera lenses for a shoot from the rental shops, comparing price and pickup.",
+        body: "1. Ask each shop for a quote and the pickup time.",
+        by: "atlas",
+      });
+    });
+    await inOwner((agent) => agent.apiSettleMemory());
+    const merge = await inOwner((_a, sql) =>
+      sql
+        .exec<{ id: string; source: string }>(`SELECT id, source FROM agenda WHERE kind = 'skill_review' AND state = 'scheduled'`)
+        .toArray(),
+    );
+    expect(merge).toHaveLength(1);
+    expect(JSON.parse(merge[0]!.source).detail.merge).toEqual([["hire-lenses", "rent-camera-gear"]]);
+
+    const b = brain([
+      call("skill_save", {
+        name: "rent-camera-gear",
+        patch: [{ old: "Ask each rental shop for a quote.", new: "Ask each rental shop for a quote and the pickup time." }],
+      }),
+      call("skill_merge", { from: "hire-lenses", into: "rent-camera-gear" }),
+      say("Merged hire-lenses into rent-camera-gear."),
+    ]);
+    await inOwner(async (agent, sql) => {
+      sql.exec(`UPDATE agenda SET due_at = ? WHERE id = ?`, Date.now() - 1, merge[0]!.id);
+      await agent.onAgendaDue({ id: merge[0]!.id });
+    });
+    expect(JSON.stringify(b.requests[0]!.messages)).toContain("hire-lenses and rent-camera-gear");
+    expect(await inOwner((_a, sql) => findSkill(sql, "hire-lenses")!.state)).toBe("archived");
+
+    // The same pair isn't offered again.
+    await inOwner((agent) => agent.apiSettleMemory());
+    expect(
+      await inOwner(
+        (_a, sql) =>
+          sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM agenda WHERE kind = 'skill_review' AND state = 'scheduled'`).one().n,
+      ),
+    ).toBe(0);
+  });
+});
