@@ -1,0 +1,53 @@
+# A release's bundle (VISION §23.2): built when a release is published, and
+# attached to it beside the Mac app, so a deployed Atlas can update itself
+# from it with one click. What's in it is in scripts/release.mjs.
+
+name: Release bundle
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The same check every commit passes, so a release is never less tested than main.
+      - run: npm run check
+
+      - name: Bundle
+        run: node scripts/release.mjs "${{ github.event.release.tag_name || github.sha }}" release
+
+      - name: Pack
+        run: tar -czf atlas-release.tar.gz -C release .
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" atlas-release.tar.gz release/release.json --clobber
+
+      - name: Keep the bundle as the run's artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-release
+          path: atlas-release.tar.gz
+          if-no-files-found: error

@@ -4,7 +4,6 @@
 export type Sql = SqlStorage;
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 
-/** Each entry runs once, in order. Never edit an entry that has shipped; add a new one. */
 /**
  * From this migration on (M7's, the first a one-click update can bring), a
  * change to storage only adds: tables, indexes and columns. Rolling the code
@@ -13,6 +12,7 @@ export type Json = null | boolean | number | string | Json[] | { [k: string]: Js
  */
 export const ONLY_ADDS_FROM = 13;
 
+/** Each entry runs once, in order. Never edit an entry that has shipped; add a new one. */
 export const MIGRATIONS: string[] = [
   `
   CREATE TABLE log (
