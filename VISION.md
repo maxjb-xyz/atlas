@@ -716,7 +716,7 @@ Atlas is a core and its extensions (decided 2026-10-23, for M5). The core is the
 |---|---|---|
 | Skills | Know-how and procedures | SKILL.md (Agent Skills) |
 | MCP | Tools Atlas can call | MCP, plus MCP Apps for views on the stage |
-| Extensions | New senses (adapters into the intake, §10.4), channels, providers (calendar, contacts, mail, maps, weather, search, models, voice), stage views and node types | A small TypeScript module with a manifest, sandboxed in a Dynamic Worker, so Atlas can write one itself, with your OK |
+| Extensions | New senses (adapters into the intake, §10.4), channels, providers (calendar, contacts, mail, maps, weather, search, models, voice), tools with a declared kind, stage views, file readers (moving in, §23.3) and node types | A small TypeScript module with a manifest, sandboxed in a Dynamic Worker, so Atlas can write one itself, with your OK |
 | API | Every surface | One public API: a live event stream plus HTTP. Atlas's own app, desktop, voice and command line all use it. Atlas is also an MCP server, so Claude, ChatGPT or an editor can talk to it. |
 | Nodes | Devices | The public node protocol (§16.3) |
 
@@ -725,7 +725,28 @@ Atlas is a core and its extensions (decided 2026-10-23, for M5). The core is the
 - **It runs sandboxed.** Each call runs it in a Dynamic Worker whose only way out is the core's gate, which lets it reach the hosts its manifest names and nothing else, and adds its secrets to its requests there. The extension never sees a secret's value, and it never sees the log, the records or the owner's other connections: the core hands it what a call needs and takes back typed results.
 - **It speaks through the core.** What it notices goes into the intake as items, like any sense (§10.4); a message it receives goes to the owner's thread or to a face; what it sends leaves through the outbox, with a receipt and the owner's OK where §12 says so. It can't act on its own.
 - **A source it can't hear from gets a look on the clock.** A service that can't post to Atlas is asked "what's new since last time?" by an item on the agenda (§4.3), at the interval its manifest asks for, while it's installed and on. Its cursor (Gmail's history id, GitHub's last time) is where it left off, kept by the core, so a restart neither misses nor repeats anything.
-- **It installs from the app:** browse the ones that ship with Atlas, see what each can touch before installing, turn it off, remove it. Atlas can write one for a service it has no extension for, as a draft you review and install, never on its own.
+- **It installs from the app:** browse the catalog (below), see what each can touch before installing, turn it off, remove it. Atlas can write one for a service it has no extension for, as a draft you review and install, never on its own.
+- **It never hooks into the loop.** Nothing an extension adds runs before or after a model call, or changes what the model said (rule 1). Hermes and OpenClaw plugins can; Atlas's can't.
+
+**Extension or MCP** (decided 2026-10-24, for M7). One service can use both, each for what it's for, and never both for the same action.
+- **An extension** when the core needs it:
+  - the service has to reach Atlas: a sense, a channel, a webhook. MCP gives a service no way to wake Atlas;
+  - the core calls it and picks between several: calendars, contacts, mail, maps, weather, search, brains, speech, coding agents, code hosts;
+  - it reads a file format;
+  - Atlas needs tools for a service that has no MCP server. An extension's tool declares its kind (§12.1), and the core holds it to that.
+- **MCP** for tools Atlas calls in a turn when the service already runs an MCP server: the vendor keeps it up, it costs Atlas nothing, and what people already use carries over. Its results are untrusted content (§20), and a tool that isn't marked read-only asks until it's trusted.
+
+For example, "file client bug reports in Linear": the email is a sense, the rule is an automation with an event trigger (§13.2), the issue is made through Linear's own MCP server, and Linear's extension hears what's assigned to you, which Linear's MCP server can't.
+
+**Services: one catalog** (decided 2026-10-24, for M7). The owner never has to know which is which. Abilities → Services (§21.2) shows one card per service (Linear, Notion, GitHub, Gmail, Telegram), whatever is underneath: what Atlas hears from it, what it can do there, its state, its cost, and one setup, with one key or sign-in when one covers every part. Only the Developer detail level (§21.5) names the parts. The last card is **Custom**: any MCP server's address, an extension from a link, or a pasted SKILL.md.
+
+The catalog comes from **an index**: a file in a git repo that lists services, each with its parts:
+- an extension's code, pinned to a commit and a content hash, with what its manifest lets it reach and hold;
+- a vendor's own MCP server and how to sign in to it. Only the vendor's own, since there's no code to pin;
+- skills, pinned the same way, including from skill hubs that use SKILL.md;
+- later, automation templates and themes, which together make a pack (§6.5).
+
+Each release carries a snapshot of the index, so the catalog works when GitHub doesn't, and Atlas looks for a newer index once a day. Anyone can publish an index, and the owner can add one by its address, the way Hermes adds GitHub repos as sources. Nothing runs on a server for it: a listing is a reviewed change to the file. An update that would let an extension reach or hold more than before asks first. Sandboxing is what makes this safe enough without a hosted store's moderation (ClawHub's moderation still let hundreds of malicious skills through); a skill is instructions, which no sandbox contains, so the exits (§4.4) are its guard, and Atlas shows a community skill in full before it's installed.
 
 **Bundled extensions** live in the repo beside the core (`extensions/`), are reviewed like the core, and are the defaults: iCloud for the calendar and contacts, OpenStreetMap and Open-Meteo, and the rest. They use the same manifest and interface as any other. Model and voice providers are bundled extensions too, but every turn and every spoken word goes through them, so a bundled extension may run inside the core's own Worker instead of a sandbox when measuring shows the sandbox's extra step costs time that matters (voice latency, §11.2). Only bundled extensions may; where one runs is a choice in the code, not in the extension, so moving it back is one line.
 
