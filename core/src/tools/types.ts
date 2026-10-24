@@ -59,6 +59,10 @@ export interface ToolContext {
   helpers: HelperDeskApi | null;
   /** Coding jobs (§8.2): start one, pass the owner's words to one, see how they're doing. Absent where jobs can't be reached. */
   coding?: CodingApi | null;
+  /** Jobs Atlas owns (§8.3): owner runs start one. */
+  goals?: GoalsApi | null;
+  /** A job's look (§8.3): its moves, bound to that job. Null elsewhere. */
+  goalLook?: GoalLookApi | null;
   /**
    * The way out for actions that may need the owner's OK (§12): the outbox
    * does it now when the kind allows, or it waits as an approval card. Null
@@ -209,7 +213,14 @@ export interface ExitApi {
 
 export interface HelperDeskApi {
   /** Starts a job; `asked_in` is the run that asked. Throws, with the reason, if the helper can't start. */
-  start(o: { title: string; brief: string; tools: string[]; asked_in: string; research?: boolean; brain?: string }): Promise<{ id: string }>;
+  start(o: {
+    title: string;
+    brief: string;
+    tools: string[];
+    asked_in: string;
+    research?: boolean;
+    brain?: string;
+  }): Promise<{ id: string }>;
   /** The job's result, or null if it's still running after `ms` (it's then reported when it ends). */
   wait(id: string, ms: number): Promise<{ state: "done" | "failed" | "cancelled"; text: string; error?: string } | null>;
 }
@@ -229,6 +240,30 @@ export interface CodingApi {
   /** The owner's words for a job: an answer to its question, or a change of direction while it works. */
   answer(id: string, text: string): Promise<{ ok: boolean; text: string }>;
   look(id?: string): unknown[];
+}
+
+/** What the owner's runs can do with jobs Atlas owns (§8.3). */
+export interface GoalsApi {
+  start(o: {
+    title: string;
+    goal: string;
+    steps: Array<{ title: string; kind: "work" | "research" | "checkpoint" }>;
+    brain?: string;
+    asked_in: string;
+  }): Promise<{ id: string; folder: string }>;
+}
+
+/** A job's look: one move, on the job it's looking at. */
+export interface GoalLookApi {
+  step(o: { step: string; brief: string; brain?: string }): Promise<{ ok: boolean; text: string }>;
+  checkpoint(o: { step?: string; text: string; content?: string; options?: string[] }): Promise<{ ok: boolean; text: string }>;
+  plan(o: { add?: Array<{ title: string; kind: "work" | "research" | "checkpoint"; after?: string }>; drop?: string[] }): {
+    ok: boolean;
+    text: string;
+  };
+  mark(o: { step: string; state: "done" | "skipped"; result?: string }): { ok: boolean; text: string };
+  finish(o: { summary: string; files?: Array<{ path: string; name?: string; note?: string }> }): Promise<{ ok: boolean; text: string }>;
+  fail(why: string): Promise<{ ok: boolean; text: string }>;
 }
 
 export interface ToolResult {

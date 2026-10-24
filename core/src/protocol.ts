@@ -113,7 +113,7 @@ export interface InboxItem {
   /** Atlas asking the owner something it can't decide alone, such as whether to stop asking for an action. */
   question?: { key: string; yes: string; no: string };
   /** A coding job's question for the owner (§8.2): the answer goes back to its agent. */
-  job?: { id: string; title: string; question: string; options: string[]; why?: string };
+  job?: { id: string; title: string; question: string; options: string[]; why?: string; content?: string };
   /** What a face handed the owner (§7.2): who it's from, the conversation, and whether it can be answered from here. */
   face?: {
     name: string;
@@ -156,6 +156,27 @@ export interface JobView {
   brain?: string;
   /** A coding job (§8.2, §21.4): its steps, the agent's stream, what Atlas answered for the owner, and what waits on them. */
   coding?: CodingView;
+  /** A job Atlas owns (§8.3): its plan, what it has done and said, what waits on the owner, and what it has used. */
+  goal?: GoalView;
+}
+
+export interface GoalView {
+  phase: "working" | "waiting" | "paused" | "done" | "failed" | "cancelled";
+  folder: string;
+  plan: Array<{
+    id: string;
+    title: string;
+    kind: "work" | "research" | "checkpoint";
+    state: "todo" | "doing" | "done" | "failed" | "skipped";
+    brain?: string;
+  }>;
+  log: Array<{ at: number; who: "atlas" | "owner" | "step"; text: string }>;
+  question: { text: string; options: string[]; content?: string } | null;
+  /** Looks and steps used, and steps by named brain (§18). */
+  spent: { looks: number; steps: number; by: Record<string, number> };
+  budget: { looks: number; steps: number };
+  /** Files it kept in Library. */
+  files: string[];
 }
 
 export interface CodingView {

@@ -3,6 +3,7 @@
 // for its page; nothing here changes anything except marking Inbox items done.
 
 import { codingJobs } from "./coding";
+import { goals } from "./goals";
 import { getPage, pageVersion, pageVersions, segments } from "../pages";
 import type { ApprovalView, HistoryFilter, HistoryStats, InboxItem, RecordView } from "../protocol";
 import { FIELDS, findEntry } from "../vault";
@@ -467,16 +468,18 @@ export function inbox(sql: Sql): InboxItem[] {
       question: { key, yes: "Yes, stop asking", no: "Keep asking" },
     }));
   // A coding job's question (§8.2), while the job still waits on it.
+  // A job Atlas owns asks the same way, at a checkpoint or a pause (§8.3).
   const waiting = new Set(
-    codingJobs(sql)
-      .map((j) => (j.phase === "waiting" && !j.question?.site ? j.question?.log : null))
-      .filter((x): x is string => !!x),
+    [
+      ...codingJobs(sql).map((j) => (j.phase === "waiting" && !j.question?.site ? j.question?.log : null)),
+      ...goals(sql).map((g) => (g.phase === "waiting" || g.phase === "paused" ? g.question?.log : null)),
+    ].filter((x): x is string => !!x),
   );
   const jobQuestions = [...waiting]
     .map((id) => getRow(sql, id))
     .filter((r): r is LogRow => r != null)
     .map((r): InboxItem => {
-      const b = r.body as { job: string; title: string; text: string; options?: string[]; why?: string };
+      const b = r.body as { job: string; title: string; text: string; options?: string[]; why?: string; content?: string };
       return {
         id: r.id,
         kind: "question",
@@ -485,7 +488,14 @@ export function inbox(sql: Sql): InboxItem[] {
         at: r.at,
         areas: r.areas,
         run_id: r.run_id,
-        job: { id: b.job, title: b.title, question: b.text, options: b.options ?? [], ...(b.why ? { why: b.why } : {}) },
+        job: {
+          id: b.job,
+          title: b.title,
+          question: b.text,
+          options: b.options ?? [],
+          ...(b.why ? { why: b.why } : {}),
+          ...(b.content ? { content: b.content } : {}),
+        },
       };
     });
   return [...approvals, ...jobQuestions, ...questions, ...pastItems(sql)];
@@ -651,7 +661,7 @@ function pastItems(sql: Sql): InboxItem[] {
   const since = Date.now() - 14 * 86_400_000;
   const rows = sql
     .exec<{ id: string }>(
-      `SELECT id FROM log WHERE at > ? AND (kind = 'job.result'
+      `SELECT id FROM log WHERE at > ? AND ((kind = 'job.result' AND json_extract(body, '$.of') IS NULL)
          OR kind = 'face.handoff' OR kind = 'face.digest'
          OR (kind = 'automation.run' AND json_extract(body, '$.report') = 'inbox' AND json_extract(body, '$.test') = 0 AND json_extract(body, '$.quiet') IS NULL)
          OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.interrupted') IS NULL AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%' AND json_extract(body, '$.trigger') NOT LIKE 'automation%'))

@@ -8,13 +8,17 @@ import { type Brain, type BrainEvent, type BrainRequest, brainKey } from "../bra
 import { HELPER_TOOLS, type HelperJob, type HelperOutcome } from "../helper";
 import type { Budget } from "../loop";
 import { type AgendaItem, createItem, finish, getItem } from "../store/agenda";
-import type { Sql } from "../store/db";
+import type { Json, Sql } from "../store/db";
 import { type Append, append, type LogKind, type LogRow } from "../store/log";
 import { getState, setState } from "../store/state";
 import { endRun, getRun, startRun } from "../store/runs";
 import type { JobView } from "../protocol";
 import type { BrainChoice } from "../store/settings";
+import { STEP_TOOLS } from "../tools/goals";
 import { fail, type ToolContext, type ToolResult } from "../tools/types";
+
+/** Every tool a helper can be given: its lookups, and a shell in its folder for a job's step (§8.3). */
+const ALL_TOOLS = [...HELPER_TOOLS, ...STEP_TOOLS];
 
 /** A helper's budget: room for real work, still bounded (§4.1, §8.1). */
 export const HELPER_BUDGET: Budget = { steps: 40, ms: 10 * 60_000 };
@@ -55,6 +59,8 @@ export interface HelperDeskHost {
    * that started the job. The job stays in `unreported` until `reported`.
    */
   report(item: AgendaItem, result: { state: "done" | "failed"; text: string }): void;
+  /** A step of a job Atlas owns ended (§8.3): its result goes to the job, not to the owner. */
+  step(id: string, result: { state: "done" | "failed"; text: string; error?: string }): Promise<void>;
   rows(rows: LogRow[]): void;
   jobsChanged(jobs: JobView[]): void;
 }
@@ -86,11 +92,13 @@ export class HelperDesk {
     budget?: Budget;
     /** A long research job: its result lands as a research view and a page. */
     research?: boolean;
+    /** A step of a job Atlas owns (§8.3): the job, and the folder the helper works in. */
+    step?: { of: string; folder: string };
   }): Promise<AgendaItem> {
     const { sql } = this.host;
     await this.#discardFinished();
     const run_id = startRun(sql, { actor: "atlas", trigger: "helper", surface: "none", role: "main" });
-    const tools = o.tools.filter((t) => HELPER_TOOLS.some((h) => h.name === t));
+    const tools = o.tools.filter((t) => (o.step ? ALL_TOOLS : HELPER_TOOLS).some((h) => h.name === t));
     const now = Date.now();
     const created = createItem(sql, {
       kind: "job",
@@ -107,7 +115,8 @@ export class HelperDesk {
           chain: o.chain as never,
           ...(o.brain ? { brain: o.brain } : {}),
           ...(o.research ? { research: true } : {}),
-        },
+          ...(o.step ? { step_of: o.step.of, folder: o.step.folder } : {}),
+        } as Record<string, Json>,
       },
     });
     // The helper holds the job's lease; if it runs out before the job ends, the clock counts the job as lost.
@@ -176,7 +185,7 @@ export class HelperDesk {
 
   async tool(jobId: string, name: string, input: unknown): Promise<ToolResult> {
     const job = this.#job(jobId);
-    const tool = HELPER_TOOLS.find((t) => t.name === name);
+    const tool = ALL_TOOLS.find((t) => t.name === name);
     if (!tool || !job.tools.includes(name)) return fail(`This helper can't use ${name}.`);
     const parsed = tool.input.safeParse(input);
     if (!parsed.success) return fail(`Those arguments don't fit: ${parsed.error.message}`);
@@ -199,6 +208,7 @@ export class HelperDesk {
     const item = getItem(this.host.sql, jobId);
     if (!item || item.state !== "running") return;
     const run = (item.source.detail as { helper_run?: string } | undefined)?.helper_run;
+    const stepOf = typeof item.source.detail?.step_of === "string" ? item.source.detail.step_of : null;
     const state = outcome.state === "replied" && outcome.text.trim() ? "done" : "failed";
     const error = state === "failed" ? (outcome.error ?? "The helper handed back nothing.") : undefined;
     if (run) endRun(this.host.sql, run, state === "done" ? "replied" : "failed", outcome.steps, error ? { error } : {});
@@ -206,7 +216,16 @@ export class HelperDesk {
       actor: "atlas",
       kind: "job.result",
       run_id: run ?? null,
-      body: { item_id: jobId, title: item.title, state, text: outcome.text, steps: outcome.steps, ...(error ? { error } : {}) },
+      body: {
+        item_id: jobId,
+        title: item.title,
+        state,
+        text: outcome.text,
+        steps: outcome.steps,
+        ...(error ? { error } : {}),
+        // A job's step isn't a result for the owner on its own: the job's own is (§8.3).
+        ...(stepOf ? { of: stepOf } : {}),
+      },
     });
     finish(this.host.sql, jobId, state, run ?? null, error ? { error } : {});
     this.#status.delete(jobId);
@@ -215,6 +234,7 @@ export class HelperDesk {
     const waiter = this.#waiting.get(jobId);
     this.#waiting.delete(jobId);
     if (waiter) waiter(result);
+    else if (stepOf) await this.host.step(jobId, { state, text: outcome.text, ...(error ? { error } : {}) });
     else if (!this.#answered.has(jobId)) {
       // Kept until the report is sent, so a restart in between doesn't lose it.
       this.#unreported("add", jobId);
@@ -320,7 +340,7 @@ export class HelperDesk {
   list(): JobView[] {
     return this.host.sql
       .exec<{ id: string; title: string; state: string; created_at: number; source: string }>(
-        `SELECT id, title, state, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND (state = 'running' OR updated_at > ?) ORDER BY created_at DESC LIMIT 20`,
+        `SELECT id, title, state, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND json_extract(source, '$.detail.goal') IS NULL AND json_extract(source, '$.detail.step_of') IS NULL AND (state = 'running' OR updated_at > ?) ORDER BY created_at DESC LIMIT 20`,
         Date.now() - 60 * 60_000,
       )
       .toArray()

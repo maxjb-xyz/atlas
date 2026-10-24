@@ -53,6 +53,7 @@ function testDesk(sql: Sql, over: Partial<ConstructorParameters<typeof HelperDes
     discard: async () => {},
     watch: async () => {},
     report: (item, result) => void reports.push(`${item.title}: ${result.state}: ${result.text}`),
+    step: async () => {},
     rows: () => {},
     jobsChanged: () => {},
     ...over,

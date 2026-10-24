@@ -14,6 +14,8 @@ export type StateName =
   | "owner_seen_at"
   /** What waits for a coding job's next wake (§8.2): the owner's words, a settled approval, Stop. */
   | `coding_mail:${string}`
+  /** A job Atlas owns (§8.3): its plan, what it has done and said, what waits on the owner, and what it has used. */
+  | `goal:${string}`
   /** The last twenty MCP tool calls whose pages (MCP Apps) were shown: their input and result, to show them again. */
   | "mcp_apps"
   /** The workspace's last twelve commands, for its view: what ran, its exit code and the end of its output. */

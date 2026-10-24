@@ -5,6 +5,7 @@
 // that last part in bounds; recall finds the rest, on demand.
 
 import { codingLines } from "./agent/coding";
+import { goalLines } from "./agent/goals";
 import { lookedAt } from "./agent/helpers";
 import { type McpServer, serversLine } from "./mcp";
 import { listPages } from "./pages";
@@ -330,14 +331,18 @@ function exitsContext(sql: Sql, tz: string, now: Date): string {
 function jobsLine(sql: Sql, now: Date): string {
   const running = sql
     .exec<{ id: string; title: string; created_at: number; source: string }>(
-      `SELECT id, title, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND state IN ('scheduled', 'running') ORDER BY created_at LIMIT 10`,
+      `SELECT id, title, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND json_extract(source, '$.detail.goal') IS NULL AND json_extract(source, '$.detail.step_of') IS NULL AND state IN ('scheduled', 'running') ORDER BY created_at LIMIT 10`,
     )
     .toArray();
   const coding = codingLines(sql, now);
   const codingText = coding.length
     ? `Coding jobs (answer "how's the job?" from these; jobs_look has more, job_answer passes the owner's words on):\n${coding.join("\n")}`
     : "";
-  if (!running.length) return codingText;
+  const owned = goalLines(sql);
+  const ownedText = owned.length
+    ? `Jobs you own (answer "how's the job?" from these; jobs_look has more, job_answer passes the owner's words on):\n${owned.join("\n")}`
+    : "";
+  if (!running.length) return [codingText, ownedText].filter(Boolean).join("\n\n");
   const lines = running.map((j) => {
     const detail = parse<{ detail?: { helper_run?: string; research?: boolean } }>(j.source, {}).detail;
     const run = detail?.helper_run;
@@ -346,7 +351,11 @@ function jobsLine(sql: Sql, now: Date): string {
     const read = detail?.research && run ? lookedAt(sql, run) : null;
     return `- ${j.title} (id ${j.id}${detail?.research ? ", a long research job" : ""}): started ${mins ? `${mins} min` : "under a minute"} ago, ${steps} lookup${steps === 1 ? "" : "s"} so far${read ? ` (${read.toLowerCase()})` : ""}`;
   });
-  return [`Helpers working now (you get each one's result when it's done, and finish the task then):\n${lines.join("\n")}`, codingText]
+  return [
+    `Helpers working now (you get each one's result when it's done, and finish the task then):\n${lines.join("\n")}`,
+    codingText,
+    ownedText,
+  ]
     .filter(Boolean)
     .join("\n\n");
 }

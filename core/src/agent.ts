@@ -11,6 +11,8 @@ import { correctAreas, discoveryPrompt, readyToDiscover, startDiscovered, tagPen
 import { HelperDesk, helperBrain, RESEARCH_BUDGET } from "./agent/helpers";
 import { CodingDesk, getJob, type JobWorkspace, type PullRequest } from "./agent/coding";
 import { codingTools } from "./tools/coding";
+import { getGoal, type GoalHost, GoalDesk, type GoalJob } from "./agent/goals";
+import { folderRun, jobOwn, lookTools } from "./tools/goals";
 import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup";
 import { history as logHistory, historyStats, inbox, inboxDone, listRecords, runDetail, stagePage } from "./agent/views";
 import { correctRecord, createRecord, findRecords, forgetRecord, getRecord } from "./store/records";
@@ -132,7 +134,7 @@ import {
   tidySkills,
 } from "./skills";
 import type { RunEvent } from "./workspace";
-import { deleteFile, filePage, getFile, keyOf, listFiles, saveFile } from "./files";
+import { cleanName, deleteFile, filePage, getFile, keyOf, listFiles, saveFile } from "./files";
 import { type BrowserDriver, type BrowserPage, BrowserRunDriver } from "./browser";
 import { fillsOn, findEntry, hiddenValues, removeEntry, saveEntry, siteFor, touchEntry, vault } from "./vault";
 import { scrub } from "./outbox";
@@ -150,7 +152,7 @@ import { ExtensionHost, type GateProps, getExt, setExtSecrets, setExtSettings, s
 import { ExtensionDesk } from "./agent/extensions";
 import { nameFor, provide } from "./providers";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
-import { HelperAgent, type HelperHost, type HelperOutcome } from "./helper";
+import { HELPER_TOOLS, HelperAgent, type HelperHost, type HelperOutcome } from "./helper";
 import type { BrainEvent, BrainRequest } from "./brains/types";
 import type { Append } from "./store/log";
 import { type NudgeFrom, nudgeTool, SenseDesk, speakingUp } from "./agent/senses";
@@ -263,6 +265,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     ...sharedTools,
     areaLook,
     ...codingTools,
+    jobOwn,
   ],
   atlas: [
     calendarRead,
@@ -403,6 +406,8 @@ interface ConverseOpts {
   silentOk?: boolean;
   /** The brains, when they aren't the role's chain: a named brain for this kind of work (§18). */
   chain?: BrainChoice[];
+  /** What this run reaches beyond its actor's usual: a job's look gets its moves and the job's folder (§8.3). */
+  context?: Partial<ToolContext>;
 }
 
 export class PersonAgent extends VoiceAgent implements HelperHost {
@@ -423,6 +428,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #helpers!: HelperDesk;
   /** Coding jobs (§8.2): the agent in the workspace, and Atlas as the middleman. */
   #coding!: CodingDesk;
+  #goals!: GoalDesk;
   #automations!: AutomationDesk;
   #senses!: SenseDesk;
   /** Extensions (§17): the host that runs them sandboxed, and the desk that hands what they bring to the core. */
@@ -468,7 +474,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           exit: null,
           automations: null,
           browser: null,
-          workspace: null,
+          // A step of a job Atlas owns works in that job's folder (§8.3); other helpers can't change anything.
+          workspace: this.#stepFolder(runId),
           mcp: null,
           extensions: null,
           run_id: runId,
@@ -485,11 +492,16 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         setScheduleId(this.#sql, item.id, s.id);
       },
       report: (item, result) => this.#tellJob(item, result),
+      step: async (id, result) => {
+        await this.#goals.stepDone(id, result);
+      },
       rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
       jobsChanged: () => this.#jobsChanged(),
     });
     this.#coding = new CodingDesk(this.#codingHost());
     void this.#coding.resume().catch(() => {});
+    this.#goals = new GoalDesk(this.#goalHost());
+    void this.#goals.resume().catch(() => {});
     // Results that ended with nobody told before a restart are told now.
     for (const { item, result } of this.#helpers.unreported()) this.#tellJob(item, result);
     void this.#helpers.tidy();
@@ -645,6 +657,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       owner: ({ text, note, via }) => this.#textTurn(text, `chat-${via.message}`, note ?? undefined, via),
       decide: (id, yes) => this.#decide(id, { yes, by: "button" }),
       job: async (id, option) => {
+        const goal = this.#goals.owns(id) ? getGoal(this.#sql, id)?.question : null;
+        if (goal !== null) {
+          const text = goal?.options[option];
+          if (!text) return { ok: false, text: "That question was already answered." };
+          const out = await this.#goals.answer(id, text);
+          this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+          return out;
+        }
         const q = getJob(this.#sql, id)?.question;
         const text = q && !q.site ? q.options[option] : undefined;
         if (!text) return { ok: false, text: "That question was already answered." };
@@ -1632,12 +1652,16 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
         return;
       case "atlas.job.stop":
-        if (getJob(this.#sql, msg.id)) {
+        if (this.#goals.owns(msg.id)) {
+          if (!(await this.#goals.stop(msg.id))) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
+        } else if (getJob(this.#sql, msg.id)) {
           if (!(await this.#coding.stop(msg.id))) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
         } else if (!this.#helpers.stop(msg.id)) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
         return;
       case "atlas.job.say": {
-        const out = await this.#coding.answer(msg.id, msg.text, "app");
+        const out = this.#goals.owns(msg.id)
+          ? await this.#goals.answer(msg.id, msg.text)
+          : await this.#coding.answer(msg.id, msg.text, "app");
         if (out.ok) append(this.#sql, { actor: "owner", kind: "settings.change", body: { job: msg.id, said: msg.text.slice(0, 300) } });
         else this.#send(connection, { type: "atlas.error", message: out.text });
         this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
@@ -2259,6 +2283,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       );
       return;
     }
+    // A job Atlas owns (§8.3): a look, beside the clock like a coding job's wake.
+    if (getItem(this.#sql, payload.id)?.kind === "job" && this.#goals.owns(payload.id)) {
+      void this.keepAliveWhile(() => this.#goals.wake(payload.id)).catch((err: unknown) =>
+        console.error(JSON.stringify({ at: "goals.wake", job: payload.id, error: err instanceof Error ? err.message : String(err) })),
+      );
+      return;
+    }
     // A job's wake is its helper's lease running out: if the job hasn't ended, the helper was lost.
     if (getItem(this.#sql, payload.id)?.kind === "job") {
       await this.keepAliveWhile(() => this.#helpers.lost(payload.id));
@@ -2621,6 +2652,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         chain: o.chain ?? settings.brains[o.role],
         toolContext: {
           ...this.#toolContext(settings, now, via, o.sourceLogId),
+          ...(o.context ?? {}),
           // Code Mode (§9.1): a program calls this run's own tools, and each call is a row of this run, with its receipt.
           tools,
           loader: (this.env as { LOADER?: WorkerLoader }).LOADER ?? null,
@@ -2702,8 +2734,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           const job = await this.#coding.start(o);
           return { id: job.id, agent: getExt(this.#sql, job.agent)?.name ?? job.agent, branch: job.branch };
         },
-        answer: (id, text) => this.#coding.answer(id, text, "run"),
-        look: (id) => this.#coding.look(id),
+        // job_answer and jobs_look reach jobs Atlas owns (§8.3) the same way.
+        answer: (id, text) => (this.#goals.owns(id) ? this.#goals.answer(id, text) : this.#coding.answer(id, text, "run")),
+        look: (id) => (id && this.#goals.owns(id) ? this.#goals.look(id) : [...this.#coding.look(id), ...(id ? [] : this.#goals.look())]),
+      },
+      goals: {
+        start: async (o) => {
+          // A named brain asked for by name must exist (§18); else the owner's pick for a job's work.
+          const brain = chainFor(settings, "job_work", o.brain).name;
+          const job = await this.#goals.start({ ...o, brain });
+          return { id: job.id, folder: job.folder };
+        },
       },
       helpers: {
         start: async (o) => {
@@ -2921,7 +2962,171 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** Every job the app shows: coding jobs and helpers', newest first. */
   #jobs(): JobView[] {
-    return [...this.#coding.list(), ...this.#helpers.list()].sort((a, b) => b.started_at - a.started_at).slice(0, 30);
+    return [...this.#coding.list(), ...this.#goals.list(), ...this.#helpers.list()]
+      .sort((a, b) => b.started_at - a.started_at)
+      .slice(0, 30);
+  }
+
+  // --- jobs Atlas owns (§8.3) ------------------------------------------------------
+
+  /** The workspace for a step's helper: only its job's folder. Null for any other run. */
+  #stepFolder(runId: string): WorkspaceApi | null {
+    const r = this.#sql
+      .exec<{ folder: string | null }>(
+        `SELECT json_extract(source, '$.detail.folder') AS folder FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.helper_run') = ? LIMIT 1`,
+        runId,
+      )
+      .toArray()[0];
+    return r?.folder ? this.#inFolder(r.folder) : null;
+  }
+
+  /** The workspace starting in one folder, with paths read from there. */
+  #inFolder(folder: string): WorkspaceApi {
+    const ws = this.#workspaceApi;
+    return {
+      ...ws,
+      run: (command, o) => ws.run(command, { ...o, cwd: folder }),
+      read: (path) => ws.read(path.startsWith("/") ? path : `${folder}/${path}`),
+    };
+  }
+
+  #goalHost(): GoalHost {
+    const sql = this.#sql;
+    return {
+      sql,
+      watch: async (id, at) => {
+        const item = getItem(sql, id);
+        if (!item) return;
+        if (item.schedule_id) await this.cancelSchedule(item.schedule_id).catch(() => false);
+        const s = await this.schedule(new Date(at), "onAgendaDue", { id });
+        setScheduleId(sql, id, s.id);
+      },
+      look: (job, note) => this.#inLine(() => this.#goalLook(job, note)),
+      helper: async ({ job, step, brief, brain }) => {
+        const settings = readSettings(sql);
+        const chain = brain === "Main" ? settings.brains.main : chainFor(settings, "job_work", brain).chain;
+        const research = step.kind === "research";
+        const item = await this.#helpers.start({
+          title: `${job.title}: ${step.title}`,
+          brief,
+          system: `${helperSystem(settings, new Date())}
+
+${research ? RESEARCH_BRIEF : stepBrief(job)}`,
+          tools: research ? HELPER_TOOLS.map((t) => t.name) : [...HELPER_TOOLS.map((t) => t.name), folderRun.name],
+          chain,
+          brain,
+          askedIn: job.asked_in ?? job.id,
+          ...(research ? { budget: RESEARCH_BUDGET } : {}),
+          step: { of: job.id, folder: job.folder },
+        });
+        return item.id;
+      },
+      stopHelper: (id) => {
+        this.#helpers.stop(id);
+      },
+      folder: async (path) => {
+        await this.#workspaceApi.run(`mkdir -p '${path.replace(/'/g, `'\''`)}'`, { run_id: "goal", timeout_s: 30 });
+      },
+      keep: async ({ job, path, name, note }) => {
+        const files = this.#toolContext(readSettings(sql), new Date(), "clock", null).files;
+        if (!files) throw new Error("Files can't be kept here.");
+        const full = path.startsWith("/") ? path : `${job.folder}/${path}`;
+        const got = await this.#workspaceApi.read(full);
+        if (!got.ok) throw new Error(`couldn't read ${full}: ${got.error}`);
+        const { file } = await saveFile(sql, files, {
+          name: cleanName(name ?? full.split("/").pop()!),
+          body: got.bytes,
+          made_by: "atlas",
+          note: note ?? `From the job ${job.title}.`,
+          run_id: job.asked_in,
+        });
+        return file.name;
+      },
+      ask: ({ job, question, row }) =>
+        this.#askOwner({ id: job.id, title: job.title, text: question.text, options: question.options, row }),
+      report: (item, result) => this.#tellJob(item, result),
+      brains: () => {
+        const settings = readSettings(sql);
+        return { names: settings.named_brains.brains.map((b) => b.name), work: chainFor(settings, "job_work").name };
+      },
+      changed: () => {
+        this.#jobsChanged();
+        this.#broadcast({ type: "atlas.inbox.items", items: inbox(sql) });
+      },
+    };
+  }
+
+  /** A job's look (§8.3): one of Atlas's own runs, on the brain for a job's looks, with the job's moves and its folder. */
+  async #goalLook(job: GoalJob, note: string): Promise<{ text: string; error?: string }> {
+    const settings = readSettings(this.#sql);
+    const runId = startRun(this.#sql, { actor: "atlas", trigger: `goal:${job.id}`, surface: "none", role: "main" });
+    const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
+    const g = this.#goals;
+    const res: LoopResult = await this.#converse({
+      runId,
+      actor: "atlas",
+      sourceLogId: null,
+      surface: "none",
+      role: "main",
+      input: note,
+      beforeSeq: lastSeq,
+      budget: { steps: 8, ms: 180_000 },
+      emit: (e) => {
+        if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });
+      },
+      tools: [...lookTools, folderRun, recall, calendarRead, fileRead, skillRead],
+      silentOk: true,
+      chain: chainFor(settings, "job_looks").chain,
+      context: {
+        workspace: this.#inFolder(job.folder),
+        goalLook: {
+          step: (o) => g.startStep(job.id, o),
+          checkpoint: (o) => g.checkpoint(job.id, o),
+          plan: (o) => g.plan(job.id, o),
+          mark: (o) => g.mark(job.id, o),
+          finish: (o) => g.finish(job.id, o),
+          fail: (why) => g.fail(job.id, why),
+        },
+      },
+    }).catch((err: unknown) => ({
+      state: "failed" as const,
+      text: "",
+      steps: 0,
+      brain: null,
+      fallback: false,
+      interrupted: false,
+      usage: { input: 0, output: 0 },
+      error: err instanceof Error ? err.message : String(err),
+    }));
+    endRun(this.#sql, runId, res.state, res.steps, {
+      ...(res.error ? { error: res.error } : {}),
+      ...(res.brain ? { brain: brainKey(res.brain) } : {}),
+      usage: res.usage as never,
+    });
+    return { text: res.text, ...(res.state === "failed" ? { error: res.error ?? "The look failed." } : {}) };
+  }
+
+  /** Brings the owner a job's question (§8.2, §8.3): on their chat with its choices as buttons, else a push to Inbox. */
+  async #askOwner(o: { id: string; title: string; text: string; why?: string; options: string[]; row: LogRow }): Promise<void> {
+    const sql = this.#sql;
+    this.#broadcast({ type: "atlas.inbox.items", items: inbox(sql) });
+    const text = `${o.title} needs you: ${o.text}`;
+    const ext = route(sql, "soon").find((c) => c !== "push" && links(sql)[c]);
+    const l = ext ? links(sql)[ext] : undefined;
+    if (ext && l) {
+      const ok = await this.#channels
+        .send(ext, {
+          chat: l.chat,
+          text: `${text}${o.why ? `\n\n${o.why}` : ""}`,
+          ...(o.options.length ? { buttons: o.options.map((label, i) => ({ label: label.slice(0, 60), data: `job:${o.id}:${i}` })) } : {}),
+        })
+        .then(
+          () => true,
+          () => false,
+        );
+      if (ok) return;
+    }
+    await this.#outbox.notify({ id: o.row.id, run_id: o.row.run_id ?? null, text }, "now", { url: "/#/inbox" });
   }
 
   #jobsChanged(): void {
@@ -4156,29 +4361,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         return { name: readSettings(sql).assistant_name, email: `atlas@${host}` };
       },
       report: (item, result) => this.#tellJob(item, result),
-      ask: async ({ job, question, row }) => {
-        this.#broadcast({ type: "atlas.inbox.items", items: inbox(sql) });
-        const text = `${job.title} needs you: ${question.text}`;
-        // On the owner's chat (§16.1), the first on their list, the question comes with its choices as buttons; else a push to Inbox.
-        const ext = route(sql, "soon").find((c) => c !== "push" && links(sql)[c]);
-        const l = ext ? links(sql)[ext] : undefined;
-        if (ext && l) {
-          const ok = await this.#channels
-            .send(ext, {
-              chat: l.chat,
-              text: `${text}${question.why ? `\n\n${question.why}` : ""}`,
-              ...(question.options.length
-                ? { buttons: question.options.map((label, i) => ({ label: label.slice(0, 60), data: `job:${job.id}:${i}` })) }
-                : {}),
-            })
-            .then(
-              () => true,
-              () => false,
-            );
-          if (ok) return;
-        }
-        await this.#outbox.notify({ id: row.id, run_id: row.run_id ?? null, text }, "now", { url: "/#/inbox" });
-      },
+      ask: ({ job, question, row }) =>
+        this.#askOwner({
+          id: job.id,
+          title: job.title,
+          text: question.text,
+          ...(question.why ? { why: question.why } : {}),
+          options: question.options,
+          row,
+        }),
       site: async (o) => {
         if ((getState<string[]>(sql, "workspace_sites") ?? []).some((h) => o.host === h || o.host.endsWith(`.${h}`)))
           return { allowed: true };
@@ -4883,6 +5074,11 @@ const yieldNow = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 /** What a long research job's helper is told besides a helper's usual brief. */
 const RESEARCH_BRIEF =
   "This is a long research job: you have hours, so take them. Search from several angles, read the sources themselves rather than their snippets, compare them, and notice where they disagree. Hand back a full answer: the finding or the pick first, then why, with each claim marked with its source's number, and the list of sources you read (title, address, and what each one adds, in a line).";
+
+/** What a step's helper is told beyond the usual (§8.3): it works in the job's folder, and what it makes stays there. */
+function stepBrief(job: GoalJob): string {
+  return `This is one step of a longer job, "${job.title}". You have a shell in the job's folder (${job.folder}) with folder_run: make what the step needs there, as files the next steps can use, and say in your reply which files you made and what's in them. Changes stay in the folder; nothing you do there reaches anyone.`;
+}
 
 function helperSystem(settings: Settings, now: Date): string {
   const name = settings.assistant_name;
