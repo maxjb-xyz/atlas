@@ -1,6 +1,7 @@
-// Gmail (VISION §10.1, §16.2): the owner's inbox as a sense, and mail sent
-// as the owner. The owner makes a Google sign-in for Atlas once (their own
-// OAuth client); the core runs the sign-in and keeps the token fresh. A look
+// Google (VISION §10.1, §16.2): the owner's Gmail inbox as a sense, mail sent
+// as the owner, and their Google calendars (calendar.ts), under one Google
+// sign-in. The owner makes a Google sign-in for Atlas once (their own OAuth
+// client); the core runs the sign-in and keeps the token fresh. A look
 // on the clock asks Gmail's history what's new since the last history id,
 // so nothing is missed across a deploy and nothing comes twice. Each new
 // message in the inbox is an item, with its words kept aside as raw content
@@ -9,6 +10,7 @@
 
 import { type Extension, type Item, type Json, get, http, json, tidy } from "../sdk";
 import { base64url, buildMail, decodeWords, fromBase64url, htmlText } from "../lib/mail";
+import { type CalendarCopy, calendars, heldEvents, keep, listEvents, moveEvent } from "./calendar";
 
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 /** At most about this many new messages are read in one look; the rest wait for the next. */
@@ -39,6 +41,8 @@ interface State {
   /** The connected account's address. */
   email?: string;
   sent?: string[];
+  /** The calendar's last read, to answer from when Google can't be asked. */
+  cal?: CalendarCopy;
 }
 
 const auth = (ctx: { secret(n: string): string }) => ({ authorization: `Bearer ${ctx.secret("access_token")}` });
@@ -128,20 +132,25 @@ async function profile(ctx: { secret(n: string): string }) {
 const ext: Extension = {
   manifest: {
     id: "gmail",
-    name: "Gmail",
-    version: "1.0.0",
+    name: "Google",
+    version: "1.1.0",
     about:
-      "Your Gmail inbox as something Atlas notices (new mail, replies you're waiting for), and mail sent as you, only after you say yes. Atlas reads mail and sends; it doesn't delete or archive.",
-    provides: ["mail", "sense"],
-    hosts: ["gmail.googleapis.com", "oauth2.googleapis.com"],
+      "Your Gmail inbox as something Atlas notices (new mail, replies you're waiting for), mail sent as you only after you say yes, and your Google calendars. One Google sign-in covers both. Atlas reads mail and sends; it doesn't delete or archive.",
+    provides: ["mail", "sense", "calendar"],
+    hosts: ["gmail.googleapis.com", "oauth2.googleapis.com", "www.googleapis.com"],
     signin: {
       authorize: "https://accounts.google.com/o/oauth2/v2/auth",
       token: "https://oauth2.googleapis.com/token",
-      scopes: ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"],
+      scopes: [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/calendar.events",
+      ],
       params: { access_type: "offline", prompt: "consent" },
       help: [
-        "Atlas signs in to Gmail with a Google sign-in of your own, so your mail goes from Google to your Atlas and nowhere else.",
-        "1. At console.cloud.google.com, make a project (any name), then APIs & Services → Library → Gmail API → Enable.",
+        "Atlas signs in to Google with a sign-in of your own, so your mail and calendar go from Google to your Atlas and nowhere else.",
+        "1. At console.cloud.google.com, make a project (any name), then APIs & Services → Library: enable the Gmail API and the Google Calendar API.",
         "2. APIs & Services → OAuth consent screen: External, your own email as the contact, and add yourself as a test user. Then Publish app, so it's In production: a sign-in left in Testing stops working after seven days. Google will say it's unverified; that's expected for an app only you use.",
         "3. APIs & Services → Credentials → Create credentials → OAuth client ID → Web application, with the redirect address below as an authorized redirect URI.",
         "4. Paste its client ID and secret here, then sign in with Google.",
@@ -156,7 +165,7 @@ const ext: Extension = {
     // The first look starts from now: what was already in the inbox isn't news.
     if (!cursor?.history) {
       const p = await profile(ctx);
-      return { items: [], cursor: { history: p.historyId }, state: { ...st, email: p.emailAddress.toLowerCase() } as Json };
+      return { items: [], cursor: { history: p.historyId }, state: { ...st, email: p.emailAddress.toLowerCase() } as unknown as Json };
     }
     // History records in order, each with the messages it added. The cursor moves only past what was read:
     // to the mailbox's latest id when everything was, else to the last record taken, so nothing is skipped.
@@ -172,7 +181,7 @@ const ext: Extension = {
       // Gmail keeps about a week of history: older than that, start again from now.
       if (res.status === 404) {
         const p = await profile(ctx);
-        return { items: [], cursor: { history: p.historyId }, state: st as Json };
+        return { items: [], cursor: { history: p.historyId }, state: st as unknown as Json };
       }
       const h = await json<{
         history?: Array<{ id: string; messagesAdded?: Array<{ message: { id: string; threadId: string; labelIds?: string[] } }> }>;
@@ -212,7 +221,7 @@ const ext: Extension = {
       const m = await message(ctx, a.id);
       if (m) items.push(itemOf(m, next));
     }
-    return { items, cursor: { history: latest }, state: next as Json };
+    return { items, cursor: { history: latest }, state: next as unknown as Json };
   },
   async mail(ctx, m) {
     const st = (ctx.state ?? {}) as State;
@@ -242,8 +251,20 @@ const ext: Extension = {
         ...st,
         email,
         sent: [sentMsg.threadId, ...(st.sent ?? []).filter((t) => t !== sentMsg.threadId)].slice(0, MAX_SENT),
-      } as Json,
+      } as unknown as Json,
     };
+  },
+  async calendar(ctx, r) {
+    const st = (ctx.state ?? {}) as State;
+    if (r.held) {
+      const held = heldEvents(st.cal, r);
+      return { events: held?.events ?? [], ...(held ? { as_of: held.as_of } : {}) };
+    }
+    const events = await listEvents(ctx, r);
+    return { events, state: { ...st, cal: keep(r, events) } as unknown as Json };
+  },
+  async move(ctx, m) {
+    return moveEvent(ctx, m);
   },
   async test(ctx) {
     const p = await profile(ctx);
@@ -253,10 +274,15 @@ const ext: Extension = {
     );
     const newest = list.messages?.[0] ? await message(ctx, list.messages[0].id, "metadata") : null;
     const subject = newest ? header(newest, "Subject") || "(no subject)" : null;
+    // The calendar, when the sign-in includes it; a sign-in from before it was asked for says to sign in again.
+    const cals = await calendars(ctx).then(
+      (c) => ` Calendars: ${c.map((x) => x.name).join(", ") || "none"}.`,
+      (err: unknown) => ` ${err instanceof Error ? err.message : String(err)}`,
+    );
     return {
-      text: `Gmail connected as ${p.emailAddress}.${subject ? ` The newest message in the inbox is "${tidy(subject, 120)}".` : " The inbox is empty."}`,
+      text: `Google connected as ${p.emailAddress}.${subject ? ` The newest message in the inbox is "${tidy(subject, 120)}".` : " The inbox is empty."}${cals}`,
       owner: { emails: [p.emailAddress.toLowerCase()] },
-      state: { ...((ctx.state ?? {}) as State), email: p.emailAddress.toLowerCase() } as Json,
+      state: { ...((ctx.state ?? {}) as State), email: p.emailAddress.toLowerCase() } as unknown as Json,
     };
   },
 };

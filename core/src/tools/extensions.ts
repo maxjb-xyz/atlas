@@ -81,7 +81,7 @@ export function extensionTools(exts: Array<{ id: string; name: string; manifest:
   const out: Tool[] = [];
   for (const x of exts) {
     // Two accounts of one service read apart: "Gmail (you@work.com)".
-    const account = "label" in x ? accountName(x as unknown as Pick<Installed, "label" | "data">) : null;
+    const account = "label" in x ? accountName(x as unknown as Pick<Installed, "label" | "data" | "settings">) : null;
     const e = account ? { ...x, name: `${x.name} (${account})` } : x;
     if (!e.methods.includes("tool") || !e.manifest.provides.includes("tools")) continue;
     const specs = ToolsShape.safeParse(e.manifest.tools ?? []);

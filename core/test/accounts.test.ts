@@ -118,7 +118,7 @@ describe("two mail accounts", () => {
       setScope(sql, work.id);
       await send(mail);
       expect(sent.at(-1)).toEqual({ via: "gmail--2", from: "me@work.example" });
-      expect(accountsLine(sql, hat(sql))).toContain("new mail as them goes from Gmail (me@work.example) here");
+      expect(accountsLine(sql, hat(sql))).toContain("new mail as them goes from Google (me@work.example) here");
 
       // Named when the owner says, whatever the area.
       await send({ ...mail, from: "me@home.example" });

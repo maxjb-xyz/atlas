@@ -76,11 +76,15 @@ export const baseOf = (id: string): string => id.split(ACCOUNT_SEP)[0]!;
 export const ACCOUNT_KINDS: Provides[] = ["mail", "calendar", "contacts", "sense"];
 export const manyAccounts = (m: Manifest): boolean => m.provides.some((p) => ACCOUNT_KINDS.includes(p));
 
-/** What an account is called: the name the owner gave it, else what it signed into (an address it keeps in its state). */
-export function accountName(e: Pick<Installed, "label" | "data">): string | null {
+/** What an account is called: the name the owner gave it, else what it signed into (an address it keeps, or signs in with). */
+export function accountName(e: Pick<Installed, "label" | "data"> & { settings?: Record<string, string> }): string | null {
   if (e.label) return e.label;
   const d = (e.data ?? {}) as { account?: unknown; email?: unknown };
-  return typeof d.account === "string" && d.account ? d.account : typeof d.email === "string" && d.email ? d.email : null;
+  if (typeof d.account === "string" && d.account) return d.account;
+  if (typeof d.email === "string" && d.email) return d.email;
+  // An account signed in by name, like an Apple ID.
+  const user = e.settings?.username?.trim();
+  return user && user.includes("@") ? user : null;
 }
 
 const fromRaw = (r: Raw): Installed => ({
