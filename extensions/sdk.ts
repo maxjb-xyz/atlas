@@ -41,7 +41,58 @@ export type Provides =
   /** A coding agent for jobs (§8.2): `agent` in its manifest says how the workspace runs it. */
   | "coding"
   /** Where the owner's code lives (§8.2): `git` in its manifest, and `repos`, `repo` and `pull_request`. */
-  | "code";
+  | "code"
+  /**
+   * Phone calls (§16.1): `call` in its manifest says how a call's audio streams; `numbers`, `use`, `release`,
+   * `available` and `order` pick the number; `receive` takes the service's call events and answers them;
+   * `dial` calls the owner.
+   */
+  | "calls";
+
+/**
+ * How a call's audio reaches Atlas (§16.1): the service connects to the
+ * address the core gives (`data.stream`, plus `?call=`) and streams in the
+ * media-stream protocol: JSON frames, `start`, then `media` with a base64
+ * `payload` of G.711 μ-law at 8 kHz, then `stop`; Atlas answers with
+ * `media` frames of the same and `clear` to drop what's queued.
+ */
+export interface CallSpec {
+  protocol: "media-stream";
+  codec: "pcmu";
+  rate: 8000;
+}
+
+/** One of the account's phone numbers, and what its calls go to now. */
+export interface PhoneNumber {
+  id: string;
+  /** E.164: "+15551234567". */
+  number: string;
+  /** What its voice is connected to now, by name, or null. */
+  connected: string | null;
+  /** It's the one Atlas uses. */
+  ours: boolean;
+  status: string;
+}
+
+/** A number the service would sell, with what it costs. */
+export interface NumberOffer {
+  number: string;
+  where: string;
+  monthly: string;
+  upfront: string;
+  currency: string;
+}
+
+/**
+ * What the core shares with a calls extension: the owner's own numbers (a
+ * call from one, with its caller ID verified by the network, is the owner),
+ * the address to stream to, and what to say to anyone else.
+ */
+export interface CallData {
+  owner_numbers: string[];
+  stream: string;
+  greeting: string;
+}
 
 /**
  * A coding agent (§8.2): an npm package with an ACP server, which the core
@@ -190,6 +241,8 @@ export interface Manifest {
   credit?: string;
   /** A coding agent's spec, when it provides "coding". */
   agent?: CodingAgent;
+  /** How a call's audio streams, when it provides "calls". */
+  call?: CallSpec;
   /** How git reaches it, when it provides "code". */
   git?: GitHost;
 }
@@ -483,6 +536,18 @@ export interface Extension {
     ctx: Ctx,
     pr: { repo: string; head: string; base: string; title: string; body: string },
   ): Promise<{ number: number; link: string }>;
+  /** The account's phone numbers, and what each is connected to. */
+  numbers?(ctx: Ctx): Promise<{ numbers: PhoneNumber[]; state?: Json }>;
+  /** Moves one number's calls to Atlas, keeping what it was connected to for `release`. Says what it did. */
+  use?(ctx: Ctx, q: { id: string }): Promise<{ text: string; number: string; state?: Json }>;
+  /** Gives the number back: its calls go where they went before. */
+  release?(ctx: Ctx): Promise<{ text: string; state?: Json }>;
+  /** Numbers it would sell, with their prices. */
+  available?(ctx: Ctx, q: { area?: string; country?: string }): Promise<NumberOffer[]>;
+  /** Buys a number for Atlas. Says what happened, including checks the service still needs. */
+  order?(ctx: Ctx, q: { number: string }): Promise<{ text: string; number?: string; state?: Json }>;
+  /** Calls the owner. `call` goes on the stream's address, so Atlas knows which call it is. */
+  dial?(ctx: Ctx, q: { to: string; call: string }): Promise<{ id: string; state?: Json }>;
 }
 
 /** A failure in the service's own words. `code` "auth" means the owner's sign-in or key was refused. */

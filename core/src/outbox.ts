@@ -274,6 +274,8 @@ export interface Channels {
   >;
   /** Sends a message to the owner on a chat channel they've linked (§16.1); false when it isn't linked. */
   chat?(ext: string, text: string): Promise<boolean>;
+  /** Calls the owner to say it (§16.1), when they've allowed calls; throws with why it couldn't. */
+  call?(text: string): Promise<boolean>;
   /** Sends a face's answer in the owner's name, once they've OK'd it (§7.2). */
   faceReply?(a: Extract<Action, { kind: "face_reply" }>): Promise<{ ok: boolean; text: string }>;
   /** Opens a coding job's pull request on its code host (§8.2), and says where. */
@@ -393,8 +395,20 @@ export class Outbox {
       if (!readSettings(this.sql).notifications.push || !pushDevices(this.sql).length) return false;
       return (await this.push(rows, urgency, { extra })).ok;
     }
-    if (!this.channels.chat) return false;
     const text = rows.map((r) => r.text).join("\n\n");
+    // A call is only for what can't wait (§14), and only once the owner allowed it (§12.3).
+    if (place === "call") {
+      if (urgency !== "now" || !this.channels.call) return false;
+      let error = "";
+      const ok = await this.channels.call(text).catch((err: unknown) => {
+        error = err instanceof Error ? err.message : String(err);
+        return false;
+      });
+      if (ok || error)
+        this.receipt(rows[0]!.run_id, { of: rows.map((r) => r.id), channel: "call", ok, urgency, ...(error ? { error } : {}) });
+      return ok;
+    }
+    if (!this.channels.chat) return false;
     let error = "";
     const ok = await this.channels.chat(place, text).catch((err: unknown) => {
       error = err instanceof Error ? err.message : String(err);

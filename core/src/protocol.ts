@@ -497,6 +497,16 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.job.stop"), id: z.string().max(64) }),
   /** The owner's words for a coding job (§8.2): the answer to its question, or Steer while it works. */
   z.object({ type: z.literal("atlas.job.say"), id: z.string().max(64), text: z.string().min(1).max(4_000) }),
+  /**
+   * Phone calls (§16.1): the calls extension's numbers, using one, giving it back, numbers to buy and buying
+   * one, and a test call to the owner. The answer is one atlas.calls.
+   */
+  z.object({ type: z.literal("atlas.calls.numbers") }),
+  z.object({ type: z.literal("atlas.calls.use"), id: z.string().min(1).max(100) }),
+  z.object({ type: z.literal("atlas.calls.release") }),
+  z.object({ type: z.literal("atlas.calls.available"), area: z.string().max(10).optional() }),
+  z.object({ type: z.literal("atlas.calls.order"), number: z.string().min(4).max(20) }),
+  z.object({ type: z.literal("atlas.calls.test") }),
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
@@ -810,6 +820,16 @@ export type ServerMessage =
   /** A new webhook source's address, with its key in it, shown once. */
   | { type: "atlas.sense.hook"; id: string; name: string; url: string }
   | { type: "atlas.test.result"; what: string; ref?: string; ok: boolean; message: string; detail?: unknown }
+  /** Phone calls (§16.1): what an atlas.calls.* asked for, or why it couldn't. */
+  | {
+      type: "atlas.calls";
+      ok: boolean;
+      text?: string;
+      numbers?: import("../../extensions/sdk").PhoneNumber[];
+      offers?: import("../../extensions/sdk").NumberOffer[];
+      /** The number Atlas answers now. */
+      number: string | null;
+    }
   | { type: "atlas.error"; message: string }
   /** This socket's sign-in was ended; the app goes back to signing in. */
   | { type: "atlas.signed_out" };

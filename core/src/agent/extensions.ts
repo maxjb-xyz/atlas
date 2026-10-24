@@ -5,6 +5,7 @@
 // core: items to the intake, fixes to location, messages to the channels.
 // It also moves what M4 built into the core out to bundled extensions, once.
 
+import { callData } from "./calls";
 import { z } from "zod";
 import type { Json, Manifest, Message, Received, Request as ExtRequest } from "../../../extensions/sdk";
 import { BUNDLED } from "../extensions.gen";
@@ -203,6 +204,7 @@ export class ExtensionDesk {
   /** What the core shares with an extension for what it provides: the owner's saved places, for a location app. */
   #dataFor(e: Installed): Json | undefined {
     if (e.manifest.provides.includes("location")) return { places: pins(this.d.sql) as unknown as Json };
+    if (e.manifest.provides.includes("calls")) return callData(this.d.sql, this.d.host.address(e)) as unknown as Json;
     return undefined;
   }
 

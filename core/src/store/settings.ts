@@ -94,6 +94,8 @@ export const Settings = z.object({
       mcp: z.enum(["per_tool", "per_service"]).default("per_tool"),
       /** Tools on the owner's devices (§16.3): ask until trusted, or always ask. */
       device_tools: z.enum(["until_trusted", "always"]).default("until_trusted"),
+      /** Phone calls (§16.1): Atlas never calls the owner, or calls about what can't wait, when a call is on their list. */
+      calls: z.enum(["never", "urgent"]).default("never"),
     })
     .prefault({}),
   voice: z

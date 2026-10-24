@@ -251,6 +251,7 @@ import owntracks from "../../extensions/owntracks";
 import tavily from "../../extensions/tavily";
 import resend from "../../extensions/resend";
 import telegram from "../../extensions/telegram";
+import telnyx from "../../extensions/telnyx";
 
 export const EXTENSIONS: Record<string, Extension> = {
   brave,
@@ -268,6 +269,7 @@ export const EXTENSIONS: Record<string, Extension> = {
   tavily,
   resend,
   telegram,
+  telnyx,
 };
 
 /** The requests extensions made in this test, as the gate let them out (secrets filled in). */

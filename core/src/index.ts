@@ -3,7 +3,8 @@
 
 import { getAgentByName, routeAgentRequest } from "agents";
 import { SESSION_HEADER } from "./auth";
-import { NODE_HEADER, OWNER } from "./agent";
+import { CALL_HEADER, NODE_HEADER, OWNER } from "./agent";
+import { bridge } from "./voice/phone";
 import { NODE_KINDS } from "./nodes";
 import { type AuthStore, handleAuth, memberOf, owner, sameOrigin } from "./auth";
 import { agentNameOf } from "./members";
@@ -102,6 +103,31 @@ export default {
       if (body.length > 30_000_000) return json({ error: "That mail is too big: 30 MB at most." }, 413);
       const out = await agent.apiMailIn(request.headers.get("x-atlas-time"), request.headers.get("x-atlas-signature"), body);
       return new Response(out.text, { status: out.status });
+    }
+
+    // A phone call's audio (§16.1): the phone service streams to its extension's address. Checked by the address's
+    // key, then joined to Atlas's voice as a voice client of its own, through the bridge.
+    const stream = /^\/x\/([a-z][a-z0-9-]{1,39})\/([0-9a-f]{36})\/stream$/.exec(path);
+    if (stream && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      const agent = await getAgentByName(env.PersonAgent, OWNER);
+      const ok = await (
+        agent as unknown as { apiCallStream(id: string, key: string): Promise<{ ok: boolean; rate: number }> }
+      ).apiCallStream(stream[1]!, stream[2]!);
+      if (!ok.ok) return new Response("This isn't a phone stream's address.", { status: 401 });
+      const call = (url.searchParams.get("call") ?? "in").slice(0, 200);
+      const res = await agent.fetch(
+        new Request(new URL("/calls/connect", url), { headers: { upgrade: "websocket", [CALL_HEADER]: call } }),
+      );
+      const voice = res.webSocket;
+      if (!voice) return new Response(`Atlas didn't take the call (HTTP ${res.status}).`, { status: 502 });
+      const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+      server.accept();
+      voice.accept();
+      bridge(server as never, voice as never, {
+        rate: ok.rate,
+        onEnd: (why) => console.log(JSON.stringify({ at: "call.end", call, why })),
+      });
+      return new Response(null, { status: 101, webSocket: client });
     }
 
     // An extension's own address (§17): a service posts here, checked by the address's key and the service's signature.

@@ -12,6 +12,7 @@ import { HelperDesk, helperBrain, RESEARCH_BUDGET } from "./agent/helpers";
 import { CodingDesk, getJob, type JobWorkspace, type PullRequest } from "./agent/coding";
 import { codingTools } from "./tools/coding";
 import { getGoal, type GoalHost, GoalDesk, type GoalJob } from "./agent/goals";
+import { CallDesk } from "./agent/calls";
 import { folderRun, jobOwn, lookTools } from "./tools/goals";
 import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup";
 import { history as logHistory, historyStats, inbox, inboxDone, listRecords, runDetail, stagePage } from "./agent/views";
@@ -433,6 +434,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #senses!: SenseDesk;
   /** Extensions (§17): the host that runs them sandboxed, and the desk that hands what they bring to the core. */
   #ext!: ExtensionHost;
+  #calls!: CallDesk;
   #extensions!: ExtensionDesk;
   #mail!: MailDesk;
   #channels!: ChannelDesk;
@@ -462,6 +464,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       tz: () => zoneOf(readSettings(this.#sql)),
     });
     this.#calendar = new CalendarSense(this.#sql, changed, this.#ext);
+    this.#calls = new CallDesk({
+      sql: this.#sql,
+      host: this.#ext,
+      changed: () => this.#broadcast({ type: "atlas.view", view: this.#view() }),
+    });
     this.#helpers = new HelperDesk({
       sql: this.#sql,
       router: this.#router,
@@ -535,6 +542,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       mcp: () => this.#mcpClient(),
       node: (c) => this.#nodeCall(c),
       mail: (a) => this.#sendMail(a),
+      call: async (text) => {
+        if (readSettings(this.#sql).permissions.calls !== "urgent") return false;
+        await this.#calls.dial(text);
+        return true;
+      },
       chat: async (ext, text) => {
         const l = links(this.#sql)[ext];
         if (!l) return false;
@@ -738,6 +750,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   override onConnect(connection: Connection, ctx: ConnectionContext): void {
     // A device's socket comes only through the Worker's device route, which checked its token and set the header.
+    // A phone call's socket comes only through the Worker's stream route, which checked the stream's address.
+    const call = new URL(ctx.request.url).pathname === "/calls/connect" ? ctx.request.headers.get(CALL_HEADER) : null;
+    if (call) {
+      connection.setState({ call } satisfies SocketState);
+      return;
+    }
     const node = new URL(ctx.request.url).pathname === "/nodes/connect" ? ctx.request.headers.get(NODE_HEADER) : null;
     if (node) {
       connection.setState({ node } satisfies SocketState);
@@ -1202,6 +1220,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         return;
       case "atlas.test":
         await this.#test(connection, msg);
+        return;
+      case "atlas.calls.numbers":
+      case "atlas.calls.use":
+      case "atlas.calls.release":
+      case "atlas.calls.available":
+      case "atlas.calls.order":
+      case "atlas.calls.test":
+        this.#send(connection, await this.#callsAsk(msg));
         return;
       case "atlas.scope.set":
         setScope(this.#sql, msg.area && listAreas(this.#sql).some((a) => a.id === msg.area) ? msg.area : null);
@@ -2026,6 +2052,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   override onCallStart(connection: Connection): void {
     this.#inCall.add(connection.id);
+    // A call Atlas placed (§16.1) starts with what it called about.
+    const call = (connection.state as SocketState | null)?.call;
+    const opening = call ? this.#calls.opening(call) : null;
+    if (opening) void this.speak(connection, opening).catch(() => {});
   }
 
   override onCallEnd(connection: Connection): void {
@@ -2103,7 +2133,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** A paired device gets none of the SDK's own messages (identity, state, connected servers): only the device protocol. */
   override shouldSendProtocolMessages(_connection: Connection, ctx: { request: Request }): boolean {
-    return new URL(ctx.request.url).pathname !== "/nodes/connect";
+    // Nor does a phone call's: the bridge speaks only the voice protocol.
+    const path = new URL(ctx.request.url).pathname;
+    return path !== "/nodes/connect" && path !== "/calls/connect";
   }
 
   /** A call is for the owner's app; a device's socket can't start one. */
@@ -2965,6 +2997,42 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return [...this.#coding.list(), ...this.#goals.list(), ...this.#helpers.list()]
       .sort((a, b) => b.started_at - a.started_at)
       .slice(0, 30);
+  }
+
+  // --- phone calls (§16.1) ---------------------------------------------------------
+
+  /** Settings' phone questions: the numbers, using or giving one back, buying one, a test call. One answer each. */
+  async #callsAsk(msg: Extract<ClientMessage, { type: `atlas.calls.${string}` }>): Promise<ServerMessage> {
+    const c = this.#calls;
+    try {
+      switch (msg.type) {
+        case "atlas.calls.numbers":
+          return { type: "atlas.calls", ok: true, numbers: await c.numbers(), number: c.number() };
+        case "atlas.calls.use": {
+          const text = await c.use(msg.id);
+          return { type: "atlas.calls", ok: true, text, numbers: await c.numbers(), number: c.number() };
+        }
+        case "atlas.calls.release": {
+          const text = await c.release();
+          return { type: "atlas.calls", ok: true, text, numbers: await c.numbers(), number: c.number() };
+        }
+        case "atlas.calls.available":
+          return { type: "atlas.calls", ok: true, offers: await c.available(msg.area), number: c.number() };
+        case "atlas.calls.order":
+          return { type: "atlas.calls", ok: true, text: await c.order(msg.number), number: c.number() };
+        case "atlas.calls.test":
+          await c.dial(`This is ${readSettings(this.#sql).assistant_name}, testing your phone. It works. Say something, and I'll answer.`);
+          return { type: "atlas.calls", ok: true, text: "Calling you now.", number: c.number() };
+      }
+    } catch (err) {
+      return { type: "atlas.calls", ok: false, text: err instanceof Error ? err.message : String(err), number: c.number() };
+    }
+    return { type: "atlas.calls", ok: false, text: "That isn't something Atlas can do with calls.", number: c.number() };
+  }
+
+  /** The Worker asks before joining a call's stream to Atlas's voice: its extension's own address, with its key. */
+  async apiCallStream(id: string, key: string): Promise<{ ok: boolean; rate: number }> {
+    return { ok: this.#calls.streamAllowed(id, key), rate: AUDIO.sampleRate };
   }
 
   // --- jobs Atlas owns (§8.3) ------------------------------------------------------
@@ -5055,10 +5123,14 @@ interface SocketState {
   visible?: boolean;
   /** Set on a paired device's socket (§16.3): which node it is. The Worker sets it only after checking the node's token. */
   node?: string;
+  /** Set on a phone call's voice socket (§16.1): which call. The Worker sets it only after checking the stream's address. */
+  call?: string;
 }
 
 /** The header the Worker puts on a paired device's socket, after checking its token. */
 export const NODE_HEADER = "x-atlas-node";
+/** Set by the Worker on a phone call's voice socket (§16.1), after checking the stream's address: which call it is. */
+export const CALL_HEADER = "x-atlas-call";
 
 /** A device's event in a few words, for its state in the situation. */
 function summary(body: Record<string, unknown>): string {
