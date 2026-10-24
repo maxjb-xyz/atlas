@@ -70,7 +70,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8">${helmet}</head><
 (async () => {
   const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
   const browser = await chromium.launch({ proxy: proxy ? { server: proxy } : undefined });
-  const page = await browser.newPage({ viewport: { width: preview.width, height: preview.height }, deviceScaleFactor: 1 });
+  const page = await browser.newPage({ viewport: { width: preview.width, height: preview.height }, deviceScaleFactor: Number(process.env.DPR || 1) });
   page.on('pageerror', e => console.log('PAGEERROR', e.message));
   page.on('console', m => { if (m.type() === 'error') console.log('CONSOLE', m.text()); });
   await page.setContent(html, { waitUntil: 'networkidle', timeout: 60000 }).catch(e => console.log('load', e.message));

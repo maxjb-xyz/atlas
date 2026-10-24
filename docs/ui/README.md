@@ -217,7 +217,7 @@ Hermes-style profiles split memory and settings, and you switch between them. At
 | `--sep` / `--sep2` / `--dash` | `#2c2a28` / `#3a3835` / `#3f3c37` | `#e7e5df` / `#d9d6ce` / `#cdc9c0` | Rules, borders, dashed rails |
 | `--tx` / `--tx2` / `--tx3` | `#f1efea` / `#aaa69e` / `#918d86` | `#191817` / `#5c5954` / `#6f6b65` | Text levels |
 | `--ac` | `#ff6a3d` | `#e8501b` | Ember: what needs you, and what Atlas just changed |
-| `--P` `--K` `--U` `--F` `--H` | pink, amber, blue, green, violet | the same, deeper | Area colors (example areas) |
+| `--P` `--K` `--U` `--F` `--H` | `#f0458a` `#f5a524` `#3b82f6` `#10b981` `#8b5cf6` | `#d61f69` `#d97706` `#2563eb` `#059669` `#7c3aed` | Area colors (example areas): deep and saturated, not pastel (changed 2026-10-24) |
 
 **Motifs, each used with a purpose**
 - **Stage frame:** a dotted grid, dashed rails, and square nodes at intersections and sheet corners.
@@ -273,7 +273,7 @@ Hermes-style profiles split memory and settings, and you switch between them. At
 - **Simple is the default detail level** (VISION §21.5). It speaks in plain words ("Thinks with", "Keeps you safe", "Atlas thinks with ChatGPT, on your Plus plan") and hides model ids, speeds, prices per million tokens and mono metadata. Detailed and Developer show the rest, the way these screens first did. The soul stays at every level: the diamond, the stage frame, receipts and ember.
 
 **Home's Now and the living diamond** (approved direction 2026-10-24):
-- **The diamond** is the mark from `brand/atlas-mark.svg`, seams and all, drawn finely in characters in ember: lightest at the top left to deep red at the bottom right, lit by a light that circles it. It sweeps now and then while idle, ripples with your voice while listening, shimmers while thinking and pulses while speaking. Open [`source/diamond.html`](source/diamond.html) in a browser to see it move; it has controls for each state, an area and the theme. The screenshots here are single frames of it.
+- **The diamond** is the mark from `brand/atlas-mark.svg`, drawn finely in characters with hairline seams and its outline traced in slanted characters, so it keeps the mark's sharp points. It's in ember: lightest at the top left to deep red at the bottom right, lit by a light that circles it. It sweeps now and then while idle, ripples with your voice while listening, shimmers while thinking and pulses while speaking. Open [`source/diamond.html`](source/diamond.html) in a browser to see it move; it has controls for each state, an area and the theme. The screenshots here are single frames of it.
 - **Now** shows what's next on a small map with when to leave, the weather with tomorrow's rain, what needs you, the jobs running, and the week stacked in area colors. Its builder is `p_now.py`.
 - **Scoped to an area,** the stage's rails and the switcher take that area's color; the diamond stays ember.
 - **People's photos** come from the address book where they have one (not drawn here, since the mockups use made-up people).
@@ -281,7 +281,7 @@ Hermes-style profiles split memory and settings, and you switch between them. At
 | | |
 |---|---|
 | ![Now](screenshots/m7/home-now.png) | ![Now, scoped to Keyframes](screenshots/m7/home-now-keyframes.png) |
-| ![Now, light](screenshots/m7/home-now-light.png) | |
+| ![Now, light](screenshots/m7/home-now-light.png) | ![The diamond at 2x](screenshots/m7/home-now-diamond-2x.png) |
 
 | Simple (the default) | Developer |
 |---|---|

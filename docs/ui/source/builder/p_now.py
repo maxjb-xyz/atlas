@@ -15,7 +15,7 @@ EXTRA_CSS = r"""
 .scK{--dash:rgba(var(--Krgb),.55);--dot:rgba(var(--Krgb),.16)}
 .card{border:1px solid var(--sep);border-radius:10px;background:var(--win);box-sizing:border-box}
 .dk{--d1:#ffb48c;--d2:#ff6a3d;--d3:#e2442a;--d4:#b02e1d}.lt{--d1:#f08a5d;--d2:#e8501b;--d3:#c2391b;--d4:#8f2412}
-.dia{font-family:'Geist Mono',ui-monospace,monospace;font-size:6.2px;line-height:6.2px;margin:0;white-space:pre;font-weight:500;flex:none}
+.dia{font-family:'Geist Mono',ui-monospace,monospace;font-size:5.1px;line-height:5.1px;margin:0;white-space:pre;font-weight:700;flex:none}
 .soft{color:var(--tx2)}
 """
 
