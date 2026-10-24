@@ -206,7 +206,7 @@ It filters by area, type and date, and results come back with their sources. Rec
 
 Library (§21.2) shows everything:
 - search;
-- people and places;
+- places (people are in their own place, §21.2);
 - collections as tables;
 - the journal and the portrait;
 - "Not sure about these": low-confidence records you confirm or reject with one tap.
@@ -303,7 +303,7 @@ The rules:
 - A face only sees what its areas and sharing settings allow, and it never mentions your other areas.
 - Every conversation goes into the log, so asking "What did Jordan want?" just works.
 
-**In the app,** each face has its own screen under Atlas settings → Faces, with everything above and a "talk to it as a stranger" test. Its conversations are in History (the Faces tab), and what it hands to you goes to Inbox.
+**In the app,** each face has its own screen under People → Faces (§21.2), with everything above and a "talk to it as a stranger" test. Its conversations are in History (the Faces tab), and what it hands to you goes to Inbox.
 
 ---
 
@@ -482,7 +482,7 @@ Adapters keep a cursor (Gmail's history id, GitHub's last time), so a restart ne
 
 **Learning both ways.** Reactions to nudges show what was noise (§10.3). "Why didn't you tell me?" shows what was missed: Atlas finds the item, says what it decided and why, and your correction becomes a standing preference. What to always bring up and what never to are lists in your own words; `decide` and Atlas both read them, and you edit them in the app.
 
-**The Senses screen.** Every source with its state (its last item, its last error in the provider's own words), and today's funnel: what came in, what was a duplicate, never, later and now, and what Atlas said. "Show me what you noticed" puts it on the stage.
+**The Senses screen** (in Abilities, §21.2). Every source with its state (its last item, its last error in the provider's own words), and today's funnel: what came in, what was a duplicate, never, later and now, and what Atlas said. "Show me what you noticed" puts it on the stage.
 
 **Measured.** The share of nudges you thank or reply to, the share you ignore, and the misses you point out. Each milestone from M4 reports them from the owner's real use.
 
@@ -916,7 +916,7 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
 
 ## 21. UI
 
-UI v1 was locked on Oct 21, 2026. The screens, screenshots and source are in [`docs/ui/`](docs/ui/README.md). This section summarizes the decisions.
+UI v1 was locked on Oct 21, 2026. The screens, screenshots and source are in [`docs/ui/`](docs/ui/README.md). This section summarizes the decisions. M7 changes it where marked (decided 2026-10-24): before a public release the app has to meet two bars, simplicity and Jarvis, and the settings as built read as pre-alpha.
 
 ![UI v1](docs/ui/screenshots/00-overview.png)
 
@@ -931,15 +931,17 @@ UI v1 was locked on Oct 21, 2026. The screens, screenshots and source are in [`d
 │ ▢ Agenda       │ ┊ │                                                     │ ┊ │
 │                │ ┊ │      the sheet: a week, a draft, a job, a list      │ ┊ │
 │ ▢ Automations  │ ┊ │                                                     │ ┊ │
-│ ▢ Library      │ ┊ └─────────────────────────────────────────────────────┘ ┊ │
-│ ▢ History      │ ┊      ┌─ console (Home) / composer (other pages) ─┐      ┊ │
-│ Pinned       + │ ┊      │  last exchange · receipts · type or talk  │      ┊ │
-│ Atlas settings │ ┊      └───────────────────────────────────────────┘      ┊ │
+│ ▢ Library      │ ┊ │                                                     │ ┊ │
+│ ▢ People       │ ┊ └─────────────────────────────────────────────────────┘ ┊ │
+│ ▢ Abilities    │ ┊      ┌─ console (Home) / composer (other pages) ─┐      ┊ │
+│ ▢ History      │ ┊      │  last exchange · receipts · type or talk  │      ┊ │
+│ Pinned       + │ ┊      └───────────────────────────────────────────┘      ┊ │
+│ Atlas settings │ ┊                                                         ┊ │
 └────────────────┴─────────────────────────────────────────────────────────────┘
 ```
 
 - **Sidebar:**
-  - the diamond and the six places, with icons;
+  - the diamond and the eight places, with icons;
   - **Pinned:** any area, person, project or automation you live in;
   - **Atlas settings** at the bottom.
 - **Toolbar:**
@@ -955,7 +957,9 @@ UI v1 was locked on Oct 21, 2026. The screens, screenshots and source are in [`d
   - **`/` commands** and **`@` mentions** work in the composer.
 - **Composer (every other page):** one line, with a hint that fits the page. Anything you can click, you can also ask for.
 
-### 21.2 Six places
+### 21.2 Eight places
+
+UI v1 had six places, with faces, members, extensions, skills and devices in Atlas settings. M7 makes them places (decided 2026-10-24): they're who Atlas deals with and what it can do, not settings, and Atlas settings keeps only settings.
 
 | Place | What it holds |
 |---|---|
@@ -963,19 +967,22 @@ UI v1 was locked on Oct 21, 2026. The screens, screenshots and source are in [`d
 | **Inbox** | Everything waiting on you: approvals (§12.2), questions Atlas can't answer alone, finished work to review, and what faces handed to you. The badge is the count, and empty is the goal. |
 | **Agenda** | Everything on a clock: events, reminders, due dates, Atlas's promises (marked with the diamond), and scheduled automation runs. |
 | **Automations** | What Atlas does on its own or when asked (§13). It has Run buttons, filters by trigger, a flow view per automation, and Atlas's suggestions. It's a separate page because many automations never run on a clock. |
-| **Library** | Everything Atlas knows (§5.5): people, places, areas, collections, memory (journal, portrait, "Not sure about these"), files, and the pages and files Atlas makes (§21.7). Recently learned facts each have a Correct link. |
+| **Library** | Everything Atlas knows (§5.5): places, areas, collections, memory (journal, portrait, "Not sure about these"), files, and the pages and files Atlas makes (§21.7). Recently learned facts each have a Correct link. Every record opens on the stage. |
+| **People** | Everyone Atlas deals with: **Contacts** (the people Atlas knows, with their channels and trust), **Members** (with invites) and **Faces** (§7.2: who each answers, what it shares, its conversations and digest). What a face hands to you still goes to Inbox. |
+| **Abilities** | What Atlas can do. It opens on a **live map**: Atlas in the middle, with its brains, senses, channels, hands, tools, skills and devices around it, each box saying what fills it, its state and its cost, and opening where it's set up. The map is also a stage view, so "what can you do?" shows it. Tabs: **Services** (the catalog, §17, as cards), **Skills** (§9.3) and **Devices** (the phone, the desktop app and other nodes, §16.3, with location). |
 | **History** | The log (§4.2): what Atlas, faces, jobs and automations did, each with a receipt (who asked, what changed, what was checked, powers, brain and cost) and Undo. |
 
-**Atlas settings** has these sections:
+**Atlas settings** has five sections (changed 2026-10-24, for M7):
 
-| Group | Sections |
+| Section | What's in it |
 |---|---|
-| Atlas | Character & voice, Look & themes |
-| Brains | Brains, Usage & limits |
-| Connected | Connections, Devices, Vault |
-| People | Members, Faces |
-| Abilities | Skills & tools, Permissions |
-| System | Notifications, Updates, Data & export |
+| Atlas | Name, character, voice, look and themes |
+| Brains | The roles, the named brains (§18), usage and limits |
+| Notifications | One list per urgency (§14), quiet hours, focus rules, the budget |
+| Permissions | When Atlas asks (§12), and your own rules (§12.3) |
+| Account | Passkeys, the vault (§15), updates (§23.2), your data (§23.4) |
+
+**Services are cards, not rows.** Each shows the service's mark, its name, one line, a live state ("heard 2 min ago"), and opens on the stage. Controls are the app's own (toggles, segmented choices, pickers that show a model's speed and cost), with at most one sentence under each and more on demand. Anything on these pages can be done by asking, like "set up Linear".
 
 Pages and stage views are built from the same components, so asking "What's going on with Keyframes?" puts the Keyframes area on the stage.
 
@@ -1134,7 +1141,7 @@ Atlas should feel like the future: alive, fast, a little magical.
 
 - **Web app first,** installable to your home screen, with push notifications.
 - **Desktop app** (Tauri): the same app, plus a node and a voice overlay you open with a hotkey.
-- **Phone:** the web app at first, with OwnTracks for location. It uses a tab bar (Home, Inbox, Agenda, Library), with History and settings under Library; this isn't drawn yet. A native app comes later, for location, health data, lock-screen voice and widgets.
+- **Phone:** the web app at first, with OwnTracks for location. It uses a tab bar (Home, Inbox, Agenda, Library), with the other places and settings under More; this isn't drawn yet. A native app comes later, for location, health data, lock-screen voice and widgets.
 - **Text channels** (SMS, iMessage, Telegram, Discord, Signal, WhatsApp, email): stage views arrive in the richest form the channel carries (§16.1): images, files, text, and links for what has to be used in the app.
 
 ---
@@ -1187,7 +1194,7 @@ Atlas gets a written character, not a list of rules: who Atlas is, how it talks,
 ### 23.2 Self-improvement and updates
 
 - **Atlas grows through skills and extensions.** All of them are versioned, tested, undoable and listed.
-- **It doesn't edit its own core.** Core updates arrive as releases, with one-click update and rollback on the Updates page (under Atlas).
+- **It doesn't edit its own core.** Core updates arrive as releases, with one-click update and rollback on the Updates page (Atlas settings → Account).
 - **How an update works** (decided 2026-10-24, for M7). Each release is built once into a bundle (the Worker and the app) attached to its GitHub release. Atlas looks for a new release once a day; the Updates page shows what's in it and updates with one click, uploading the bundle as a new version of the owner's Worker with the Cloudflare token from setup (§22). Roll back puts the previous version back. Nothing else needs setting up, and the owner never touches GitHub or a terminal. Updating on its own is a setting, off by default.
 - **The data only grows.** A release's changes to storage only add (tables, columns), so rolling back the code never breaks the data, and the data itself is never rolled back.
 - **Coding jobs on any repo,** including Atlas's own, are ordinary helper jobs (§8.2).
