@@ -255,7 +255,7 @@ Atlas writes and keeps up the learned parts, and you can edit them:
 - recent activity;
 - collections.
 
-Settings are explicit and start with careful defaults: tone, accounts, autonomy, sharing, faces and automations. In the app, areas live in Library, and the settings that control what leaves Atlas are one row per area in Library → Areas (§21.3).
+Settings are explicit and start with careful defaults: tone, accounts, autonomy, sharing, faces and automations. Each area also has **its color and its icon**, which the owner can change (decided 2026-10-24, for M7): one of the app's deep, saturated presets or any color they pick, and a line icon from Atlas's set or a logo they upload (a company's or a school's), kept with their files (§21.7). Chips, avatars, the week's load and a scoped stage (§21.3) all use them. In the app, areas live in Library, and the settings that control what leaves Atlas are one row per area in Library → Areas (§21.3).
 
 Shared areas, such as Home or Family, belong to several members (§7.1).
 
