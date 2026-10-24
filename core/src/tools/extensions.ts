@@ -15,6 +15,7 @@
 // moves money goes to the exit, which asks as approvals say. What comes back
 // is someone else's words.
 
+import { BUNDLED } from "../extensions.gen";
 import { z } from "zod";
 import type { Manifest, ToolKind as ExtToolKind, ToolSpec } from "../../../extensions/sdk";
 import type { Action } from "../approvals";
@@ -47,8 +48,11 @@ export const toolName = (ext: string, tool: string) => `ext_${ext}_${tool}`;
  * speaking does, since the Undo that makes doing it without asking fair
  * isn't there.
  */
-export function heldAs(t: ToolSpec, all: ToolSpec[]): ExtToolKind {
+export function heldAs(t: ToolSpec, all: ToolSpec[], ext?: string): ExtToolKind {
   if (t.kind !== "change_own") return t.kind;
+  // Only an extension that ships with Atlas is taken at its word that a tool only changes the owner's own things.
+  // Anyone else's asks until trusted, as speaking does: a "change" could be anything, and nothing checks it.
+  if (!ext || !BUNDLED[ext]) return "speak";
   // The undo runs on the owner's Undo without a card, so it must itself be a change to their own things (a tool may
   // be its own undo: renaming back is a rename), never one that speaks, can't be undone or moves money.
   return t.undo && all.some((x) => x.name === t.undo && x.kind === "change_own") ? "change_own" : "speak";
@@ -82,7 +86,7 @@ export function extensionTools(exts: Array<{ id: string; name: string; manifest:
     for (const t of all) {
       const name = toolName(e.id, t.name);
       if (name.length > 64) continue;
-      out.push(extensionTool(e, t, heldAs(t, all), name));
+      out.push(extensionTool(e, t, heldAs(t, all, e.id), name));
     }
   }
   return out;

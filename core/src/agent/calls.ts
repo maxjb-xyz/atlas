@@ -7,16 +7,20 @@
 // ordinary voice session; one Atlas placed starts with what it called about.
 
 import type { CallData, NumberOffer, PhoneNumber } from "../../../extensions/sdk";
-import { channelsOf } from "../contacts";
 import type { ExtensionHost, Installed } from "../extensions";
 import { installed } from "../extensions";
 import type { Json, Sql } from "../store/db";
 import { append } from "../store/log";
-import { ownerName, ownerRecord } from "../store/records";
+import { ownerName } from "../store/records";
 import { readSettings } from "../store/settings";
+import { getState, setState } from "../store/state";
 
 /** How long a call Atlas placed waits for its stream, before what it was going to say is dropped. */
 const PENDING_MS = 2 * 60_000;
+/** How long a stream's one-time key is good for: a call is answered, and its stream connects, within seconds. */
+const TOKEN_MS = 2 * 60_000;
+/** Calls Atlas places in an hour, at most: what can't wait still can't ring you all day. */
+export const CALLS_PER_HOUR = 4;
 
 export interface CallDeskDeps {
   sql: Sql;
@@ -24,20 +28,47 @@ export interface CallDeskDeps {
   changed(): void;
 }
 
-/** The owner's own phone numbers, from their record. */
+/**
+ * The owner's own phone numbers: only the ones they set themselves (§16.1).
+ * Not their record's, which what Atlas reads can add to: a number there
+ * could otherwise be answered as the owner.
+ */
 export function ownerPhones(sql: Sql): string[] {
-  return channelsOf(ownerRecord(sql))
-    .filter((c) => c.kind === "phone")
-    .map((c) => c.value);
+  return readSettings(sql).phone.mine.filter((n) => n.replace(/\D/g, "").length >= 7);
 }
 
-/** What a calls extension is told: the owner's numbers, where to stream a call, and what anyone else hears. */
+/** A one-time key for one call's stream, good for a couple of minutes. */
+function mintToken(sql: Sql): string {
+  const now = Date.now();
+  const live = Object.entries(getState<Record<string, number>>(sql, "call_tokens") ?? {})
+    .filter(([, until]) => until > now)
+    .slice(-40);
+  const token = crypto.randomUUID().replace(/-/g, "");
+  setState(sql, "call_tokens", Object.fromEntries([...live, [token, now + TOKEN_MS]]));
+  return token;
+}
+
+/** Uses up a stream's key: true once, while it's good. */
+export function useToken(sql: Sql, token: string): boolean {
+  const all = getState<Record<string, number>>(sql, "call_tokens") ?? {};
+  const until = all[token];
+  if (!until) return false;
+  delete all[token];
+  setState(sql, "call_tokens", all);
+  return until > Date.now();
+}
+
+/**
+ * What a calls extension is told: the owner's numbers, where to stream a
+ * call (with a one-time key, so the address alone can't open a voice
+ * session), and what anyone else hears.
+ */
 export function callData(sql: Sql, address: string | undefined): CallData {
   const s = readSettings(sql);
   const owner = ownerName(sql) || "the owner";
   return {
     owner_numbers: ownerPhones(sql),
-    stream: address ? `${address.replace(/^http/, "ws")}/stream` : "",
+    stream: address ? `${address.replace(/^http/, "ws")}/stream/${mintToken(sql)}` : "",
     greeting: `You've reached ${s.assistant_name}, ${owner}'s assistant. ${owner} doesn't take calls on this number. Please send them a message instead. Goodbye.`,
   };
 }
@@ -106,23 +137,30 @@ export class CallDesk {
    */
   async dial(text: string): Promise<void> {
     const to = ownerPhones(this.d.sql)[0];
-    if (!to) throw new Error("Atlas doesn't know your phone number: add it to your record in People.");
+    if (!to) throw new Error("Atlas doesn't have your phone number: add it under Telnyx in Abilities → Services.");
+    const now = Date.now();
+    const placed = (getState<number[]>(this.d.sql, "calls_placed") ?? []).filter((t) => now - t < 3_600_000);
+    if (placed.length >= CALLS_PER_HOUR)
+      throw new Error(
+        `Atlas has called you ${placed.length} times in the last hour, its most; it doesn't call again until an hour after the first.`,
+      );
     if (!this.number()) throw new Error("Atlas has no number to call from yet: pick or buy one for Telnyx in Abilities → Services.");
     const call = `out-${crypto.randomUUID()}`;
     for (const [k, v] of this.#pending) if (Date.now() - v.at > PENDING_MS) this.#pending.delete(k);
     this.#pending.set(call, { text, at: Date.now() });
     try {
       await this.#call("dial", [{ to, call }]);
+      setState(this.d.sql, "calls_placed", [...placed, now]);
     } catch (err) {
       this.#pending.delete(call);
       throw err;
     }
   }
 
-  /** Whether a call's stream may join Atlas's voice: its extension's own address, with its key. */
-  streamAllowed(id: string, key: string): boolean {
+  /** Whether a call's stream may join Atlas's voice: its extension's own address, with its key, and a one-time key from a call. */
+  streamAllowed(id: string, key: string, token: string): boolean {
     const e = this.extension();
-    return !!e && e.id === id && e.key.length > 0 && same(e.key, key);
+    return !!e && e.id === id && e.key.length > 0 && same(e.key, key) && useToken(this.d.sql, token);
   }
 
   /** A call's stream connected: what Atlas says first, when it placed the call. */

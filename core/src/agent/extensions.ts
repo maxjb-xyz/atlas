@@ -93,7 +93,7 @@ export class ExtensionDesk {
         provides: m.provides,
         hosts: m.hosts,
         tools: (m.tools ?? []).map((t) => {
-          const kind = heldAs(t, m.tools ?? []);
+          const kind = heldAs(t, m.tools ?? [], m.id);
           return { name: t.name, description: t.description, kind, asks: EXT_ASKS[kind].asks };
         }),
         credit: m.credit ?? null,

@@ -98,6 +98,11 @@ export const Settings = z.object({
       calls: z.enum(["never", "urgent"]).default("never"),
     })
     .prefault({}),
+  /**
+   * Phone calls (§16.1): the owner's own numbers, set by them in Abilities → Services. A call from one, with
+   * caller ID the network vouches for, is the owner; Atlas calls the first. Never learned from what Atlas reads.
+   */
+  phone: z.object({ mine: z.array(z.string().trim().min(7).max(30)).max(4).default([]) }).prefault({}),
   voice: z
     .object({
       speech_in: z.enum(["workers-ai-flux", "elevenlabs-scribe"]).default("workers-ai-flux"),
@@ -211,6 +216,7 @@ export const SettingsPatch = z.object({
   brains: f.brains.unwrap().optional(),
   named_brains: f.named_brains.unwrap().optional(),
   permissions: f.permissions.unwrap().optional(),
+  phone: f.phone.unwrap().optional(),
   voice: f.voice.unwrap().optional(),
   character: f.character.unwrap().optional(),
   pins: f.pins.unwrap().optional(),

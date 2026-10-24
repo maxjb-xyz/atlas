@@ -349,7 +349,12 @@ describe("where a message goes (§14)", () => {
   it("finds where a job or a promise was asked for, from the run that made it", () =>
     withSql((sql) => {
       ownerSaid(sql, { channel: "telegram", run: "run_asked" });
-      const job = createItem(sql, { kind: "job", title: "Find flights", due_at: Date.now() + 60_000, source: { run_id: "run_asked", via: "helpers" } });
+      const job = createItem(sql, {
+        kind: "job",
+        title: "Find flights",
+        due_at: Date.now() + 60_000,
+        source: { run_id: "run_asked", via: "helpers" },
+      });
       expect(askedOn(sql, `job:${job.id}`)).toBe("telegram");
       expect(askedOn(sql, "device:mac")).toBeNull();
     }));

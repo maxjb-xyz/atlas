@@ -309,7 +309,7 @@ export interface PendingUpdate {
   sha256: string;
   version: string;
   /** What it would add: hosts it would reach, and secrets it would hold. */
-  widens: { hosts: string[]; secrets: string[] };
+  widens: { hosts: string[]; secrets: string[]; tools?: string[] };
   at: number;
 }
 
@@ -345,13 +345,22 @@ export function holdsOf(m: Manifest): string[] {
   return [...new Set(all)].sort();
 }
 
-/** What a new manifest would reach or hold that the old one doesn't. */
-export function widening(before: Manifest, after: Manifest): { hosts: string[]; secrets: string[] } {
+/**
+ * What a new manifest would reach, hold or do that the old one doesn't:
+ * hosts, secrets, and tools that are new or declare another kind, or a new
+ * thing it provides. Any of them waits for the owner's OK.
+ */
+export function widening(before: Manifest, after: Manifest): { hosts: string[]; secrets: string[]; tools: string[] } {
   const had = reachOf(before);
   // A host the old one covered (itself or as a parent domain) isn't new.
   const covered = (h: string) => had.some((x) => h === x || h.endsWith(`.${x}`));
   const held = new Set(holdsOf(before));
-  return { hosts: reachOf(after).filter((h) => !covered(h)), secrets: holdsOf(after).filter((s) => !held.has(s)) };
+  const was = new Map((before.tools ?? []).map((t) => [t.name, `${t.kind}:${t.undo ?? ""}`]));
+  const tools = [
+    ...(after.tools ?? []).filter((t) => was.get(t.name) !== `${t.kind}:${t.undo ?? ""}`).map((t) => `${t.name} (${t.kind})`),
+    ...after.provides.filter((p) => !before.provides.includes(p)).map((p) => `provides ${p}`),
+  ];
+  return { hosts: reachOf(after).filter((h) => !covered(h)), secrets: holdsOf(after).filter((s) => !held.has(s)), tools };
 }
 
 /** Whether a manifest stays inside what its listing says it may reach and hold. */

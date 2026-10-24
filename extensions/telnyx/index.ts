@@ -113,6 +113,8 @@ const STREAM = {
 
 /** Compares phone numbers by their digits, so "+1 (555) 123-4567" and "+15551234567" are one number. */
 const digits = (n: string) => n.replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "");
+/** Two numbers are one only when both have a real number's digits: an anonymous caller's empty ID matches nothing. */
+const same = (a: string, b: string) => digits(a).length >= 7 && digits(a) === digits(b);
 
 interface Event {
   data?: {
@@ -302,8 +304,8 @@ const extension: Extension = {
     const act = (action: string, body: Record<string, unknown> = {}) =>
       api(ctx, "POST", `/calls/${encodeURIComponent(id)}/actions/${action}`, { command_id: `${e.data?.id ?? id}-${action}`, ...body });
 
-    if (type === "call.initiated" && p.direction === "incoming" && (!ours || digits(p.to ?? "") === digits(ours))) {
-      const fromOwner = data.owner_numbers.some((n) => digits(n) === digits(p.from ?? ""));
+    if (type === "call.initiated" && p.direction === "incoming" && (!ours || same(p.to ?? "", ours))) {
+      const fromOwner = data.owner_numbers.some((n) => same(n, p.from ?? ""));
       // Caller ID can be faked; the network's own check says this call really comes from that number.
       const vouched = p.shaken_stir_attestation === "A" && p.shaken_stir_validated === true;
       if (fromOwner && vouched) {

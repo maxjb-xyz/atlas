@@ -349,9 +349,13 @@ describe("your own rules (§12.3)", () => {
       const go = (a: Action, o: Partial<typeof base> = {}) => permits(sql, a, { ...base, ...o, permissions: loose });
       expect(go(hook)).toBe(true);
       expect(go(site)).toBe(true);
-      expect(go(form)).toBe(true);
-      // Only on the sites the owner allowed.
-      expect(go({ ...form, url: "https://elsewhere.test/submit" } as Action)).toBe(false);
+      // Forms go on sites the owner picked themselves: not under "any site", where sites join without asking,
+      // and not in a run that has read the web elsewhere.
+      expect(go(form)).toBe(false);
+      const forms = rules({ forms: "allowed_sites" });
+      expect(permits(sql, form, { ...base, permissions: forms })).toBe(true);
+      expect(permits(sql, form, { ...base, read_web: true, permissions: forms })).toBe(false);
+      expect(permits(sql, { ...form, url: "https://elsewhere.test/submit" } as Action, { ...base, permissions: forms })).toBe(false);
       expect(go(reply)).toBe(true);
       // A face reply to someone Atlas doesn't know still asks under its own rule.
       const { person: _, ...stranger } = reply as Extract<Action, { kind: "face_reply" }>;
@@ -372,7 +376,14 @@ describe("your own rules (§12.3)", () => {
       ).toBe(false);
       // After reading the web, everything leaving asks, unless the owner said trusted things can go.
       expect(go(hook, { read_web: true })).toBe(false);
-      expect(permits(sql, hook, { ...base, read_web: true, permissions: rules({ outside: "never", after_web: "trusted" }) })).toBe(true);
+      // "Not for what you trust" means only that: what isn't trusted still asks, whatever else is loosened.
+      const trustedAfter = rules({ outside: "never", sites: "any", after_web: "trusted" });
+      expect(permits(sql, hook, { ...base, read_web: true, permissions: trustedAfter })).toBe(false);
+      expect(permits(sql, site, { ...base, read_web: true, permissions: trustedAfter })).toBe(false);
+      for (let i = 0; i < TRUST_AFTER; i++) countApproval(sql, [hook], true);
+      setTrust(sql, "webhook:wh_rules", true);
+      expect(permits(sql, hook, { ...base, read_web: true, permissions: trustedAfter })).toBe(true);
+      setTrust(sql, "webhook:wh_rules", false);
       // Nothing to earn when nothing asks.
       expect(earnsTrust(hook, loose)).toBe(false);
     }));

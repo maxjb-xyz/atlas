@@ -11,7 +11,7 @@ import { correctAreas, discoveryPrompt, readyToDiscover, startDiscovered, tagPen
 import { HelperDesk, helperBrain, RESEARCH_BUDGET } from "./agent/helpers";
 import { CodingDesk, getJob, type JobWorkspace, type PullRequest } from "./agent/coding";
 import { codingTools } from "./tools/coding";
-import { getGoal, type GoalHost, GoalDesk, type GoalJob } from "./agent/goals";
+import { getGoal, type GoalHost, GoalDesk, type GoalJob, inFolder } from "./agent/goals";
 import { CallDesk } from "./agent/calls";
 import { folderRun, jobOwn, lookTools } from "./tools/goals";
 import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup";
@@ -3132,8 +3132,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   }
 
   /** The Worker asks before joining a call's stream to Atlas's voice: its extension's own address, with its key. */
-  async apiCallStream(id: string, key: string): Promise<{ ok: boolean; rate: number }> {
-    return { ok: this.#calls.streamAllowed(id, key), rate: AUDIO.sampleRate };
+  async apiCallStream(id: string, key: string, token: string): Promise<{ ok: boolean; rate: number }> {
+    return { ok: this.#calls.streamAllowed(id, key, token), rate: AUDIO.sampleRate };
   }
 
   // --- jobs Atlas owns (§8.3) ------------------------------------------------------
@@ -3149,13 +3149,21 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return r?.folder ? this.#inFolder(r.folder) : null;
   }
 
-  /** The workspace starting in one folder, with paths read from there. */
+  /**
+   * The workspace for a job Atlas owns: its commands run in its folder as
+   * its own user, with the owner's vault keys off (§8.3), and it reads only
+   * inside its folder.
+   */
   #inFolder(folder: string): WorkspaceApi {
     const ws = this.#workspaceApi;
+    const as = folder.split("/").pop()!;
     return {
       ...ws,
-      run: (command, o) => ws.run(command, { ...o, cwd: folder }),
-      read: (path) => ws.read(path.startsWith("/") ? path : `${folder}/${path}`),
+      run: (command, o) => ws.run(command, { ...o, cwd: folder, as }),
+      read: async (path) => {
+        const full = inFolder(folder, path);
+        return full ? ws.read(full) : { ok: false, error: `${path} isn't in the job's folder.` };
+      },
     };
   }
 
@@ -3199,7 +3207,8 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
       keep: async ({ job, path, name, note }) => {
         const files = this.#toolContext(readSettings(sql), new Date(), "clock", null).files;
         if (!files) throw new Error("Files can't be kept here.");
-        const full = path.startsWith("/") ? path : `${job.folder}/${path}`;
+        const full = inFolder(job.folder, path);
+        if (!full) throw new Error(`${path} isn't in the job's folder`);
         const got = await this.#workspaceApi.read(full);
         if (!got.ok) throw new Error(`couldn't read ${full}: ${got.error}`);
         const { file } = await saveFile(sql, files, {
@@ -4073,7 +4082,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
     return (
       this.#sql
         .exec(
-          `SELECT 1 FROM log WHERE kind = 'delivery' AND json_extract(body, '$.channel') IN ('web', 'mcp') AND json_extract(body, '$.ok') = 1
+          `SELECT 1 FROM log WHERE kind = 'delivery' AND json_extract(body, '$.channel') IN ('web', 'mcp', 'extension') AND json_extract(body, '$.ok') = 1
              AND (run_id = ? OR run_id IN (SELECT json_extract(source, '$.detail.helper_run') FROM agenda WHERE kind = 'job' AND json_extract(source, '$.run_id') = ?))
            LIMIT 1`,
           runId,
@@ -5304,7 +5313,7 @@ const RESEARCH_BRIEF =
 
 /** What a step's helper is told beyond the usual (§8.3): it works in the job's folder, and what it makes stays there. */
 function stepBrief(job: GoalJob): string {
-  return `This is one step of a longer job, "${job.title}". You have a shell in the job's folder (${job.folder}) with folder_run: make what the step needs there, as files the next steps can use, and say in your reply which files you made and what's in them. Changes stay in the folder; nothing you do there reaches anyone.`;
+  return `This is one step of a longer job, "${job.title}". You have a shell in the job's own folder (${job.folder}) with folder_run: make what the step needs there, as files the next steps can use, and say in your reply which files you made and what's in them. The folder is the job's alone; it reaches only the websites the owner allowed, and nothing in it reaches the owner until Atlas keeps it for them.`;
 }
 
 function helperSystem(settings: Settings, now: Date): string {

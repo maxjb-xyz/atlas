@@ -300,7 +300,7 @@ export class ServiceDesk {
   #extTools(m: Manifest | null): ServiceView["does"]["tools"] {
     const all = m?.tools ?? [];
     return all.map((t) => {
-      const kind = heldAs(t, all);
+      const kind = heldAs(t, all, m?.id);
       return {
         name: t.name,
         title: t.name.replace(/_/g, " "),
@@ -596,7 +596,8 @@ export class ServiceDesk {
     const sql = this.d.sql;
     const listed = catalog(sql);
     for (const [extId, pin] of Object.entries(pins(sql))) {
-      const s = listed.find((x) => x.id === pin.service);
+      // Only the index it came from can update it: another that lists the same id later can't push code into it.
+      const s = listed.find((x) => x.id === pin.service && x.index === pin.index);
       const part = s?.extension && "code" in s.extension && s.extension.id === extId ? s.extension : null;
       const e = getExt(sql, extId);
       if (!s || !part || !e || part.sha256 === pin.sha256) continue;
@@ -604,7 +605,7 @@ export class ServiceDesk {
       try {
         const next = await this.#pinnedCode(part);
         const widens = widening(e.manifest, next.manifest);
-        if (widens.hosts.length || widens.secrets.length) {
+        if (widens.hosts.length || widens.secrets.length || widens.tools.length) {
           setPending(sql, extId, {
             service: s.id,
             index: s.index,

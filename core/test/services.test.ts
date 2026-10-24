@@ -268,7 +268,7 @@ describe("the index", () => {
       hosts: ["api.a.example"],
       secrets: [{ name: "key", label: "k" }],
     };
-    expect(widening(m, { ...m, hosts: ["api.a.example"] })).toEqual({ hosts: [], secrets: [] });
+    expect(widening(m, { ...m, hosts: ["api.a.example"] })).toEqual({ hosts: [], secrets: [], tools: [] });
     expect(
       widening(m, {
         ...m,
@@ -281,7 +281,23 @@ describe("the index", () => {
     ).toEqual({
       hosts: ["evil.example"],
       secrets: ["pw"],
+      tools: [],
     });
+    // A new tool, or one that says it's another kind now, or something new it provides, widens it too.
+    const t = { name: "rename", description: "Rename", input: { type: "object" }, kind: "change_own" as const, undo: "rename" };
+    expect(
+      widening(
+        { ...m, tools: [t] } as never,
+        {
+          ...m,
+          provides: ["sense", "tools"],
+          tools: [
+            { ...t, kind: "speak", undo: undefined },
+            { ...t, name: "pay", kind: "money" },
+          ],
+        } as never,
+      ).tools,
+    ).toEqual(["rename (speak)", "pay (money)", "provides tools"]);
   });
 
   it("is looked at once a day on the clock, and an index the owner adds joins the catalog after Atlas's own", async () => {
@@ -405,7 +421,7 @@ describe("installing from the index", () => {
     await lookNow();
     expect(await inOwner((_a, sql) => getExt(sql, "acme")!.version)).toBe("1.1.0");
     const c = await card(s, "acme", (x) => x.update != null);
-    expect(c.update).toEqual({ version: "2.0.0", widens: { hosts: ["files.example"], secrets: [] } });
+    expect(c.update).toEqual({ version: "2.0.0", widens: { hosts: ["files.example"], secrets: [], tools: [] } });
     s.send({ type: "atlas.service.update", id: "acme" });
     expect((await s.next("atlas.service.done", (m) => m.id === "acme")).ok).toBe(true);
     expect(await inOwner((_a, sql) => getExt(sql, "acme")!.version)).toBe("2.0.0");
@@ -505,30 +521,24 @@ describe("an extension's tools", () => {
     expect(deliveries[0]!.body).toMatchObject({ channel: "extension", to: "tooly", text: "find_note", ok: true });
   });
 
-  it("holds a change to the owner's things to its kind: it runs, and Undo calls its undo tool", async () => {
+  it("asks before a change from an extension that isn't Atlas's own until it's trusted, then runs it, without an Undo", async () => {
     const s = await connect();
+    // Only an extension that ships with Atlas is taken at its word that a tool only changes the owner's things.
+    brain([call("ext_tooly_rename_note", { id: "n1", title: "Later" }), say("Waiting for your OK.")]);
+    const asked = await turn(s, "rename it");
+    expect((asked.results[0]!.body.receipt as { text: string }).text).toBe("Waiting for your OK · rename note on Tooly");
+    expect(extToolsFor.calls).toEqual([]);
+    await inOwner((_a, sql) =>
+      setState(sql, "trust", {
+        "tool:tooly:rename_note": { name: "rename note on Tooly", as_is: 5, offered: false, trusted_at: Date.now() },
+      }),
+    );
     brain([call("ext_tooly_rename_note", { id: "n1", title: "Later" }), say("Renamed.")]);
     const { results } = await turn(s, "rename it");
     const receipt = results[0]!.body.receipt as { text: string; undo: unknown };
-    expect(receipt).toEqual({
-      text: "Done · rename note on Tooly",
-      undo: { kind: "tool.undo", ext: "tooly", tool: "rename_note", name: "rename note on Tooly", input: { id: "n1", title: "Plans" } },
-    });
+    // Held as speaking, it has no Undo: an undo tool would run on the owner's Undo with no card.
+    expect(receipt).toEqual({ text: "Done · rename note on Tooly" });
     expect(extToolsFor.calls).toEqual([{ name: "rename_note", input: { id: "n1", title: "Later" } }]);
-    const logId = await inOwner(
-      (_a, sql) =>
-        sql
-          .exec<{ id: string }>(
-            `SELECT id FROM log WHERE kind = 'tool.result' AND json_extract(body, '$.name') = 'ext_tooly_rename_note' ORDER BY seq DESC LIMIT 1`,
-          )
-          .one().id,
-    );
-    s.send({ type: "atlas.undo", log_id: logId });
-    await s.next("atlas.rows", (m) => m.rows.some((r) => r.kind === "delivery" && r.body.undo_of === logId));
-    expect(extToolsFor.calls[1]).toEqual({ name: "rename_note", input: { id: "n1", title: "Plans" } });
-    // The same receipt can't be undone twice.
-    s.send({ type: "atlas.undo", log_id: logId });
-    expect((await s.next("atlas.error")).message).toBe("That's already undone.");
   });
 
   it("asks before one that speaks until it's trusted, and always with a hold before one that moves money, showing the amount", async () => {

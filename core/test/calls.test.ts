@@ -157,8 +157,12 @@ beforeEach(async () => {
     install(sql, { id: "telnyx", source: "bundled", state: "on" });
     setExtSecrets(sql, "telnyx", { api_key: "KEY_test_123" });
     setState(sql, "origin", "https://atlas.test");
+    // A number on the owner's record isn't enough: what Atlas reads can add to it. Their own numbers are set by them.
     const owner = ownerRecord(sql);
-    sql.exec(`UPDATE records SET fields = json_set(fields, '$.phone', ?) WHERE id = ?`, "+1 (555) 010-9999", owner.id);
+    sql.exec(`UPDATE records SET fields = json_set(fields, '$.phone', ?) WHERE id = ?`, "+1 (555) 010-7777", owner.id);
+    writeSettings(sql, { phone: { mine: ["+1 (555) 010-9999"] } });
+    setState(sql, "calls_placed", null);
+    setState(sql, "call_tokens", null);
     key = getExt(sql, "telnyx")!.key;
   });
 });
@@ -234,8 +238,18 @@ describe("Telnyx", () => {
 
     expect((await post(initiated("+15550109999", { a: "A", ok: true }))).status).toBe(200);
     const answer = tx.reqs.find((r) => r.path === "/calls/call_in_1/actions/answer")!;
+    expect(String(answer.body.stream_url)).toMatch(
+      new RegExp(`^wss://atlas\\.test/x/telnyx/${key}/stream/[0-9a-f]{32}\\?call=in-call_in_1$`),
+    );
+    // The number on the owner's record, not one they set as theirs, isn't the owner.
+    tx.reqs.length = 0;
+    await post(initiated("+15550107777", { a: "A", ok: true }));
+    expect(tx.reqs.find((r) => r.path === "/calls/call_in_1/actions/answer")!.body.stream_url).toBeUndefined();
+    // An anonymous caller's empty ID matches nobody.
+    tx.reqs.length = 0;
+    await post(initiated("anonymous", { a: "A", ok: true }));
+    expect(tx.reqs.find((r) => r.path === "/calls/call_in_1/actions/answer")!.body.stream_url).toBeUndefined();
     expect(answer.body).toMatchObject({
-      stream_url: `wss://atlas.test/x/telnyx/${key}/stream?call=in-call_in_1`,
       stream_bidirectional_mode: "rtp",
       stream_codec: "PCMU",
     });
@@ -251,8 +265,14 @@ describe("Telnyx", () => {
   });
 
   it("refuses a stream that isn't at its extension's address", async () => {
-    const res = await SELF.fetch(`https://atlas.test/x/telnyx/${"0".repeat(36)}/stream`, { headers: { upgrade: "websocket" } });
-    expect(res.status).toBe(401);
+    const token = "a".repeat(32);
+    const wrongKey = await SELF.fetch(`https://atlas.test/x/telnyx/${"0".repeat(36)}/stream/${token}`, {
+      headers: { upgrade: "websocket" },
+    });
+    expect(wrongKey.status).toBe(401);
+    // The address's own key isn't enough either: a stream needs a one-time key from a call Atlas answered or placed.
+    const noCall = await SELF.fetch(`https://atlas.test/x/telnyx/${key}/stream/${token}`, { headers: { upgrade: "websocket" } });
+    expect(noCall.status).toBe(401);
   });
 
   it("calls the owner for something that can't wait, last on their list, once they've allowed calls", async () => {
@@ -300,6 +320,15 @@ describe("Telnyx", () => {
       from: "+15550100001",
       stream_establish_before_call_originate: true,
     });
-    expect(String(dial.body.stream_url)).toMatch(new RegExp(`^wss://atlas\\.test/x/telnyx/${key}/stream\\?call=out-`));
+    expect(String(dial.body.stream_url)).toMatch(new RegExp(`^wss://atlas\\.test/x/telnyx/${key}/stream/[0-9a-f]{32}\\?call=out-`));
+    // At most a few calls an hour, whatever the reason.
+    for (let i = 1; i < 4; i++) {
+      s.send({ type: "atlas.calls.test" });
+      expect((await s.next("atlas.calls")).ok).toBe(true);
+    }
+    s.send({ type: "atlas.calls.test" });
+    const capped = await s.next("atlas.calls");
+    expect(capped.ok).toBe(false);
+    expect(capped.text).toContain("4 times in the last hour");
   });
 });

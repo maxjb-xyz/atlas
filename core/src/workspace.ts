@@ -409,7 +409,8 @@ export class Workspace extends DurableObject<Env> {
     const extra = [...this.#extra.values()];
     // The gate can't tell who's asking, so while a job's agent runs, the owner's vault keys stay off it: an agent could
     // otherwise reach their sites with them. The owner's own commands then reach those sites without the key.
-    this.#keysOff = jobs.length > 0 && Object.keys(this.#base.inject).length > 0;
+    const off = jobs.length > 0 || extra.some((e) => e.keysOff);
+    this.#keysOff = off && Object.keys(this.#base.inject).length > 0;
     if (jobs.length) {
       const next = Math.min(...jobs.map((j) => j.until ?? now));
       await this.ctx.storage.setAlarm(next + 1_000).catch(() => {});
@@ -418,7 +419,7 @@ export class Workspace extends DurableObject<Env> {
       props: {
         ws: this.#name,
         allow: [...new Set([...this.#base.allow, ...extra.flatMap((e) => e.allow), ...jobs.flatMap((j) => j.allow)])],
-        inject: jobs.length ? {} : this.#base.inject,
+        inject: off ? {} : this.#base.inject,
         rules: [...extra.flatMap((e) => e.rules), ...jobs.flatMap((j) => j.rules)],
       },
     });
@@ -574,13 +575,22 @@ export class Workspace extends DurableObject<Env> {
         // What's in a command's own environment (a nonce) never goes to a job's user.
         if (o.as && o.env && Object.keys(o.env).length) throw new Error("A job's commands don't take an environment of their own.");
         await this.#setBase({ allow: o.allow, inject: o.inject });
-        if (o.rules?.length) this.#extra.set(key, carrying(o.rules));
+        // A job's command (`as`) runs with the owner's vault keys off the gate, as a job's agent does.
+        if (o.rules?.length || o.as)
+          this.#extra.set(key, { ...(o.rules?.length ? carrying(o.rules) : { allow: [], rules: [] }), ...(o.as ? { keysOff: true } : {}) });
         await this.#gate();
         this.#blocked.clear();
         const inner = `cd ${sh(cwd)} && timeout -k 5 ${o.timeout_s} bash -lc ${sh(o.command)}`;
         const user = o.as ? await this.#jobUser(o.as) : null;
         const p = await this.#c.exec(
-          ["bash", "-lc", user ? `runuser -u ${user.name} -- bash -lc ${sh(inner)}` : `mkdir -p ${sh(cwd)} && ${inner}`],
+          [
+            "bash",
+            "-lc",
+            user
+              ? // The job's folder and home, made its own the first time (a job Atlas owns has no clone to make them).
+                `install -d -o ${user.uid} -g ${user.gid} -m 700 ${sh(jobDir(o.as!))} ${sh(`${jobDir(o.as!)}/home`)} && runuser -u ${user.name} -- bash -lc ${sh(inner)}`
+              : `mkdir -p ${sh(cwd)} && ${inner}`,
+          ],
           {
             env: { ...ENV, ...(user ? { HOME: `${jobDir(o.as!)}/home` } : {}), ...(o.env ?? {}) },
             stderr: "combined",
@@ -1059,7 +1069,8 @@ export class Workspace extends DurableObject<Env> {
 
   #base: { allow: string[]; inject: Record<string, string> } | null = null;
   /** What running commands add to the gate while they run (an install's npm, a git step's key), by command. */
-  #extra = new Map<string, { allow: string[]; rules: KeyRule[] }>();
+  /** What each command running now adds to the gate; `keysOff` takes the owner's vault keys off it while a job's command runs. */
+  #extra = new Map<string, { allow: string[]; rules: KeyRule[]; keysOff?: boolean }>();
   /** The gate was set by this instance (a deploy leaves the old version's handler until it's set again). */
   #gated = false;
   /** The owner's vault keys are off the gate while a job runs. */

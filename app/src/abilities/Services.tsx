@@ -782,8 +782,45 @@ function Phone({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
     atlas.send(m);
   };
   const calls = view.settings.permissions.calls;
+  const mine = view.settings.phone.mine;
+  const [num, setNum] = useState("");
+  const setMine = (next: string[]) => atlas.send({ type: "atlas.settings.update", patch: { phone: { mine: next } } });
   return (
     <>
+      <div className="line">
+        <span className="grow">
+          Your own numbers
+          <span className="aside">
+            {" "}
+            · a call from one of these, with caller ID the phone network vouches for, is you. Atlas calls the first.
+          </span>
+        </span>
+      </div>
+      {mine.map((n) => (
+        <div className="line" key={n}>
+          <span className="grow mono">{n}</span>
+          <button className="tbtn" onClick={() => setMine(mine.filter((x) => x !== n))}>
+            Remove
+          </button>
+        </div>
+      ))}
+      {mine.length < 4 && (
+        <form
+          className="line"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (num.replace(/\D/g, "").length >= 7) {
+              setMine([...mine, num.trim()]);
+              setNum("");
+            }
+          }}
+        >
+          <input className="grow" value={num} placeholder="+1 555 010 9999" onChange={(e) => setNum(e.target.value)} />
+          <button className="btn s" type="submit" disabled={num.replace(/\D/g, "").length < 7}>
+            Add my number
+          </button>
+        </form>
+      )}
       <div className="line">
         <span className="grow">
           {c?.number ? `Atlas answers ${c.number}.` : "Atlas doesn't have a number yet: use one of yours, or buy one."}

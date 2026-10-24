@@ -258,16 +258,20 @@ const hostOf = (url: string) => {
  */
 export function permits(sql: Sql, a: Action, o: { permissions: Permissions; read_web: boolean; sites: string[] }): boolean {
   const p = o.permissions;
-  // Sending a form can't be taken back, so it asks, unless the owner allowed forms on sites they chose.
-  // The site list is the guard there, as it is for the vault, so reading the page doesn't change it.
-  if (a.kind === "browser") return p.forms === "allowed_sites" && onSites(hostOf(a.url), o.sites);
+  // Sending a form can't be taken back, so it asks, unless the owner allowed forms on sites they chose themselves
+  // (not ones added without asking, under "any site"), in a run that hasn't read the web elsewhere.
+  if (a.kind === "browser") return p.forms === "allowed_sites" && p.sites === "each" && !o.read_web && onSites(hostOf(a.url), o.sites);
   // Growing Atlas's own abilities always has the owner's OK (§9.2), and a vault login asks the first time on each site (§15).
   if (a.kind === "mcp_add" || a.kind === "vault") return false;
   const kind = kindOf(a);
   if (ASKS[kind].asks === "never") return true;
   if (kind === "irreversible") return false;
-  // What it read could be steering it (§20): it asks before anything leaves, unless the owner trusts what they trust.
-  if (o.read_web && p.after_web === "ask") return false;
+  // What it read could be steering it (§20): it asks before anything leaves. With "not for what you trust", only what
+  // the owner already trusts goes: people and places, never everything the other rules would let through.
+  if (o.read_web) {
+    if (p.after_web === "ask") return false;
+    return isTrusted(sql, a, p) || (a.kind === "face_reply" && !!a.person && p.faces_known === "send");
+  }
   if (a.kind === "site") return p.sites === "any";
   if (a.kind === "email" && a.as === "owner" && p.email_as_you === "always") return false;
   if (a.kind === "node" && p.device_tools === "always") return false;

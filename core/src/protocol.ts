@@ -825,7 +825,7 @@ export interface ServiceView {
     skills: Array<{ name: string; installed: boolean }>;
   };
   /** An update from the index that would reach or hold more than before, waiting for the owner's OK (`atlas.service.update`). */
-  update: { version: string; widens: { hosts: string[]; secrets: string[] } } | null;
+  update: { version: string; widens: { hosts: string[]; secrets: string[]; tools?: string[] } } | null;
 }
 
 /** An index the catalog reads (§17): Atlas's own first, then the ones the owner added. */

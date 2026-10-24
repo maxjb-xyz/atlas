@@ -12,6 +12,10 @@ export type StateName =
   | "skill_pairs_offered"
   /** When the owner last opened Atlas or a push from it (§14: something urgent seen since needs no follow-up). */
   | "owner_seen_at"
+  /** Phone calls (§16.1): the one-time keys a call's stream must carry, each until it's used or runs out. */
+  | "call_tokens"
+  /** Phone calls Atlas placed lately, for its cap. */
+  | "calls_placed"
   /** What waits for a coding job's next wake (§8.2): the owner's words, a settled approval, Stop. */
   | `coding_mail:${string}`
   /** A job Atlas owns (§8.3): its plan, what it has done and said, what waits on the owner, and what it has used. */

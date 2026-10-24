@@ -107,12 +107,12 @@ export default {
 
     // A phone call's audio (§16.1): the phone service streams to its extension's address. Checked by the address's
     // key, then joined to Atlas's voice as a voice client of its own, through the bridge.
-    const stream = /^\/x\/([a-z][a-z0-9-]{1,39})\/([0-9a-f]{36})\/stream$/.exec(path);
+    const stream = /^\/x\/([a-z][a-z0-9-]{1,39})\/([0-9a-f]{36})\/stream\/([0-9a-f]{32})$/.exec(path);
     if (stream && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
       const agent = await getAgentByName(env.PersonAgent, OWNER);
       const ok = await (
-        agent as unknown as { apiCallStream(id: string, key: string): Promise<{ ok: boolean; rate: number }> }
-      ).apiCallStream(stream[1]!, stream[2]!);
+        agent as unknown as { apiCallStream(id: string, key: string, token: string): Promise<{ ok: boolean; rate: number }> }
+      ).apiCallStream(stream[1]!, stream[2]!, stream[3]!);
       if (!ok.ok) return new Response("This isn't a phone stream's address.", { status: 401 });
       const call = (url.searchParams.get("call") ?? "in").slice(0, 200);
       const res = await agent.fetch(
@@ -289,6 +289,7 @@ export default {
           headers.set(SESSION_HEADER, who.via === "session" ? who.id : "");
           // Only the Worker's own device route says a socket is a paired device.
           headers.delete(NODE_HEADER);
+          headers.delete(CALL_HEADER);
           return new Request(req, { headers });
         },
         // The agent is only reached over its socket; plain HTTP to it is refused.
