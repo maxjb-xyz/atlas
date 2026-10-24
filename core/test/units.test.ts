@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { chatgptBrain, readResponsesStream, refusal, toInput } from "../src/brains/chatgpt";
 import { finishLogin, jwtClaims, listModels, newClient, readCallback, refreshTokens, startLogin } from "../src/brains/chatgpt-auth";
-import { BrainRouter } from "../src/brains/router";
+import { BrainRouter, SlowBrainError } from "../src/brains/router";
 import { BrainError } from "../src/brains/types";
 import { readWorkersAIStream, toChatMessages } from "../src/brains/workers-ai";
 import { scrub, StreamScrubber } from "../src/outbox";
@@ -299,6 +299,26 @@ describe("brain router", () => {
     expect(router.snapshot()["chatgpt:a"]).toMatchObject({ ok: false, reason: "down" });
     router.markOk(a);
     expect(router.chain(chain).map((x) => x.model)).toEqual(["a", "b"]);
+  });
+
+  it("keeps a slow brain out of the way for longer each time in a row, and remembers it across a restart", () => {
+    const a = scripted([], "chatgpt", "a").brain;
+    let kept: Record<string, unknown> | null = null;
+    const store = { load: () => kept as never, save: (all: Record<string, unknown>) => void (kept = JSON.parse(JSON.stringify(all))) };
+    const router = new BrainRouter(() => a, store);
+    const wait = () => router.health.get("chatgpt:a")!.until! - router.health.get("chatgpt:a")!.checked_at;
+    router.markFailed(a, new SlowBrainError("no answer within 6 s"));
+    expect(wait()).toBe(2 * 60_000);
+    router.markFailed(a, new SlowBrainError("no answer within 6 s"));
+    expect(wait()).toBe(4 * 60_000);
+    router.markFailed(a, new BrainError("down"));
+    expect(wait()).toBe(4 * 60_000);
+    // After a restart the router still knows.
+    const again = new BrainRouter(() => a, store);
+    expect(again.snapshot()["chatgpt:a"]).toMatchObject({ ok: false, reason: "down" });
+    again.markOk(a);
+    again.markFailed(a, new SlowBrainError("no answer within 6 s"));
+    expect(again.health.get("chatgpt:a")!.strikes).toBe(1);
   });
 });
 

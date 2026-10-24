@@ -365,6 +365,8 @@ export interface AutomationView {
   when_text: string;
   steps: Array<{ step: import("./automations").Step; text: string }>;
   report: "thread" | "worth" | "inbox" | "silent";
+  /** Where it tells the owner: "you", wherever they are, or one place ("push", "telegram"). */
+  to: string;
   /** Whether it can be turned on now: Atlas's need a test run since their last change. */
   can_turn_on: boolean;
   tested_at: number | null;

@@ -223,6 +223,7 @@ export function automationView(sql: Sql, a: Automation): AutomationView {
     when_text: whenText(a.when, (id) => getAutomation(sql, id)?.name ?? null),
     steps: a.do.map((step) => ({ step, text: stepText(step) })),
     report: a.report,
+    to: a.to,
     can_turn_on: !needsTest(a),
     tested_at: a.tested_at,
     fails: a.fails,

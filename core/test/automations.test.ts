@@ -9,6 +9,10 @@ import { append, type LogRow } from "../src/store/log";
 import { indexNewMessages } from "../src/store/memory";
 import { seedRoutines } from "../src/routines";
 import { noticeAsk, openSuggestions, settleSuggestion } from "../src/suggestions";
+import { systemPrompt } from "../src/context";
+import { install, setExtSecrets } from "../src/extensions";
+import { readSettings } from "../src/store/settings";
+import { setState } from "../src/store/state";
 import { call, env, fakeCalendar, fakeEmbedder, say, scripted, SECRET, type Step } from "./helpers";
 
 const ORIGIN = "http://atlas.test";
@@ -211,6 +215,34 @@ describe("when automations run", () => {
       expect(moved).toMatchObject({ state: "on", report: "worth", when: { at: "07:30" }, changed_by: "owner" });
       const changed = saveAutomation(sql, { ...brief, do: [{ kind: "atlas", instructions: "Look at the week." }] }, "atlas", a.id);
       expect(changed.state).toBe("paused");
+    }));
+
+  it("go wherever the owner is unless told one place, keep that place through other edits, and Atlas knows the linked chats", () =>
+    runInDurableObject(env.PersonAgent.get(env.PersonAgent.idFromName(`a-${crypto.randomUUID()}`)), (_a, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      const brief: AutomationInput = {
+        name: "Brief",
+        about: "",
+        when: { kind: "schedule", at: "08:00", days: [] },
+        do: [{ kind: "atlas", instructions: "Look at the day." }],
+        report: "thread",
+      };
+      const a = saveAutomation(sql, brief, "owner");
+      expect(a.to).toBe("you");
+      const there = saveAutomation(sql, { ...brief, to: "telegram" }, "owner", a.id);
+      expect(there.to).toBe("telegram");
+      // Moving it to 7:30 without saying where keeps Telegram, and only the place changing doesn't pause it.
+      const moved = saveAutomation(sql, { ...brief, when: { kind: "schedule", at: "07:30", days: [] } }, "atlas", a.id);
+      expect(moved).toMatchObject({ to: "telegram", state: "on" });
+
+      install(sql, { id: "telegram", source: "bundled" });
+      setExtSecrets(sql, "telegram", { bot_token: "123:abc" });
+      setState(sql, "channel_links", { telegram: { user: "1", chat: "1", name: "Max", at: Date.now() } });
+      const system = systemPrompt({ settings: readSettings(sql), tz: "America/New_York", now: new Date(), surface: "app", sql });
+      expect(system).toContain("Telegram (linked to them)");
+      expect(system).toContain("Connected services: Telegram: chat with you");
+      expect(system).toContain("The owner has no webhooks.");
     }));
 });
 

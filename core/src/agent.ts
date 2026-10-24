@@ -52,7 +52,7 @@ import { base64, type Out } from "../../extensions/sdk";
 import { makeNotes, type Notes } from "./voice/providers";
 import { addressesIn, ownerAddresses } from "./contacts";
 import { type Embedder, embedPending, workersAIEmbedder } from "./brains/embed";
-import { BrainRouter } from "./brains/router";
+import { BrainRouter, type Health } from "./brains/router";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
 import { anthropicBrain, anthropicModels } from "./brains/anthropic";
@@ -362,6 +362,12 @@ const VOICE_HISTORY_TOKENS = 12_000;
 
 /** How long a brain gets to start answering before the next one is tried. */
 const FIRST_EVENT_MS = { main: 25_000, voice: 6_000 };
+/**
+ * In voice, a brain that has said nothing by then doesn't hold the turn: the
+ * next one in the chain starts too, and whichever speaks first is used. Most
+ * turns start well inside this, so it only costs a second call when one is slow.
+ */
+const VOICE_HEDGE_MS = 2_500;
 /** Messages only the owner's Atlas takes in M5 (members get their own Atlas without these). */
 const OWNER_ONLY = new Set<string>([
   "atlas.ext.install",
@@ -470,7 +476,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       (connection.state as SocketState | null)?.node ? this.#nodeRaw(connection, message) : voiced.call(this, connection, message);
   }
 
-  #router = new BrainRouter((c) => this.#makeBrain(c));
+  #router = new BrainRouter((c) => this.#makeBrain(c), {
+    load: () => getState<Record<string, Health>>(this.#sql, "brain_health"),
+    save: (all) => setState(this.#sql, "brain_health", all),
+  });
   #outbox!: Outbox;
   #calendar!: CalendarSense;
   #chatgpt!: ChatGPTSignIn;
@@ -653,7 +662,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       converse: async ({ runId, note, test, worth }) => {
         const lastSeq = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM log`).one().seq;
         // Reporting when it's worth saying, it speaks the way awareness does: with nudge, or not at all.
-        const nudger = worth ? this.#nudger({ runId, trigger: `automation:${worth.id}`, from: "routine", ref: worth.id }) : null;
+        const nudger = worth
+          ? this.#nudger({ runId, trigger: `automation:${worth.id}`, from: "routine", ref: worth.id, to: worth.to })
+          : null;
         const res = await this.#converse({
           runId,
           actor: "atlas",
@@ -2195,6 +2206,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
               if (e.type === "status") statusLine = words;
               spoken.push(scrubber.push(words));
             }
+            // A lookup starting: what came before it is finished, so it's spoken now.
+            if (e.type === "pause" || (e.type === "status" && e.text)) {
+              spoken.push(scrubber.flush());
+              spoken.pause();
+            }
             this.#relay(runId, e, null);
           },
         });
@@ -2710,7 +2726,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    * hours, focus, the day's budget), watched for the owner's reaction.
    * `said()` is what it sent, if anything.
    */
-  #nudger(o: { runId: string; trigger: string; from: NudgeFrom; ref?: string }): { tool: Tool; said: () => string | null } {
+  #nudger(o: { runId: string; trigger: string; from: NudgeFrom; ref?: string; to?: string }): { tool: Tool; said: () => string | null } {
     let said: string | null = null;
     const tool = nudgeTool(async (text, about, urgency) => {
       if (said != null) return { ok: false, text: "You've already nudged in this run; one is enough." };
@@ -2723,6 +2739,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           urgency,
           trigger: o.trigger,
           nudge: { from: o.from, about, ...(o.ref ? { ref: o.ref } : {}) },
+          ...(o.to && o.to !== "you" ? { to: o.to } : {}),
         },
         { alreadyStreamed: false },
       );
@@ -2918,6 +2935,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         joiner: o.surface === "voice" ? " " : "\n\n",
         effort: o.role === "voice" ? "low" : "medium",
         firstEventMs: FIRST_EVENT_MS[o.role],
+        ...(o.role === "voice" ? { hedgeMs: VOICE_HEDGE_MS } : {}),
         ...(o.silentOk ? { silentOk: true } : {}),
       },
       o.emit,
@@ -5371,16 +5389,31 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
 
 /**
  * What the voice pipeline reads while the loop is still running: text is
- * pushed as the brain streams it and spoken sentence by sentence.
+ * pushed as the brain streams it and spoken sentence by sentence. A break
+ * says what's been said so far is finished, so it's spoken now rather than
+ * waiting for a full stop that may never come (a status line, or words before
+ * a lookup that end without one).
  */
-class Speech implements AsyncIterable<string> {
-  #chunks: string[] = [];
+export type SpeechPart = { type: "text-delta"; text: string } | { type: "finish-step" };
+
+class Speech implements AsyncIterable<SpeechPart> {
+  #parts: SpeechPart[] = [];
   #done = false;
+  #paused = true;
   #wake: (() => void) | null = null;
 
   push(text: string): void {
     if (!text || this.#done) return;
-    this.#chunks.push(text);
+    this.#parts.push({ type: "text-delta", text });
+    this.#paused = false;
+    this.#wake?.();
+  }
+
+  /** What's been said is finished: the pipeline speaks it now. */
+  pause(): void {
+    if (this.#done || this.#paused) return;
+    this.#paused = true;
+    this.#parts.push({ type: "finish-step" });
     this.#wake?.();
   }
 
@@ -5389,11 +5422,11 @@ class Speech implements AsyncIterable<string> {
     this.#wake?.();
   }
 
-  async *[Symbol.asyncIterator](): AsyncIterator<string> {
+  async *[Symbol.asyncIterator](): AsyncIterator<SpeechPart> {
     while (true) {
-      const chunk = this.#chunks.shift();
-      if (chunk !== undefined) {
-        yield chunk;
+      const part = this.#parts.shift();
+      if (part !== undefined) {
+        yield part;
         continue;
       }
       if (this.#done) return;

@@ -219,6 +219,11 @@ export interface Delivery {
   nudge?: { from: string; about: string; ref?: string };
   /** For spoken replies: when the status line and the answer were ready. */
   timing?: Record<string, unknown>;
+  /**
+   * One place it always goes ("push", a linked chat like "telegram"), as an automation's report can ask (§13.3),
+   * whether or not Atlas is open; "you" or none follows the Notifications lists.
+   */
+  to?: string;
 }
 
 /** One of the owner's devices that takes push notifications. */
@@ -339,6 +344,18 @@ export class Outbox {
       },
     });
     this.channels.broadcast([row]);
+    // Asked for one place: it goes there; if that place can't take it now, the lists decide as usual.
+    if (d.to && d.to !== "you" && channel !== "voice") {
+      const urgency = d.urgency === "now" ? "now" : "soon";
+      if (await this.#via(d.to, [noteOf(row)], urgency).catch(() => false)) return row;
+      this.receipt(row.run_id, {
+        of: [row.id],
+        channel: d.to,
+        ok: false,
+        urgency,
+        note: `${d.to === "push" ? "No device took the notification" : "That chat didn't take it"}, so it went the usual way.`,
+      });
+    }
     // One channel (§14): heard in a call, or seen in an app in view, needs no push as well.
     if (channel !== "voice" && channel !== "api" && channel !== "chat" && !this.channels.looking())
       await this.notify(noteOf(row), d.urgency ?? "soon", undefined, d.origin);

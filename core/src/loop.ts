@@ -2,8 +2,8 @@
 // streams, calls tools, sees their results, and goes again until it answers
 // or the budget runs out. Nothing here rewrites what the model says (rule 1).
 
-import { BrainError, type BrainEvent, brainKey, type Message, type ToolCall, type Usage } from "./brains/types";
-import type { BrainRouter } from "./brains/router";
+import { type Brain, BrainError, type BrainEvent, brainKey, type Message, type ToolCall, type Usage } from "./brains/types";
+import { type BrainRouter, SlowBrainError } from "./brains/router";
 import type { Append, LogRow, Surface } from "./store/log";
 import type { FinalState } from "./store/runs";
 import type { BrainChoice } from "./store/settings";
@@ -40,6 +40,12 @@ export interface RunSpec {
   effort?: "low" | "medium";
   /** How long a brain gets to start answering before the next one is tried. */
   firstEventMs: number;
+  /**
+   * When set, a brain that has said nothing by then doesn't hold the turn: the
+   * next one starts too, and whichever answers first is used. For voice, where
+   * every second of quiet is heard.
+   */
+  hedgeMs?: number;
   /** Where to pick up from, after a restart cut a durable run short. */
   resume?: Checkpoint;
   /** Called after each step that ran tools, so a durable run can save where it is. */
@@ -69,7 +75,9 @@ export type LoopEvent =
   | { type: "status"; text: string | null; speakable: boolean }
   | { type: "row"; row: LogRow }
   /** Tools finished running; whatever Atlas says next comes from their results. */
-  | { type: "tools"; names: string[] };
+  | { type: "tools"; names: string[] }
+  /** What Atlas said so far is finished: tools are about to run, so voice speaks it now. */
+  | { type: "pause" };
 
 export interface LoopResult {
   state: FinalState;
@@ -141,6 +149,7 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
         text += spec.joiner;
         emit({ type: "text", text: spec.joiner });
       }
+      emit({ type: "pause" });
       messages.push({ role: "assistant", content: step.text, toolCalls: step.calls });
       // A stop doesn't wait for a slow tool: the run ends now, and the tool's own result is still logged when it lands.
       const tools = Promise.all(step.calls.map((call) => runTool(deps, spec, call, emit)));
@@ -191,7 +200,23 @@ interface StepResult {
   usage?: Usage;
 }
 
-/** One model call, trying each brain in the chain until one starts answering. */
+/** One brain's try at a step, and what its first event turned out to be. */
+interface Attempt {
+  index: number;
+  brain: Brain;
+  abort: AbortController;
+  it: AsyncIterator<BrainEvent>;
+  first: Promise<Started>;
+}
+
+type Started = { attempt: Attempt; ok: true; next: IteratorResult<BrainEvent> } | { attempt: Attempt; ok: false; err: unknown };
+
+/**
+ * One model call, trying each brain in the chain until one starts answering.
+ * With `hedgeMs` (voice), a brain that has said nothing by then doesn't hold
+ * the turn: the next one starts too, the first to answer is used and the rest
+ * are stopped. Nothing reaches the owner from a brain until it has won.
+ */
 async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepResult> {
   const brains = deps.router.chain(deps.chain);
   if (brains.length === 0) {
@@ -199,24 +224,90 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
   }
   const specs = io.tools.map(toSpec);
   const failures: string[] = [];
+  const why = new Map<number, string>();
+  const live: Attempt[] = [];
+  let started = 0;
+  let lastStart = 0;
 
-  for (const [i, brain] of brains.entries()) {
-    const attempt = new AbortController();
-    const signal = spec.signal ? AbortSignal.any([spec.signal, attempt.signal]) : attempt.signal;
+  const start = () => {
+    const index = started++;
+    const brain = brains[index]!;
+    lastStart = Date.now();
+    const abort = new AbortController();
+    const signal = spec.signal ? AbortSignal.any([spec.signal, abort.signal]) : abort.signal;
+    const attempt = { index, brain, abort } as Attempt;
+    try {
+      attempt.it = brain
+        .stream({ system: io.system, messages: io.messages, tools: specs, signal, effort: spec.effort })
+        [Symbol.asyncIterator]();
+      attempt.first = firstEvent(attempt.it, spec.firstEventMs, abort).then(
+        (next): Started => ({ attempt, ok: true, next }),
+        (err): Started => ({ attempt, ok: false, err }),
+      );
+    } catch (err) {
+      attempt.first = Promise.resolve({ attempt, ok: false, err });
+    }
+    live.push(attempt);
+  };
+
+  const failed = (a: Attempt, err: unknown) => {
+    deps.router.markFailed(a.brain, err);
+    const reason = err instanceof Error ? err.message : String(err);
+    why.set(a.index, reason);
+    failures.push(`${brainKey(a.brain)}: ${reason}`);
+  };
+
+  while (true) {
+    if (live.length === 0) {
+      if (started >= brains.length) throw new NoBrainError(`No brain could answer. ${failures.join(" · ")}`);
+      start();
+    }
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const hedge =
+      spec.hedgeMs != null && started < brains.length
+        ? new Promise<"hedge">((r) => (timer = setTimeout(() => r("hedge"), Math.max(0, lastStart + spec.hedgeMs! - Date.now()))))
+        : null;
+    const got = await Promise.race([...live.map((a) => a.first), ...(hedge ? [hedge] : [])]);
+    if (timer) clearTimeout(timer);
+    if (got === "hedge") {
+      start();
+      continue;
+    }
+    const a = got.attempt;
+    live.splice(live.indexOf(a), 1);
+    if (!got.ok) {
+      if (spec.signal?.aborted) throw got.err;
+      failed(a, got.err);
+      continue;
+    }
+
+    // This one answered first: the rest stop, and the ones ahead of it in the chain were the slow ones.
+    for (const o of live.splice(0)) {
+      o.abort.abort();
+      if (o.index < a.index) {
+        const err = new SlowBrainError(`was slower to start (nothing after ${seconds(spec.hedgeMs ?? spec.firstEventMs)})`);
+        failed(o, err);
+      }
+    }
+    const { brain } = a;
+    if (a.index > 0) {
+      const row = await deps.log({
+        actor: "system",
+        kind: "brain.fallback",
+        run_id: spec.runId,
+        surface: spec.surface,
+        body: { role: spec.role, from: brainKey(brains[0]!), to: brainKey(brain), reason: why.get(0) ?? "didn't answer" },
+      });
+      io.emit({ type: "row", row });
+    }
+
     let produced = false;
     let stepText = "";
     let statusSaid = false;
     const calls: ToolCall[] = [];
     let usage: Usage | undefined;
     try {
-      const it = brain
-        .stream({ system: io.system, messages: io.messages, tools: specs, signal, effort: spec.effort })
-        [Symbol.asyncIterator]();
-      let first = true;
-      while (true) {
-        const next: IteratorResult<BrainEvent> = first ? await firstEvent(it, spec.firstEventMs, attempt) : await it.next();
-        first = false;
-        if (next.done) break;
+      for (let next = got.next; !next.done; next = await a.it.next()) {
         const ev = next.value;
         if (ev.type === "text") {
           produced = true;
@@ -239,36 +330,27 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
         }
       }
       deps.router.markOk(brain);
-      return { text: stepText, calls, brain: { provider: brain.provider, model: brain.model }, fellBack: i > 0, usage };
+      return { text: stepText, calls, brain: { provider: brain.provider, model: brain.model }, fellBack: a.index > 0, usage };
     } catch (err) {
       if (spec.signal?.aborted) throw err;
-      deps.router.markFailed(brain, err);
-      const reason = err instanceof Error ? err.message : String(err);
       // Words already reached the owner: switching brains mid-answer would garble it.
-      if (produced) throw new BrainError(`The answer broke off: ${reason}`);
-      failures.push(`${brainKey(brain)}: ${reason}`);
-      const nextBrain = brains[i + 1];
-      if (nextBrain) {
-        const row = await deps.log({
-          actor: "system",
-          kind: "brain.fallback",
-          run_id: spec.runId,
-          surface: spec.surface,
-          body: { role: spec.role, from: brainKey(brain), to: brainKey(nextBrain), reason },
-        });
-        io.emit({ type: "row", row });
+      if (produced) {
+        deps.router.markFailed(brain, err);
+        throw new BrainError(`The answer broke off: ${err instanceof Error ? err.message : String(err)}`);
       }
+      failed(a, err);
     }
   }
-  throw new NoBrainError(`No brain could answer. ${failures.join(" · ")}`);
 }
+
+const seconds = (ms: number) => `${Math.round(ms / 100) / 10} s`;
 
 async function firstEvent(it: AsyncIterator<BrainEvent>, ms: number, attempt: AbortController): Promise<IteratorResult<BrainEvent>> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       attempt.abort();
-      reject(new BrainError(`no answer within ${Math.round(ms / 1000)} s`));
+      reject(new SlowBrainError(`no answer within ${seconds(ms)}`));
     }, ms);
   });
   try {

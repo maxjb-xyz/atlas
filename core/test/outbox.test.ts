@@ -359,6 +359,20 @@ describe("where a message goes (§14)", () => {
       expect(askedOn(sql, "device:mac")).toBeNull();
     }));
 
+  it("sends to the place an automation names, and the usual way when that place can't take it", () =>
+    withSql(async (sql) => {
+      writeSettings(sql, { notifications: lists(["push"], ["push"]) });
+      const { box, chats, shown } = reaching(sql, fakeNet().f, { linked: ["telegram"] });
+      await box.deliver({ text: "Your brief.", run_id: null, channel: "app", to: "telegram" }, { alreadyStreamed: false });
+      expect(chats).toEqual([{ ext: "telegram", text: "Your brief." }]);
+      expect(receipts(shown)).toEqual([expect.objectContaining({ channel: "chat", to: "telegram", ok: true })]);
+      // Discord isn't linked: it says so, and the owner's list takes it from there.
+      shown.length = 0;
+      await box.deliver({ text: "Another.", run_id: null, channel: "app", to: "discord" }, { alreadyStreamed: false });
+      expect(chats).toHaveLength(1);
+      expect(receipts(shown)[0]).toMatchObject({ ok: false, note: "That chat didn't take it, so it went the usual way." });
+    }));
+
   it("sends something now to the first place, and puts the next on the clock in case it isn't seen", () =>
     withSql(async (sql) => {
       writeSettings(sql, { notifications: lists(["telegram", "push"], ["push"]) });

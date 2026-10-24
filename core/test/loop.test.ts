@@ -168,6 +168,53 @@ describe("the loop", () => {
       expect(res.text).toBe("I'm here.");
     }));
 
+  it("in voice, starts the next brain when the first is slow, uses whichever speaks first, and cools the slow one", () =>
+    withSql(async (sql) => {
+      const t = setup(sql, [], { hedgeMs: 30, firstEventMs: 2_000 }, [[say("Quick answer.")]]);
+      let stopped = false;
+      t.main.brain.stream = async function* (req) {
+        await new Promise((r) => setTimeout(r, 400));
+        stopped = req.signal?.aborted ?? false;
+        yield { type: "text", text: "Slow answer." };
+      };
+      const started = Date.now();
+      const res = await t.run();
+      expect(res).toMatchObject({ state: "replied", text: "Quick answer.", fallback: true, brain: { model: "backup0" } });
+      expect(Date.now() - started).toBeLessThan(400);
+      const row = t.events.find((e) => e.type === "row");
+      expect(row?.type === "row" && row.row.body).toMatchObject({ from: "chatgpt:main", to: "workers-ai:backup0" });
+      expect(String(row?.type === "row" && row.row.body.reason)).toMatch(/slower to start/);
+      // The slow one waits at the back of the chain for the next turn.
+      expect(
+        t.router
+          .chain([
+            { provider: "chatgpt", model: "main" },
+            { provider: "workers-ai", model: "backup0" },
+          ])
+          .map((b) => b.model),
+      ).toEqual(["backup0", "main"]);
+      await new Promise((r) => setTimeout(r, 450));
+      expect(stopped).toBe(true);
+    }));
+
+  it("in voice, keeps the first brain when it starts before the next one does", () =>
+    withSql(async (sql) => {
+      const t = setup(sql, [], { hedgeMs: 20 }, [[]]);
+      t.main.brain.stream = async function* () {
+        await new Promise((r) => setTimeout(r, 40));
+        yield { type: "text", text: "First, a little late." };
+      };
+      t.others[0]!.brain.stream = async function* () {
+        await new Promise((r) => setTimeout(r, 300));
+        yield { type: "text", text: "Second." };
+      };
+      const res = await t.run();
+      expect(res).toMatchObject({ text: "First, a little late.", fallback: false, brain: { model: "main" } });
+      expect(t.events.some((e) => e.type === "row")).toBe(false);
+      // The one started second only lost the race: it isn't held against it.
+      expect(t.router.snapshot()["workers-ai:backup0"]).toBeUndefined();
+    }));
+
   it("fails with every reason when no brain can answer", () =>
     withSql(async (sql) => {
       const t = setup(sql, [new BrainError("down")], {}, [[new BrainError("also down")]]);

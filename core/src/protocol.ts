@@ -292,7 +292,12 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** The Automations page: every automation. */
   z.object({ type: z.literal("atlas.automations") }),
   /** Make or change an automation in the form. The owner's own start on (§13.4). */
-  z.object({ type: z.literal("atlas.automation.save"), id: z.string().max(64).optional(), automation: AutomationInput }),
+  z.object({
+    type: z.literal("atlas.automation.save"),
+    id: z.string().max(64).optional(),
+    // Where it reports, left out, stays as it was.
+    automation: AutomationInput.extend({ to: z.string().max(40).optional() }),
+  }),
   z.object({ type: z.literal("atlas.automation.set"), id: z.string().max(64), on: z.boolean() }),
   /** A suggestion at the top of Automations: made into one, or set aside. Neither is suggested again. */
   z.object({ type: z.literal("atlas.suggestion.set"), id: z.string().max(64), state: z.enum(["dismissed", "made"]) }),

@@ -18,6 +18,8 @@ import { character, TEXT_PROFILE, VOICE_PROFILE } from "./character";
 import { getItem, upcoming } from "./store/agenda";
 import { actionsOf, needsHold, waitingApprovals } from "./approvals";
 import { webhooks } from "./webhooks";
+import { accountName, installed, providing, ready } from "./extensions";
+import { links } from "./agent/channels";
 import { vault } from "./vault";
 import { type Area, getArea, getScope, listAreas } from "./store/areas";
 import { parse, type Sql } from "./store/db";
@@ -110,6 +112,7 @@ export function systemPrompt(opts: {
     // What could wait, for the owner's own turns; Atlas's own runs get it in their notes.
     surface === "none" ? "" : pileLine(sql, settings),
     areaContext(sql, opts.beforeSeq),
+    reachContext(sql, settings),
     exitsContext(sql, tz, now),
     jobsLine(sql, now),
     surface === "voice" ? VOICE_PROFILE : surface === "none" ? "" : TEXT_PROFILE,
@@ -285,7 +288,7 @@ function exitsContext(sql: Sql, tz: string, now: Date): string {
     lines.push(
       `The owner's webhooks (call them with webhook_call):\n${hooks.map((w) => `- ${w.name}${w.about ? `: ${w.about}` : ""}`).join("\n")}`,
     );
-  }
+  } else lines.push("The owner has no webhooks.");
   const entries = vault(sql);
   if (entries.length) {
     lines.push(
@@ -359,6 +362,53 @@ function jobsLine(sql: Sql, now: Date): string {
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/** What each thing a service gives is, in a word or two, for the run's list of what's connected. */
+const GIVES_WORDS: Record<string, string> = {
+  mail: "their mail",
+  calendar: "their calendar",
+  contacts: "their contacts",
+  sense: "what happens there",
+  channel: "chat with you",
+  calls: "phone calls",
+  sending: "sends your own mail",
+  location: "where they are",
+  search: "web search",
+  maps: "maps and routes",
+  weather: "weather",
+  coding: "a coding agent",
+  code: "code",
+  tools: "its tools",
+};
+
+/**
+ * What's connected (§17) and how the owner is reached (§14), so a run never
+ * says something isn't set up when it is, or offers a way round what it can
+ * already do. Services not set up are in Abilities → Services.
+ */
+function reachContext(sql: Sql, settings: Settings): string {
+  const on = installed(sql).filter((e) => e.state === "on" && e.source !== "atlas");
+  const services = on
+    .map((e) => {
+      const what = e.manifest.provides.map((p) => GIVES_WORDS[p]).filter(Boolean);
+      const who = accountName(e);
+      return `${e.name}${who ? ` (${who})` : ""}${what.length ? `: ${what.join(", ")}` : ""}${ready(sql, e) ? "" : ", not signed in yet"}`;
+    })
+    .slice(0, 30);
+  const chats = providing(sql, "channel").map((e) => ({ id: e.id, name: e.name, linked: Boolean(links(sql)[e.id]) }));
+  const place = (p: string) =>
+    p === "push" ? "a notification" : p === "call" ? "a phone call" : (chats.find((c) => c.id === p)?.name ?? p);
+  const lists = settings.notifications.lists;
+  const out = [
+    services.length ? `Connected services: ${services.join("; ")}.` : "No services are connected yet.",
+    `How the owner is reached when they aren't in the app: what can't wait goes to ${lists.now.map(place).join(", then ")}; what can wait, to ${lists.soon.map(place).join(", then ")}. ${
+      chats.length
+        ? `Chats: ${chats.map((c) => `${c.name} (${c.linked ? "linked to them" : "not linked to them yet"})`).join(", ")}.`
+        : "No chat app is set up."
+    } An automation tells them wherever they are by these, or always in one place it names (automation_save's to: push, or a linked chat).`,
+  ];
+  return out.join(" ");
 }
 
 /** What a run is told about areas: the hat, its tone, and the owner's other areas. */

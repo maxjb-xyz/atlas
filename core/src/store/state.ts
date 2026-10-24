@@ -6,6 +6,8 @@
 import { parse, type Sql } from "./db";
 
 export type StateName =
+  /** Each brain's health (§18): when it last failed, why, and until when it waits at the back of its chain. */
+  | "brain_health"
   /** Each calendar account's calendars, by name, as Atlas has read them: for the account's card to put each in an area. */
   | "calendar_names"
   /** Each calendar's refusal of its sign-in, by its extension (the first calendar's was "icloud_refused"). */

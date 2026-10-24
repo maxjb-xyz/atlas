@@ -11,7 +11,7 @@ import { defineTool, fail } from "./types";
 export const deviceCall = defineTool({
   name: "device_call",
   kind: "look",
-  status: "Asking your device",
+  status: "Asking your device.",
   timeoutMs: 120_000,
   description: [
     "Use a tool on one of the owner's paired devices (their Mac, their phone app), from the paired devices in your context.",

@@ -57,7 +57,7 @@ export interface DeskDeps {
     runId: string;
     note: string;
     test: boolean;
-    worth?: { id: string; name: string };
+    worth?: { id: string; name: string; to?: string };
   }): Promise<LoopResult & { nudged?: string | null }>;
   /** The day as a look sees it: the later pile, what was said today, the owner's lists; `seen` marks the pile looked at. */
   picture(): { text: string; seen: () => void };
@@ -154,7 +154,12 @@ export class AutomationDesk {
           const picture = this.d.picture();
           const worth = a.report === "worth";
           const note = this.#note(a, o.why, step.instructions, inputs, results, context, test, picture.text, worth);
-          const res = await this.d.converse({ runId, note, test, ...(worth && !test ? { worth: { id: a.id, name: a.name } } : {}) });
+          const res = await this.d.converse({
+            runId,
+            note,
+            test,
+            ...(worth && !test ? { worth: { id: a.id, name: a.name, to: a.to } } : {}),
+          });
           steps += res.steps;
           brain = res.brain ?? brain;
           usage.input += res.usage.input;
@@ -277,7 +282,7 @@ export class AutomationDesk {
     // A time or a request the owner chose doesn't wait for quiet hours; a watch or an absence can.
     const urgency: Urgency = why === "schedule" || why === "request" || why === "button" ? "now" : "soon";
     await this.d.outbox.deliver(
-      { text, run_id: runId, channel: "app", trigger: `automation:${a.id}`, urgency },
+      { text, run_id: runId, channel: "app", trigger: `automation:${a.id}`, urgency, ...(a.to !== "you" ? { to: a.to } : {}) },
       { alreadyStreamed: false },
     );
   }

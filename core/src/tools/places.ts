@@ -168,7 +168,7 @@ function hereAt(ctx: ToolContext, id: string, name: string): void {
 export const placeFind = defineTool({
   name: "place_find",
   kind: "look",
-  status: "Looking at the map",
+  status: "Looking at the map.",
   timeoutMs: 60_000,
   description: [
     "Find places on the map: a kind of place (a grocery store, a pharmacy) or one by name, near somewhere, or along the way to somewhere.",
@@ -268,7 +268,7 @@ function found(p: Found, from: Point, u: Units) {
 export const routeTool = defineTool({
   name: "route",
   kind: "look",
-  status: "Checking the route",
+  status: "Checking the route.",
   description: [
     "How long it takes to get somewhere, and the route: from 'here' by default, by car unless the owner walks or bikes.",
     "The situation already has the travel time to the next event with a place; use this for anything else. OpenStreetMap has no live traffic, so say travel times are typical; Mapbox's include traffic.",
@@ -315,7 +315,7 @@ export const routeTool = defineTool({
 export const weatherTool = defineTool({
   name: "weather",
   kind: "look",
-  status: "Checking the weather",
+  status: "Checking the weather.",
   description: [
     "The forecast from Open-Meteo for the next seven days, for a rough area around a place ('here' by default).",
     "Today's weather near the owner is already in the situation; use this for other days or other places. show: true (near here only) puts the weather on the stage.",

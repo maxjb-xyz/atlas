@@ -3,6 +3,7 @@
 // turning one on or pausing it. Turning on what Atlas made needs a test run
 // first, so the owner sees what it would do before it runs on its own.
 
+import { providing } from "../extensions";
 import { z } from "zod";
 import {
   AutomationInput,
@@ -25,6 +26,7 @@ export const automationSave = defineTool({
   kind: "change_own",
   description: [
     "Make an automation, or change one (pass its id): when it runs, what it does, and where it reports.",
+    "`to` is where it tells the owner: you (wherever they are, by their Notifications settings), push (a notification), or a chat they've linked (telegram), when they ask for it there. Changing only where it goes, or its name, keeps it on.",
     "Use it when the owner asks for something to happen on its own or on request: 'every weekday at 8, give me a short brief', 'when I say goodnight, turn off the lights', 'tell me if I haven't logged a workout in 3 days', 'watch this page for a price drop'.",
     "`when`: request (a phrase, with $inputs, or just the Run button), schedule (a local time and days, 0 for Sunday to 6 for Saturday; empty for every day), watch (a page, how often, and what change matters), absence (words that would show something happened, how many days without them, and when to check), or event (after another automation's id, or when the calendar changes, optionally only for events about some words).",
     "`do` is a list of steps: say (fixed words, sent as written), webhook (one of the owner's webhooks by name), or atlas (your own note for that moment, for anything that needs looking up or judgment). Use fixed steps when nothing needs judgment: they run fast, with no model.",
@@ -42,7 +44,7 @@ export const automationSave = defineTool({
     const old = given.id ? (getAutomation(ctx.sql, given.id) ?? findAutomation(ctx.sql, given.id)) : null;
     if (given.id && !old) return fail(`There's no automation with id ${given.id}.`);
     const merged = AutomationInput.safeParse({
-      ...(old ? { name: old.name, about: old.about, when: old.when, do: old.do, report: old.report } : {}),
+      ...(old ? { name: old.name, about: old.about, when: old.when, do: old.do, report: old.report, to: old.to } : {}),
       ...Object.fromEntries(Object.entries(given).filter(([k, v]) => k !== "id" && v !== undefined)),
     });
     if (!merged.success)
@@ -58,6 +60,12 @@ export const automationSave = defineTool({
         );
       }
     }
+    // Where it tells the owner: wherever they are, a notification, or a chat they've linked.
+    const places = ["you", "push", ...providing(ctx.sql, "channel").map((e) => e.id)];
+    if (!places.includes(input.to))
+      return fail(
+        `It can't report to "${input.to}". It can go to: you (wherever the owner is), push (a notification)${places.length > 2 ? `, or ${places.slice(2).join(", ")}` : ""}.`,
+      );
     if (input.when.kind === "event" && input.when.on === "automation" && !getAutomation(ctx.sql, input.when.after ?? ""))
       return fail(`There's no automation with id ${input.when.after ?? "(none given)"} to run after.`);
     if (input.when.kind === "event" && input.when.on === "calendar" && !ctx.calendar)
@@ -177,6 +185,7 @@ export const automationList = defineTool({
           when: whenText(a.when, names(ctx.sql)),
           do: a.do.map(stepText),
           report: a.report,
+          to: a.to,
           ...(needsTest(a) ? { needs: "a test run before it can be turned on" } : {}),
         })),
       },

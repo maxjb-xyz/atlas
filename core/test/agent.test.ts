@@ -1,6 +1,6 @@
 import { runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type PersonAgent, seams } from "../src/agent";
+import { type PersonAgent, seams, type SpeechPart } from "../src/agent";
 import type { ServerMessage } from "../src/protocol";
 import { CalendarError } from "../src/calendar/types";
 import { getItem } from "../src/store/agenda";
@@ -590,14 +590,20 @@ describe("voice", () => {
         messages: [],
         signal: new AbortController().signal,
       });
-      const it = (spoken as AsyncIterable<string>)[Symbol.asyncIterator]();
+      const it = (spoken as AsyncIterable<SpeechPart>)[Symbol.asyncIterator]();
       const status = await it.next();
+      const pause = await it.next();
       release();
       let rest = "";
-      for (let x = await it.next(); !x.done; x = await it.next()) rest += x.value;
-      return { status: status.value as string, rest };
+      for (let x = await it.next(); !x.done; x = await it.next()) rest += x.value.type === "text-delta" ? x.value.text : "|";
+      return { status: status.value, pause: pause.value, rest };
     });
-    expect(said).toEqual({ status: "Checking your calendar. ", rest: "You're free." });
+    // The status line is spoken before the lookup answers: a break follows it.
+    expect(said).toEqual({
+      status: { type: "text-delta", text: "Checking your calendar. " },
+      pause: { type: "finish-step" },
+      rest: "You're free.",
+    });
     s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: null } });
     await s.next("atlas.view");
     s.ws.close();
@@ -615,9 +621,9 @@ describe("voice", () => {
         messages: [],
         signal: new AbortController().signal,
       });
-      return collect(spoken as AsyncIterable<string>);
+      return collect(spoken as AsyncIterable<SpeechPart>);
     });
-    expect(words.join("")).toBe("Checking your calendar. You're free all afternoon.");
+    expect(words.map((w) => (w.type === "text-delta" ? w.text : "|")).join("")).toBe("Checking your calendar. |You're free all afternoon.");
     expect(b.voice.requests[0]!.system).toContain("speaking out loud");
     expect(b.voice.requests[0]!.tools.map((t) => t.name)).toContain("calendar_read");
 

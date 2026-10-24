@@ -328,6 +328,10 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE extensions ADD COLUMN label TEXT;
   `,
+  // 17. M7: where an automation's report goes (§13.3): "you", wherever the owner is, or one place ("telegram", "push").
+  `
+  ALTER TABLE automations ADD COLUMN goes_to TEXT NOT NULL DEFAULT 'you';
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

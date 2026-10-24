@@ -235,11 +235,22 @@ export function Switch({ on, onChange, disabled }: { on: boolean; onChange: (on:
 }
 
 const REPORT: Record<AutomationView["report"], [string, string]> = {
-  thread: ["Thread", "Says it to you, and notifies you if Atlas isn't open"],
-  worth: ["Thread, when it's worth saying", "Says it only when there's something worth saying, and waits for quiet hours"],
+  thread: ["Tells you", "Every time it runs"],
+  worth: ["Tells you, when it's worth it", "Only when there's something worth saying, after quiet hours"],
   inbox: ["Inbox", "Waits in Inbox for you to look over"],
   silent: ["History", "Only in History"],
 };
+
+/** Where an automation can tell the owner: wherever they are, a notification, or a chat they've linked. */
+function places(atlas: Atlas): Array<{ value: string; label: string; sub?: string }> {
+  const chats = (atlas.state.view?.channels ?? []).filter((c) => c.linked);
+  return [
+    { value: "you", label: "Wherever you are", sub: "Here if Atlas is open, else as your Notifications settings say" },
+    { value: "push", label: "A notification", sub: "On your phone, every time" },
+    ...chats.map((c) => ({ value: c.ext, label: c.name, sub: `Your chat with Atlas on ${c.name}, every time` })),
+  ];
+}
+const placeName = (atlas: Atlas, to: string) => places(atlas).find((p) => p.value === to)?.label ?? to;
 
 /** One automation as a When → Do → Report flow, with what it may do and its runs (docs/ui screen 12). Also its stage view. */
 export function AutomationFlow({
@@ -373,7 +384,9 @@ export function AutomationFlow({
           <span className="lab">Report</span>
           <div className="flow-item">
             <span className="lab faint">{REPORT[a.report][0]}</span>
-            <span>{REPORT[a.report][1]}</span>
+            <span>
+              {a.report === "thread" || a.report === "worth" ? `${placeName(atlas, a.to)}. ${REPORT[a.report][1]}.` : REPORT[a.report][1]}
+            </span>
           </div>
         </div>
       </div>
@@ -525,7 +538,7 @@ function AutomationForm({
   const webhooks = atlas.state.view?.webhooks ?? [];
   const [f, setF] = useState<AutomationInput>(() =>
     a
-      ? { name: a.name, about: a.about, when: a.when, do: a.steps.map((s) => s.step), report: a.report }
+      ? { name: a.name, about: a.about, when: a.when, do: a.steps.map((s) => s.step), report: a.report, to: a.to }
       : (start ?? { name: "", about: "", when: blankTrigger("request"), do: [{ kind: "say", text: "" }], report: "thread" }),
   );
   const t = f.when;
@@ -792,14 +805,26 @@ function AutomationForm({
           width={380}
           value={f.report}
           options={[
-            { value: "thread", label: "In the thread", sub: "And a notification if Atlas isn't open" },
-            { value: "worth", label: "In the thread, when it's worth saying" },
-            { value: "inbox", label: "In Inbox" },
-            { value: "silent", label: "Only in History" },
+            { value: "thread", label: "Tell me", sub: "Every time it runs" },
+            { value: "worth", label: "Tell me when it's worth it", sub: "It may stay quiet" },
+            { value: "inbox", label: "Leave it in Inbox" },
+            { value: "silent", label: "Only keep it in History" },
           ]}
           onPick={(report) => setF({ ...f, report: report as AutomationInput["report"] })}
         />
       </div>
+      {(f.report === "thread" || f.report === "worth") && (
+        <div className="field">
+          <span>Where</span>
+          <Picker
+            label="Where it tells you"
+            width={380}
+            value={f.to ?? "you"}
+            options={places(atlas)}
+            onPick={(to) => setF({ ...f, to })}
+          />
+        </div>
+      )}
 
       <div className="row">
         <button className="btn primary" disabled={!!problem}>
