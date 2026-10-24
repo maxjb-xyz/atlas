@@ -15,6 +15,8 @@ import { AutomationFlow } from "./pages/Automations";
 import { AppFrame, ChartBody, CompareBody, KitBody } from "./ChartViews";
 import { McpAppFrame } from "./McpApp";
 import { MapView, PlaceView, SensesView, SituationView, WeatherView } from "./SenseViews";
+import { AbilitiesMap } from "./abilities/Map";
+import type { Place } from "./ui";
 
 /** A view on the stage: the receipt it came from (or a local id), the view, and its title. */
 export interface Shown {
@@ -133,6 +135,7 @@ function ViewBody({
   return (
     <>
       {v.kind === "area" && <AreaView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
+      {v.kind === "abilities" && <AbilitiesView atlas={atlas} view={v} onClose={onClose} />}
       {v.kind === "person" && <PersonView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
       {v.kind === "list" && <ListView view={v} onClose={onClose} />}
       {v.kind === "table" && <TableView view={v} onClose={onClose} />}
@@ -212,6 +215,29 @@ function Keep({ atlas, shown }: { atlas: Atlas; shown: Shown }) {
     >
       <Diamond size={11} /> Keep
     </button>
+  );
+}
+
+/**
+ * What Atlas can do, on the stage (§21.2): the Abilities map, or the group
+ * Atlas pointed at, zoomed in. Going back or into another group stays here;
+ * a link to where something is set up goes there.
+ */
+function AbilitiesView({ atlas, view, onClose }: { atlas: Atlas; view: Extract<StageView, { kind: "abilities" }>; onClose?: () => void }) {
+  const [zoom, setZoom] = useState<string | null>(view.group ?? null);
+  useEffect(() => setZoom(view.group ?? null), [view.group]);
+  useEffect(() => {
+    if (atlas.voice.connected) atlas.send({ type: "atlas.services" });
+  }, [atlas.voice.connected]);
+  const go = (p: Place, d?: string) => {
+    location.hash = d ? `#/${p}/${encodeURIComponent(d)}` : `#/${p}`;
+  };
+  if (!atlas.state.view) return <Loading />;
+  return (
+    <div className="abilities-on-stage">
+      <Close onClose={onClose} />
+      <AbilitiesMap atlas={atlas} go={go} zoom={zoom} open={setZoom} />
+    </div>
   );
 }
 
@@ -1173,6 +1199,7 @@ function viewLabel(atlas: Atlas, v: StageView): string {
   if (v.kind === "weather") return "The weather";
   if (v.kind === "situation") return "The situation";
   if (v.kind === "senses") return "What Atlas noticed";
+  if (v.kind === "abilities") return "What Atlas can do";
   return v.title;
 }
 
@@ -1398,6 +1425,7 @@ const KIND: Record<StageView["kind"], string> = {
   weather: "Weather",
   situation: "Situation",
   senses: "Noticed",
+  abilities: "Abilities",
 };
 
 export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown; onOpen: () => void }) {
@@ -1461,7 +1489,9 @@ export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown
                                                 ? "Where you are, what's next, and when to leave."
                                                 : v.kind === "senses"
                                                   ? "Today's funnel, each source, and what's waiting."
-                                                  : "What Atlas knows about them, and where they came up.";
+                                                  : v.kind === "abilities"
+                                                    ? "What Atlas can do, and what does it."
+                                                    : "What Atlas knows about them, and where they came up.";
   return (
     <div className="stage-card rise">
       <span className="lab">

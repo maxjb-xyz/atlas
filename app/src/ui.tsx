@@ -25,6 +25,7 @@ export const ICONS = {
   down: "M6 9l6 6 6-6",
   back: "M15 18l-6-6 6-6",
   left: "M19 12H5M12 19l-7-7 7-7",
+  right: "m9 18 6-6-6-6",
   plus: "M12 5v14M5 12h14",
   minus: "M5 12h14",
   x: "M18 6 6 18M6 6l12 12",

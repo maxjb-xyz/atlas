@@ -1535,3 +1535,158 @@ button.card2:hover {
   gap: 4px;
   border-color: var(--bad);
 }
+
+/* --- Abilities: a group zoomed into its tree -------------------------------------------- */
+.zoom-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 6px 0 22px;
+  flex-wrap: wrap;
+}
+.zoom-root {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--dash);
+  border-radius: 8px;
+  background: var(--bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tx2);
+  flex: none;
+}
+/* The rail down from the group, a joint for each job, and a wire out to who does it. */
+.tree {
+  position: relative;
+  margin-left: 19px;
+  padding-left: 30px;
+  border-left: 1px dashed var(--dash);
+}
+.tree-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(180px, 250px) 40px minmax(0, 1fr);
+  align-items: center;
+  padding: 10px 0;
+}
+.tree-row + .tree-row {
+  border-top: 1px solid var(--sep);
+}
+.tree-joint {
+  position: absolute;
+  left: -30px;
+  top: 30px;
+  width: 26px;
+  border-top: 1px dashed var(--dash);
+}
+.tree-joint::after {
+  content: "";
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  width: 7px;
+  height: 7px;
+  background: var(--bg);
+  border: 1px solid var(--dash);
+}
+.tree-job {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.tree-job .h {
+  font-weight: 600;
+}
+.tree-wire {
+  border-top: 1px dashed var(--dash);
+  align-self: center;
+}
+.tree-hands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.hand {
+  height: 34px;
+  padding: 0 10px 0 6px;
+  border: 1px solid var(--sep2);
+  border-radius: 8px;
+  background: var(--win);
+  color: var(--tx);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  max-width: 100%;
+}
+.hand .logo {
+  border-radius: 6px;
+}
+.hand-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hand:hover {
+  background: var(--hover);
+}
+.hand.on {
+  border-color: var(--tx);
+  background: var(--sel);
+}
+/* One the catalog has, not set up: dashed, like a slot to fill. */
+.hand.add {
+  border-style: dashed;
+  color: var(--tx2);
+  background: transparent;
+}
+.hand-empty {
+  align-self: center;
+}
+/* A service's options, fanned out under its line. */
+.fan {
+  grid-column: 1 / -1;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--sep2);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.fan-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.fan-about {
+  margin: 10px 0 0;
+  color: var(--tx2);
+}
+.fan-body {
+  margin-top: 10px;
+}
+@media (max-width: 760px) {
+  .tree {
+    margin-left: 8px;
+    padding-left: 18px;
+  }
+  .tree-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+  .tree-joint {
+    left: -18px;
+    width: 9px;
+    top: 21px;
+  }
+  .tree-wire {
+    display: none;
+  }
+}
+/* The map on Home's stage sits in the view's own padding. */
+.abilities-on-stage > .sheet-in {
+  padding: 0;
+}

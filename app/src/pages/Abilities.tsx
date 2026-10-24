@@ -32,6 +32,8 @@ export function Abilities({
   const [head = "", ...rest] = base.split(":");
   const tab = (["services", "skills", "devices"].includes(head) ? head : "map") as Tab;
   const open = tab === "services" && rest.length ? rest.join(":") : null;
+  // "map:channels" zooms into a group of the map.
+  const zoom = head === "map" && rest.length ? rest[0]! : null;
   const signin = new URLSearchParams(query);
   const note = signin.get("note") ? { ok: signin.get("signin") === "ok", text: signin.get("note")! } : null;
   useEffect(() => {
@@ -79,8 +81,8 @@ export function Abilities({
         {!view ? (
           <p className="muted sheet-in">Loading.</p>
         ) : (
-          <div className="rise" key={tab + (open ?? "")}>
-            {tab === "map" && <AbilitiesMap atlas={atlas} go={place} />}
+          <div className={zoom ? "" : "rise"} key={tab + (open ?? "") + (zoom ?? "")}>
+            {tab === "map" && <AbilitiesMap atlas={atlas} go={place} zoom={zoom} open={(id) => go(id ? `map:${id}` : "")} />}
             {tab === "services" && <Services atlas={atlas} open={open} go={go} note={note} />}
             {tab === "skills" && <Skills atlas={atlas} />}
             {tab === "devices" && <Devices atlas={atlas} go={go} />}

@@ -116,7 +116,7 @@ export function Services({
   );
 }
 
-function SvcLogo({ s, size = 34 }: { s: Service; size?: number }) {
+export function SvcLogo({ s, size = 34 }: { s: Service; size?: number }) {
   if (s.builtin === "webhooks")
     return (
       <span className="logo" style={{ width: size, height: size, borderRadius: 8 }}>
@@ -839,7 +839,7 @@ function Uses({ atlas, e, view }: { atlas: Atlas; e: ExtensionView; view: Settin
   );
 }
 
-function SearchUse({ atlas, view, id }: { atlas: Atlas; view: SettingsView; id: string }) {
+export function SearchUse({ atlas, view, id }: { atlas: Atlas; view: SettingsView; id: string }) {
   const on = view.settings.web.search === id;
   return (
     <div className="line">
@@ -854,7 +854,7 @@ function SearchUse({ atlas, view, id }: { atlas: Atlas; view: SettingsView; id: 
   );
 }
 
-function Calendars({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+export function Calendars({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
   const [hidden, setHidden] = useState(view.settings.calendar.hidden.join(", "));
   const cal = view.calendar;
   return (
@@ -895,7 +895,7 @@ function Calendars({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
  * one moved to Atlas and given back, numbers to buy with their price, and a
  * test call. Only the number picked changes; the account's others stay.
  */
-function Phone({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+export function Phone({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
   const c = atlas.state.calls;
   const [area, setArea] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1012,7 +1012,7 @@ function Phone({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
 }
 
 /** Who you are on a chat channel (§16.1): message the bot from your own account, then send it the code shown here. */
-function ChatLink({ atlas, view, ext }: { atlas: Atlas; view: SettingsView; ext: string }) {
+export function ChatLink({ atlas, view, ext }: { atlas: Atlas; view: SettingsView; ext: string }) {
   const c = view.channels.find((x) => x.ext === ext);
   const code = atlas.state.channelCode;
   const now = useNow(30_000);
@@ -1082,7 +1082,7 @@ export function Location({ atlas, view }: { atlas: Atlas; view: SettingsView }) 
 }
 
 /** Atlas's own address (§16.2): atlas@ your domain, with a token for the domain's Cloudflare account. */
-function AtlasEmail({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+export function AtlasEmail({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
   const m = view.mail;
   const [domain, setDomain] = useState(m.domain ?? "");
   const [token, setToken] = useState("");
@@ -1156,7 +1156,7 @@ function AtlasEmail({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
 }
 
 /** Your own webhooks: ones Atlas calls (it asks first), and sources that post to Atlas, each with its own address. */
-function Webhooks({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+export function Webhooks({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
   const blank = { id: undefined as string | undefined, name: "", url: "", method: "POST" as "POST" | "GET", about: "" };
   const [form, setForm] = useState(blank);
   const [open, setOpen] = useState(false);

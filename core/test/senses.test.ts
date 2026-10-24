@@ -958,6 +958,25 @@ describe("places, the way people say them", () => {
   });
 });
 
+describe("what Atlas can do, on the stage", () => {
+  it("shows the Abilities map zoomed to a group, and refuses a group that isn't one", async () => {
+    brain([
+      call("show", { view: { kind: "abilities", group: "others" } }),
+      call("show", { view: { kind: "abilities", group: "email" } }),
+      say("Here."),
+    ]);
+    const t = await turn(s, "how do you send email?");
+    const results = await inOwner((_a, sql) =>
+      sql
+        .exec<{ body: string }>(`SELECT body FROM log WHERE run_id = ? AND kind = 'tool.result' ORDER BY seq`, t.run)
+        .toArray()
+        .map((r) => JSON.parse(r.body) as { ok: boolean; receipt?: { view?: unknown } }),
+    );
+    expect(results[0]).toMatchObject({ ok: true, receipt: { view: { kind: "abilities", group: "others" } } });
+    expect(results[1]!.ok).toBe(false);
+  });
+});
+
 describe("runs that end without words", () => {
   it("a turn that shows a view and says nothing ends replied, and a look that nudges and says nothing too", async () => {
     const b = brain([call("show", { view: { kind: "situation" } }), say("")]);
