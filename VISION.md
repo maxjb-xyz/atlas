@@ -532,7 +532,7 @@ Voice is a mode of the same Atlas, never a second mind. In old Atlas, separate f
 - **The app:** a full-screen voice mode, and a small voice bar on every page.
 - **The desktop:** a hotkey.
 - **The phone:** the web app first; later a native app with voice from the lock screen.
-- **Phone calls** through Telnyx or Twilio: you can call Atlas, and Atlas can call you for urgent things.
+- **Phone calls** through Telnyx (M7, §16.1): you can call Atlas, and Atlas can call you for urgent things once you allow it (§12.3). Phone audio is narrower than the app's, so speech in and out take it as it is, and the voice benchmark includes a call.
 - **Later:** earbuds, cars and glasses, as nodes.
 
 ---
@@ -573,6 +573,25 @@ Each area can raise or lower these defaults. The Permissions page (under Atlas i
 - **Hold to confirm** for things that can't be undone, and for money.
 - **Earned trust.** After you've approved several of the same kind without changes, Atlas offers to stop asking: "You've OK'd 5 meeting confirmations as-is. Want me to send these myself?" You can revoke this at any time.
 - **Nothing gets stuck.** Work carries on around a waiting approval. Approvals expire, and Atlas tells you what didn't happen as a result.
+
+### 12.3 Your own rules
+
+The Permissions page lets the owner change when Atlas asks (decided 2026-10-24, for M7). Each kind of action can be set to always ask, ask until trusted, or don't ask, and a few named rules cover cases the kinds don't. Each starts as Atlas behaves today:
+
+| Rule | Starts as | Can be |
+|---|---|---|
+| Websites the workspace reaches (§9.1) | Asks for each site | Any site |
+| Forms in the browser | Asks | Fills and submits on sites you've allowed |
+| After reading the web (§20) | Asks before anything leaves | Doesn't ask for people and places you already trust |
+| Email sent as you | Always asks | Asks until you trust each recipient |
+| Faces replying to known contacts | Asks until trusted | Sends without asking |
+| Calendar changes that involve other people | Asks | Does it and tells you |
+| MCP tools | Trusted one tool at a time | All of one service's tools at once |
+| A paid brain when a plan runs out (§18) | Asks | Allowed within the spending cap |
+| Tools on your devices (§16.3) | Asks until trusted | Always asks |
+| Phone calls (§16.1) | Atlas doesn't call you; an unknown caller leaves a message | Atlas calls about urgent things; the face answers |
+
+Some floors can't be lowered: money and things that can't be undone always ask, a vault login asks the first time on each site, and secrets go only through the app. Areas can still raise or lower the rest (§6.2).
 
 ---
 
@@ -617,14 +636,20 @@ Any trigger can have conditions: "only on weekdays", "only when I'm home", "only
 
 ## 14. Notifications and delivery
 
-The outbox decides how and when anything reaches a person.
-- **Urgency:** now, at the next free moment, in a digest, or never.
-- **Context:** quiet hours; focus, judged from your calendar, location and devices, or set by picking an area (§21.3); driving; sleeping.
-- **One channel.** Each message goes to the best channel, not all of them. Reading it on one device clears it everywhere.
-- **Follow-up.** Urgent things re-ping, then escalate to a call if they go unseen, according to your rules.
-- **Budget.** A daily interruption budget, learned from how you react, so Atlas has to earn its interruptions.
+The outbox decides how and when anything reaches a person. Atlas decides whether to say something and how urgent it is, since that's a judgment about what it's saying; where it goes is code, at the exit (decided 2026-10-24, for M7).
+- **Urgency,** set by Atlas with the message: **now**; **soon**, at your next free moment; **later**, in the next brief or when you next open the app; or never.
+- **One channel,** picked in this order:
+  1. where you're talking now: a live call, the app in view, or a chat you replied in within the last few minutes;
+  2. where the matter started: a job's result or a promise reports back where it was asked for;
+  3. otherwise your list for that urgency (for example: soon on Telegram; now as a push and on Telegram, then a call).
 
-In the app, Atlas settings → Notifications shows channels per urgency, quiet hours, focus rules and the budget.
+  Reading it on one device clears it everywhere.
+- **Context:** quiet hours, sleep and focus (judged from your calendar, location and devices, or set by picking an area, §21.3) hold anything that isn't now. While you're driving, it comes by voice or a call, or waits.
+- **Follow-up.** Something urgent that goes unseen moves down your list: a re-ping, then a call (§16.1) once you've allowed that (§12.3).
+- **Budget.** A daily interruption budget, so Atlas has to earn its interruptions. How you react shapes suggestions ("You read Telegram faster than notifications. Reach you there first?"); the lists change only when you say so (rule 9).
+- **Everyone has their own.** Members have their own lists. A contact always gets the reply on the channel they used.
+
+In the app, Atlas settings → Notifications shows one list per urgency, quiet hours, focus rules and the budget.
 
 ---
 
@@ -651,14 +676,23 @@ In the app, Atlas settings → Notifications shows channels per urgency, quiet h
 
 ### 16.1 Channels
 
-Channels are the text surfaces where people reach Atlas or a face:
-- SMS and calls (later, §26);
+Channels are the surfaces where people reach Atlas or a face:
+- phone calls, through Telnyx (M7, below); SMS later (§26);
 - email;
 - Telegram, Discord, WhatsApp, Signal and Slack;
 - iMessage, through a Mac node;
 - the website widget.
 
 **Telegram comes first** (decided 2026-10-23, for M5): it has an official bot API, needs no phone number, and Telegram calls Atlas only when a message arrives, so it costs nothing while idle and nothing runs until the owner adds a bot token (§19.3). Its voice notes, in and out, beside the app's voice call, stand in for a phone. Discord needs a connection held open all month to receive messages, so it waits. Signal has no official bot API that we've found; signal-cli, the unofficial client, needs a process that's always on and a number of its own, so Signal would come through a node (§16.3), like iMessage through a Mac, unless Signal opens one.
+
+**Phone calls come through Telnyx** (decided 2026-10-24, for M7), voice only, so there's no US texting registration. Setup is one pasted key:
+- **Your numbers or a new one.** Atlas lists the numbers the Telnyx account already has, each with what it's connected to now, or offers to buy one, showing its monthly price first. Telnyx checks identity before selling a number, and Settings says so up front; an account that's already verified skips it.
+- **Nothing else is touched.** Using a number gives Atlas its own voice app and moves only that number's voice to it. The account's other apps and numbers, and the number's texting, stay as they were, and "Give the number back" restores what its voice was connected to.
+- **A test call** rings the owner when it's done.
+- **Costs only while in use** (§19.3): audio streams only during a live call, so the number's monthly fee is the one standing cost, and Settings shows it before anything is bought.
+- **One number, both sides:** the owner calling gets Atlas, and anyone else gets the face (§7.2).
+
+WhatsApp waits.
 
 Each channel is an adapter (§17). In a messaging thread Atlas texts like a person who has things to show you, the way messaging-native agents such as Instinct do: it sends what the channel can carry, not a link to everything.
 - **Rich where the channel allows.** An adapter says what its channel carries (images, files, reactions, effects, buttons, voice notes, formatting, length), and each stage view goes out in the richest form that fits:
@@ -1245,7 +1279,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 2. **Shape (§19.2).** A person agent plus a home agent, to be validated in M0.
 3. **Default assistant name.** The product is Atlas. Proposed: a new user's assistant is called "Atlas" by default, and they can rename it.
 4. **License.** MIT, like Hermes and OpenClaw, or Apache-2.0.
-5. **The phone.** Telnyx and Twilio both gave the owner trouble: hard to set up, and identity checks they'd rather not do. Every carrier with a real number does those checks now, and US texting needs registration on top. So the phone is out of M5 (decided 2026-10-23): the owner talks to Atlas by voice in the app and with Telegram's voice notes, and Atlas calling a business waits for a later milestone. What we found is in [M5.md §7](docs/M5.md#7-the-phone-later).
+5. **The phone.** Telnyx and Twilio both gave the owner trouble: hard to set up, and identity checks they'd rather not do. Every carrier with a real number does those checks now, and US texting needs registration on top. So the phone is out of M5 (decided 2026-10-23): the owner talks to Atlas by voice in the app and with Telegram's voice notes, and Atlas calling a business waits for a later milestone. What we found is in [M5.md §7](docs/M5.md#7-the-phone-later). Decided 2026-10-24: phone calls come in M7 through Telnyx, voice only, for owners willing to do Telnyx's identity check, with an existing account and numbers welcome (§16.1). Texting and Atlas calling businesses still wait.
 6. **Name.** OpenAI ships a browser called "ChatGPT Atlas" (October 2025). Decide before the public launch whether that matters.
 7. **Files (§21.7):** office formats, how polished they need to be, and sharing outside Atlas. Living pages were decided on 2026-10-22.
 
