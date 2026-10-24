@@ -79,7 +79,9 @@ export type Undo =
   /** Moves a calendar event back to where it was. */
   | { kind: "calendar.move"; id: string; title: string; start: string; end: string }
   /** Puts Speaking up back the way it was before Atlas changed it. */
-  | { kind: "speaking.restore"; before: unknown };
+  | { kind: "speaking.restore"; before: unknown }
+  /** Takes back an extension tool's change (§17): its `undo` tool, with the input the call gave back for it. */
+  | { kind: "tool.undo"; ext: string; tool: string; name: string; input: Json };
 
 /** What a source says happened, as the intake keeps it in a `sense` row (§10.4). Sources add their own fields beside these (a place, a device, an event). */
 export interface SenseItem {

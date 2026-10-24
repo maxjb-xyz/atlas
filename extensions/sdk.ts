@@ -41,7 +41,9 @@ export type Provides =
   /** A coding agent for jobs (§8.2): `agent` in its manifest says how the workspace runs it. */
   | "coding"
   /** Where the owner's code lives (§8.2): `git` in its manifest, and `repos`, `repo` and `pull_request`. */
-  | "code";
+  | "code"
+  /** Tools Atlas can use in a turn, for a service with no MCP server of its own (§17): `tools` in its manifest, and `tool`. */
+  | "tools";
 
 /**
  * A coding agent (§8.2): an npm package with an ACP server, which the core
@@ -151,6 +153,50 @@ export interface Signature {
   secret: string;
 }
 
+/**
+ * What a tool does, which decides when Atlas asks first (VISION §12.1). The
+ * core holds a tool to the kind it declares, whatever the tool does:
+ * - "look" reads and changes nothing, so it runs at once;
+ * - "change_own" changes the owner's own things in a way its `undo` tool
+ *   takes back, so it runs at once and the receipt offers Undo (one that
+ *   names no `undo` asks first, as one that speaks does);
+ * - "speak" reaches other people or the public, so it asks until the owner
+ *   trusts it;
+ * - "irreversible" can't be undone (delete, cancel, submit), so it always
+ *   asks, with a hold;
+ * - "money" moves money, so it always asks, with a hold, showing the amount.
+ */
+export type ToolKind = "look" | "change_own" | "speak" | "irreversible" | "money";
+
+/** A tool the extension offers Atlas (§17), run through its `tool` call. */
+export interface ToolSpec {
+  /** Lowercase letters, digits and underscores: "create_issue". Atlas sees it as `ext_<extension id>_<name>`. */
+  name: string;
+  /** What it does and when to use it, for the model: a tool's description is part of how Atlas behaves. */
+  description: string;
+  kind: ToolKind;
+  /** Its input, as a JSON Schema object: { type: "object", properties: {...}, required: [...] }. */
+  input: { type: "object"; properties?: Record<string, Json>; required?: string[]; [k: string]: Json | undefined };
+  /**
+   * For "change_own": the tool that takes it back, given the `undo` the call returned as its input. It runs on
+   * the owner's Undo with no card, so it must be a "change_own" tool too (it can be this one).
+   */
+  undo?: string;
+  /** For "money": the input fields that hold the amount and its currency, shown on the card. */
+  amount?: string;
+  currency?: string;
+}
+
+/** What a tool call gives back. The text is the service's words: Atlas reads it as information, never as instructions. */
+export interface ToolOutput {
+  text: string;
+  /** What it made or changed, for the receipt. */
+  link?: string;
+  /** For a "change_own" tool: the input for its `undo` tool that takes this call back. */
+  undo?: Json;
+  state?: Json;
+}
+
 export interface Manifest {
   /** Lowercase, stable: "github", "icloud". */
   id: string;
@@ -158,6 +204,13 @@ export interface Manifest {
   version: string;
   /** What it does, in a sentence the owner reads before installing it. */
   about: string;
+  /**
+   * The service's own logo for its card, used under the service's terms: a small SVG or PNG as a data URI
+   * ("data:image/svg+xml;base64,…"). A bundled extension's comes from icon.svg or icon.png in its folder.
+   */
+  icon?: string;
+  /** The logo is black, so the app inverts it in the dark theme. */
+  icon_invert?: boolean;
   provides: Provides[];
   /** The only hosts it may reach. "example.com" also covers its subdomains. */
   hosts: string[];
@@ -192,6 +245,8 @@ export interface Manifest {
   agent?: CodingAgent;
   /** How git reaches it, when it provides "code". */
   git?: GitHost;
+  /** The tools it offers Atlas, when it provides "tools". */
+  tools?: ToolSpec[];
 }
 
 /** What every call gets. */
@@ -483,6 +538,8 @@ export interface Extension {
     ctx: Ctx,
     pr: { repo: string; head: string; base: string; title: string; body: string },
   ): Promise<{ number: number; link: string }>;
+  /** Runs one of the tools its manifest declares, with input that fits that tool's schema. */
+  tool?(ctx: Ctx, call: { name: string; input: Record<string, Json> }): Promise<ToolOutput>;
 }
 
 /** A failure in the service's own words. `code` "auth" means the owner's sign-in or key was refused. */

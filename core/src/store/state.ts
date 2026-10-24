@@ -112,7 +112,15 @@ export type StateName =
   /** In a member's own agent: who they are, and whose Atlas they share. */
   | "member_of"
   /** Message-IDs of the owner's mail to Atlas's address already taken, so a mail relayed twice is said once. */
-  | "mail_seen";
+  | "mail_seen"
+  /** Indexes of services the owner added by address (§17), beside Atlas's own. */
+  | "service_indexes"
+  /** Each index's last daily look (§17): the index as fetched, when, and its last error in the host's words. */
+  | "service_index_cache"
+  /** Extensions installed from an index (§17): the service, the index, and the pinned code and hash they came from. */
+  | "service_pins"
+  /** Updates to extensions from an index that would reach or hold more than before, waiting for the owner's OK (§17). */
+  | "service_updates";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

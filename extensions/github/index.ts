@@ -68,6 +68,7 @@ export function webhookItem(event: string, delivery: string | undefined, p: Reco
 const ext: Extension = {
   manifest: {
     id: "github",
+    icon_invert: true,
     name: "GitHub",
     version: "1.0.0",
     about:

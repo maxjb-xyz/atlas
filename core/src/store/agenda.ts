@@ -31,7 +31,9 @@ export type AgendaKind =
   /** A time a face held for someone (§7.2), for the owner to confirm; busy to every face until then. */
   | "hold"
   /** The faces' digest (§7.2): what their conversations were, once a day, to Inbox. */
-  | "digest";
+  | "digest"
+  /** The services index's daily look (§17): a newer catalog, and updates to what was installed from it. */
+  | "index";
 export type AgendaState = "scheduled" | "running" | "done" | "cancelled" | "failed";
 
 export interface AgendaSource {

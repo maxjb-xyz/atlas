@@ -73,7 +73,7 @@ export interface CalendarEventView {
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "node" | "email" | "face_reply" | "pull_request";
+  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "tool" | "node" | "email" | "face_reply" | "pull_request";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -439,6 +439,23 @@ export const ClientMessage = z.discriminatedUnion("type", [
     token: z.string().max(4_000).optional(),
   }),
   z.object({ type: z.literal("atlas.mcp.remove"), id: z.string().max(64) }),
+  /**
+   * Abilities → Services (§17): the cards; what installing one would add (fetched and checked first); installing
+   * every part; the one key that covers its parts; removing it; saying yes to an update that reaches or holds
+   * more. `id` is a card's id.
+   */
+  z.object({ type: z.literal("atlas.services") }),
+  z.object({ type: z.literal("atlas.service.preview"), id: z.string().max(80) }),
+  z.object({ type: z.literal("atlas.service.install"), id: z.string().max(80) }),
+  z.object({ type: z.literal("atlas.service.key"), id: z.string().max(80), key: z.string().trim().min(1).max(4_000) }),
+  z.object({ type: z.literal("atlas.service.remove"), id: z.string().max(80) }),
+  z.object({ type: z.literal("atlas.service.update"), id: z.string().max(80) }),
+  /** Another index by its address, removing one, or looking at every index now. */
+  z.object({ type: z.literal("atlas.index.add"), url: z.string().url().max(500) }),
+  z.object({ type: z.literal("atlas.index.remove"), url: z.string().max(500) }),
+  z.object({ type: z.literal("atlas.index.refresh") }),
+  /** Custom: an extension from a link, read in a sandbox with no way out and kept as a draft to read before Install. */
+  z.object({ type: z.literal("atlas.ext.link"), url: z.string().url().max(500) }),
   /** An MCP App on the stage (§21.6): its page, and what the page asks of its server. `req` is echoed back. */
   z.object({ type: z.literal("atlas.mcp.app"), req: z.string().max(64), call: z.string().max(64) }),
   z.object({
@@ -655,9 +672,12 @@ export interface ExtensionView {
   about: string;
   provides: string[];
   hosts: string[];
+  /** Its tools (§17), each with the kind the core holds it to and when it asks. */
+  tools: Array<{ name: string; description: string; kind: ExtToolKind; asks: Asks }>;
   credit: string | null;
   costs: string | null;
-  source: "bundled" | "atlas" | "owner";
+  /** Who wrote it: it ships with Atlas, Atlas or the owner wrote it, or it came from an index. */
+  source: "bundled" | "atlas" | "owner" | "index";
   /** "available" is a bundled one that isn't installed. */
   state: "on" | "off" | "draft" | "available";
   secrets: Array<{ name: string; label: string; help: string; optional: boolean; set: boolean }>;
@@ -674,6 +694,116 @@ export interface ExtensionView {
   methods: string[];
   /** The code, for one Atlas or the owner wrote, so it can be read before it's installed. */
   code: string | null;
+}
+
+/** When something Atlas can do asks first (§12.1): never; does it, tells you and offers Undo; until you trust it; always. */
+export type Asks = "never" | "tells" | "until_trusted" | "always";
+
+/** The kind of action an extension's tool declares (§17), which the core holds it to. */
+export type ExtToolKind = "look" | "change_own" | "speak" | "irreversible" | "money";
+
+/**
+ * One card in Abilities → Services (VISION §17: services, one catalog). One
+ * per service, whatever is underneath: an extension, its vendor's own MCP
+ * server, skills. Simple shows the name, icon, about, `hears.summary`,
+ * `does.summary`, the state, the error and the one setup; Developer also
+ * shows `parts`, `touches` and each tool. Sent as `atlas.services`, in the
+ * order the app shows them: what's on first, then by name.
+ */
+export interface ServiceView {
+  /** The catalog's id ("linear"); for something added by hand, "ext:<extension id>" or "mcp:<server id>". */
+  id: string;
+  name: string;
+  about: string;
+  /** The service's own logo, as a data URI to show in an <img> (never as markup); `icon_invert` when it's black, for the dark theme. */
+  icon: string | null;
+  icon_invert: boolean;
+  /** "work", "notes", "mail", "chat", "calendar", "location", "maps", "weather", "search", "coding", "money", "home"; "custom" for something added by hand. */
+  category: string;
+  /**
+   * on: what's installed works. setup: installed, waiting for its key or sign-in (see `setup`). off: turned off.
+   * error: its last call failed (see `error`). draft: code waiting for the owner's Install. available: in the
+   * catalog, nothing installed.
+   */
+  state: "on" | "setup" | "off" | "error" | "draft" | "available";
+  /** Where the listing came from: an index (its address; `snapshot` when it's this release's copy), or added by hand (Custom). */
+  from: { kind: "index"; index: string; snapshot: boolean } | { kind: "custom" };
+  /** What Atlas hears from it: the listing's line, what its extension provides in words, and the last few things it heard. */
+  hears: { summary: string | null; what: string[]; recent: Array<{ what: string; at: number }> };
+  /** What Atlas can do there: the listing's line, and each tool (its MCP server's, its extension's), with when it asks. */
+  does: {
+    summary: string | null;
+    tools: Array<{ name: string; title: string; about: string; via: "mcp" | "extension"; asks: Asks; kind: ExtToolKind | null }>;
+  };
+  /** What it can touch: the hosts its extension may reach, the secrets it may hold (names only), and its MCP server's host. */
+  touches: { hosts: string[]; secrets: string[]; mcp: string | null };
+  /** When Atlas last heard something from it. */
+  last_heard: number | null;
+  /** Its last failure, in the service's own words, and which part it came from. */
+  error: { text: string; at: number | null; part: "extension" | "mcp" } | null;
+  /** What it costs while it's on, when that isn't nothing. */
+  cost: string | null;
+  /**
+   * The one setup, when one covers every part: a key (pasted once, with `atlas.service.key`; `covers` says
+   * which parts it fills), a sign-in (the MCP server's, at `url`, or the extension's, in its own fields),
+   * nothing, or each part on its own (the extension's fields, in `parts`).
+   */
+  setup:
+    | { kind: "key"; label: string; help: string; set: boolean; covers: Array<"extension" | "mcp"> }
+    | { kind: "signin"; via: "mcp" | "extension"; signed_in: boolean; url: string | null }
+    | { kind: "none" }
+    | { kind: "each" };
+  /** The parts underneath, for Developer: the extension (with its settings in Settings' ExtensionView by `id`), the MCP server, skills. */
+  parts: {
+    extension: {
+      id: string;
+      version: string | null;
+      source: ExtensionView["source"] | null;
+      state: ExtensionView["state"];
+      /** Code from an index: the address it was pinned at and its sha256. */
+      pinned: { code: string; sha256: string } | null;
+    } | null;
+    mcp: { id: string | null; url: string; state: string; signin: "oauth" | "token" | "either" | null } | null;
+    skills: Array<{ name: string; installed: boolean }>;
+  };
+  /** An update from the index that would reach or hold more than before, waiting for the owner's OK (`atlas.service.update`). */
+  update: { version: string; widens: { hosts: string[]; secrets: string[] } } | null;
+}
+
+/** An index the catalog reads (§17): Atlas's own first, then the ones the owner added. */
+export interface IndexView {
+  url: string;
+  own: boolean;
+  name: string | null;
+  /** The listing's own date, and when Atlas last fetched it (worked or not) and last fetched it fine. */
+  updated: string | null;
+  at: number | null;
+  ok_at: number | null;
+  /** Its last failure in the host's words, and listings that didn't fit the format (left out). */
+  error: string | null;
+  problems: string[];
+  services: number;
+}
+
+/** What installing a service would add, fetched and checked against its pins, shown before Install (§17). */
+export interface ServicePreview {
+  id: string;
+  name: string;
+  extension: {
+    id: string;
+    name: string;
+    version: string;
+    about: string;
+    provides: string[];
+    hosts: string[];
+    secrets: string[];
+    tools: ServiceView["does"]["tools"];
+    /** The code, for one from an index, to read before installing; null for one that ships with Atlas. */
+    code: string | null;
+  } | null;
+  mcp: { url: string; signin: "oauth" | "token" | "either" } | null;
+  /** Each skill in full (§17: a community skill is shown in full before it's installed), with its folder's files. */
+  skills: Array<{ name: string; md: string; files: string[] }>;
 }
 
 export interface LocationView {
@@ -733,6 +863,12 @@ export type ServerMessage =
   | { type: "atlas.files"; files: import("./stage").FileRow[] }
   | { type: "atlas.skills"; skills: SkillView[] }
   | { type: "atlas.mcp.servers"; servers: McpServerView[] }
+  /** Abilities → Services (§17): a card per service, and the indexes the catalog reads. Sent when asked and after any change. */
+  | { type: "atlas.services"; services: ServiceView[]; indexes: IndexView[] }
+  /** What installing a service would add, fetched and checked, or why it can't be (a hash that doesn't match, in words). */
+  | { type: "atlas.service.preview"; id: string; preview?: ServicePreview; error?: string }
+  /** How a service action went (install, key, remove, update, an index, an extension from a link), in the service's words when it didn't. */
+  | { type: "atlas.service.done"; id: string; ok: boolean; text: string }
   | { type: "atlas.mcp.app.result"; req: string; page?: McpAppPage; error?: string }
   /** What the page's own tool call or read answered: MCP's result as-is, or why it didn't happen. */
   | { type: "atlas.mcp.app.answer"; req: string; result?: Record<string, unknown>; error?: string }

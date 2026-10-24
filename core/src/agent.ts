@@ -21,6 +21,7 @@ import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
 import { seams } from "./agent/seams";
 import { liveTest, settingsView } from "./agent/settings";
 import { undoReceipt } from "./agent/undo";
+import { ServiceDesk } from "./agent/services";
 import { MailDesk } from "./agent/mail";
 import { type ChatVia, ChannelDesk, links } from "./agent/channels";
 import { FaceDesk, type Where } from "./agent/faces";
@@ -51,13 +52,16 @@ import { vapidKeys } from "./push";
 import {
   type AreaView,
   ClientMessage,
+  type IndexView,
   type JobView,
   type McpAppPage,
   type McpServerView,
   type ServerMessage,
+  type ServiceView,
   type SettingsView,
   type SkillView,
 } from "./protocol";
+import { addIndex, removeIndex } from "./services";
 import { type AgendaItem, createItem, due, finish, getItem, lease, rearm, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, newId, parse, type Sql } from "./store/db";
 import { type Actor, append, forRun, get as getRow, type LogRow, logTo, type Surface, thread } from "./store/log";
@@ -99,7 +103,7 @@ import { fileRead, fileTools } from "./tools/files";
 import { workspaceTools } from "./tools/workspace";
 import { codeRun } from "./tools/code";
 import { reviewTools, skillRead, skillTools, unpackSkill } from "./tools/skills";
-import { mcpCall, mcpToolset, mcpTools } from "./tools/mcp";
+import { mcpCall, mcpToolset, mcpTools, UNTRUSTED } from "./tools/mcp";
 import {
   APP_MIME,
   appCsp,
@@ -177,7 +181,7 @@ import {
   updateNode,
 } from "./nodes";
 import { deviceCall } from "./tools/nodes";
-import { extensionDraft } from "./tools/extensions";
+import { extensionDraft, extensionTools } from "./tools/extensions";
 import { loopClose, loopOpen, person, peopleTools } from "./tools/people";
 import { closeLoop, detailOf, openLoops } from "./loops";
 import { locationOff, locationOn, observe } from "./location";
@@ -343,6 +347,15 @@ const OWNER_ONLY = new Set<string>([
   "atlas.ext.setup",
   "atlas.ext.test",
   "atlas.ext.signin",
+  "atlas.ext.link",
+  "atlas.service.preview",
+  "atlas.service.install",
+  "atlas.service.key",
+  "atlas.service.remove",
+  "atlas.service.update",
+  "atlas.index.add",
+  "atlas.index.remove",
+  "atlas.index.refresh",
   "atlas.mail.setup",
   "atlas.mail.remove",
   "atlas.mail.test",
@@ -428,6 +441,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** Extensions (§17): the host that runs them sandboxed, and the desk that hands what they bring to the core. */
   #ext!: ExtensionHost;
   #extensions!: ExtensionDesk;
+  /** Services, one catalog (§17): the cards, installing from the index, its daily look. */
+  #services!: ServiceDesk;
   #mail!: MailDesk;
   #channels!: ChannelDesk;
   #faces!: FaceDesk;
@@ -521,6 +536,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       fetch: (...args) => (seams.fetch ?? fetch)(...args),
       browser: () => this.#driver(),
       mcp: () => this.#mcpClient(),
+      // An extension's tool runs in its sandbox, through its gate (§17); it gets nothing but its input.
+      extTool: (c) => this.#ext.call(c.ext, "tool", [{ name: c.tool, input: c.input }], { ms: 60_000 }),
       node: (c) => this.#nodeCall(c),
       mail: (a) => this.#sendMail(a),
       chat: async (text) => {
@@ -623,6 +640,19 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       changed,
       origin: () => getState<string>(this.#sql, "origin"),
     });
+    this.#services = new ServiceDesk({
+      sql: this.#sql,
+      host: this.#ext,
+      draft: (code) => this.#extensions.draft(code, "owner"),
+      extensionsChanged: () => this.#extensions.afterChange(),
+      fetch:
+        () =>
+        (...args) =>
+          (seams.fetch ?? fetch)(...args),
+      mcp: () => this.#mcpClient(),
+      files: () => this.#bucket(),
+      clock: this.#clock,
+    });
     this.#faces = new FaceDesk({
       sql: this.#sql,
       run: (o) => this.#faceRun(o),
@@ -664,6 +694,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     // What M4 kept in the core moves to bundled extensions once; then the extensions' looks are on the clock.
     void this.keepAliveWhile(() => this.#extensions.upgrade().then(() => this.#extensions.arm())).catch((err: unknown) =>
       console.error(JSON.stringify({ at: "extensions.upgrade", error: err instanceof Error ? err.message : String(err) })),
+    );
+    // The services index's look is on the clock once a day; the first start looks a minute from now (§17).
+    void this.keepAliveWhile(() => this.#services.arm(true)).catch((err: unknown) =>
+      console.error(JSON.stringify({ at: "services.arm", error: err instanceof Error ? err.message : String(err) })),
     );
     // The faces' digest stays on the clock while a face has one.
     void this.keepAliveWhile(() => this.#armDigest()).catch(() => {});
@@ -1503,6 +1537,57 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#broadcast({ type: "atlas.mcp.servers", servers: this.#mcpView() });
         return;
       }
+      case "atlas.services":
+        await this.#mcpServers(3_000);
+        this.#send(connection, { type: "atlas.services", ...this.#servicesView() });
+        return;
+      case "atlas.service.preview":
+        try {
+          this.#send(connection, { type: "atlas.service.preview", id: msg.id, preview: await this.#services.preview(msg.id) });
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err);
+          console.error(JSON.stringify({ at: "services.preview", id: msg.id, error }));
+          this.#send(connection, { type: "atlas.service.preview", id: msg.id, error });
+        }
+        return;
+      case "atlas.service.install":
+      case "atlas.service.key":
+      case "atlas.service.remove":
+      case "atlas.service.update":
+      case "atlas.index.add":
+      case "atlas.index.remove":
+      case "atlas.index.refresh":
+      case "atlas.ext.link": {
+        const id = "id" in msg ? msg.id : "url" in msg ? msg.url : "index";
+        try {
+          const text =
+            msg.type === "atlas.service.install"
+              ? await this.#services.install(msg.id)
+              : msg.type === "atlas.service.key"
+                ? await this.#services.key(msg.id, msg.key)
+                : msg.type === "atlas.service.remove"
+                  ? await this.#services.remove(msg.id)
+                  : msg.type === "atlas.service.update"
+                    ? await this.#services.update(msg.id)
+                    : msg.type === "atlas.ext.link"
+                      ? `${(await this.#services.link(msg.url)).name} is a draft: read what it can touch, then Install.`
+                      : await (async () => {
+                          if (msg.type === "atlas.index.add") addIndex(this.#sql, msg.url);
+                          if (msg.type === "atlas.index.remove") removeIndex(this.#sql, msg.url);
+                          await this.#services.refresh();
+                          return "The catalog is up to date.";
+                        })();
+          this.#send(connection, { type: "atlas.service.done", id, ok: true, text });
+        } catch (err) {
+          const text = err instanceof Error ? err.message : String(err);
+          console.error(JSON.stringify({ at: `services.${msg.type.slice(6)}`, id, error: text }));
+          this.#send(connection, { type: "atlas.service.done", id, ok: false, text });
+        }
+        await this.#mcpServers(3_000);
+        this.#servicesChanged();
+        this.#broadcast({ type: "atlas.mcp.servers", servers: this.#mcpView() });
+        return;
+      }
       case "atlas.mcp.app": {
         const out = await this.#mcpApp(msg.call);
         this.#send(connection, { type: "atlas.mcp.app.result", req: msg.req, ...out });
@@ -2244,6 +2329,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       await this.keepAliveWhile(() => this.#extensions.looks(item));
       return;
     }
+    if (item.kind === "index") {
+      await this.keepAliveWhile(() => this.#services.look(item));
+      this.#servicesChanged();
+      return;
+    }
     if (item.kind === "loop") {
       await this.keepAliveWhile(() => this.#senses.loopDue(item));
       return;
@@ -2539,7 +2629,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const settings = readSettings(this.#sql);
     const tz = zoneOf(settings);
     const now = new Date();
-    const tools = o.tools ?? TOOLS[o.actor];
+    const base = o.tools ?? TOOLS[o.actor];
+    // A run that may use services' tools (it has mcp_call) has the extensions' own tools too, held to their kinds (§17).
+    const tools = base.includes(mcpCall) ? [...base, ...extensionTools(this.#services.toolHosts())] : base;
     const mcp = tools.includes(mcpCall) ? await this.#mcpServers(3_000) : [];
     // What's shared, and for a member's Atlas whose it is (§7.1). The owner's Atlas being unreachable doesn't stop a run.
     const shared = await this.#sharedNote();
@@ -2587,7 +2679,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         surface: o.surface,
         system,
         messages,
-        tools: o.tools ?? TOOLS[o.actor],
+        tools,
         budget: o.budget,
         signal: o.signal,
         joiner: o.surface === "voice" ? " " : "\n\n",
@@ -2615,6 +2707,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       web: this.#web,
       maps: this.#maps,
       devices: { call: (c, o) => this.#outbox.device(c, o) },
+      extTool: (c, o) => this.#outbox.extTool(c, { run_id: o.run_id, by: "atlas" }),
       files: this.#bucket(),
       workspace: this.#workspaceApi,
       browser: this.#browserApi,
@@ -3371,7 +3464,16 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   // --- undo and live checks ---------------------------------------------------
 
   async #undo(logId: string, connection: Connection): Promise<void> {
-    const out = await undoReceipt(this.#sql, logId, this.#clock, this.#calendar.source(readSettings(this.#sql)));
+    const out = await undoReceipt(this.#sql, logId, this.#clock, this.#calendar.source(readSettings(this.#sql)), (u, of) =>
+      this.#outbox.extTool(
+        { ext: u.ext, tool: u.tool, name: u.name, input: u.input as Record<string, unknown> },
+        {
+          run_id: getRow(this.#sql, of)?.run_id ?? null,
+          by: "owner",
+          undo_of: of,
+        },
+      ),
+    );
     if (!out.ok) {
       this.#send(connection, { type: "atlas.error", message: out.message });
       return;
@@ -4223,6 +4325,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return c.servers();
   }
 
+  /** Abilities → Services (§17): a card per service, and the indexes the catalog reads. */
+  #servicesView(): { services: ServiceView[]; indexes: IndexView[] } {
+    return { services: this.#services.views(this.#mcpClient()?.servers() ?? []), indexes: this.#services.indexes() };
+  }
+
+  #servicesChanged(): void {
+    this.#broadcast({ type: "atlas.services", ...this.#servicesView() });
+  }
+
   /** The servers as Settings shows them: their tools and state, never a token. */
   #mcpView(): McpServerView[] {
     return (this.#mcpClient()?.servers() ?? []).map((s) => ({
@@ -4410,10 +4521,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       }
       if (ASKS[kindOf(action)].asks === "never" || (!readWeb && isTrusted(this.#sql, action))) {
         const out = await this.#outbox.perform(action, { run_id: c.run_id, by: "trusted" });
+        // An extension's tool answers in its service's words; one that changed the owner's things offers Undo (§17).
+        const theirs = action.kind === "tool" ? { untrusted: UNTRUSTED } : {};
         return {
           ok: out.ok,
-          output: out.ok ? { done: out.text } : { error: out.text },
-          receipt: { text: `${out.ok ? "Done" : "Didn't work"} · ${action.name}` },
+          output: out.ok ? { done: out.text, ...theirs } : { error: out.text },
+          receipt: { text: `${out.ok ? "Done" : "Didn't work"} · ${action.name}`, ...(out.undo ? { undo: out.undo } : {}) },
         };
       }
       const { item, created } = requestApproval(this.#sql, { run_id: c.run_id, log_id: c.source_log_id, action, read_web: readWeb });
@@ -4583,10 +4696,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         }
       }
       // A tool's arguments, edited as JSON in the card; what doesn't read as an object is left as it was.
-      if (a?.kind === "mcp") {
+      if (a?.kind === "mcp" || a?.kind === "tool") {
         const args = parse<unknown>(e.message, null);
-        if (args && typeof args === "object" && !Array.isArray(args) && JSON.stringify(args) !== JSON.stringify(a.arguments)) {
-          actions = actions.map((x, i) => (i === e.index ? ({ ...a, arguments: args } as Action) : x));
+        const was = a.kind === "mcp" ? a.arguments : a.input;
+        if (args && typeof args === "object" && !Array.isArray(args) && JSON.stringify(args) !== JSON.stringify(was)) {
+          actions = actions.map((x, i) =>
+            i === e.index ? ({ ...a, ...(a.kind === "mcp" ? { arguments: args } : { input: args }) } as Action) : x,
+          );
           edited = true;
         }
       }

@@ -40,6 +40,7 @@ async function domainOf(ctx: { secret(n: string): string; settings: Record<strin
 const ext: Extension = {
   manifest: {
     id: "resend",
+    icon_invert: true,
     name: "Resend",
     version: "1.0.0",
     about: "Sends mail from Atlas's own address through Resend, free for 3,000 mails a month (100 a day). It only sends.",
