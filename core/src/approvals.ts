@@ -78,6 +78,27 @@ export type Action =
   /** Connecting a new MCP server (§9.2: growing its own abilities, with the owner's OK). */
   | { kind: "mcp_add"; name: string; url: string; why: string }
   /**
+   * A tool an extension offers (§17), held to the kind its manifest declares
+   * (`acts`): one that changes the owner's own things runs and offers Undo
+   * (with `undo`, the tool that takes it back); one that speaks asks until
+   * trusted; one that can't be undone, or moves money, always asks with a
+   * hold. `name` says it for the card ("Send invoice on Acme").
+   */
+  | {
+      kind: "tool";
+      ext: string;
+      tool: string;
+      name: string;
+      input: Record<string, Json>;
+      acts: "change_own" | "speak" | "irreversible" | "money";
+      undo?: string;
+      /** For money: the input fields with the amount and its currency, so the card shows them as they are now. */
+      amount?: { field: string; currency?: string };
+      what: string;
+      /** The extension's name and the hosts it reaches, for the card. */
+      where: string;
+    }
+  /**
    * A tool on a paired device that does more than notify (§16.3), such as
    * running a command on the owner's Mac. `name` says it for the card;
    * `what` is the input in words.
@@ -136,18 +157,24 @@ export type Action =
 
 /** Sending a form can't be taken back (VISION §12.1 lists submit with the things that can't be undone). */
 export const kindOf = (a: Action): ToolKind =>
-  a.kind === "pull_request"
-    ? "change_own"
-    : a.kind === "webhook" ||
-        a.kind === "site" ||
-        a.kind === "node" ||
-        a.kind === "mcp_add" ||
-        a.kind === "email" ||
-        a.kind === "face_reply" ||
-        (a.kind === "vault" && !a.card) ||
-        (a.kind === "mcp" && !a.destructive)
-      ? "outside"
-      : "irreversible";
+  a.kind === "tool"
+    ? a.acts === "change_own"
+      ? "change_own"
+      : a.acts === "speak"
+        ? "outside"
+        : "irreversible"
+    : a.kind === "pull_request"
+      ? "change_own"
+      : a.kind === "webhook" ||
+          a.kind === "site" ||
+          a.kind === "node" ||
+          a.kind === "mcp_add" ||
+          a.kind === "email" ||
+          a.kind === "face_reply" ||
+          (a.kind === "vault" && !a.card) ||
+          (a.kind === "mcp" && !a.destructive)
+        ? "outside"
+        : "irreversible";
 
 /** What earned trust is counted by: each webhook on its own. Nothing that can't be undone is ever trusted. */
 export const trustKey = (a: Action): string | null =>
@@ -155,18 +182,20 @@ export const trustKey = (a: Action): string | null =>
     ? `webhook:${a.webhook}`
     : a.kind === "mcp"
       ? `mcp:${a.server}:${a.tool}`
-      : a.kind === "node"
-        ? // On a device, trust is earned for exactly this, not for every command the tool could run.
-          `node:${a.node}:${a.tool}:${JSON.stringify(a.input)}`
-        : a.kind === "face_reply"
-          ? `face:${a.face}`
-          : a.kind === "email"
-            ? // Mail is trusted by who it's to and whose name it's in: "mail to Doug as you".
-              `email:${a.as}:${[...a.to, ...(a.cc ?? [])]
-                .map((x) => x.toLowerCase())
-                .sort()
-                .join(",")}`
-            : null;
+      : a.kind === "tool"
+        ? `tool:${a.ext}:${a.tool}`
+        : a.kind === "node"
+          ? // On a device, trust is earned for exactly this, not for every command the tool could run.
+            `node:${a.node}:${a.tool}:${JSON.stringify(a.input)}`
+          : a.kind === "face_reply"
+            ? `face:${a.face}`
+            : a.kind === "email"
+              ? // Mail is trusted by who it's to and whose name it's in: "mail to Doug as you".
+                `email:${a.as}:${[...a.to, ...(a.cc ?? [])]
+                  .map((x) => x.toLowerCase())
+                  .sort()
+                  .join(",")}`
+              : null;
 
 export const needsHold = (actions: Action[]) => actions.some((a) => ASKS[kindOf(a)].hold);
 

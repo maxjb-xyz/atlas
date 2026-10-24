@@ -250,9 +250,19 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
       .filter(
         (a) =>
           (a.state === "scheduled" || a.state === "running") &&
-          !["notify", "follow_up", "approval", "skills", "skill_review", "situation", "rhythm", "errand", "looks", "device"].includes(
-            a.kind,
-          ),
+          ![
+            "notify",
+            "follow_up",
+            "approval",
+            "skills",
+            "skill_review",
+            "situation",
+            "rhythm",
+            "errand",
+            "looks",
+            "index",
+            "device",
+          ].includes(a.kind),
       )
       .map((a): AgendaEntry => {
         const d = a.source.detail ?? {};

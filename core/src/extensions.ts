@@ -28,7 +28,8 @@ import { seams } from "./agent/seams";
 
 export type { Manifest, Provides } from "../../extensions/sdk";
 
-export type ExtSource = "bundled" | "atlas" | "owner";
+/** Who wrote it: it ships with Atlas, Atlas or the owner wrote it (a draft, or a link), or it came from an index (§17). */
+export type ExtSource = "bundled" | "atlas" | "owner" | "index";
 export type ExtState = "on" | "off" | "draft";
 
 export interface Installed {

@@ -36,6 +36,8 @@ import { getSecret, readSettings, setSecret, writeSettings } from "../store/sett
 import { getState, setState } from "../store/state";
 import type { ToolContext } from "../tools/types";
 import type { ExtensionView } from "../protocol";
+import { Icon } from "../services";
+import { EXT_ASKS, heldAs, ToolsShape } from "../tools/extensions";
 
 export interface ExtensionDeps {
   sql: Sql;
@@ -52,17 +54,25 @@ export interface ExtensionDeps {
   origin(): string | null;
 }
 
-/** What a draft's manifest must look like before it's kept. */
-const ManifestShape = z.object({
-  id: z.string().regex(/^[a-z][a-z0-9-]{1,39}$/),
-  name: z.string().min(1).max(60),
-  version: z.string().min(1).max(20),
-  about: z.string().min(1).max(400),
-  provides: z
-    .array(z.enum(["sense", "channel", "mail", "sending", "calendar", "contacts", "location", "maps", "weather", "search"]))
-    .min(1),
-  hosts: z.array(z.string().min(3).max(120)).max(20),
-});
+/** What the manifest of an extension that doesn't ship with Atlas (a draft, a link, an index's) must look like before it's kept. */
+export const ManifestShape = z
+  .object({
+    id: z.string().regex(/^[a-z][a-z0-9-]{1,39}$/),
+    name: z.string().min(1).max(60),
+    version: z.string().min(1).max(20),
+    about: z.string().min(1).max(400),
+    icon: Icon.optional(),
+    provides: z
+      .array(z.enum(["sense", "channel", "mail", "sending", "calendar", "contacts", "location", "maps", "weather", "search", "tools"]))
+      .min(1),
+    hosts: z.array(z.string().min(3).max(120)).max(20),
+    tools: ToolsShape.optional(),
+  })
+  .refine((m) => !m.provides.includes("tools") || (m.tools ?? []).length > 0, "it provides tools, so it needs `tools`")
+  .refine(
+    (m) => (m.tools ?? []).every((t) => `ext_${m.id}_${t.name}`.length <= 64),
+    "a tool's name with its extension's id is over 64 characters",
+  );
 
 export class ExtensionDesk {
   constructor(private readonly d: ExtensionDeps) {}
@@ -82,6 +92,10 @@ export class ExtensionDesk {
         about: m.about,
         provides: m.provides,
         hosts: m.hosts,
+        tools: (m.tools ?? []).map((t) => {
+          const kind = heldAs(t, m.tools ?? []);
+          return { name: t.name, description: t.description, kind, asks: EXT_ASKS[kind].asks };
+        }),
         credit: m.credit ?? null,
         costs: m.costs ?? null,
         source,

@@ -512,13 +512,15 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
       ? !a.message || clean(a.message)
       : a.kind === "mcp"
         ? clean(JSON.stringify(a.arguments))
-        : a.kind === "node"
+        : a.kind === "tool"
           ? clean(JSON.stringify(a.input))
-          : a.kind === "email"
-            ? clean(`${a.subject}\n${a.text}`)
-            : a.kind === "face_reply"
-              ? clean(a.text)
-              : true,
+          : a.kind === "node"
+            ? clean(JSON.stringify(a.input))
+            : a.kind === "email"
+              ? clean(`${a.subject}\n${a.text}`)
+              : a.kind === "face_reply"
+                ? clean(a.text)
+                : true,
   );
   const hold = needsHold(actions);
   return {
@@ -584,6 +586,30 @@ function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
         ? "Its server says this can't be undone."
         : "It reaches one of your connected services, and only that service can undo it.",
       message: JSON.stringify(a.arguments, null, 2).slice(0, 4_000),
+    };
+  }
+  if (a.kind === "tool") {
+    return {
+      kind: "tool",
+      title: a.name,
+      detail:
+        a.acts === "money"
+          ? `${a.what} Amount: ${
+              a.amount && a.input[a.amount.field] != null
+                ? `${String(a.input[a.amount.field])}${a.amount.currency && a.input[a.amount.currency] != null ? ` ${String(a.input[a.amount.currency])}` : ""}`
+                : "as its input below says"
+            }.`
+          : a.what,
+      where: a.where,
+      undo:
+        a.acts === "irreversible"
+          ? "Its extension says this can't be undone."
+          : a.acts === "money"
+            ? "It moves money, which only the service can take back."
+            : a.acts === "change_own"
+              ? "Undo on its receipt takes it back."
+              : "It reaches other people through one of your services, and only that service can undo it.",
+      message: JSON.stringify(a.input, null, 2).slice(0, 4_000),
     };
   }
   if (a.kind === "mcp_add") {

@@ -5,6 +5,7 @@ import { type Extension, get, json, tidy } from "../sdk";
 const ext: Extension = {
   manifest: {
     id: "tavily",
+    icon_invert: true,
     name: "Tavily",
     version: "1.0.0",
     about: "Web search with Tavily: 1,000 free searches a month, no card needed.",

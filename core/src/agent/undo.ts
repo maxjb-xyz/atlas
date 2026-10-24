@@ -5,7 +5,7 @@
 import { getSkill, restoreSkill, setSkillState } from "../skills";
 import { finish, getItem } from "../store/agenda";
 import type { Sql } from "../store/db";
-import { append, get as getRow, type LogRow, type Receipt } from "../store/log";
+import { append, get as getRow, type LogRow, type Receipt, type Undo } from "../store/log";
 import { SettingsPatch, writeSettings } from "../store/settings";
 import { forgetRecord, getRecord, restoreRecord, revertRecord } from "../store/records";
 import type { ToolContext } from "../tools/types";
@@ -18,6 +18,8 @@ export async function undoReceipt(
   logId: string,
   clock: ToolContext["clock"],
   calendar: ToolContext["calendar"] = null,
+  /** Runs an extension's undo tool through the outbox, marking its receipt as the undo of `logId` when it works. */
+  tool: ((u: Extract<Undo, { kind: "tool.undo" }>, logId: string) => Promise<{ ok: boolean; text: string }>) | null = null,
 ): Promise<UndoOutcome> {
   const receiptRow = getRow(sql, logId);
   const undo = (receiptRow?.body.receipt as Receipt | undefined)?.undo;
@@ -92,6 +94,13 @@ export async function undoReceipt(
       });
       return { ok: true, row, agenda: false };
     }
+    case "tool.undo": {
+      if (!tool) return { ok: false, message: `${undo.name} can't be undone from here.` };
+      const out = await tool(undo, logId);
+      if (!out.ok) return { ok: false, message: `Couldn't undo ${undo.name}: ${out.text}` };
+      const row = undoneBy(sql, logId);
+      return row ? { ok: true, row, agenda: false } : { ok: false, message: `Couldn't undo ${undo.name}: ${out.text}` };
+    }
     case "speaking.restore": {
       const before = SettingsPatch.shape.speaking.safeParse(undo.before);
       if (!before.success || !before.data) return { ok: false, message: "That change to Speaking up can't be undone from here." };
@@ -123,7 +132,7 @@ export async function undoReceipt(
 function undoneBy(sql: Sql, logId: string): LogRow | null {
   const r = sql
     .exec<{ id: string }>(
-      `SELECT id FROM log WHERE kind IN ('agenda.change', 'record.change', 'page.change', 'settings.change', 'calendar.change') AND json_extract(body, '$.undo_of') = ? LIMIT 1`,
+      `SELECT id FROM log WHERE kind IN ('agenda.change', 'record.change', 'page.change', 'settings.change', 'calendar.change', 'delivery') AND json_extract(body, '$.undo_of') = ? LIMIT 1`,
       logId,
     )
     .toArray()[0];

@@ -95,6 +95,16 @@ export interface ToolContext {
   extensions?: { draft(code: string): Promise<{ id: string; name: string; hosts: string[] }> } | null;
   /** Speaking up changed (`speaking_up`): the moments are put on the clock again. */
   speaking?: () => Promise<void>;
+  /**
+   * Runs an extension's tool (§17) through the outbox, for a look or a change Undo takes back; anything that
+   * asks goes through `exit`. Absent where extensions' tools can't be used.
+   */
+  extTool?:
+    | ((
+        c: { ext: string; tool: string; name: string; input: Record<string, unknown>; undo?: string },
+        o: { run_id: string },
+      ) => Promise<{ ok: boolean; text: string; link?: string; undo?: import("../store/log").Undo }>)
+    | null;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
   clock: {
     schedule(item: AgendaItem): Promise<void>;
@@ -279,6 +289,8 @@ export interface Tool {
   description: string;
   kind: ToolKind;
   input: z.ZodType;
+  /** Its input as brains see it, when it's given as a JSON Schema rather than made from `input` (an extension's tool, §17). */
+  schema?: Record<string, unknown>;
   /** Said or shown while it runs, when Atlas hasn't said anything yet ("Checking your calendar"). */
   status?: string;
   timeoutMs?: number;
@@ -303,6 +315,8 @@ export function defineTool<S extends z.ZodType>(t: {
  * left out; the tool still checks its input in full.
  */
 export function toSpec(tool: Tool): ToolSpec {
+  if (tool.schema)
+    return { name: tool.name, description: tool.description, parameters: withoutPropertyNames(tool.schema) as Record<string, unknown> };
   const schema = z.toJSONSchema(tool.input, { target: "draft-7", io: "input" }) as Record<string, unknown>;
   delete schema.$schema;
   return { name: tool.name, description: tool.description, parameters: withoutPropertyNames(schema) as Record<string, unknown> };

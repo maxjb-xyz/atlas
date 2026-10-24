@@ -10,9 +10,9 @@
 
 import { type PushSubscriptionJSON, sendPush, vapidKeys } from "./push";
 import { type Action } from "./approvals";
-import type { Sql } from "./store/db";
+import type { Json, Sql } from "./store/db";
 import { getItem } from "./store/agenda";
-import { append, get as getRow, type LogRow, type Surface } from "./store/log";
+import { append, get as getRow, type LogRow, type Surface, type Undo } from "./store/log";
 import { readSettings, secretValues } from "./store/settings";
 import { getState, setState } from "./store/state";
 import { deleteRecord, findRecords } from "./store/records";
@@ -289,6 +289,15 @@ export interface Channels {
     run_id: string | null;
     by: string;
   }): Promise<boolean>;
+  /** Runs an extension's tool in its sandbox (§17), and gives back what it said, in the service's words when it fails. */
+  extTool?(c: { ext: string; tool: string; input: Record<string, unknown> }): Promise<ExtToolOut>;
+}
+
+/** What an extension's tool gave back: its words, a link to what it made, and the input that takes it back. */
+export interface ExtToolOut {
+  text: string;
+  link?: string;
+  undo?: Json;
 }
 
 export class Outbox {
@@ -555,7 +564,7 @@ export class Outbox {
   async perform(
     a: Action,
     o: { run_id: string | null; by: "approved" | "trusted" | "owner" | "automation" },
-  ): Promise<{ ok: boolean; text: string }> {
+  ): Promise<{ ok: boolean; text: string; undo?: Undo }> {
     if (a.kind === "browser") return this.#submit(a, o);
     if (a.kind === "mcp") {
       const out = await this.mcp({ server: a.server, tool: a.tool, args: a.arguments, run_id: o.run_id, by: o.by });
@@ -565,6 +574,14 @@ export class Outbox {
       };
     }
     if (a.kind === "mcp_add") return this.#connect(a, o);
+    if (a.kind === "tool") {
+      const out = await this.extTool({ ext: a.ext, tool: a.tool, name: a.name, input: a.input, undo: a.undo }, o);
+      return {
+        ok: out.ok,
+        text: out.ok ? `${a.name} answered: ${clip(out.text, 4_000)}` : `${a.name} didn't work: ${clip(out.text, 1_000)}`,
+        ...(out.undo ? { undo: out.undo } : {}),
+      };
+    }
     if (a.kind === "email") return this.#mail(a, o);
     if (a.kind === "pull_request") {
       if (!this.channels.pullRequest) return { ok: false, text: "Pull requests can't be opened from here." };
@@ -696,6 +713,51 @@ export class Outbox {
     } catch (err) {
       return fail(`${s.name} (${hostOf(s.url)}) didn't answer: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  /**
+   * Runs an extension's tool (§17): a look at once, or what its kind, the
+   * owner's OK or earned trust allowed. Its input passes the secrets check
+   * first. A delivery receipt keeps the extension, the tool, how it went and,
+   * on failure, the service's own words. When the tool names an `undo` and
+   * the call gave its input back, the Undo comes back too. `undo_of` marks
+   * this call as the undo of a receipt, once it works.
+   */
+  async extTool(
+    c: { ext: string; tool: string; name: string; input: Record<string, unknown>; undo?: string },
+    o: { run_id: string | null; by: string; undo_of?: string },
+  ): Promise<{ ok: boolean; text: string; link?: string; undo?: Undo }> {
+    const base = { channel: "extension", to: c.ext, text: c.tool, by: o.by };
+    const fail = (error: string, extra: Record<string, unknown> = {}) => {
+      this.receipt(o.run_id, { ...base, ok: false, error, ...extra });
+      console.error(JSON.stringify({ at: "ext.tool", ext: c.ext, tool: c.tool, error }));
+      return { ok: false, text: error };
+    };
+    if (!this.channels.extTool) return fail("Extensions' tools can't be used from here.");
+    const input = JSON.stringify(c.input);
+    if (scrub(input, this.secrets()) !== input)
+      return fail(`Not sent: what it would send to ${c.ext} held one of your secrets.`, { checks: { secrets: "failed" } });
+    let out: ExtToolOut;
+    try {
+      out = await this.channels.extTool({ ext: c.ext, tool: c.tool, input: c.input });
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+    const text = typeof out?.text === "string" ? out.text : JSON.stringify(out ?? null);
+    const link = typeof out?.link === "string" && /^https:\/\//.test(out.link) ? out.link : undefined;
+    this.receipt(o.run_id, {
+      ...base,
+      ok: true,
+      answer: clip(text, 300),
+      ...(link ? { link } : {}),
+      ...(o.undo_of ? { undo_of: o.undo_of } : {}),
+      checks: { secrets: "passed" },
+    });
+    const undo: Undo | undefined =
+      c.undo && out?.undo !== undefined && out.undo !== null
+        ? { kind: "tool.undo", ext: c.ext, tool: c.undo, name: c.name, input: out.undo as Json }
+        : undefined;
+    return { ok: true, text: clip(text, 16_000), ...(link ? { link } : {}), ...(undo ? { undo } : {}) };
   }
 
   /**
