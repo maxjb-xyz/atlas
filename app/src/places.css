@@ -1568,7 +1568,8 @@ button.card2:hover {
   display: grid;
   grid-template-columns: minmax(180px, 250px) 40px minmax(0, 1fr);
   align-items: center;
-  padding: 10px 0;
+  /* Clear of the joint's square, so it never touches the words. */
+  padding: 10px 0 10px 14px;
 }
 .tree-row + .tree-row {
   border-top: 1px solid var(--sep);

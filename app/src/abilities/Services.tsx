@@ -1155,6 +1155,38 @@ export function AtlasEmail({ atlas, view }: { atlas: Atlas; view: SettingsView }
   );
 }
 
+/** Which service sends Atlas's own mail: switching needs its address set up, and keeps the domain and its token. */
+export function SenderUse({ atlas, view, id }: { atlas: Atlas; view: SettingsView; id: string }) {
+  const m = view.mail;
+  const on = m.sending === id;
+  const note = atlas.state.tests.mail;
+  if (!m.address || !m.domain)
+    return (
+      <div className="line">
+        <span className="grow small">It sends once Atlas has an address of its own: set that up under "Mail to it" above.</span>
+      </div>
+    );
+  return (
+    <>
+      {on && m.sending_note && <p className="err small line">{m.sending_note}</p>}
+      <div className="line">
+        <span className="grow">Atlas sends its mail with it</span>
+        {on && m.sending_ok && (
+          <button className="btn s" onClick={() => atlas.send({ type: "atlas.mail.test" })}>
+            Send a test
+          </button>
+        )}
+        <Toggle
+          on={on}
+          label="Send Atlas's mail with it"
+          onChange={(v) => v && atlas.send({ type: "atlas.mail.setup", domain: m.domain!, sending: id })}
+        />
+      </div>
+      {note && <p className={`small line ${note.ok ? "ok" : "err"}`}>{note.message}</p>}
+    </>
+  );
+}
+
 /** Your own webhooks: ones Atlas calls (it asks first), and sources that post to Atlas, each with its own address. */
 export function Webhooks({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
   const blank = { id: undefined as string | undefined, name: "", url: "", method: "POST" as "POST" | "GET", about: "" };

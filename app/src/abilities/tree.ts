@@ -20,6 +20,7 @@ export type Panel =
   | { kind: "chat"; ext: string }
   | { kind: "location" }
   | { kind: "email" }
+  | { kind: "sender"; id: string }
   | { kind: "search"; id: string }
   | { kind: "webhooks" }
   | { kind: "note"; text: string; to?: [Place, string]; label?: string };
@@ -532,17 +533,50 @@ export function cards(atlas: Atlas, dev: boolean): Card[] {
       open: ["people", "faces", "Faces"],
       jobs: [
         {
-          id: "email",
+          id: "receive",
           icon: "mail",
-          name: "Its own email address",
-          about: "Mail to Atlas comes in, and it writes as itself.",
+          name: "Mail to it",
+          about: "An address of its own, on your domain, that people can write to.",
+          hands: email
+            ? [
+                {
+                  ...fromService(email, { kind: "email" }),
+                  name: dev ? "Cloudflare Email Routing" : "Cloudflare",
+                  by: view.mail.address ?? "no address yet",
+                  state: (view.mail.address ? "on" : "off") as Look,
+                  added: true,
+                },
+              ]
+            : [],
+          empty: "Only the owner can set up Atlas's address.",
+        },
+        {
+          id: "send",
+          icon: "send",
+          name: "Mail from it",
+          about: "What it writes, sent as itself, from its own address.",
           hands: order([
             ...(email
-              ? [{ ...fromService(email, { kind: "email" }), name: dev ? "Email Routing" : "Atlas's address", by: email.said }]
+              ? [
+                  {
+                    ...fromService(email, { kind: "sender", id: "cloudflare" }),
+                    key: "send:cloudflare",
+                    name: dev ? "Cloudflare Email Service" : "Cloudflare",
+                    added: true,
+                  },
+                ]
               : []),
-            ...gives("sending").map((x) => fromService(x)),
-          ]),
-          empty: "No address yet.",
+            ...gives("sending").map((x) => fromService(x, { kind: "sender", id: x.ext!.id })),
+          ]).map((h) => {
+            const id = h.panel?.kind === "sender" ? h.panel.id : "";
+            if (!h.added) return h;
+            if (!view.mail.address) return { ...h, by: "needs Atlas's address first", state: "off" as Look };
+            if (view.mail.sending !== id) return { ...h, by: "not in use", state: "off" as Look };
+            return view.mail.sending_ok
+              ? { ...h, by: `sends as ${view.mail.address}`, state: "on" as Look }
+              : { ...h, by: "can't send yet", state: "needs" as Look };
+          }),
+          empty: "",
         },
         {
           id: "number",

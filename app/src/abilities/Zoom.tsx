@@ -6,10 +6,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Atlas } from "../connection";
 import { Icon, logoFor, LogoMark, type Place, StateDot } from "../ui";
-import { AtlasEmail, Calendars, ChatLink, Location, Phone, SearchUse, SvcLogo, Webhooks } from "./Services";
+import { AtlasEmail, Calendars, ChatLink, Location, Phone, SearchUse, SenderUse, SvcLogo, Webhooks } from "./Services";
 import type { Card, Hand } from "./tree";
 
-/** Where a card was on the map when it was opened, so the zoomed view grows out of it. */
+/** Where a card was on the map when it was opened, so the zoomed view grows out of it and shrinks back into it. */
 let from: DOMRect | null = null;
 export const zoomFrom = (r: DOMRect) => {
   from = r;
@@ -19,6 +19,10 @@ const takeZoomFrom = () => {
   from = null;
   return r;
 };
+
+/** The transform that puts a box where `to` is onto where `card` was. */
+const onto = (card: DOMRect, to: DOMRect) =>
+  `translate(${card.left - to.left}px, ${card.top - to.top}px) scale(${card.width / to.width}, ${Math.min(1, card.height / to.height)})`;
 
 const still = () => document.documentElement.dataset.motion === "reduced" || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -37,31 +41,47 @@ export function Zoomed({
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [sel, setSel] = useState<string | null>(null);
+  const card0 = useRef<DOMRect | null>(null);
+  const leaving = useRef(false);
   // Grows out of the card it was opened from.
   useLayoutEffect(() => {
     const start = takeZoomFrom();
+    card0.current = start;
     const el = box.current;
     if (!start || !el || still()) return;
     const to = el.getBoundingClientRect();
     if (!to.width || !to.height) return;
     el.animate(
       [
-        {
-          transformOrigin: "top left",
-          transform: `translate(${start.left - to.left}px, ${start.top - to.top}px) scale(${start.width / to.width}, ${Math.min(1, start.height / to.height)})`,
-          opacity: 0.35,
-        },
+        { transformOrigin: "top left", transform: onto(start, to), opacity: 0.35 },
         { transformOrigin: "top left", transform: "none", opacity: 1 },
       ],
       { duration: 320, easing: "cubic-bezier(.2,.7,.2,1)" },
     );
   }, [card.id]);
+  // Back shrinks into the card it came from (or, opened some other way, just settles away), then the map returns.
+  const leave = () => {
+    const el = box.current;
+    if (leaving.current) return;
+    if (!el || still()) return back();
+    leaving.current = true;
+    const to = el.getBoundingClientRect();
+    const card = card0.current;
+    const end = card && to.width && to.height ? onto(card, to) : "scale(0.97)";
+    el.animate(
+      [
+        { transformOrigin: "top left", transform: "none", opacity: 1 },
+        { transformOrigin: card ? "top left" : "top center", transform: end, opacity: card ? 0.3 : 0 },
+      ],
+      { duration: 240, easing: "cubic-bezier(.4,0,.6,1)", fill: "forwards" },
+    ).finished.then(back, back);
+  };
   // Esc goes back to the whole map, unless a service is open; then it closes that first.
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || (e.target as HTMLElement | null)?.closest("input, textarea")) return;
       if (sel) setSel(null);
-      else back();
+      else leave();
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
@@ -69,7 +89,7 @@ export function Zoomed({
 
   return (
     <div className="sheet-in zoom" ref={box}>
-      <button className="back" onClick={back}>
+      <button className="back" onClick={leave}>
         <Icon name="back" size={14} /> Everything Atlas can do
       </button>
       <div className="zoom-title">
@@ -176,6 +196,7 @@ function HandPanel({ atlas, h, go }: { atlas: Atlas; h: Hand; go: (p: Place, d?:
           {p.kind === "chat" && <ChatLink atlas={atlas} view={view} ext={p.ext} />}
           {p.kind === "location" && <Location atlas={atlas} view={view} />}
           {p.kind === "email" && <AtlasEmail atlas={atlas} view={view} />}
+          {p.kind === "sender" && <SenderUse atlas={atlas} view={view} id={p.id} />}
           {p.kind === "search" && <SearchUse atlas={atlas} view={view} id={p.id} />}
           {p.kind === "webhooks" && <Webhooks atlas={atlas} view={view} />}
           {p.kind === "note" && (
