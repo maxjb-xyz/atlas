@@ -384,13 +384,18 @@ Underneath, each is Atlas, writing to one log.
 Skills use the SKILL.md format, so skills from Claude Code, Codex, Hermes and OpenClaw work unchanged.
 
 - **Learned from outcomes.** After a task that succeeded and that you accepted, Atlas drafts a skill, including what went wrong along the way.
+- **Reviewed after each conversation** (decided 2026-10-24, for M7). Saving a skill mid-turn depends on Atlas remembering to, so it isn't the main way Atlas learns, as it isn't in Hermes. When a conversation goes quiet, a review runs: one of Atlas's own runs, on the clock, with only the skill tools. It reads the conversation and patches the skills that were used, or saves a new one, when there's something worth keeping: a correction ("stop doing X"), a method that took working out, or a skill that turned out wrong. "Nothing to save" is a fine outcome. It's the one kind of Atlas's own run that may write skills, and it writes only skills: facts about the owner still never come from Atlas's own work (§5.4).
 - **Found again.** Every skill's one-line summary sits in the index Atlas always sees, tagged by area, with its use counted. Old Atlas wrote 14 skills of its own and reused none, because nothing ever surfaced them.
-- **Patched, not rewritten,** with history and undo.
+- **One skill per method.** A new skill that reads like one Atlas already has is refused with that skill's name, so Atlas patches it instead. Near-duplicates are Hermes's main known weakness.
+- **Patched, not rewritten:** a change replaces the passage that was wrong, with history and undo.
+- **Folders, as the standard has them.** A skill is its SKILL.md plus its folder (references, scripts, templates, assets), kept in R2. Scripts run in the workspace.
 - **Tested.** A skill can include a quick check that runs in the sandbox. A weekly pass re-runs the checks and flags broken skills.
-- **Tidied.** Duplicates are merged, and unused skills are archived, never deleted.
+- **Tidied.** The nightly tidy-up merges duplicates, and unused skills are archived, never deleted.
+- **Measured.** How often a skill Atlas saved is opened again is the number that shows the learning works, and each milestone reports it.
 - **Visible.**
   - "I learned how you file reimbursements" appears in the console.
-  - The Skills page (under Atlas in the app) lists every skill with its history, its runs and what it can touch.
+  - Abilities → Skills (§21.2) lists every skill with its history, its runs and what it can touch.
+- **Installed like the rest:** from the catalog (§17), from a link, or pasted.
 
 ---
 
