@@ -905,8 +905,9 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
 - **At the exits** (rule 2): the outbox checks, the secrets scrubber, the public-query check, sharing rules, approvals and the vault.
 - **Untrusted content** (emails, web pages, messages from other people, web results that tools return) is marked as untrusted wherever it appears. It can inform Atlas, never instruct it.
   - Atlas reads a page or a search's results itself; long or many reads go to helpers (§8.1), so only what matters comes back.
-  - Once a run has read the web, itself or through its helpers, anything that leaves Atlas in that run asks first, even what Atlas usually does without asking. The safety is at the exit (rule 2), not in the reading. The one exception is a vault login on a site the owner already said yes to (§15): the entry only fills on its own sites, so a page can't steer it anywhere else. (Decided 2026-10-22: a quarantined helper for every page would add a model call to each read, which voice can't afford.)
+  - Once a run has read the web, itself or through its helpers, anything that leaves Atlas in that run asks first, even what Atlas usually does without asking. The owner can relax this for people and places they already trust (§12.3). The safety is at the exit (rule 2), not in the reading. The one exception is a vault login on a site the owner already said yes to (§15): the entry only fills on its own sites, so a page can't steer it anywhere else. (Decided 2026-10-22: a quarantined helper for every page would add a model call to each read, which voice can't afford.)
 - **Members are kept apart** by agent (§19.2).
+- **What Cloudflare can see** (decided 2026-10-24, for M7). Atlas runs on Cloudflare's machines and reads your data to act while you're away, and Workers AI is Cloudflare's too, so no setup hides your data from the host that runs it. Cloudflare encrypts storage at rest. On top of that, Atlas encrypts the vault and every key and token itself, with a key kept as a Worker secret, so a leaked copy of storage, a backup or an export doesn't carry them. The launch docs say plainly what Cloudflare and each model provider can see. Later: vault entries sealed by your passkey, which open only while you're there.
 - **One audit log:** the log itself, with every action and delivery.
 - **Devices** are paired and can be revoked. Sign-in uses passkeys.
 - **Data:** export everything in open formats, delete everything, or restore to any point in the last 30 days (a Durable Objects feature).
@@ -1187,6 +1188,8 @@ Atlas gets a written character, not a list of rules: who Atlas is, how it talks,
 
 - **Atlas grows through skills and extensions.** All of them are versioned, tested, undoable and listed.
 - **It doesn't edit its own core.** Core updates arrive as releases, with one-click update and rollback on the Updates page (under Atlas).
+- **How an update works** (decided 2026-10-24, for M7). Each release is built once into a bundle (the Worker and the app) attached to its GitHub release. Atlas looks for a new release once a day; the Updates page shows what's in it and updates with one click, uploading the bundle as a new version of the owner's Worker with the Cloudflare token from setup (§22). Roll back puts the previous version back. Nothing else needs setting up, and the owner never touches GitHub or a terminal. Updating on its own is a setting, off by default.
+- **The data only grows.** A release's changes to storage only add (tables, columns), so rolling back the code never breaks the data, and the data itself is never rolled back.
 - **Coding jobs on any repo,** including Atlas's own, are ordinary helper jobs (§8.2).
 
 Old Atlas's self-modifying deploy pipeline was about 7.5k lines and never deployed one of its own changes.
