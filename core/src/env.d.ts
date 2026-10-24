@@ -1,4 +1,4 @@
-// Bindings, as configured in wrangler.jsonc. Secrets are set with
+// Bindings, as configured in the repo root's wrangler.jsonc. Secrets are set with
 // `wrangler secret put`; ATLAS_TEST is only set by the test runner.
 interface Env {
   AI: Ai;

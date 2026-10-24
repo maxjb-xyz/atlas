@@ -8,12 +8,12 @@
     "bench"
   ],
   "scripts": {
-    "build": "npm run build -w app",
+    "build": "npm run extensions && npm run build -w app",
     "typecheck": "npm run typecheck -ws --if-present && tsc -p extensions --noEmit",
     "test": "npm test -w core",
     "check": "npm run extensions && npm run typecheck && npm test && npm run build",
-    "dev": "npm run extensions && npm run build && npm run dev -w core",
-    "deploy": "npm run extensions && npm run build && npm run deploy -w core",
+    "dev": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
     "bench": "npm run bench -w bench --",
     "format": "prettier --write \"core/src/**/*.ts\" \"core/test/**/*.ts\" \"app/src/**/*.{ts,tsx,css}\" \"bench/*.ts\" \"extensions/**/*.ts\"",
     "eval:character": "npm run eval:character -w bench --",
@@ -24,5 +24,15 @@
   },
   "devDependencies": {
     "esbuild": "^0.28.2"
+  },
+  "cloudflare": {
+    "bindings": {
+      "ATLAS_OWNER_SECRET": {
+        "description": "Your setup code: any 16 or more characters you'll remember for a few minutes. You type it once in the app to make your passkey, and again only if you ever lose every passkey."
+      },
+      "ATLAS_DATA_KEY": {
+        "description": "Atlas's own key for locking your keys, sign-ins and vault: 32 or more random characters. Keep a copy somewhere safe; if it's ever changed, put the old one back and everything opens again."
+      }
+    }
   }
 }

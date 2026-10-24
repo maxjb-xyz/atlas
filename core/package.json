@@ -3,11 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "wrangler dev -c ../wrangler.jsonc",
+    "deploy": "wrangler deploy -c ../wrangler.jsonc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "types": "wrangler types src/worker-configuration.d.ts"
+    "types": "wrangler types -c ../wrangler.jsonc src/worker-configuration.d.ts"
   },
   "dependencies": {
     "@cloudflare/codemode": "0.5.5",

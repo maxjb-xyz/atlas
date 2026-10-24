@@ -1,0 +1,4 @@
+# The secrets the Deploy to Cloudflare button asks for (descriptions in package.json, cloudflare.bindings).
+# For local development, copy this to .dev.vars (it's ignored by git) and fill both in.
+ATLAS_OWNER_SECRET=
+ATLAS_DATA_KEY=
