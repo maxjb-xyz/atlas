@@ -327,7 +327,7 @@ a{color:inherit}
                               <div style="position: absolute; right: 7px; bottom: 6px; width: 18px; height: 7px; border-radius: 2px; background: {{t.tx}};"></div>
                             </div>
                           </div>
-                          <div style="display: flex; align-items: baseline; gap: 6px;"><span style="font-weight: 500;">{{t.n}}</span><span class="aside" style="flex: 1;">{{t.s}}</span><sc-if value="{{t.on}}" hint-placeholder-val="{{false}}"><span style="color: var(--F); font-size: 12px;">✓</span></sc-if></div>
+                          <div style="display: flex; flex-direction: column; gap: 1px;"><span style="display: flex; align-items: center; gap: 6px; font-weight: 500; white-space: nowrap;">{{t.n}}<sc-if value="{{t.on}}" hint-placeholder-val="{{false}}"><span style="color: var(--F); font-size: 12px;">✓</span></sc-if></span><span class="aside">{{t.s}}</span></div>
                         </div>
                       </sc-for>
                     </div>
@@ -369,8 +369,8 @@ a{color:inherit}
             <!-- ============ BRAINS ============ -->
             <sc-if value="{{isBrains}}" hint-placeholder-val="{{false}}">
               <div class="rise" style="display: flex; flex-direction: column;">
-                <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 12px 0 10px;"><span class="h2">Roles</span><span class="aside">A fallback covers one turn, and Atlas tells you.</span></div>
-                <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 11px 0 9px;"><span class="h2">Roles</span><span class="aside">A fallback covers one turn, and Atlas tells you.</span></div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
                   <sc-for list="{{roles}}" as="r" hint-placeholder-count="2">
                     <div style="display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px; align-items: center;">
                       <div style="display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 600;">{{r.n}}</span><span class="aside">{{r.sub}}</span></div>
@@ -381,18 +381,17 @@ a{color:inherit}
                           </sc-if>
                           <div style="flex: 1 1 0; min-width: 0; position: relative;">
                             <sc-if value="{{b.real}}" hint-placeholder-val="{{true}}">
-                              <div class="slot" onClick="{{b.pick}}" style="height: 48px; box-sizing: border-box; border: 1px solid {{b.bd}}; border-radius: 8px; background: var(--win); padding: 0 12px; display: flex; align-items: center; gap: 10px;">
-                                <span class="mono" style="font-size: 10.5px; color: var(--tx3);">{{b.i}}</span>
+                              <div class="slot" onClick="{{b.pick}}" style="height: 44px; box-sizing: border-box; border: 1px solid {{b.bd}}; border-radius: 8px; background: var(--win); padding: 0 10px 0 12px; display: flex; align-items: center; gap: 10px;">
                                 <div style="display: flex; flex-direction: column; min-width: 0; flex: 1;"><span style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{b.model}}</span><span class="aside">{{b.prov}}</span></div>
                                 <span class="{{b.stc}}">{{b.state}}</span>
                                 <svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M6 9l6 6 6-6"></path></svg>
                               </div>
                             </sc-if>
                             <sc-if value="{{b.ghost}}" hint-placeholder-val="{{false}}">
-                              <div style="height: 48px; box-sizing: border-box; border: 1px dashed var(--sep2); border-radius: 8px; padding: 0 12px; display: flex; align-items: center; gap: 8px; color: var(--tx3); font-size: 12.5px;"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Add a fallback</div>
+                              <div style="height: 44px; box-sizing: border-box; border: 1px dashed var(--sep2); border-radius: 8px; padding: 0 12px; display: flex; align-items: center; gap: 8px; color: var(--tx3); font-size: 12.5px;"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Add a fallback</div>
                             </sc-if>
                             <sc-if value="{{b.open}}" hint-placeholder-val="{{false}}">
-                              <div class="rise" role="dialog" aria-label="Choose a model" style="position: absolute; left: -1px; top: 56px; width: 440px; background: var(--win); border: 1px solid var(--sep2); border-radius: 10px; box-shadow: var(--sh); z-index: 30; overflow: hidden;">
+                              <div class="rise" role="dialog" aria-label="Choose a model" style="position: absolute; left: -1px; top: 52px; width: 460px; background: var(--win); border: 1px solid var(--sep2); border-radius: 10px; box-shadow: var(--sh); z-index: 30; overflow: hidden;">
                                 <div style="display: flex; align-items: center; gap: 10px; padding: 12px 14px 10px;">
                                   <span style="font-weight: 600;">Main, if ChatGPT is unavailable</span><span style="flex: 1;"></span><span class="kbd">esc</span>
                                 </div>
@@ -418,11 +417,11 @@ a{color:inherit}
                   </sc-for>
                 </div>
 
-                <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 12px 0 10px; margin-top: 16px;"><span class="h2">Named brains</span><span class="aside">Atlas sees only these names and lines when it hands work to a helper.</span><span style="flex: 1;"></span><button type="button" class="tbtn">New brain</button></div>
+                <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 11px 0 9px; margin-top: 14px;"><span class="h2">Named brains</span><span class="aside">Atlas sees only these names and lines when it hands work to a helper.</span><span style="flex: 1;"></span><button type="button" class="tbtn">New brain</button></div>
                 <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;">
                   <sc-for list="{{named}}" as="nb" hint-placeholder-count="3">
-                    <div class="card" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;">
-                      <div style="display: flex; flex-direction: column; gap: 2px;"><span class="disp" style="font-size: 16px; font-weight: 600;">{{nb.n}}</span><span style="font-size: 12.5px; color: var(--tx2);">{{nb.line}}</span></div>
+                    <div class="card" style="padding: 11px 14px 12px; display: flex; flex-direction: column; gap: 10px;">
+                      <div style="display: flex; flex-direction: column; gap: 2px;"><div style="display: flex; align-items: baseline; gap: 8px;"><span class="disp" style="font-size: 16px; font-weight: 600;">{{nb.n}}</span><span style="flex: 1;"></span><span class="mono" style="font-size: 10.5px; color: var(--tx3);">{{nb.stat}}</span></div><span style="font-size: 12.5px; color: var(--tx2);">{{nb.line}}</span></div>
                       <div style="display: flex; align-items: stretch;">
                         <sc-for list="{{nb.slots}}" as="b" hint-placeholder-count="2">
                           <sc-if value="{{b.join}}" hint-placeholder-val="{{false}}"><div aria-hidden="true" style="flex: 0 0 16px; position: relative;"><div style="position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed var(--dash);"></div></div></sc-if>
@@ -430,21 +429,20 @@ a{color:inherit}
                           <sc-if value="{{b.ghost}}" hint-placeholder-val="{{false}}"><div style="flex: 1 1 0; min-width: 0; border: 1px dashed var(--sep2); border-radius: 6px; padding: 5px 9px; display: flex; align-items: center; font-size: 12px; color: var(--tx3);">Add a fallback</div></sc-if>
                         </sc-for>
                       </div>
-                      <span class="mono" style="font-size: 10.5px; color: var(--tx3);">{{nb.stat}}</span>
                     </div>
                   </sc-for>
                 </div>
-                <div class="cardb" style="margin-top: 12px; padding: 10px 14px; display: grid; grid-template-columns: 112px repeat(5, minmax(0, 1fr)); gap: 12px; align-items: center;">
+                <div class="cardb" style="margin-top: 10px; padding: 8px 14px; display: grid; grid-template-columns: 112px repeat(5, minmax(0, 1fr)); gap: 12px; align-items: center;">
                   <span style="font-weight: 500;">Used for</span>
                   <sc-for list="{{usedFor}}" as="u" hint-placeholder-count="5">
-                    <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;"><span class="aside">{{u.k}}</span><button type="button" class="chip">{{u.v}}<svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M6 9l6 6 6-6"></path></svg></button></div>
+                    <div style="display: flex; flex-direction: column; gap: 3px; align-items: flex-start;"><span class="aside">{{u.k}}</span><button type="button" class="chip">{{u.v}}<svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M6 9l6 6 6-6"></path></svg></button></div>
                   </sc-for>
                 </div>
 
-                <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 12px 0 10px; margin-top: 16px;"><span class="h2">Providers</span><span class="aside">Checked every minute. A failing one is skipped within seconds.</span><span style="flex: 1;"></span><span class="mono" style="font-size: 11px; color: var(--tx3);">$18.40 this month + plan</span></div>
+                <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 11px 0 9px; margin-top: 14px;"><span class="h2">Providers</span><span class="aside">Checked every minute. A failing one is skipped within seconds.</span><span style="flex: 1;"></span><span class="mono" style="font-size: 11px; color: var(--tx3);">$18.40 this month + plan</span></div>
                 <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;">
                   <sc-for list="{{provs}}" as="p" hint-placeholder-count="3">
-                    <div class="card" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
+                    <div class="card" style="padding: 11px 14px; display: flex; flex-direction: column; gap: 7px;">
                       <div style="display: flex; align-items: center; gap: 10px;"><span style="font-weight: 600;">{{p.n}}</span><span class="ok">{{p.state}}</span><span style="flex: 1;"></span><button type="button" class="tbtn">Manage</button></div>
                       <div style="display: flex; align-items: baseline; gap: 8px;"><span style="font-size: 12.5px; color: var(--tx2);">{{p.k}}</span><span style="flex: 1;"></span><span class="mono" style="font-size: 11.5px;">{{p.v}}</span></div>
                       <div class="mtr"><sc-for list="{{p.cells}}" as="c" hint-placeholder-count="24"><i class="{{c.k}}"></i></sc-for></div>
@@ -474,33 +472,32 @@ a{color:inherit}
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 10px;">
                   <sc-for list="{{urg}}" as="u" hint-placeholder-count="3">
-                    <div style="display: grid; grid-template-columns: 170px minmax(0, 1fr) auto; gap: 16px; align-items: center;">
-                      <div style="display: flex; flex-direction: column; gap: 1px;"><span class="disp" style="font-size: 15px; font-weight: 600;">{{u.n}}</span><span class="aside">{{u.sub}}</span></div>
+                    <div style="display: grid; grid-template-columns: 156px minmax(0, 1fr); gap: 16px; align-items: center;">
+                      <div style="display: flex; flex-direction: column; gap: 1px;"><div style="display: flex; align-items: baseline; gap: 8px;"><span class="disp" style="font-size: 15px; font-weight: 600;">{{u.n}}</span><span class="mono" style="font-size: 10px; color: var(--tx3);">{{u.stat}}</span></div><span class="aside">{{u.sub}}</span></div>
                       <div style="display: flex; align-items: stretch;">
                         <sc-for list="{{u.steps}}" as="c" hint-placeholder-count="3">
                           <sc-if value="{{c.join}}" hint-placeholder-val="{{false}}">
                             <div aria-hidden="true" style="flex: 0 0 {{c.jw}}px; position: relative;"><div style="position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed var(--dash);"></div><span class="node" style="left: 50%; top: 50%;"></span><span class="mono" style="position: absolute; left: 0; right: 0; bottom: calc(50% + 6px); text-align: center; font-size: 9.5px; letter-spacing: .06em; color: var(--tx3); white-space: nowrap;">{{c.jl}}</span></div>
                           </sc-if>
-                          <div class="slot" style="flex: 0 0 186px; height: 46px; box-sizing: border-box; border: 1px solid var(--sep2); border-radius: 8px; background: var(--win); padding: 0 12px; display: flex; align-items: center; gap: 10px;">
+                          <div class="slot" style="flex: 0 0 160px; height: 46px; box-sizing: border-box; border: 1px solid var(--sep2); border-radius: 8px; background: var(--win); padding: 0 12px; display: flex; align-items: center; gap: 10px;">
                             <svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx2);"><path d="{{c.d}}"></path></svg>
                             <div style="display: flex; flex-direction: column; min-width: 0;"><span style="font-weight: 500;">{{c.n}}</span><span class="aside" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{c.s}}</span></div>
                           </div>
                         </sc-for>
-                        <div aria-hidden="true" style="flex: 0 0 14px;"></div>
+                        <div aria-hidden="true" style="flex: 0 0 10px;"></div>
                         <button type="button" aria-label="Add a channel" class="it" style="flex: 0 0 34px; height: 46px; border: 1px dashed var(--sep2); border-radius: 8px; background: transparent; color: var(--tx3); display: inline-flex; align-items: center; justify-content: center; padding: 0;"><svg class="ic" width="13" height="13" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg></button>
                       </div>
-                      <span class="mono" style="font-size: 11px; color: var(--tx3); text-align: right;">{{u.stat}}</span>
                     </div>
                   </sc-for>
                 </div>
-                <div class="aside" style="padding: 10px 0 0 186px;">Reading it on one device clears it everywhere.</div>
+                <div class="aside" style="padding: 10px 0 0 172px;">Reading it on one device clears it everywhere.</div>
 
                 <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 18px;">
                   <div class="card" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 9px;">
                     <div style="display: flex; align-items: center; gap: 10px;"><span style="font-weight: 600;">Quiet hours</span><span style="flex: 1;"></span><button type="button" class="{{quietCls}}" onClick="{{toggleQuiet}}" aria-label="Quiet hours"></button></div>
-                    <div style="display: flex; align-items: baseline; gap: 8px;"><span style="font-size: 12.5px;">10 pm to 7 am</span><span class="aside">Only Now gets through.</span></div>
+                    <div style="display: flex; flex-direction: column; gap: 1px;"><span style="font-size: 12.5px;">10 pm to 7 am</span><span class="aside">Only Now gets through. Starts in 7 hours.</span></div>
                     <div class="mtr" style="position: relative;"><sc-for list="{{dayCells}}" as="c" hint-placeholder-count="24"><i class="{{c.k}}"></i></sc-for></div>
-                    <div class="mono" style="display: flex; font-size: 10px; color: var(--tx3);"><span style="flex: 1;">12 AM</span><span style="flex: 1; text-align: center;">NOW 2:41 PM</span><span style="flex: 1; text-align: right;">12 AM</span></div>
+                    <div class="mono" style="display: flex; font-size: 10px; color: var(--tx3);"><span style="flex: 1;">12 AM</span><span style="flex: 1; text-align: center;">NOON</span><span style="flex: 1; text-align: right;">12 AM</span></div>
                   </div>
                   <div class="card" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 9px;">
                     <div style="display: flex; align-items: center; gap: 10px;"><span style="font-weight: 600;">Focus</span><span style="flex: 1;"></span><button type="button" class="{{focusCls}}" onClick="{{toggleFocus}}" aria-label="Focus"></button></div>
@@ -513,7 +510,7 @@ a{color:inherit}
                       <div style="display: inline-flex; align-items: center; border: 1px solid var(--sep2); border-radius: 6px; height: 22px;"><button type="button" aria-label="Fewer" style="width: 22px; height: 20px; border: 0; background: transparent; color: var(--tx2); padding: 0;">−</button><span class="mono" style="font-size: 11px; padding: 0 4px;">10/day</span><button type="button" aria-label="More" style="width: 22px; height: 20px; border: 0; background: transparent; color: var(--tx2); padding: 0;">+</button></div></div>
                     <div style="display: flex; align-items: baseline; gap: 8px;"><span class="disp num" style="font-size: 20px; font-weight: 600;">4</span><span style="font-size: 12.5px; color: var(--tx2);">of 10 used today</span></div>
                     <div class="mtr"><sc-for list="{{budget}}" as="c" hint-placeholder-count="10"><i class="{{c.k}}" style="height: 8px;"></i></sc-for></div>
-                    <span class="aside">What Atlas raises on its own counts. Resets at 7 am.</span>
+                    <span class="aside">Atlas’s own pings count. Resets at 7 am.</span>
                   </div>
                 </div>
               </div>
@@ -526,7 +523,7 @@ a{color:inherit}
                   <div style="display: flex; flex-direction: column;">
                     <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 12px 0 4px;"><span class="h2">Kinds of action</span></div>
                     <sc-for list="{{kinds}}" as="k" hint-placeholder-count="5">
-                      <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--sep);">
+                      <div style="display: flex; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--sep);">
                         <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">{{k.n}}</span><span class="aside">{{k.s}}</span></div>
                         <sc-if value="{{k.lock}}" hint-placeholder-val="{{false}}"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4"></path></svg></sc-if>
                         <div class="{{k.segCls}}"><sc-for list="{{k.opts}}" as="o" hint-placeholder-count="3"><button type="button" class="{{o.cls}}" onClick="{{o.pick}}">{{o.l}}</button></sc-for></div>
@@ -537,7 +534,7 @@ a{color:inherit}
                   <div style="display: flex; flex-direction: column;">
                     <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 12px 0 4px;"><span class="h2">Atlas doesn’t ask for</span><span style="flex: 1;"></span><span class="aside">Trust you gave it</span></div>
                     <sc-for list="{{trusted}}" as="t" hint-placeholder-count="4">
-                      <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--sep);">
+                      <div style="display: flex; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--sep);">
                         <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">{{t.n}}</span><span class="aside">{{t.s}}</span></div>
                         <button type="button" class="btn s">Ask again</button>
                       </div>
@@ -545,10 +542,10 @@ a{color:inherit}
                   </div>
                 </div>
 
-                <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 12px 0 4px; margin-top: 18px;"><span class="h2">Your own rules</span><span class="aside">Each starts as Atlas behaves out of the box, on the left.</span></div>
+                <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 12px 0 4px; margin-top: 14px;"><span class="h2">Your own rules</span><span class="aside">Each starts as Atlas behaves out of the box, on the left.</span></div>
                 <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 28px;">
                   <sc-for list="{{rules}}" as="r" hint-placeholder-count="10">
-                    <div style="display: flex; align-items: center; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--sep);">
+                    <div style="display: flex; align-items: center; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--sep);">
                       <span style="flex: 1; min-width: 0; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{r.n}}</span>
                       <div class="seg sm"><sc-for list="{{r.opts}}" as="o" hint-placeholder-count="2"><button type="button" class="{{o.cls}}" onClick="{{o.pick}}">{{o.l}}</button></sc-for></div>
                     </div>
@@ -572,10 +569,10 @@ a{color:inherit}
                 </div>
 
                 <div class="card" style="padding: 13px 16px; display: flex; flex-direction: column; gap: 10px;">
-                  <div style="display: flex; align-items: center; gap: 10px;"><span class="h2">Vault</span><span class="aside">Built in, encrypted. Atlas never sees the values.</span><span style="flex: 1;"></span><button type="button" class="btn s">Open the vault</button></div>
+                  <div style="display: flex; align-items: center; gap: 10px;"><span class="h2">Vault</span><span class="aside">Built in and encrypted.</span><span style="flex: 1;"></span><button type="button" class="btn s">Open the vault</button></div>
                   <div style="display: flex; align-items: baseline; gap: 10px; padding-top: 2px;"><span class="disp num" style="font-size: 26px; font-weight: 600;">14</span><span style="color: var(--tx2);">entries</span></div>
                   <div style="display: flex; gap: 6px; flex-wrap: wrap;"><sc-for list="{{vault}}" as="v" hint-placeholder-count="4"><span style="height: 22px; padding: 0 8px; border: 1px solid var(--sep2); border-radius: 4px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--tx2);"><span class="mono" style="color: var(--tx);">{{v.c}}</span>{{v.n}}</span></sc-for></div>
-                  <span class="aside">Last used 2 hours ago: the Chase login, on chase.com.</span>
+                  <span class="aside">Atlas never sees the values. Last used 2 hours ago, on chase.com.</span>
                 </div>
 
                 <div class="card" style="padding: 13px 16px; display: flex; flex-direction: column; gap: 10px;">
@@ -587,7 +584,7 @@ a{color:inherit}
                     </div>
                     <div style="display: flex; align-items: center; gap: 10px; padding-top: 4px;">
                       <button type="button" class="btnp s">Update</button>
-                      <span class="aside">About a minute. Afterwards, Roll back puts 0.7.0 back.</span>
+                      <span class="aside">Takes a minute. You can roll back to 0.7.0.</span>
                     </div>
                   </div>
                   <div style="display: flex; align-items: center; gap: 10px; padding-top: 2px;"><button type="button" class="{{autoCls}}" onClick="{{toggleAuto}}" aria-label="Update on its own"></button><span style="font-size: 12.5px;">Update on its own</span><span class="aside">Overnight, when you’re not talking.</span></div>
@@ -596,7 +593,7 @@ a{color:inherit}
                 <div class="card" style="padding: 13px 16px; display: flex; flex-direction: column;">
                   <div style="display: flex; align-items: center; gap: 10px; padding-bottom: 8px;"><span class="h2">Your data</span><span class="aside">It only grows, and it’s yours.</span></div>
                   <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--sep);">
-                    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Export everything</span><span class="aside">The log, records, files, skills and settings, in open formats.</span></div>
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Export everything</span><span class="aside">The log, records, files, skills and settings.</span></div>
                     <button type="button" class="btn s">Export</button>
                   </div>
                   <div style="display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--sep);">
@@ -605,7 +602,7 @@ a{color:inherit}
                     <div class="mono" style="display: flex; font-size: 10px; color: var(--tx3);"><span style="flex: 1;">SEP 24</span><span>TODAY</span></div>
                   </div>
                   <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0 2px; border-top: 1px solid var(--sep);">
-                    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Delete everything</span><span class="aside">Your Atlas, its memory and every backup. This can’t be undone.</span></div>
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Delete everything</span><span class="aside">Everything, and every backup. No undo.</span></div>
                     <button type="button" class="btn s hold"><span class="fill"></span><span>Hold to delete</span></button>
                   </div>
                 </div>
@@ -719,30 +716,30 @@ class Component extends DCLogic {
     var picker = !!st.picker;
     function slot(i, model, prov, state, open) {
       var on = state === 'In use';
-      return { real: true, join: i > 1, i: '0' + i, model: model, prov: prov, state: state, stc: on ? 'ok' : 'idle', open: !!open, bd: open ? 'var(--tx2)' : (on ? 'var(--tx3)' : 'var(--sep2)'),
+      return { real: true, join: i > 1, model: model, prov: prov, state: on ? state : '', stc: on ? 'ok' : 'idle', open: !!open, bd: open ? 'var(--tx2)' : (on ? 'var(--tx3)' : 'var(--sep2)'),
         pick: function () { if (open !== undefined) set('picker', !picker); } };
     }
     var roles = [
-      { n: 'Main', sub: 'Chats, jobs, decisions', slots: [slot(1, 'gpt-5.6-terra', 'ChatGPT', 'In use'), slot(2, 'Claude Sonnet 5.5', 'Anthropic', 'Ready', picker), slot(3, 'Kimi K2.6', 'Workers AI', 'Ready')] },
+      { n: 'Main', sub: 'Chats and jobs', slots: [slot(1, 'gpt-5.6-terra', 'ChatGPT', 'In use'), slot(2, 'Claude Sonnet 5.5', 'Anthropic', 'Ready', picker), slot(3, 'Kimi K2.6', 'Workers AI', 'Ready')] },
       { n: 'Voice', sub: 'Thinks while it talks', slots: [slot(1, 'Kimi K2.6', 'Workers AI', 'In use'), slot(2, 'gpt-5.6-terra', 'ChatGPT', 'Ready'), { ghost: true, join: true }] }
     ];
     function mini(i, model, prov) { return { real: true, join: i > 1, model: model, prov: prov }; }
     var named = [
-      { n: 'Quick', line: 'Fast and cheap, for routine work.', slots: [mini(1, 'Kimi K2.6', 'Workers AI'), mini(2, 'gpt-5.6-terra', 'ChatGPT')], stat: '1,906 RUNS THIS WEEK · $0.00' },
-      { n: 'Deep', line: 'Careful thinking, for hard problems.', slots: [mini(1, 'gpt-5.6-terra', 'ChatGPT'), mini(2, 'Claude Sonnet 5.5', 'Anthropic')], stat: '48 RUNS THIS WEEK · IN PLAN' },
-      { n: 'Long reading', line: 'Whole documents, contracts and threads.', slots: [mini(1, 'Claude Sonnet 5.5', 'Anthropic'), { ghost: true, join: true }], stat: '6 RUNS THIS WEEK · $4.10' }
+      { n: 'Quick', line: 'Fast and cheap, for routine work.', slots: [mini(1, 'Kimi K2.6', 'Workers AI'), mini(2, 'gpt-5.6-terra', 'ChatGPT')], stat: '1,906 THIS WEEK' },
+      { n: 'Deep', line: 'Careful thinking, for hard problems.', slots: [mini(1, 'gpt-5.6-terra', 'ChatGPT'), mini(2, 'Sonnet 5.5', 'Anthropic')], stat: '48 THIS WEEK' },
+      { n: 'Long reading', line: 'Whole documents and long threads.', slots: [mini(1, 'Sonnet 5.5', 'Anthropic'), { ghost: true, join: true }], stat: '6 THIS WEEK' }
     ];
     var usedFor = [['Helpers', 'Quick'], ['Research', 'Deep'], ['A job’s work', 'Quick'], ['A job’s looks', 'Deep'], ['Skill review', 'Quick']].map(function (u) { return { k: u[0], v: u[1] }; });
     function meter(n, pct) { var f = Math.round(n * pct / 100); return cells(n, function (k) { return k < f ? 'f' : ''; }); }
     var provs = [
-      { n: 'ChatGPT', state: 'Signed in, Plus', k: 'Plan window', v: '62% used', cells: meter(24, 62), foot: 'Resets 4:10 pm. Then Main moves to Anthropic.' },
-      { n: 'Anthropic', state: 'API key', k: 'This month', v: '$18.40 of $100', cells: meter(24, 18.4), foot: 'The cap is yours. At $100 it stops and asks.' },
-      { n: 'Workers AI', state: 'Connected', k: 'Free allowance today', v: '41% used', cells: meter(24, 41), foot: 'Your Cloudflare account. Resets 8 pm.' }
+      { n: 'ChatGPT', state: 'Signed in, Plus', k: 'Plan window', v: '62% used', cells: meter(24, 62), foot: 'Resets 4:10 pm. Until then, all in your plan.' },
+      { n: 'Anthropic', state: 'API key', k: 'This month', v: '$18.40 of $100', cells: meter(24, 18.4), foot: 'At the cap, it stops and asks you.' },
+      { n: 'Workers AI', state: 'Connected', k: 'Free allowance today', v: '41% used', cells: meter(24, 41), foot: 'Resets 8 pm. Then a few cents a day.' }
     ];
     var pv = st.pickProvider || 'Anthropic';
     var pickProv = ['ChatGPT', 'Anthropic', 'Workers AI'].map(function (p) { return { l: p, cls: p === pv ? 'on' : '', pick: function () { set('pickProvider', p); } }; });
     var CAT = {
-      Anthropic: [['Claude Opus 5.5', 'Most capable. Slower, and costs more.', 2, '~55 tok/s', '$5 · $25'], ['Claude Sonnet 5.5', 'Strong and quick. The usual pick.', 3, '~80 tok/s', '$3 · $15'], ['Claude Sonnet 5', 'The one before, a little cheaper to cache.', 3, '~78 tok/s', '$3 · $15'], ['Claude Haiku 4.5', 'Fastest and cheapest. Simpler work.', 5, '~160 tok/s', '$1 · $5']],
+      Anthropic: [['Claude Opus 5.5', 'Most capable, slower, costs more.', 2, '~55 tok/s', '$5 · $25'], ['Claude Sonnet 5.5', 'Strong and quick. The usual pick.', 3, '~80 tok/s', '$3 · $15'], ['Claude Haiku 5.5', 'Fastest and cheapest.', 5, '~160 tok/s', '$1 · $5']],
       ChatGPT: [['gpt-5.6-terra', 'The plan’s best model.', 3, '~90 tok/s', 'In plan'], ['gpt-5.6-terra-mini', 'Lighter, uses less of the window.', 4, '~140 tok/s', 'In plan'], ['gpt-5.5', 'The one before.', 3, '~85 tok/s', 'In plan']],
       'Workers AI': [['Kimi K2.6', 'The best open model here.', 4, '~120 tok/s', 'Free · then $0.60'], ['gpt-oss-120b', 'Open, good at tools.', 4, '~130 tok/s', 'Free · then $0.35'], ['Llama 4 Scout', 'Small and very fast.', 5, '~210 tok/s', 'Free · then $0.27']]
     };
@@ -762,12 +759,12 @@ class Component extends DCLogic {
     var BRIEF = 'M12 3v2M5.6 5.6l1.4 1.4M3 12h2M19 12h2M17 7l1.4-1.4M7 16a5 5 0 0 1 10 0M3 20h18';
     var accepted = !!st.accepted;
     function ch(d, n, s, jl, jw) { return { d: d, n: n, s: s, join: !!jl, jl: jl || '', jw: jw || 0 }; }
-    var nowSteps = accepted ? [ch(TGM, 'Telegram', '@maxbarbare'), ch(PH, 'Push', 'Max’s iPhone', 'THEN', 56), ch(CALL, 'Phone call', 'Max’s iPhone', '10 MIN UNSEEN', 104)]
-                            : [ch(PH, 'Push', 'Max’s iPhone'), ch(TGM, 'Telegram', '@maxbarbare', 'THEN', 56), ch(CALL, 'Phone call', 'Max’s iPhone', '10 MIN UNSEEN', 104)];
+    var nowSteps = accepted ? [ch(TGM, 'Telegram', '@maxbarbare'), ch(PH, 'Push', 'Max’s iPhone', 'THEN', 48), ch(CALL, 'Phone call', 'Max’s iPhone', '10 MIN UNSEEN', 100)]
+                            : [ch(PH, 'Push', 'Max’s iPhone'), ch(TGM, 'Telegram', '@maxbarbare', 'THEN', 48), ch(CALL, 'Phone call', 'Max’s iPhone', '10 MIN UNSEEN', 100)];
     var urg = [
-      { n: 'Now', sub: 'Interrupts, even in quiet hours', steps: nowSteps, stat: '2 THIS WEEK' },
+      { n: 'Now', sub: 'Right away, even at night', steps: nowSteps, stat: '2 THIS WEEK' },
       { n: 'Soon', sub: 'At your next free moment', steps: [ch(TGM, 'Telegram', '@maxbarbare')], stat: '7 TODAY' },
-      { n: 'Later', sub: 'Waits for a better time', steps: [ch(BRIEF, 'The next brief', 'Tomorrow, 8:00 am'), ch('M3 5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM3 15h18', 'Or the app', 'When you next open it', 'OR', 56)], stat: '11 WAITING' }
+      { n: 'Later', sub: 'Waits for a better time', steps: [ch(BRIEF, 'The next brief', 'Tomorrow, 8:00 am'), ch('M3 5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM3 15h18', 'Or the app', 'When you next open it', 'OR', 48)], stat: '11 WAITING' }
     ];
     var order = [['1', 'Where you’re talking now'], ['2', 'Where it started'], ['3', 'Your list for its urgency']].map(function (o, k) {
       return { i: o[0], n: o[1], join: k > 0, c: 'var(--tx2)', bd: 'var(--sep2)' };
@@ -780,7 +777,7 @@ class Component extends DCLogic {
     var KO = ['Always ask', 'Until trusted', 'Don’t ask'];
     var K = [
       ['k_look', 'Looking', 'Your data, the web', 'Don’t ask', false],
-      ['k_own', 'Changing your own things', 'Calendar, notes, reminders. Always with undo.', 'Don’t ask', false],
+      ['k_own', 'Changing your own things', 'Calendar, notes, with undo', 'Don’t ask', false],
       ['k_speak', 'Speaking to others', 'Messages, email, posts', 'Until trusted', false],
       ['k_undo', 'Things that can’t be undone', 'Always asks, with hold to confirm', 'Always ask', true],
       ['k_money', 'Money', 'Always asks, showing the amount', 'Always ask', true]

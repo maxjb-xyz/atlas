@@ -1,6 +1,6 @@
 # Atlas UI v1
 
-Locked on Oct 21, 2026. These screens are the reference for the app shell and the first views. [VISION.md §21](../../VISION.md#21-ui) summarizes the decisions; this page has the details and the screenshots.
+Locked on Oct 21, 2026. These screens are the reference for the app shell and the first views. M7 changes some of them (§8): those mockups wait for the owner's OK, and once approved they replace what they change here. [VISION.md §21](../../VISION.md#21-ui) summarizes the decisions; this page has the details and the screenshots.
 
 - **Live canvas:** the "Atlas UI" design canvas, on its Stage page (private to the owner). It is the place to keep iterating: https://claude.ai/artifact/CHgse2xx2xUsf7CgyECBjz
 - **Source:** [`source/`](source/) has the eight screens as `.dc.html` files and [`source/builder/`](source/builder/) has the scripts that generate them.
@@ -242,8 +242,7 @@ Hermes-style profiles split memory and settings, and you switch between them. At
 - **Setup:** the first ten minutes (VISION §22).
 - **The ⌘K palette**, the area scope menu and the Pinned "+" flow.
 - **Detail pages:** a person, a place, an area, a collection, Memory (journal and portrait), Files.
-- **Faces:** each face's screen and its "talk to it as a stranger" test.
-- **The other settings sections:** Look & themes, Connections, Devices, Vault, Members, Permissions, Notifications.
+- **The vault's own screen**, and setting up a service step by step (M7, stage 3).
 - **Pages and files Atlas makes** ([VISION §21.7](../../VISION.md#217-pages-and-files-things-atlas-makes)): a page screen, and how Library lists pages and files. The design itself still needs refinement.
 - **Empty, loading, error and offline states.**
 - **Themes beyond Dark and Light:** Terminal, Midnight, High contrast.
@@ -252,3 +251,34 @@ Hermes-style profiles split memory and settings, and you switch between them. At
 
 - **Editing.** Change a screen in the design canvas, or edit the builders in `source/builder/` and regenerate. [`source/builder/README.md`](source/builder/README.md) explains how.
 - **The builders.** `shell.py` holds the shared shell (sidebar, toolbar, stage frame, composer, theme tokens), so a change there reaches every page when you re-run them.
+
+## 8. M7: the new places and settings (proposed 2026-10-24)
+
+Waiting for the owner's OK (smoke test step 1 in [docs/M7.md](../M7.md)). The decisions are in [VISION §21.2](../../VISION.md#212-eight-places). The built app's settings read as pre-alpha (browser controls, raw model ids, a paragraph under every control, one thing in three places), so these screens redo them against two bars: simplicity and Jarvis.
+
+![The M7 screens](screenshots/m7/00-overview.png)
+
+**What changes from UI v1**
+- **Eight places.** People and Abilities join the sidebar after Library. Library keeps everything Atlas knows except people, which have their own place.
+- **Abilities** opens on a live map: Atlas in the middle, with eight groups wired to it (brains, senses, channels, hands, services, skills, devices, and the exits it checks on the way out), each item with its state and cost. Clicking a group opens its tab.
+- **Services are cards,** one per service, whatever is underneath. A card opens in place: what Atlas hears from it, what it can do there (with when it asks), one key, what it can reach, what it costs, what happened lately and the rules that use it.
+- **Skills** show their area, how often they're used, who made them and their check. Reuse is counted at the top.
+- **People:** Contacts (trust, channels, areas, when you last talked), a person opened in place (what Atlas knows with each fact's source, threads, commitments, which faces may talk to them), Members (what stays private), and Faces as cards; a face opened shows its rules as a flow beside its conversations.
+- **Atlas settings has five sections:** Atlas (character, voice, look), Brains (roles as chains, named brains, what each kind of work uses, providers with live limits, a model picker from the provider's catalog), Notifications (where things go, a list per urgency, quiet hours, focus, the budget, and Atlas's suggestions), Permissions (each kind of action, the locked floors, your own rules, and what Atlas no longer asks for), and Account (passkeys, the vault, updates and your data).
+- **The app's own controls:** toggles, segmented choices and pickers. At most one short line under anything, sentence-case labels, and mono only for times, counts and meters.
+
+| | |
+|---|---|
+| ![Map](screenshots/m7/abilities-map.png) | ![Services](screenshots/m7/abilities-services.png) |
+| ![A service](screenshots/m7/abilities-service-open.png) | ![Skills](screenshots/m7/abilities-skills.png) |
+| ![Devices](screenshots/m7/abilities-devices.png) | ![Map, light](screenshots/m7/abilities-map-light.png) |
+| ![Contacts](screenshots/m7/people-contacts.png) | ![A person](screenshots/m7/people-person.png) |
+| ![Members](screenshots/m7/people-members.png) | ![Faces](screenshots/m7/people-faces.png) |
+| ![A face](screenshots/m7/people-face-open.png) | ![Faces, light](screenshots/m7/people-faces-light.png) |
+| ![Atlas](screenshots/m7/settings-atlas.png) | ![Voice](screenshots/m7/settings-atlas-voice.png) |
+| ![Look](screenshots/m7/settings-atlas-look.png) | ![Brains](screenshots/m7/settings-brains.png) |
+| ![Model picker](screenshots/m7/settings-brains-picker.png) | ![Brains, light](screenshots/m7/settings-brains-light.png) |
+| ![Notifications](screenshots/m7/settings-notifications.png) | ![Permissions](screenshots/m7/settings-permissions.png) |
+| ![Account](screenshots/m7/settings-account.png) | ![Library](screenshots/m7/library.png) |
+
+The builders are `p_abilities.py`, `p_people.py` and `p_settings.py` in [`source/builder/`](source/builder/); the screenshots were taken with its stand-in renderer (`preview.cjs`). Model names, prices and the example world's details are illustrative.
