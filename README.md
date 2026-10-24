@@ -63,7 +63,9 @@ Atlas runs on Cloudflare's machines and reads your data so it can act for you wh
 
 ## Updates
 
-From the first release on, Atlas will check for new releases once a day and show them in Settings with what changed, with one click to update and one to go back. That isn't built yet (it's in [docs/M7.md](docs/M7.md), stage 2). A release's changes to storage only add, which `npm run check` enforces, so going back to older code never breaks your data.
+Atlas looks for a new release once a day and shows it in Atlas settings → Account → Updates with what changed, with one click to update and one to go back. The first time, it asks for a Cloudflare API token that can edit your Workers ("Make the token on Cloudflare" opens Cloudflare's page with that filled in). Each update checks every file of the release against its listed SHA-256 before uploading anything, then puts it in as a new version of your Worker with your bindings and secrets as they are. A release's changes to storage only add, which `npm run check` enforces, so going back to older code never breaks your data.
+
+If you deployed with the button, your copy of the repository is connected to Workers Builds, and a push there deploys over what you installed from the app. Disconnect it (Workers & Pages, your Atlas, Settings, Build) if you update from the app; Atlas also says so when a version it didn't install replaces one it did. A release that changes Atlas's Durable Objects can't go in as a version: the Updates page says so and what to run instead.
 
 ## Read more
 

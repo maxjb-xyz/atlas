@@ -140,7 +140,9 @@ export type StateName =
   /** Extensions installed from an index (§17): the service, the index, and the pinned code and hash they came from. */
   | "service_pins"
   /** Updates to extensions from an index that would reach or hold more than before, waiting for the owner's OK (§17). */
-  | "service_updates";
+  | "service_updates"
+  /** Updates (§23.2): the releases from the daily look, this Atlas's Worker, the last update or rollback, and what ran before it. */
+  | "updates";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

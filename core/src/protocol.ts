@@ -363,6 +363,11 @@ export const ClientMessage = z.discriminatedUnion("type", [
     sending: z.string().max(40),
   }),
   z.object({ type: z.literal("atlas.mail.remove") }),
+  /** Updates (§23.2): the token they use (null forgets it), a look at the releases now, Update, and Roll back. */
+  z.object({ type: z.literal("atlas.updates.token"), token: z.string().trim().min(8).max(200).nullable() }),
+  z.object({ type: z.literal("atlas.updates.look") }),
+  z.object({ type: z.literal("atlas.updates.install"), tag: z.string().min(1).max(100) }),
+  z.object({ type: z.literal("atlas.updates.rollback"), force: z.boolean().optional() }),
   /** Faces (§7.2): make or change one, remove it, talk to it as a stranger, or answer what one handed you. */
   z.object({ type: z.literal("atlas.face.save"), face: FaceInput }),
   z.object({ type: z.literal("atlas.face.remove"), id: z.string().max(40) }),
@@ -736,6 +741,55 @@ export interface SettingsView {
   senses: SensesView;
   /** Open tasks (§5.1), for Agenda's To do. */
   tasks: import("./tasks").TaskView[];
+  /** Atlas settings → Account → Updates (§23.2). */
+  updates: UpdatesView;
+}
+
+/** One step of an update or rollback, and how it went, in Cloudflare's or GitHub's words when it didn't. */
+export interface UpdateStep {
+  what: "check" | "bundle" | "assets" | "version" | "deploy" | "confirm";
+  ok: boolean;
+  text: string;
+  at: number;
+}
+
+/** The last update or rollback, step by step. */
+export interface UpdateRun {
+  kind: "update" | "rollback";
+  /** The release's tag, or the version rolled back to. */
+  label: string;
+  from_version: string | null;
+  to_version: string | null;
+  state: "running" | "deploying" | "done" | "failed";
+  started_at: number;
+  ended_at: number | null;
+  steps: UpdateStep[];
+  /** A rollback Cloudflare refused because a secret changed since: Roll back anyway sends `force`. */
+  needs_force?: boolean;
+}
+
+/** The Updates card (§23.2): which Atlas runs, the newest release, and the last update or rollback step by step. */
+export interface UpdatesView {
+  /** The app's build (its tag, or `git describe` of its commit) and Cloudflare's id for the running version. */
+  running: { version: string; commit: string | null; version_id: string | null };
+  /** Whether there's a Cloudflare token for updates, and the Worker it found. */
+  token: boolean;
+  /** Cloudflare's "Create token" page with Workers Scripts · Edit filled in. */
+  token_link: string;
+  script: string | null;
+  looked_at: number | null;
+  /** The last look's failure, in GitHub's words. */
+  look_error: string | null;
+  /** The newest release, and why it can't be installed from here when it can't (a Durable Object change, no release.json). */
+  newest: { tag: string; name: string; notes: string; published_at: number; url: string; problem: string | null } | null;
+  /** The newest release is newer than what runs. */
+  ready: boolean;
+  run: UpdateRun | null;
+  /** The version from before the last update, to go back to. */
+  rollback: { label: string } | null;
+  /** A version Atlas didn't install replaced one it did (Workers Builds after a push), and what to do. */
+  foreign: { at: number; text: string } | null;
+  busy: boolean;
 }
 
 export interface SensesView {
@@ -1042,6 +1096,8 @@ export type ServerMessage =
   | { type: "atlas.ext.signin"; id: string; url?: string; error?: string }
   /** How setting up, taking down or testing Atlas's address went, in the provider's words when it didn't. */
   | { type: "atlas.mail"; ok: boolean; text: string }
+  /** How a token, an update or a rollback went, in Cloudflare's words when it didn't. The steps are on the view. */
+  | { type: "atlas.updates"; ok: boolean; text: string }
   /** A face's answer in a test conversation. */
   | { type: "atlas.face.said"; id: string; conv: string; ok: boolean; text: string }
   | { type: "atlas.channel.code"; ext: string; code: string; expires: number }

@@ -295,6 +295,8 @@ export type SecretName =
   | "mapbox_token"
   /** A Cloudflare API token for the account Atlas's own address is in (§16.2). */
   | "cf_mail_token"
+  /** A Cloudflare API token for this Atlas's own Worker (Workers Scripts · Edit), for updates and rollback (§23.2). */
+  | "cf_update_token"
   /** The key Atlas's mail relay signs each mail with. */
   | "mail_relay"
   /** Each webhook source's key (§10.4), by its id. */
@@ -360,6 +362,7 @@ export function secretValues(sql: Sql): string[] {
     ["owntracks", ["password"]],
     ["mapbox_token", []],
     ["cf_mail_token", []],
+    ["cf_update_token", []],
     ["mail_relay", []],
   ];
   const hooks = getSecret<Array<{ url?: unknown }>>(sql, "webhooks") ?? [];

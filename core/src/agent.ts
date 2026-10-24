@@ -47,6 +47,7 @@ import { seams } from "./agent/seams";
 import { liveTest, settingsView } from "./agent/settings";
 import { undoReceipt } from "./agent/undo";
 import { ServiceDesk } from "./agent/services";
+import { UpdateDesk } from "./agent/updates";
 import { MailDesk } from "./agent/mail";
 import { type ChatVia, ChannelDesk, links } from "./agent/channels";
 import { FaceDesk, type Where } from "./agent/faces";
@@ -401,6 +402,10 @@ const OWNER_ONLY = new Set<string>([
   "atlas.mail.setup",
   "atlas.mail.remove",
   "atlas.mail.test",
+  "atlas.updates.token",
+  "atlas.updates.look",
+  "atlas.updates.install",
+  "atlas.updates.rollback",
   "atlas.face.save",
   "atlas.face.remove",
   "atlas.face.test",
@@ -506,6 +511,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #extensions!: ExtensionDesk;
   /** Services, one catalog (§17): the cards, installing from the index, its daily look. */
   #services!: ServiceDesk;
+  /** Updates (§23.2): the daily look at releases, Update and Roll back through Cloudflare's API. */
+  #updates!: UpdateDesk;
   #mail!: MailDesk;
   #channels!: ChannelDesk;
   #faces!: FaceDesk;
@@ -742,6 +749,20 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       files: () => this.#bucket(),
       clock: this.#clock,
     });
+    this.#updates = new UpdateDesk({
+      sql: this.#sql,
+      // Tests never reach a real service (CLAUDE.md): without a fake fetch, the look on the clock reaches nothing.
+      fetch:
+        () =>
+        (...args) =>
+          (seams.fetch ?? (this.env.ATLAS_TEST ? () => Promise.reject(new Error("Tests don't reach GitHub or Cloudflare.")) : fetch))(
+            ...args,
+          ),
+      clock: this.#clock,
+      running: () => this.#running(),
+      origin: () => getState<string>(this.#sql, "origin"),
+      changed: () => this.#broadcast({ type: "atlas.view", view: this.#view() }),
+    });
     this.#faces = new FaceDesk({
       sql: this.#sql,
       run: (o) => this.#faceRun(o),
@@ -796,6 +817,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     void this.keepAliveWhile(() => this.#services.arm(true)).catch((err: unknown) =>
       console.error(JSON.stringify({ at: "services.arm", error: err instanceof Error ? err.message : String(err) })),
     );
+    // Which Atlas this is, an update a restart cut off settled, and the releases' look on the clock once a day (§23.2).
+    // Only the owner's Atlas updates the Worker; a member's shares it.
+    if (!this.#member)
+      void this.keepAliveWhile(() => this.#updates.start()).catch((err: unknown) =>
+        console.error(JSON.stringify({ at: "updates.start", error: err instanceof Error ? err.message : String(err) })),
+      );
     // The faces' digest stays on the clock while a face has one.
     void this.keepAliveWhile(() => this.#armDigest()).catch(() => {});
     // Items a restart left half way are weighed again.
@@ -1201,6 +1228,24 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
               ? await this.#mail.remove()
               : await this.#mailTest();
         this.#send(connection, { type: "atlas.mail", ...out });
+        this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.updates.token":
+      case "atlas.updates.look":
+      case "atlas.updates.install":
+      case "atlas.updates.rollback": {
+        const out = await this.keepAliveWhile(async () => {
+          if (msg.type === "atlas.updates.token") return this.#updates.token(msg.token);
+          if (msg.type === "atlas.updates.install") return this.#updates.install(msg.tag);
+          if (msg.type === "atlas.updates.rollback") return this.#updates.rollback(msg.force ?? false);
+          await this.#updates.refresh();
+          const v = this.#updates.view();
+          return v.look_error
+            ? { ok: false, text: v.look_error }
+            : { ok: true, text: v.ready && v.newest ? `${v.newest.tag} is ready to install.` : "This is the newest Atlas." };
+        });
+        this.#send(connection, { type: "atlas.updates", ...out });
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       }
@@ -2611,6 +2656,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       this.#servicesChanged();
       return;
     }
+    if (item.kind === "updates") {
+      await this.keepAliveWhile(() => this.#updates.look(item));
+      return;
+    }
     if (item.kind === "loop") {
       await this.keepAliveWhile(() => this.#senses.loopDue(item));
       return;
@@ -4002,6 +4051,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
       router: this.#router,
       extensions: this.#extensions,
       mail: this.#mail,
+      updates: this.#updates,
     });
   }
 
@@ -5385,6 +5435,23 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
     this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
     this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
     return row;
+  }
+
+  /**
+   * Which Atlas this is (§23.2): the app's build says its version and commit (`version.json`, written by the
+   * app's build), and the version metadata binding says which of the Worker's versions Cloudflare runs.
+   */
+  async #running(): Promise<import("./updates").Running> {
+    if (seams.running) return seams.running;
+    const meta = (this.env as { CF_VERSION_METADATA?: { id?: string } }).CF_VERSION_METADATA;
+    let app: { version?: string; commit?: string } = {};
+    try {
+      const res = await (this.env as { ASSETS?: Fetcher }).ASSETS?.fetch("https://atlas.assets/version.json");
+      if (res?.ok) app = (await res.json()) as typeof app;
+    } catch (err) {
+      console.error(JSON.stringify({ at: "updates.version_json", error: err instanceof Error ? err.message : String(err) }));
+    }
+    return { version: app.version ?? "unknown", commit: app.commit ?? null, version_id: meta?.id || null };
   }
 
   /** Where files' bytes live (§21.7). */
