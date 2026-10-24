@@ -1293,17 +1293,18 @@ Now: ${d.now}.`;
       const job = getJob(this.h.sql, jobId);
       if (!job) return;
       const run = job.looks?.[id] ?? null;
+      const decision = job.deciding?.id === id ? job.deciding : null;
+      // A look that decided did its work through the tool; what it said after, or didn't, isn't a failure.
       if (run)
         endRun(
           this.h.sql,
           run,
-          outcome.state === "replied" ? "replied" : "failed",
+          outcome.state === "replied" || decision?.acted ? "replied" : "failed",
           outcome.steps,
-          outcome.error ? { error: outcome.error } : {},
+          outcome.error ? (decision?.acted ? { note: `After deciding: ${outcome.error}` } : { error: outcome.error }) : {},
         );
       if (job.looks) delete job.looks[id];
       this.h.discard(id).catch(() => {});
-      const decision = job.deciding?.id === id ? job.deciding : null;
       if (!decision || decision.acted || job.phase !== "deciding") {
         // It decided (or a newer look took over): nothing more to do here.
         if (decision) job.deciding = null;

@@ -8,7 +8,20 @@ import type { Atlas } from "./connection";
 import { Markdown } from "./Markdown";
 import { openOnStage, type Shown, shownFrom, StageCard } from "./StageViews";
 import { Thread } from "./Thread";
-import { AreaChip, AreaDot, areaColor, AsciiDiamond, Diamond, Icon, type IconName, initials, type Place, shortDay, useDismiss } from "./ui";
+import {
+  AreaChip,
+  AreaDot,
+  areaColor,
+  AsciiDiamond,
+  Diamond,
+  Icon,
+  type IconName,
+  initials,
+  type Place,
+  shortDay,
+  useDismiss,
+  useNow,
+} from "./ui";
 
 /** The eight places, in three groups: what's yours today, what Atlas knows and can do, and what it did. */
 export const PLACES: Array<{ id: Place; label: string; icon: IconName; gap?: boolean }> = [
@@ -502,10 +515,26 @@ export function Console({ atlas, onTranscript, onReceipt }: { atlas: Atlas; onTr
   const asked =
     pending && !pending.run_id ? pending.text : str(s.rows.find((r) => r.kind === "message.in" && r.run_id === runId)?.body.text);
   const { busy } = useTurn(atlas);
+  const nowMs = useNow();
+  const [closed, setClosed] = useState<string | null>(null);
+  // An exchange from more than an hour ago, or one closed, leaves Home's stage clear; the transcript keeps it.
+  const lastAt = [...s.rows].reverse().find((r) => r.kind === "message.out" || r.kind === "message.in")?.at ?? 0;
+  const key = runId ?? String(lastAt);
+  const show = busy || liveRun != null || pending != null || (nowMs - lastAt < 60 * 60_000 && closed !== key);
   return (
     <div className="console">
       {busy && <BusyEdge />}
-      <Exchange atlas={atlas} runId={runId} asked={asked} onTranscript={onTranscript} onReceipt={onReceipt} latest />
+      {show && (
+        <Exchange
+          atlas={atlas}
+          runId={runId}
+          asked={asked}
+          onTranscript={onTranscript}
+          onReceipt={onReceipt}
+          onClose={() => setClosed(key)}
+          latest
+        />
+      )}
       <Composer atlas={atlas} placeholder={`Message ${name}`} reply={false} />
     </div>
   );

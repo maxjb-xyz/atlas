@@ -1585,6 +1585,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         return;
       }
       case "atlas.stage":
+        if (msg.view.kind === "weather" || msg.view.kind === "situation") this.#senses.look();
         this.#send(connection, {
           type: "atlas.stage.page",
           ref: msg.ref,
@@ -4689,7 +4690,9 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
         // A sign-in comes back to the app's own address, where the Worker hands it to this agent.
         const origin = getState<string>(this.#sql, "origin");
         if (!origin) throw new Error("Open Atlas in the app once first, so it knows its own address for a sign-in to come back to.");
-        const same = Object.entries(this.getMcpServers().servers).filter(([, s]) => s.server_url === url || s.server_url === new URL(url).href);
+        const same = Object.entries(this.getMcpServers().servers).filter(
+          ([, s]) => s.server_url === url || s.server_url === new URL(url).href,
+        );
         // Added again without a token: connect the one that's there, with what it was added with, rather than drop it.
         if (!token && same.length) {
           const r = await this.#sdkMcp!.retry(same[0]![0]);

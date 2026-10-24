@@ -37,6 +37,7 @@ import {
   type SituationEvent,
   situationLines,
   TRAVEL_AHEAD_MS,
+  WEATHER_MS,
   withText,
 } from "../situation";
 import { clockLocal, shortLocal, startOfLocalDay, zoneOf } from "../time";
@@ -122,6 +123,8 @@ export interface SenseDeps {
 export class SenseDesk {
   #refreshing: Promise<void> | null = null;
   #again = false;
+  #looking = false;
+  #lookedAt = 0;
 
   constructor(private readonly d: SenseDeps) {}
 
@@ -153,12 +156,14 @@ export class SenseDesk {
         this.#again = false;
         const settings = readSettings(this.d.sql);
         const before = cache(this.d.sql);
+        const looking = this.#looking;
+        this.#looking = false;
         const after = await refreshCache({
           sql: this.d.sql,
           settings,
           calendar: this.d.calendar(),
           maps: this.d.maps(),
-          full: full && this.#needed(settings),
+          full: full && (looking || this.#needed(settings)),
         });
         await this.#armSoon(settings);
         // What changed is news for the senses, like a move: the trip to the next event, the weather.
@@ -174,6 +179,20 @@ export class SenseDesk {
         this.#refreshing = null;
       });
     return this.#refreshing;
+  }
+
+  /**
+   * The owner opened a view of the weather or the situation: when what's
+   * kept is more than an hour old, it's looked at again now, in the
+   * background (the view follows when it changes). At most once in ten
+   * minutes, so a look that can't get the weather doesn't repeat.
+   */
+  look(now = Date.now()): void {
+    const w = cache(this.d.sql).weather;
+    if ((w && now - w.at < WEATHER_MS) || now - this.#lookedAt < 10 * 60_000) return;
+    this.#lookedAt = now;
+    this.#looking = true;
+    this.d.background(() => this.refresh(true));
   }
 
   /** The weather and travel are worth looking at while the owner uses Atlas, or an event with a place is coming. */

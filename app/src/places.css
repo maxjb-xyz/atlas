@@ -809,6 +809,10 @@ button.card2:hover {
   padding: 12px 0;
   flex-wrap: wrap;
 }
+/* The words keep a readable width; on a narrow screen the choice goes under them. */
+.perm > .grow {
+  flex: 1 1 220px;
+}
 .perm-icon {
   width: 36px;
   height: 36px;
@@ -1306,6 +1310,16 @@ button.card2:hover {
   }
 }
 @media (max-width: 760px) {
+  /* On a phone the suggestion's words take the width, and its buttons go under them. */
+  .suggest {
+    flex-wrap: wrap;
+  }
+  .suggest p {
+    flex: 1 1 100%;
+  }
+  .suggest .row {
+    flex-wrap: wrap;
+  }
   .set-shell {
     grid-template-columns: 1fr;
   }

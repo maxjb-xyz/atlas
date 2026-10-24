@@ -2,7 +2,7 @@
 // helpers' Jobs, the views Atlas shows (§21.6), and whatever a receipt opens into.
 
 import { InlineText } from "../Markdown";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { JobView, LogRow } from "../../../core/src/protocol";
 import type { StageView } from "../../../core/src/stage";
 import type { Atlas } from "../connection";
@@ -328,12 +328,14 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
   const tMin = Math.min(...hours.map((h) => h.temp_c), 0);
   const travel = sit?.next?.travel && next && sit.next.title === next.title ? sit.next.travel : null;
   const point = sit?.where.known ? sit.where.point : null;
+  // On a phone the diamond is smaller, so what's next shows without scrolling.
+  const narrow = useMemo(() => window.matchMedia("(max-width: 760px)").matches, []);
 
   return (
     <Sheet>
       <div className="sheet-in now">
         <div className="now-head">
-          <AsciiDiamond height={280} level={atlas.inCall ? atlas.voice.level : 0} state={diamondState(atlas)} />
+          <AsciiDiamond height={narrow ? 140 : 280} level={atlas.inCall ? atlas.voice.level : 0} state={diamondState(atlas)} />
           <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
             <h1 className="disp now-hello">
               {scoped ? `${scoped.name}, this week.` : `${greeting(new Date())}${owner ? `, ${owner}` : ""}.`}
@@ -423,24 +425,43 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
                     <span className="aside">{sky(wx.weather.now.code)[0]!.toUpperCase() + sky(wx.weather.now.code).slice(1)}</span>
                   </span>
                 </span>
-                <span className="small">{wx.matters.length ? wx.matters.join(" ") : (sit?.weather?.line ?? "Nothing unusual.")}</span>
-                <div className="wx-bars" aria-hidden>
-                  {hours.map((h) => (
-                    <span
-                      key={h.t}
-                      className="wx-col"
-                      title={`${new Date(h.t).toLocaleTimeString([], { hour: "numeric" })}: ${temp(h.temp_c, u)}, ${h.pop}% rain`}
-                    >
-                      {h.pop >= 20 && <i className="rain" style={{ height: `${Math.round(h.pop / 5)}px` }} />}
-                      <i className="t" style={{ height: `${6 + ((h.temp_c - tMin) / Math.max(1, tMax - tMin)) * 16}px` }} />
+                <span className="small">
+                  {wx.matters.length ? wx.matters.join(" ") : (sit?.weather?.line ?? "Nothing unusual.")}
+                  {nowMs - wx.weather.at > 90 * 60_000 && (
+                    <span className="aside">
+                      {" "}
+                      As of{" "}
+                      {new Date(wx.weather.at).toLocaleString(
+                        [],
+                        new Date(wx.weather.at).toDateString() === new Date(nowMs).toDateString()
+                          ? { hour: "numeric", minute: "2-digit" }
+                          : { weekday: "long", hour: "numeric", minute: "2-digit" },
+                      )}
+                      .
                     </span>
-                  ))}
-                </div>
-                <span className="row aside" style={{ justifyContent: "space-between" }}>
-                  <span>Now</span>
-                  {hours[8] && <span>{new Date(hours[8].t).toLocaleTimeString([], { hour: "numeric" })}</span>}
-                  {hours[16] && <span>{new Date(hours[16].t).toLocaleTimeString([], { hour: "numeric" })}</span>}
+                  )}
                 </span>
+                {hours.length >= 3 && (
+                  <div className="wx-bars" aria-hidden>
+                    {hours.map((h) => (
+                      <span
+                        key={h.t}
+                        className="wx-col"
+                        title={`${new Date(h.t).toLocaleTimeString([], { hour: "numeric" })}: ${temp(h.temp_c, u)}, ${h.pop}% rain`}
+                      >
+                        {h.pop >= 20 && <i className="rain" style={{ height: `${Math.round(h.pop / 5)}px` }} />}
+                        <i className="t" style={{ height: `${6 + ((h.temp_c - tMin) / Math.max(1, tMax - tMin)) * 16}px` }} />
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {hours.length >= 3 && (
+                  <span className="row aside" style={{ justifyContent: "space-between" }}>
+                    <span>Now</span>
+                    {hours[8] && <span>{new Date(hours[8].t).toLocaleTimeString([], { hour: "numeric" })}</span>}
+                    {hours[16] && <span>{new Date(hours[16].t).toLocaleTimeString([], { hour: "numeric" })}</span>}
+                  </span>
+                )}
               </>
             ) : (
               <span className="muted">{wx?.error ?? sit?.weather?.line ?? "Looking."}</span>
@@ -858,14 +879,21 @@ export function CodingJob({ atlas, jobs, job, onSelect }: { atlas: Atlas; jobs: 
             {c.log.map((e, i) => {
               const l = streamLine(e);
               return (
-                <div key={i} style={{ whiteSpace: "pre-wrap", color: l.tone }} title={e.text}>
+                <div key={i} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", color: l.tone }} title={e.text}>
                   {l.mark} <span style={{ color: "var(--tx3)" }}>{l.who.padEnd(6, " ")}</span> {l.text}
                 </div>
               );
             })}
             {lastTool?.out && running && (
               <div
-                style={{ whiteSpace: "pre-wrap", color: "var(--tx3)", borderTop: "1px dashed var(--dash)", marginTop: 6, paddingTop: 6 }}
+                style={{
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  color: "var(--tx3)",
+                  borderTop: "1px dashed var(--dash)",
+                  marginTop: 6,
+                  paddingTop: 6,
+                }}
               >
                 {lastTool.out.trim().split("\n").slice(-8).join("\n")}
               </div>

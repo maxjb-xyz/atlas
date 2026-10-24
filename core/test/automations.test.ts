@@ -709,5 +709,8 @@ describe("automations", () => {
       );
       for (const h of [80, 60, 0]) ask("weather forecast today", h);
       expect(openSuggestions(sql)).toEqual([]);
+      // Asking about something gone wrong isn't a routine, however often it's asked.
+      for (const h of [90, 70, 0]) expect(ask("Why didn't you tell me about the review request from Doug?", h)).toBe(false);
+      expect(openSuggestions(sql)).toEqual([]);
     }));
 });
