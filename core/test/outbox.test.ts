@@ -1,12 +1,12 @@
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
-import { type Channels, type Note, Outbox, type PushDevice, pushDevices } from "../src/outbox";
+import { askedOn, type Channels, FOLLOW_UP_MS, type Note, Outbox, type PushDevice, pushDevices, route } from "../src/outbox";
 import { b64url, encryptPayload, fromB64url, type PushSubscriptionJSON, vapidAuth, vapidKeys } from "../src/push";
 import { createItem } from "../src/store/agenda";
 import { migrate, type Sql } from "../src/store/db";
 import { append, type LogRow } from "../src/store/log";
-import { readSettings, setSecret, writeSettings } from "../src/store/settings";
+import { readSettings, Settings, setSecret, writeSettings } from "../src/store/settings";
 import { setState } from "../src/store/state";
 import { quietUntil } from "../src/time";
 import { setFocus } from "../src/tools/focus";
@@ -129,7 +129,7 @@ describe("push notifications", () => {
       setState(sql, "push_devices", [device("laptop", laptop.sub, 1_000), device("phone", phone.sub, 2_000)]);
       const net = fakeNet();
       const { box, shown } = outbox(sql, net.f);
-      await box.deliver({ text: "Your job finished.", run_id: null, channel: "app", urgency: "normal" }, { alreadyStreamed: false });
+      await box.deliver({ text: "Your job finished.", run_id: null, channel: "app", urgency: "soon" }, { alreadyStreamed: false });
 
       expect(net.calls.map((c) => c.url)).toEqual([phone.sub.endpoint]);
       const headers = net.calls[0]!.init.headers as Record<string, string>;
@@ -145,7 +145,9 @@ describe("push notifications", () => {
       const net = fakeNet();
       await outbox(sql, net.f, { looking: true }).box.deliver({ text: "a", run_id: null, channel: "app" }, { alreadyStreamed: false });
       await outbox(sql, net.f, { inCall: true }).box.deliver({ text: "b", run_id: null, channel: "app" }, { alreadyStreamed: false });
-      writeSettings(sql, { notifications: { push: false, quiet: readSettings(sql).notifications.quiet, budget: 10, reach: "push" } });
+      writeSettings(sql, {
+        notifications: { push: false, quiet: readSettings(sql).notifications.quiet, budget: 10, lists: { now: ["push"], soon: ["push"] } },
+      });
       await outbox(sql, net.f).box.deliver({ text: "c", run_id: null, channel: "app" }, { alreadyStreamed: false });
       expect(net.calls).toEqual([]);
     }));
@@ -162,12 +164,12 @@ describe("push notifications", () => {
           push: true,
           quiet: { on: true, from: hhmm(Date.now() - 3_600_000), to: hhmm(Date.now() + 3_600_000) },
           budget: 10,
-          reach: "push",
+          lists: { now: ["push"], soon: ["push"] },
         },
       });
       const net = fakeNet();
       const { box, held, shown } = outbox(sql, net.f);
-      await box.deliver({ text: "Your job finished.", run_id: null, channel: "app", urgency: "normal" }, { alreadyStreamed: false });
+      await box.deliver({ text: "Your job finished.", run_id: null, channel: "app", urgency: "soon" }, { alreadyStreamed: false });
       expect(net.calls).toEqual([]);
       expect(held).toHaveLength(1);
       expect(Math.abs(held[0]!.at.getTime() - (Date.now() + 3_600_000))).toBeLessThan(61_000);
@@ -214,7 +216,7 @@ describe("focus and the budget", () => {
       await setFocus(sql, clock, 45, "the quote", "owner");
       const net = fakeNet();
       const { box, held, shown } = outbox(sql, net.f);
-      await box.deliver({ text: "Your job finished.", run_id: null, channel: "app", urgency: "normal" }, { alreadyStreamed: false });
+      await box.deliver({ text: "Your job finished.", run_id: null, channel: "app", urgency: "soon" }, { alreadyStreamed: false });
       await box.deliver({ text: "Call the landlord.", run_id: null, channel: "app", urgency: "now" }, { alreadyStreamed: false });
       expect(net.calls).toHaveLength(1);
       expect(held).toHaveLength(1);
@@ -238,12 +240,12 @@ describe("focus and the budget", () => {
       const net = fakeNet();
       const { box, shown } = outbox(sql, net.f);
       for (const text of ["one", "two", "three"])
-        await box.deliver({ text, run_id: null, channel: "app", urgency: "normal" }, { alreadyStreamed: false });
+        await box.deliver({ text, run_id: null, channel: "app", urgency: "soon" }, { alreadyStreamed: false });
       await box.deliver({ text: "A reminder you set.", run_id: null, channel: "app", urgency: "now" }, { alreadyStreamed: false });
       expect(net.calls).toHaveLength(3);
       expect(receipts(shown).map((r) => r.note ?? r.urgency)).toEqual([
-        "normal",
-        "normal",
+        "soon",
+        "soon",
         "Not sent: today's 2 interruptions are used. It waits in the app.",
         "now",
       ]);
@@ -285,5 +287,131 @@ describe("held notifications on the clock", () => {
     });
     expect(net.calls).toHaveLength(1);
     expect(await phone.decrypt(net.calls[0]!.init.body as Uint8Array)).toMatchObject({ body: "2 messages. The first: First thing." });
+  });
+});
+
+describe("where a message goes (§14)", () => {
+  /** An outbox with a Telegram the owner linked, and a follow-up clock. */
+  function reaching(sql: Sql, f: typeof fetch, o: { linked?: string[] } = {}) {
+    const chats: Array<{ ext: string; text: string }> = [];
+    const follow: Array<{ at: Date; rest: string[] }> = [];
+    const shown: LogRow[] = [];
+    const channels: Channels = {
+      broadcast: (rows) => shown.push(...rows),
+      speak: async () => false,
+      looking: () => false,
+      hold: async () => {},
+      followUp: async (at, _n, rest) => void follow.push({ at, rest }),
+      fetch: f,
+      browser: () => null,
+      mcp: () => null,
+      chat: async (ext, text) => {
+        if (!(o.linked ?? ["telegram"]).includes(ext)) return false;
+        chats.push({ ext, text });
+        return true;
+      },
+    };
+    return { box: new Outbox(sql, channels), chats, follow, shown };
+  }
+  const lists = (now: string[], soon: string[]) => ({ ...Settings.parse({}).notifications, lists: { now, soon } });
+  const ownerSaid = (sql: Sql, o: { channel?: string; at?: number; run?: string } = {}) => {
+    const row = append(sql, {
+      actor: "owner",
+      kind: "message.in",
+      surface: o.channel ? "chat" : "app",
+      ...(o.run ? { run_id: o.run } : {}),
+      body: { text: "hi", ...(o.channel ? { channel: o.channel } : {}) },
+    });
+    if (o.at) sql.exec(`UPDATE log SET at = ? WHERE id = ?`, o.at, row.id);
+  };
+
+  it("keeps where settings saved before the lists reached the owner, with a push behind a chat", () => {
+    expect(Settings.parse({ notifications: { push: true, budget: 10, reach: "telegram" } }).notifications.lists).toEqual({
+      now: ["telegram", "push"],
+      soon: ["telegram", "push"],
+    });
+    expect(Settings.parse({ notifications: { reach: "push" } }).notifications.lists).toEqual({ now: ["push"], soon: ["push"] });
+  });
+
+  it("tries the chat the owner is writing on, then where the matter started, then their list", () =>
+    withSql((sql) => {
+      writeSettings(sql, { notifications: lists(["push"], ["push"]) });
+      expect(route(sql, "soon")).toEqual(["push"]);
+      expect(route(sql, "soon", "discord")).toEqual(["discord", "push"]);
+      ownerSaid(sql, { channel: "telegram" });
+      expect(route(sql, "now", "discord")).toEqual(["telegram", "discord", "push"]);
+      // Said a while ago, or last in the app: not talking there now.
+      ownerSaid(sql, { channel: "telegram", at: Date.now() - 30 * 60_000 });
+      ownerSaid(sql, {});
+      expect(route(sql, "now")).toEqual(["push"]);
+    }));
+
+  it("finds where a job or a promise was asked for, from the run that made it", () =>
+    withSql((sql) => {
+      ownerSaid(sql, { channel: "telegram", run: "run_asked" });
+      const job = createItem(sql, { kind: "job", title: "Find flights", due_at: Date.now() + 60_000, source: { run_id: "run_asked", via: "helpers" } });
+      expect(askedOn(sql, `job:${job.id}`)).toBe("telegram");
+      expect(askedOn(sql, "device:mac")).toBeNull();
+    }));
+
+  it("sends something now to the first place, and puts the next on the clock in case it isn't seen", () =>
+    withSql(async (sql) => {
+      writeSettings(sql, { notifications: lists(["telegram", "push"], ["push"]) });
+      const { box, chats, follow, shown } = reaching(sql, fakeNet().f);
+      await box.deliver({ text: "Your flight moved to 6:40.", run_id: null, channel: "app", urgency: "now" }, { alreadyStreamed: false });
+      expect(chats).toEqual([{ ext: "telegram", text: "Your flight moved to 6:40." }]);
+      expect(follow).toHaveLength(1);
+      expect(follow[0]!.rest).toEqual(["push"]);
+      expect(Math.abs(follow[0]!.at.getTime() - (Date.now() + FOLLOW_UP_MS))).toBeLessThan(5_000);
+      expect(receipts(shown)).toEqual([expect.objectContaining({ channel: "chat", to: "telegram", ok: true, urgency: "now" })]);
+    }));
+
+  it("sends something soon to the first place that takes it, with no follow-up, and keeps something later in the app", () =>
+    withSql(async (sql) => {
+      const phone = await fakeBrowser();
+      setState(sql, "push_devices", [device("phone", phone.sub, 1)]);
+      writeSettings(sql, { notifications: lists(["push"], ["discord", "push"]) });
+      const net = fakeNet();
+      const { box, chats, follow, shown } = reaching(sql, net.f);
+      await box.deliver({ text: "Oat milk on the way home?", run_id: null, channel: "app", urgency: "soon" }, { alreadyStreamed: false });
+      // Discord isn't linked, so the push takes it.
+      expect(chats).toEqual([]);
+      expect(net.calls).toHaveLength(1);
+      expect(follow).toEqual([]);
+      await box.deliver({ text: "A new episode is out.", run_id: null, channel: "app", urgency: "later" }, { alreadyStreamed: false });
+      expect(net.calls).toHaveLength(1);
+      expect(receipts(shown).at(-1)).toMatchObject({
+        channel: "app",
+        urgency: "later",
+        note: "It waits in the app, for when you next open it.",
+      });
+    }));
+
+  it("moves something unseen down the list when its follow-up comes due, and lets it be once the owner has seen it", async () => {
+    const phone = await fakeBrowser();
+    const net = fakeNet();
+    seams.fetch = net.f;
+    const stub = env.PersonAgent.get(env.PersonAgent.idFromName(`follow-${crypto.randomUUID()}`));
+    await runInDurableObject(stub, async (agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      setState(sql, "push_devices", [device("phone", phone.sub, 1)]);
+      const sent = Date.now() - FOLLOW_UP_MS;
+      const follow = (text: string) => {
+        const row = append(sql, { actor: "atlas", kind: "message.out", surface: "app", body: { text } });
+        return createItem(sql, {
+          kind: "follow_up",
+          title: text,
+          due_at: Date.now() - 1000,
+          source: { log_id: row.id, via: "outbox", detail: { rest: ["push"], sent_at: sent } },
+        }).id;
+      };
+      await agent.onAgendaDue({ id: follow("Leave now for the dentist.") });
+      expect(net.calls).toHaveLength(1);
+      setState(sql, "owner_seen_at", Date.now());
+      await agent.onAgendaDue({ id: follow("The gate changed to B12.") });
+      expect(net.calls).toHaveLength(1);
+    });
+    expect(await phone.decrypt(net.calls[0]!.init.body as Uint8Array)).toMatchObject({ body: "Leave now for the dentist." });
   });
 });

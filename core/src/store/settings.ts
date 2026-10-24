@@ -28,6 +28,17 @@ export type NamedBrain = z.infer<typeof NamedBrain>;
 export const WORK_KINDS = ["helpers", "research", "job_work", "job_looks", "skill_review"] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
 
+/** A place Atlas reaches the owner (§14): "push", or the id of a chat channel's extension they've linked. */
+const Reach = z.string().min(1).max(40);
+
+/** Settings saved before the lists (M7) had one place, `reach`: it leads both lists, with a push behind a chat, as before. */
+function fromReach(v: unknown): unknown {
+  if (!v || typeof v !== "object" || "lists" in v || !("reach" in v)) return v;
+  const { reach, ...rest } = v as { reach: unknown };
+  const first = typeof reach === "string" && reach !== "push" ? [reach, "push"] : ["push"];
+  return { ...rest, lists: { now: first, soon: first } };
+}
+
 export const Settings = z.object({
   /** What the assistant is called (§26 open question 3: "Atlas" by default). */
   assistant_name: z.string().min(1).max(40).default("Atlas"),
@@ -122,29 +133,42 @@ export const Settings = z.object({
   web: z.object({ search: z.string().min(1).max(40).default("cloudflare") }).default({ search: "cloudflare" }),
   /** How messages reach the owner when the app isn't in view (§14). */
   notifications: z
-    .object({
-      /** Push notifications to the device used last, when no app is in view. */
-      push: z.boolean().default(true),
-      /** Non-urgent pushes wait until these hours end. Local times, HH:mm. */
-      quiet: z
-        .object({
-          on: z.boolean().default(false),
-          from: z
-            .string()
-            .regex(/^\d{2}:\d{2}$/)
-            .default("22:00"),
-          to: z
-            .string()
-            .regex(/^\d{2}:\d{2}$/)
-            .default("07:00"),
-        })
-        .default({ on: false, from: "22:00", to: "07:00" }),
-      /** The daily interruption budget (§14): pushes a day for things that can wait. 0 means no limit. */
-      budget: z.number().int().min(0).max(100).default(10),
-      /** Where Atlas reaches the owner when the app isn't in view: a push, or a chat channel they've linked (§16.1). */
-      reach: z.string().min(1).max(40).default("push"),
-    })
-    .default({ push: true, quiet: { on: false, from: "22:00", to: "07:00" }, budget: 10, reach: "push" }),
+    .preprocess(
+      fromReach,
+      z.object({
+        /** Push notifications to the device used last, when no app is in view. */
+        push: z.boolean().default(true),
+        /** Non-urgent pushes wait until these hours end. Local times, HH:mm. */
+        quiet: z
+          .object({
+            on: z.boolean().default(false),
+            from: z
+              .string()
+              .regex(/^\d{2}:\d{2}$/)
+              .default("22:00"),
+            to: z
+              .string()
+              .regex(/^\d{2}:\d{2}$/)
+              .default("07:00"),
+          })
+          .default({ on: false, from: "22:00", to: "07:00" }),
+        /** The daily interruption budget (§14): pushes a day for things that can wait. 0 means no limit. */
+        budget: z.number().int().min(0).max(100).default(10),
+        /**
+         * Where Atlas reaches the owner when they aren't talking to it (§14),
+         * one list per urgency, in order: "push", or a chat channel they've
+         * linked (§16.1). Something soon goes to the first that takes it;
+         * something now that goes unseen moves down its list.
+         */
+        lists: z
+          .object({
+            now: z.array(Reach).min(1).max(4).default(["push"]),
+            soon: z.array(Reach).min(1).max(4).default(["push"]),
+          })
+          .prefault({}),
+      }),
+    )
+    .default({ push: true, quiet: { on: false, from: "22:00", to: "07:00" }, budget: 10, lists: { now: ["push"], soon: ["push"] } }),
   /** Location (§10.1): whether Atlas takes in what the phone sends. Off drops it, and Atlas says it doesn't know where you are. */
   location: z.object({ on: z.boolean().default(true) }).default({ on: true }),
   /** Maps (§19.1): which maps extension answers (§17): OpenStreetMap's by default, Mapbox's by key, or another. */

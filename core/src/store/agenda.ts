@@ -11,6 +11,8 @@ export type AgendaKind =
   | "promise"
   | "job"
   | "notify"
+  /** Something urgent that hasn't been seen (§14): when it's due and the owner still hasn't been, it goes to the next place on its list. */
+  | "follow_up"
   | "approval"
   | "automation"
   | "skills"

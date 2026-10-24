@@ -1934,24 +1934,55 @@ function Notifications({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
         {error && <p className="err small">{error}</p>}
       </Row>
       <Row label="Reach me on">
-        <label className="field">
-          <span>When Atlas isn't open in front of you, messages reach you</span>
-          <select
-            value={draft.notifications.reach}
-            onChange={(e) => edit({ notifications: { ...draft.notifications, reach: e.target.value } })}
-          >
-            <option value="push">As a notification on your device</option>
-            {view.channels
-              .filter((c) => c.linked)
-              .map((c) => (
-                <option key={c.ext} value={c.ext}>
-                  In {c.name}
-                </option>
-              ))}
-          </select>
-        </label>
         <p className="muted small">
-          Quiet hours and the daily budget apply either way. A chat you haven't linked yet is in Connections → Chat.
+          When you aren't talking to Atlas, it reaches you here, in order. Something soon goes to the first that works. Something that can't
+          wait moves to the next if you haven't seen it in five minutes.
+        </p>
+        {(["now", "soon"] as const).map((u) => {
+          const list = draft.notifications.lists[u];
+          const places = [
+            { id: "push", name: "A notification on your device" },
+            ...view.channels.filter((c) => c.linked).map((c) => ({ id: c.ext, name: `In ${c.name}` })),
+          ];
+          const nameOf = (id: string) => places.find((p) => p.id === id)?.name ?? id;
+          const set = (next: string[]) =>
+            edit({ notifications: { ...draft.notifications, lists: { ...draft.notifications.lists, [u]: next } } });
+          return (
+            <div className="field" key={u}>
+              <span>{u === "now" ? "Can't wait" : "Can wait a little"}</span>
+              <div className="rows">
+                {list.map((id, i) => (
+                  <div className="r" key={id}>
+                    <span className="grow">
+                      {i > 0 && <span className="muted">then </span>}
+                      {nameOf(id)}
+                    </span>
+                    {list.length > 1 && (
+                      <button className="btn ghost small" onClick={() => set(list.filter((x) => x !== id))}>
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {places.some((p) => !list.includes(p.id)) && list.length < 4 && (
+                <select value="" onChange={(e) => e.target.value && set([...list, e.target.value])}>
+                  <option value="">Add a place…</option>
+                  {places
+                    .filter((p) => !list.includes(p.id))
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                </select>
+              )}
+            </div>
+          );
+        })}
+        <p className="muted small">
+          A chat you're writing on, or the one something was asked on, comes first. Quiet hours and the daily budget hold what can wait. A
+          chat you haven't linked yet is in Connections → Chat.
         </p>
       </Row>
       <Row label="Devices">

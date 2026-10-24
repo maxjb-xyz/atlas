@@ -10,6 +10,8 @@ export type StateName =
   | "skill_review_seq"
   /** Pairs of skills already offered to the review to merge, as "a|b", so each is offered once. */
   | "skill_pairs_offered"
+  /** When the owner last opened Atlas or a push from it (§14: something urgent seen since needs no follow-up). */
+  | "owner_seen_at"
   /** What waits for a coding job's next wake (§8.2): the owner's words, a settled approval, Stop. */
   | `coding_mail:${string}`
   /** The last twenty MCP tool calls whose pages (MCP Apps) were shown: their input and result, to show them again. */

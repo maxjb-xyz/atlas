@@ -47,7 +47,7 @@ import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
 import { compact, planCompaction } from "./compaction";
 import { CONTEXT_TOKENS, history, systemPrompt, tokens, withMessage } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
-import { Outbox, type PushDevice, pushDevices, StreamScrubber, type Urgency } from "./outbox";
+import { askedOn, Outbox, type PushDevice, pushDevices, route, StreamScrubber, type Urgency } from "./outbox";
 import { vapidKeys } from "./push";
 import {
   type AreaView,
@@ -523,12 +523,20 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       mcp: () => this.#mcpClient(),
       node: (c) => this.#nodeCall(c),
       mail: (a) => this.#sendMail(a),
-      chat: async (text) => {
-        const ext = readSettings(this.#sql).notifications.reach;
+      chat: async (ext, text) => {
         const l = links(this.#sql)[ext];
         if (!l) return false;
         await this.#channels.send(ext, { chat: l.chat, text });
         return true;
+      },
+      followUp: async (at, note, rest) => {
+        const item = createItem(this.#sql, {
+          kind: "follow_up",
+          title: note.text.slice(0, 300),
+          due_at: at.getTime(),
+          source: { log_id: note.id, run_id: note.run_id ?? undefined, via: "outbox", detail: { rest, sent_at: Date.now() } },
+        });
+        await this.#clock.schedule(item);
       },
       pullRequest: (a) => this.#coding.opened(a as PullRequest),
       faceReply: async (a) => {
@@ -895,6 +903,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
     switch (msg.type) {
       case "atlas.hello": {
+        this.#seen();
         const s = readSettings(this.#sql);
         if (!s.timezone && msg.tz && isValidZone(msg.tz)) this.#updateSettings({ timezone: msg.tz });
         this.#send(connection, {
@@ -2190,7 +2199,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     }
     if (!lines.length) return;
     const note = `[Atlas's devices, not the owner] ${device} is back, and what you asked it for while it was away has run:\n${lines.join("\n")}\n\nTell the owner in a short message how it went.`;
-    await this.#inLine(() => this.#atlasSays(`device:${device}`, note, `${device} is back. ${lines.join(" ")}`, "normal"));
+    await this.#inLine(() => this.#atlasSays(`device:${device}`, note, `${device} is back. ${lines.join(" ")}`, "soon"));
   }
 
   /** A device asks to pair (§16.3): a code to show, and a secret to poll with. */
@@ -2204,7 +2213,34 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** A push was opened or dismissed: if it was a nudge, that's its reaction (§10.3). */
   async apiReaction(id: string, how: "opened" | "dismissed"): Promise<void> {
+    if (how === "opened") this.#seen();
     this.#senses.pushed(id, how);
+  }
+
+  /** The owner opened Atlas or a push from it: what was sent before has been seen (§14). */
+  #seen(): void {
+    setState(this.#sql, "owner_seen_at", Date.now());
+  }
+
+  /** When the owner last showed they'd seen Atlas: opened it, opened a push, or said something anywhere. */
+  #seenAt(): number {
+    const said = this.#sql
+      .exec<{ at: number | null }>(`SELECT MAX(at) AS at FROM log WHERE kind = 'message.in' AND actor = 'owner'`)
+      .one().at;
+    return Math.max(getState<number>(this.#sql, "owner_seen_at") ?? 0, said ?? 0);
+  }
+
+  /** Something urgent's follow-up came due (§14): seen since, it's done; else it goes to the next place on its list. */
+  async #followUp(item: AgendaItem): Promise<void> {
+    const d = item.source.detail ?? {};
+    const sent = typeof d.sent_at === "number" ? d.sent_at : item.created_at;
+    const rest = Array.isArray(d.rest) ? (d.rest as string[]) : [];
+    if (this.#looking() || this.#seenAt() >= sent || !rest.length) {
+      finish(this.#sql, item.id, "done", null, { seen: true });
+      return;
+    }
+    finish(this.#sql, item.id, "done", null, { moved_to: rest[0]! });
+    await this.#outbox.reach([{ id: item.source.log_id ?? item.id, run_id: item.source.run_id ?? null, text: item.title }], "now", rest);
   }
 
   /** The node a device's token belongs to, for the Worker before it lets the socket in. */
@@ -2231,6 +2267,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     // An approval nobody answered runs out, and the owner hears what didn't happen (§12.2).
     if (getItem(this.#sql, payload.id)?.kind === "approval") {
       await this.keepAliveWhile(() => this.#expire(payload.id));
+      return;
+    }
+    if (getItem(this.#sql, payload.id)?.kind === "follow_up") {
+      const item = lease(this.#sql, payload.id);
+      if (item) await this.keepAliveWhile(() => this.#followUp(item));
       return;
     }
     // Quiet hours are over: every held notification goes out together, as one push.
@@ -2388,7 +2429,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       result.state === "done" ? `Finished: ${item.title}.\n\n${result.text}` : `"${item.title}" didn't finish: ${result.text}`;
     // The report finishes the owner's task, so it can put a view on the stage (a chart from the helper's numbers)
     // and make the file that was asked for (a spreadsheet), in the workspace if it isn't text.
-    await this.#atlasSays(`job:${item.id}`, note, fallback, "normal", 8, [
+    await this.#atlasSays(`job:${item.id}`, note, fallback, "soon", 8, [
       ...TOOLS.atlas,
       show,
       ...pageTools,
@@ -2412,7 +2453,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    */
   #nudger(o: { runId: string; trigger: string; from: NudgeFrom; ref?: string }): { tool: Tool; said: () => string | null } {
     let said: string | null = null;
-    const tool = nudgeTool(async (text, about) => {
+    const tool = nudgeTool(async (text, about, urgency) => {
       if (said != null) return { ok: false, text: "You've already nudged in this run; one is enough." };
       said = text;
       const row = await this.#outbox.deliver(
@@ -2420,7 +2461,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           text,
           run_id: o.runId,
           channel: "app",
-          urgency: "normal",
+          urgency,
           trigger: o.trigger,
           nudge: { from: o.from, about, ...(o.ref ? { ref: o.ref } : {}) },
         },
@@ -2963,6 +3004,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           run_id: runId,
           channel,
           urgency,
+          // A job's result or a promise reports back where it was asked for (§14).
+          origin: askedOn(this.#sql, trigger),
           brain: res.brain,
           fallback: res.fallback,
           interrupted: res.interrupted,
@@ -4116,12 +4159,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       ask: async ({ job, question, row }) => {
         this.#broadcast({ type: "atlas.inbox.items", items: inbox(sql) });
         const text = `${job.title} needs you: ${question.text}`;
-        const settings = readSettings(sql);
-        const l = links(sql)[settings.notifications.reach];
-        // On the owner's chat (§16.1), the question comes with its choices as buttons; else a push to Inbox.
-        if (l && settings.notifications.reach !== "push") {
+        // On the owner's chat (§16.1), the first on their list, the question comes with its choices as buttons; else a push to Inbox.
+        const ext = route(sql, "soon").find((c) => c !== "push" && links(sql)[c]);
+        const l = ext ? links(sql)[ext] : undefined;
+        if (ext && l) {
           const ok = await this.#channels
-            .send(settings.notifications.reach, {
+            .send(ext, {
               chat: l.chat,
               text: `${text}${question.why ? `\n\n${question.why}` : ""}`,
               ...(question.options.length
@@ -4464,7 +4507,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         // Nobody looking: the card reaches the owner as a push, with Approve when it doesn't need a hold.
         if (!this.#looking()) {
           void this.#outbox
-            .notify({ id: item.id, run_id: c.run_id, text: `Waiting for your OK: ${item.title}` }, "normal", {
+            .notify({ id: item.id, run_id: c.run_id, text: `Waiting for your OK: ${item.title}` }, "soon", {
               approval: item.id,
               hold,
               url: "/#/inbox",
@@ -4684,7 +4727,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (row && !this.#looking()) {
       await this.#outbox.notify(
         { id: row.id, run_id: item.source.run_id ?? null, text: `Your OK for ${item.title} ran out, so it didn't happen.` },
-        "normal",
+        "soon",
       );
     }
   }

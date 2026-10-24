@@ -948,7 +948,9 @@ export function speakingLine(s: Settings): string {
  * owner, through the outbox like every message, as something that can wait
  * (quiet hours, focus and the day's budget apply). No nudge is silence.
  */
-export function nudgeTool(send: (text: string, about: string) => Promise<{ ok: boolean; text: string }>): Tool {
+export function nudgeTool(
+  send: (text: string, about: string, urgency: "now" | "soon" | "later") => Promise<{ ok: boolean; text: string }>,
+): Tool {
   return defineTool({
     name: "nudge",
     kind: "look",
@@ -956,10 +958,15 @@ export function nudgeTool(send: (text: string, about: string) => Promise<{ ok: b
       "Tell the owner something now, on your own: in the app if it's open, else a notification on their phone, or out loud in a call.",
       "Use it at most once, only when hearing it now would help them, in a sentence or two, the way you'd text a friend. Not using it is silence, which is often right.",
       "`about` names what it's about in a few words ('oat milk on the way home', 'traffic to the dentist'), so you can see later how this kind of thing landed.",
+      "`urgency` is how soon they need it: now when waiting would cost them (leave in ten minutes, the flight moved), and it keeps trying until they've seen it; soon for their next free moment, after quiet hours and focus; later when it can wait until they next open Atlas.",
     ].join(" "),
-    input: z.object({ text: z.string().min(1).max(600), about: z.string().min(1).max(80) }),
+    input: z.object({
+      text: z.string().min(1).max(600),
+      about: z.string().min(1).max(80),
+      urgency: z.enum(["now", "soon", "later"]).default("soon"),
+    }),
     async run(input) {
-      const out = await send(input.text, input.about);
+      const out = await send(input.text, input.about, input.urgency);
       return out.ok ? { ok: true, output: { sent: true, how: out.text } } : fail(out.text);
     },
   });

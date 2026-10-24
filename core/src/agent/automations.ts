@@ -275,7 +275,7 @@ export class AutomationDesk {
   async #report(a: Automation, text: string, runId: string, why: Why): Promise<void> {
     if (a.report !== "thread" || !text) return;
     // A time or a request the owner chose doesn't wait for quiet hours; a watch or an absence can.
-    const urgency: Urgency = why === "schedule" || why === "request" || why === "button" ? "now" : "normal";
+    const urgency: Urgency = why === "schedule" || why === "request" || why === "button" ? "now" : "soon";
     await this.d.outbox.deliver(
       { text, run_id: runId, channel: "app", trigger: `automation:${a.id}`, urgency },
       { alreadyStreamed: false },
@@ -294,7 +294,7 @@ export class AutomationDesk {
     }
     if (text)
       await this.d.outbox.deliver(
-        { text, run_id: null, channel: "app", trigger: `automation:${a.id}`, urgency: "normal" },
+        { text, run_id: null, channel: "app", trigger: `automation:${a.id}`, urgency: "soon" },
         { alreadyStreamed: false },
       );
   }

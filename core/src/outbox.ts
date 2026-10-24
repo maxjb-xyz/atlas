@@ -1,7 +1,9 @@
 // One way out (§4.4): every message from Atlas leaves through here. To the
 // owner, it picks one channel (§14): the app when it's in view, a live call,
-// or else a push to the device used last, held through quiet hours unless it
-// can't wait. Every delivery beyond the thread leaves a receipt in the log.
+// a chat they're writing on, where the matter started, or else their list
+// for its urgency; what can wait is held through quiet hours and focus, and
+// something urgent that goes unseen moves down its list. Every delivery
+// beyond the thread leaves a receipt in the log.
 // A look that leaves Atlas (a web search's query, a page's address) passes
 // the secrets scrubber and the public-query check here too. Sharing rules
 // come with members and faces in M5.
@@ -9,6 +11,7 @@
 import { type PushSubscriptionJSON, sendPush, vapidKeys } from "./push";
 import { type Action } from "./approvals";
 import type { Sql } from "./store/db";
+import { getItem } from "./store/agenda";
 import { append, get as getRow, type LogRow, type Surface } from "./store/log";
 import { readSettings, secretValues } from "./store/settings";
 import { getState, setState } from "./store/state";
@@ -140,15 +143,64 @@ export function focusNow(sql: Sql, now = Date.now()): Focus | null {
 export function interruptionsToday(sql: Sql, tz: string, now = new Date()): number {
   return sql
     .exec<{ n: number }>(
-      `SELECT COUNT(*) AS n FROM log WHERE kind = 'delivery' AND at >= ? AND json_extract(body, '$.channel') = 'push'
-         AND json_extract(body, '$.ok') = 1 AND json_extract(body, '$.to') IS NOT NULL AND json_extract(body, '$.urgency') = 'normal'`,
+      `SELECT COUNT(*) AS n FROM log WHERE kind = 'delivery' AND at >= ? AND json_extract(body, '$.channel') IN ('push', 'chat')
+         AND json_extract(body, '$.ok') = 1 AND json_extract(body, '$.to') IS NOT NULL AND json_extract(body, '$.urgency') IN ('normal', 'soon')`,
       startOfLocalDay(now, tz).getTime(),
     )
     .one().n;
 }
 
-/** "now" goes out at once; "normal" waits for quiet hours and focus to end, and counts against the day's budget (§14). */
-export type Urgency = "now" | "normal";
+/**
+ * How urgent a message is, which Atlas decides with it (§14): "now" goes out
+ * at once and moves down the list while unseen; "soon" waits for quiet hours
+ * and focus to end, and counts against the day's budget; "later" waits in
+ * the app for the next time the owner opens it.
+ */
+export type Urgency = "now" | "soon" | "later";
+
+/** How long something urgent waits to be seen before the next place on its list (§14). */
+export const FOLLOW_UP_MS = 5 * 60_000;
+/** A chat the owner wrote on this recently is where they're talking now (§14). */
+export const TALKING_MS = 10 * 60_000;
+
+/** The chat the owner is talking on now: the one their last message came from, if it was in the last few minutes. */
+export function talkingOn(sql: Sql, now = Date.now()): string | null {
+  const r = sql
+    .exec<{ ext: string | null; at: number }>(
+      `SELECT json_extract(body, '$.channel') AS ext, at FROM log WHERE kind = 'message.in' AND actor = 'owner' ORDER BY seq DESC LIMIT 1`,
+    )
+    .toArray()[0];
+  return r?.ext && now - r.at < TALKING_MS ? r.ext : null;
+}
+
+/**
+ * Where the matter started (§14): the chat a job or a promise was asked for
+ * on, from the run that made it. `trigger` is the run's, such as `job:ag_…`.
+ */
+export function askedOn(sql: Sql, trigger: string | undefined): string | null {
+  const id = /^(?:job|agenda):(.+)$/.exec(trigger ?? "")?.[1];
+  const run = id ? getItem(sql, id)?.source.run_id : null;
+  if (!run) return null;
+  const r = sql
+    .exec<{ ext: string | null }>(
+      `SELECT json_extract(body, '$.channel') AS ext FROM log WHERE run_id = ? AND kind = 'message.in' AND actor = 'owner' LIMIT 1`,
+      run,
+    )
+    .toArray()[0];
+  return r?.ext ?? null;
+}
+
+/** The places to try, in order (§14): the chat the owner is talking on, where the matter started, then their list. */
+export function route(sql: Sql, urgency: "now" | "soon", origin?: string | null): string[] {
+  const out: string[] = [];
+  const add = (c: string | null | undefined) => {
+    if (c && !out.includes(c)) out.push(c);
+  };
+  add(talkingOn(sql));
+  add(origin);
+  for (const c of readSettings(sql).notifications.lists[urgency]) add(c);
+  return out;
+}
 
 export interface Delivery {
   text: string;
@@ -161,6 +213,8 @@ export interface Delivery {
   interrupted?: boolean;
   usage?: unknown;
   trigger?: string;
+  /** The chat the matter started on (§14), when it didn't start in the app. */
+  origin?: string | null;
   /** A nudge Atlas sent on its own (§10.3): what started it, what it was about in Atlas's words, and the errand or thing, if any. */
   nudge?: { from: string; about: string; ref?: string };
   /** For spoken replies: when the status line and the answer were ready. */
@@ -199,6 +253,8 @@ export interface Channels {
   looking(): boolean;
   /** Puts a held notification on the one clock (§4.3), to be released at `at`. */
   hold(at: Date, note: Note): Promise<void>;
+  /** Puts a follow-up on the clock (§14): at `at`, if the owner hasn't been seen since, `note` goes to the next of `rest`. */
+  followUp?(at: Date, note: Note, rest: string[]): Promise<void>;
   fetch: typeof fetch;
   /** The browser (§9.1), or null where there isn't one. */
   browser(): BrowserDriver | null;
@@ -216,8 +272,8 @@ export interface Channels {
   ): Promise<
     { ok: true; id: string; thread?: string; link?: string; message_id?: string; via: string } | { ok: false; error: string; via: string }
   >;
-  /** Sends a message to the owner on the chat channel they picked to be reached on; false when it can't. */
-  chat?(text: string): Promise<boolean>;
+  /** Sends a message to the owner on a chat channel they've linked (§16.1); false when it isn't linked. */
+  chat?(ext: string, text: string): Promise<boolean>;
   /** Sends a face's answer in the owner's name, once they've OK'd it (§7.2). */
   faceReply?(a: Extract<Action, { kind: "face_reply" }>): Promise<{ ok: boolean; text: string }>;
   /** Opens a coding job's pull request on its code host (§8.2), and says where. */
@@ -274,15 +330,27 @@ export class Outbox {
     this.channels.broadcast([row]);
     // One channel (§14): heard in a call, or seen in an app in view, needs no push as well.
     if (channel !== "voice" && channel !== "api" && channel !== "chat" && !this.channels.looking())
-      await this.notify(noteOf(row), d.urgency ?? "normal");
+      await this.notify(noteOf(row), d.urgency ?? "soon", undefined, d.origin);
     return row;
   }
 
-  /** Tells the owner, on one device, about something they haven't seen. `extra` goes to the service worker with it. */
-  async notify(row: Note, urgency: Urgency, extra?: Record<string, unknown>): Promise<void> {
+  /**
+   * Tells the owner about something they haven't seen, in one place (§14).
+   * `extra` goes to the service worker with a push; `origin` is the chat the
+   * matter started on.
+   */
+  async notify(row: Note, urgency: Urgency, extra?: Record<string, unknown>, origin?: string | null): Promise<void> {
     const settings = readSettings(this.sql);
-    const chat = settings.notifications.reach !== "push";
-    if (!chat && (!settings.notifications.push || !pushDevices(this.sql).length)) return;
+    if (urgency === "later") {
+      this.receipt(row.run_id, {
+        of: [row.id],
+        channel: "app",
+        ok: true,
+        urgency,
+        note: "It waits in the app, for when you next open it.",
+      });
+      return;
+    }
     const tz = zoneOf(settings);
     const quiet = urgency === "now" ? null : quietUntil(new Date(), tz, settings.notifications.quiet);
     const focus = urgency === "now" ? null : focusNow(this.sql);
@@ -299,16 +367,45 @@ export class Outbox {
       });
       return;
     }
-    if (urgency === "normal" && this.#overBudget([row])) return;
-    // Reached on a chat (§16.1): the message goes there instead of a push, when it can.
-    if (settings.notifications.reach !== "push" && this.channels.chat && (await this.channels.chat(row.text).catch(() => false))) {
-      this.receipt(row.run_id, { of: [row.id], channel: "chat", to: settings.notifications.reach, ok: true, urgency });
-      return;
-    }
-    await this.push([row], urgency, { extra });
+    if (urgency === "soon" && this.#overBudget([row])) return;
+    await this.reach([row], urgency, route(this.sql, urgency, origin), extra);
   }
 
-  /** Past the day's budget, something that can wait doesn't push: it waits in the app, and the receipt says so. */
+  /**
+   * Tries each place in turn until one takes it. Something now then waits
+   * to be seen, and if it isn't, the clock sends it to the next (§14).
+   * True when one took it.
+   */
+  async reach(rows: Note[], urgency: "now" | "soon", places: string[], extra?: Record<string, unknown>): Promise<boolean> {
+    for (let i = 0; i < places.length; i++) {
+      if (!(await this.#via(places[i]!, rows, urgency, extra))) continue;
+      const rest = places.slice(i + 1);
+      if (urgency === "now" && rest.length && this.channels.followUp)
+        await this.channels.followUp(new Date(Date.now() + FOLLOW_UP_MS), rows[0]!, rest);
+      return true;
+    }
+    return false;
+  }
+
+  /** One place: a push to the device used last, or a linked chat. */
+  async #via(place: string, rows: Note[], urgency: "now" | "soon", extra?: Record<string, unknown>): Promise<boolean> {
+    if (place === "push") {
+      if (!readSettings(this.sql).notifications.push || !pushDevices(this.sql).length) return false;
+      return (await this.push(rows, urgency, { extra })).ok;
+    }
+    if (!this.channels.chat) return false;
+    const text = rows.map((r) => r.text).join("\n\n");
+    let error = "";
+    const ok = await this.channels.chat(place, text).catch((err: unknown) => {
+      error = err instanceof Error ? err.message : String(err);
+      return false;
+    });
+    if (ok || error)
+      this.receipt(rows[0]!.run_id, { of: rows.map((r) => r.id), channel: "chat", to: place, ok, urgency, ...(error ? { error } : {}) });
+    return ok;
+  }
+
+  /** Past the day's budget, something that can wait doesn't go out: it waits in the app, and the receipt says so. */
   #overBudget(rows: Note[]): boolean {
     const settings = readSettings(this.sql);
     const budget = settings.notifications.budget;
@@ -322,7 +419,7 @@ export class Outbox {
     return true;
   }
 
-  /** Notifications held through quiet hours: one push for all of them, unless the owner has opened Atlas since. */
+  /** Notifications held through quiet hours: together, in one place, unless the owner has opened Atlas since. */
   async release(rows: Note[]): Promise<void> {
     if (!rows.length) return;
     if (this.channels.looking()) {
@@ -330,7 +427,7 @@ export class Outbox {
       return;
     }
     if (this.#overBudget(rows)) return;
-    await this.push(rows, "normal");
+    await this.reach(rows, "soon", route(this.sql, "soon"));
   }
 
   /**
