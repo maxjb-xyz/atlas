@@ -82,6 +82,7 @@ function toBase64(bytes: Uint8Array): string {
 export const skillRead = defineTool({
   name: "skill_read",
   kind: "look",
+  status: "Reading how to do that.",
   description:
     "Open one of your skills by name, before doing a task it covers: the list in your context has each one's name and what it's for. Follow it, and improve it with skill_save if it turns out wrong or incomplete. If it has files (references, scripts), open one with skill_file.",
   input: z.object({ name: z.string().min(1).max(80) }),
@@ -114,6 +115,7 @@ export const skillRead = defineTool({
 export const skillFile = defineTool({
   name: "skill_file",
   kind: "look",
+  status: "Reading how to do that.",
   description:
     "Read one file from a skill's folder (a reference, a script, a template), by the path skill_read listed. To run a script, put the folder in the workspace with `unpack` true: it lands at /workspace/skills/<name>.",
   input: z.object({ name: z.string().min(1).max(80), path: z.string().min(1).max(200).optional(), unpack: z.boolean().optional() }),

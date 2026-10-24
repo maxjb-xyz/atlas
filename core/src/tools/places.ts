@@ -85,6 +85,7 @@ async function resolve(ctx: ToolContext, ref: string): Promise<Where> {
 export const placePin = defineTool({
   name: "place_pin",
   kind: "change_own",
+  status: "Pinning the place.",
   description: [
     "Pin a saved place on the map, so Atlas notices when the owner arrives or leaves, and can route to it.",
     "Use at: here when the owner says they're there now ('this is my gym'), or at: address with its address (found with OpenStreetMap, and kept).",

@@ -96,6 +96,7 @@ export function settingsView(
       sending_ok: false,
       sending_note: null,
       permissions: [],
+      token_links: { cloudflare: "", other: "" },
       senders: [],
     },
     webhooks: webhooks(sql).map(webhookView),

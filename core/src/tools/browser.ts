@@ -155,6 +155,7 @@ export const browserSubmit = defineTool({
 export const browserTakeOver = defineTool({
   name: "browser_take_over",
   kind: "change_own",
+  status: "Handing you the browser.",
   description: [
     "Hand the browser to the owner, for what only they should do: a login, a captcha, a payment form, a choice only they can make.",
     "The stage shows them the live browser to drive; when they're done they hand it back and you carry on from where they left it. Say in a sentence what they need to do. Don't use the browser until they hand it back.",
@@ -181,6 +182,7 @@ export const browserTakeOver = defineTool({
 export const browserClose = defineTool({
   name: "browser_close",
   kind: "look",
+  status: "Closing the browser.",
   description: "Close the browser when you're done with it. It also closes by itself after ten minutes without use.",
   input: z.object({}),
   async run(_input, ctx) {

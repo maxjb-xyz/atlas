@@ -32,6 +32,7 @@ function when(at: string, ctx: ToolContext): Date | string {
 export const reminderCreate = defineTool({
   name: "reminder_create",
   kind: "change_own",
+  status: "Setting that reminder.",
   description: [
     "Set a reminder: at that time Atlas messages the owner with it (in the app, and out loud if they're in a call).",
     "Use it whenever the owner asks to be reminded of something plainly, and whenever you say you'll remind them: no tool call means no reminder.",
@@ -64,6 +65,7 @@ export const reminderCreate = defineTool({
 export const promise = defineTool({
   name: "promise",
   kind: "change_own",
+  status: "Making a note to do that.",
   description: [
     "Make a promise: something you'll do later, at a set time, with your tools and judgment.",
     "Use it in the same step whenever you say you'll do something later: check on something, follow up, look again, get back to the owner, or remind them only if something hasn't happened. No tool call means no promise, so never say 'I'll check' without it.",
@@ -123,6 +125,7 @@ export const agendaList = defineTool({
 export const agendaCancel = defineTool({
   name: "agenda_cancel",
   kind: "change_own",
+  status: "Taking that off.",
   description:
     "Cancel an upcoming reminder or promise by its id (from agenda_list, or your context), when the owner says never mind, or it's no longer needed.",
   input: z.object({ id: z.string().describe("The reminder's or promise's id.") }),

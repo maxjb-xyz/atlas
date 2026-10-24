@@ -25,7 +25,7 @@ export const emailSend = defineTool({
     "Write and send a mail. `as: owner` sends from the owner's own mail, so it reads as them: use it when the owner asks you to email someone for them ('email Doug that I'll be late').",
     "`as: atlas` sends from your own address, saying you're Atlas, an AI assistant writing for the owner: use it when the owner asks you to reach out yourself ('ask the dentist's office if they have anything Thursday'). Write it so the reader knows that.",
     "With more than one mail account, a new mail as the owner goes from the account the area uses (you're told which); `from` sends from another, by its address or name, when the owner says so. A reply always goes from the account its mail came to.",
-    "`to` takes names of people you know or addresses. To answer a mail, pass its item id as `reply_to` (from noticed, or an item you were told about): it goes in that conversation, to its sender unless you say otherwise.",
+    "`to` takes names of people you know or addresses. To answer a mail, pass its item id as `reply_to` (from noticed, or an item you were told about): it goes in that conversation, to its sender unless you say otherwise (to everyone on it, for mail the owner copied you on).",
     "It asks the owner first on a card they can edit, until they trust that kind of mail; then tell them in a few words it's waiting for their OK. If what you send asks something, open a loop (loop_open) so you notice if no answer comes.",
   ].join(" "),
   input: z.object({
@@ -60,6 +60,8 @@ export const emailSend = defineTool({
       const was = typeof b.subject === "string" ? b.subject : "";
       if (!subject && was) subject = /^re:/i.test(was) ? was : `Re: ${was}`;
       replyFrom = typeof b.from === "string" ? addressesIn(b.from) : [];
+      // Mail the owner copied Atlas on is answered to everyone on it.
+      if (Array.isArray(b.everyone)) replyFrom = b.everyone.filter((x): x is string => typeof x === "string");
       // A reply goes out the way the mail came in: the owner's Gmail answers in Gmail, Atlas's address from Atlas's.
       if (b.source === "email" && input.as === "owner") return fail("That mail came to your own address, Atlas's: answer it as: atlas.");
       if (b.source !== "email") via = typeof b.ext === "string" ? b.ext : null;
@@ -152,6 +154,7 @@ export const emailSend = defineTool({
 export const mailAccount = defineTool({
   name: "mail_account",
   kind: "change_own",
+  status: "Changing which account sends.",
   description:
     "Set which of the owner's mail accounts new mail as them goes from, when they say ('use my work Gmail for Keyframes', 'send from my personal address by default'): in one area, or by default when you leave area out. Replies always go from the account their mail came to.",
   input: z.object({

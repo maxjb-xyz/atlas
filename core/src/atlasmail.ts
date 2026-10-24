@@ -37,14 +37,37 @@ export interface AtlasMail {
 
 export const atlasMail = (sql: Sql): AtlasMail | null => getState<AtlasMail>(sql, "atlas_mail");
 
-/** The permissions the domain's account token needs, as Settings lists them. */
-export const TOKEN_PERMISSIONS = [
-  "Account · Workers Scripts · Edit (for the relay Worker)",
-  "Zone · Email Routing Rules · Edit, and Zone · Zone Settings · Edit (for the address and sending)",
-  "Zone · DNS · Edit (for Email Routing's records, and Resend's when it sends)",
-  "Account · Email Sending · Edit (only when Cloudflare sends)",
-  "Zone · Zone · Read",
+/**
+ * What the domain's account token needs, in Cloudflare's own words, with the
+ * key its "Create token" link takes (developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/).
+ */
+export const TOKEN_PERMISSIONS: TokenPermission[] = [
+  { text: "Account · Workers Scripts · Edit", why: "for the relay Worker", key: "workers_scripts", type: "edit" },
+  { text: "Zone · Email Routing Rules · Edit", why: "for the rule that sends Atlas's mail to it", key: "email_routing_rule", type: "edit" },
+  { text: "Zone · Zone Settings · Edit", why: "to turn on Email Routing and sending", key: "zone_settings", type: "edit" },
+  { text: "Zone · DNS · Edit", why: "for Email Routing's records, and Resend's when it sends", key: "dns", type: "edit" },
+  { text: "Zone · Zone · Read", why: "to find the domain", key: "zone", type: "read" },
+  { text: "Account · Email Sending · Edit", why: "only when Cloudflare sends", key: "email_sending", type: "edit", cloudflare: true },
 ];
+
+export interface TokenPermission {
+  text: string;
+  why: string;
+  key: string;
+  type: "read" | "edit";
+  /** Only needed when Cloudflare sends Atlas's mail. */
+  cloudflare?: boolean;
+}
+
+/**
+ * Cloudflare's "Create token" page with the permissions filled in, for every
+ * zone; the owner can narrow it to the one domain there before making it.
+ */
+export function tokenLink(cloudflareSends: boolean): string {
+  const keys = TOKEN_PERMISSIONS.filter((p) => cloudflareSends || !p.cloudflare).map((p) => ({ key: p.key, type: p.type }));
+  const q = new URLSearchParams({ permissionGroupKeys: JSON.stringify(keys), accountId: "*", zoneId: "all", name: "Atlas mail" });
+  return `https://dash.cloudflare.com/profile/api-tokens?${q.toString()}`;
+}
 
 export class CloudflareError extends Error {
   constructor(
@@ -163,7 +186,7 @@ export async function setUpAtlasMail(
   }
   if (!zone)
     throw new CloudflareError(
-      `The token can't see ${domain} on Cloudflare. Make it for the account the domain is in, with Zone · Read.`,
+      `The token can't see ${domain} on Cloudflare. Make it for the account the domain is in, with Zone · Zone · Read, and that domain under Zone Resources.`,
       404,
     );
   // Where the domain's mail goes now: Cloudflare's Email Routing (or nowhere) keeps the domain; anything else, a subdomain.

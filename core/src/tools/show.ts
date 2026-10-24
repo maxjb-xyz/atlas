@@ -18,6 +18,7 @@ import { here, pinOf } from "../location";
 export const show = defineTool({
   name: "show",
   kind: "look",
+  status: "Pulling that up.",
   description: [
     "Put a view on the stage of the owner's app, beside your reply.",
     "Use it when the owner asks to see something, when they ask what's going on with one of their areas or who someone is, and when the answer is several items that read better as a list or a table than as sentences.",

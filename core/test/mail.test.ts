@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { seams } from "../src/agent";
 import type { Decider } from "../src/brains/decide";
 import { channelsOf, findPerson, ownerAddresses, ownerLearned, trustOf, upsertPerson } from "../src/contacts";
-import { getExt, install, setExtSecrets, uninstall } from "../src/extensions";
+import { getExt, install, saveData, setExtSecrets, uninstall } from "../src/extensions";
+import { createArea, threadAreas, updateArea } from "../src/store/areas";
 import { base64url, fromBase64url } from "../../extensions/lib/mail";
 import { call, extensionRequests, fakeCalendar, fakeEmbedder, runExt, runExtensionsHere, say } from "./helpers";
 import gmail from "../../extensions/gmail";
@@ -16,6 +17,7 @@ import type { CalendarEvent } from "../src/calendar/types";
 import { brain, connect, inOwner, turn } from "./owner";
 import { getSecret, setSecret } from "../src/store/settings";
 import { setState } from "../src/store/state";
+import { TOKEN_PERMISSIONS, tokenLink } from "../src/atlasmail";
 
 const quiet: Decider = {
   model: "fake-decide",
@@ -590,6 +592,75 @@ describe("mail to Atlas's address", () => {
     expect(all).toContain("Order 1234");
   });
 
+  it("takes mail the owner wrote to someone else, with Atlas on copy, as theirs to that person, in the area of the account it came from", async () => {
+    const area = await inOwner((_a, sql) => {
+      install(sql, { id: "gmail", source: "bundled" });
+      saveData(sql, "gmail", { email: "owner@gmail.com" });
+      const a = createArea(sql, { name: "Keyframes", by: "owner" });
+      updateArea(sql, a.id, { settings: { ...a.settings, mail: "gmail" } }, "owner");
+      return a.id;
+    });
+    const b = brain([say("I'll watch for Doug's answer.")]);
+    const s = await connect();
+    const mime = [
+      "From: Owner <owner@gmail.com>",
+      "To: Doug <doug@acme.example>",
+      "Cc: atlas@example.com",
+      "Subject: Next week",
+      "Message-ID: <c1@gmail.com>",
+      "Authentication-Results: mx.cloudflare.net; dkim=pass header.d=gmail.com; spf=pass",
+      "Content-Type: text/plain",
+      "",
+      "Doug, can we meet next week? Atlas can find us a time.",
+    ].join("\r\n");
+    expect((await relay(mime)).status).toBe(202);
+    await s.next("atlas.run", (m) => m.state === "replied");
+    const all = JSON.stringify(b.requests[0]);
+    expect(all).toContain("with you on copy, and it went to doug@acme.example too");
+    const copied = await inOwner((_a, sql) =>
+      sql
+        .exec<{ id: string; body: string }>(
+          `SELECT id, body FROM log WHERE kind = 'sense' AND json_extract(body, '$.event') = 'copied' ORDER BY seq DESC LIMIT 1`,
+        )
+        .one(),
+    );
+    expect(all).toContain(`reply_to ${copied.id}`);
+    expect(JSON.parse(copied.body)).toMatchObject({ thread: "mail:<c1@gmail.com>", everyone: ["owner@gmail.com", "doug@acme.example"] });
+    // Sent from the Keyframes account, so it's Keyframes' as it comes in, and the run wears it.
+    const asked = await inOwner((_a, sql) =>
+      sql.exec<{ areas: string; body: string }>(`SELECT areas, body FROM log WHERE kind = 'message.in' ORDER BY seq DESC LIMIT 1`).one(),
+    );
+    expect(JSON.parse(asked.areas)).toEqual([area]);
+    expect(JSON.parse(asked.body).thread).toBe("mail:<c1@gmail.com>");
+    expect(all).toContain("You're acting in Keyframes");
+
+    // Doug answers everyone: it's the next mail in that conversation, not a stranger's, and stays Keyframes'.
+    const reply = [
+      "From: Doug <doug@acme.example>",
+      "To: Owner <owner@gmail.com>",
+      "Cc: atlas@example.com",
+      "Subject: Re: Next week",
+      "Message-ID: <d1@acme.example>",
+      "In-Reply-To: <c1@gmail.com>",
+      "References: <c1@gmail.com>",
+      "Content-Type: text/plain",
+      "",
+      "Tuesday or Wednesday works.",
+    ].join("\r\n");
+    expect((await relay(reply)).status).toBe(202);
+    const row = await inOwner((_a, sql) => {
+      const r = sql
+        .exec<{ body: string }>(
+          `SELECT body FROM log WHERE kind = 'sense' AND json_extract(body, '$.event') = 'reply' AND json_extract(body, '$.thread') = 'mail:<c1@gmail.com>'`,
+        )
+        .one();
+      return { body: JSON.parse(r.body), areas: threadAreas(sql, "mail:<c1@gmail.com>") };
+    });
+    expect(row.body).toMatchObject({ thread: "mail:<c1@gmail.com>" });
+    expect(row.body.what).toContain("on a conversation the owner copied Atlas on");
+    expect(row.areas).toEqual([area]);
+  });
+
   it("takes anyone else's mail as someone writing to Atlas, in the conversation it answers", async () => {
     await inOwner((_a, sql) =>
       sql.exec(
@@ -612,11 +683,27 @@ describe("mail to Atlas's address", () => {
     expect((await relay(mime)).status).toBe(202);
     const row = await inOwner((_a, sql) =>
       JSON.parse(
-        sql.exec<{ body: string }>(`SELECT body FROM log WHERE kind = 'sense' AND json_extract(body, '$.source') = 'email'`).one().body,
+        sql
+          .exec<{ body: string }>(
+            `SELECT body FROM log WHERE kind = 'sense' AND json_extract(body, '$.source') = 'email' ORDER BY seq DESC LIMIT 1`,
+          )
+          .one().body,
       ),
     );
     expect(row).toMatchObject({ event: "reply", thread: "mail:<sent1@example.com>", from: "Bright Smiles <front@brightsmiles.example>" });
     expect(row.person).toBeTruthy();
+  });
+});
+
+describe("the token for Atlas's address", () => {
+  it("opens Cloudflare's Create token page with what Atlas needs, and Email Sending only when Cloudflare sends", () => {
+    const keys = (u: string) => JSON.parse(new URL(u).searchParams.get("permissionGroupKeys")!) as Array<{ key: string; type: string }>;
+    const url = new URL(tokenLink(true));
+    expect(url.origin + url.pathname).toBe("https://dash.cloudflare.com/profile/api-tokens");
+    expect(url.searchParams.get("accountId")).toBe("*");
+    expect(url.searchParams.get("zoneId")).toBe("all");
+    expect(keys(tokenLink(true))).toEqual(TOKEN_PERMISSIONS.map((p) => ({ key: p.key, type: p.type })));
+    expect(keys(tokenLink(false)).map((k) => k.key)).not.toContain("email_sending");
   });
 });
 

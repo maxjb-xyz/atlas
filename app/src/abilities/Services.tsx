@@ -1259,13 +1259,35 @@ export function AtlasEmail({ atlas, view }: { atlas: Atlas; view: SettingsView }
         placeholder={m.address ? "A new token, or leave empty to keep it" : "A token for the domain's Cloudflare account"}
         onChange={(e) => setToken(e.target.value)}
       />
+      {m.token_links.cloudflare && (
+        <div className="small" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <a
+            className="btn s"
+            style={{ alignSelf: "flex-start" }}
+            href={sending === "cloudflare" ? m.token_links.cloudflare : m.token_links.other}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Make the token on Cloudflare
+          </a>
+          <span className="aside">
+            It opens Cloudflare's Create token page with what Atlas needs filled in. Under Zone Resources pick your domain, then Continue to
+            summary, Create Token, and paste the token here.
+          </span>
+        </div>
+      )}
       <details className="small">
         <summary>What the token needs</summary>
         <ul className="small">
-          {m.permissions.map((p) => (
-            <li key={p}>{p}</li>
-          ))}
+          {m.permissions
+            .filter((p) => sending === "cloudflare" || !p.cloudflare)
+            .map((p) => (
+              <li key={p.text}>
+                {p.text} <span className="muted">({p.why})</span>
+              </li>
+            ))}
         </ul>
+        <span className="aside">If Cloudflare's page is missing one, add it there with Add more.</span>
       </details>
       <div className="row">
         <span className="small muted">Sends with</span>

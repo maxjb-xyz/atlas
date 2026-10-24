@@ -126,6 +126,7 @@ export const workspaceKeep = defineTool({
 export const workspacePreview = defineTool({
   name: "workspace_preview",
   kind: "change_own",
+  status: "Opening a preview.",
   description: [
     "Give the owner a link to a web server you started in the workspace (listening on 0.0.0.0, in the background), to see what you built: a small site, a dashboard, a report.",
     "The link works for a day, for anyone who has it; it shows nothing once the workspace sleeps. Start the server with nohup or & in workspace_run first.",

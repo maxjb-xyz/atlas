@@ -236,6 +236,17 @@ export function tagsOf(sql: Sql, ref: Tagged): string[] {
   return r ? parse<string[]>(r.areas, []) : [];
 }
 
+/** The areas a mail conversation already has: the latest of its messages that has any. */
+export function threadAreas(sql: Sql, thread: string): string[] {
+  const r = sql
+    .exec<{ areas: string }>(
+      `SELECT areas FROM log WHERE json_extract(body, '$.thread') = ? AND areas != '[]' ORDER BY seq DESC LIMIT 1`,
+      thread,
+    )
+    .toArray()[0];
+  return r ? (JSON.parse(r.areas) as string[]) : [];
+}
+
 export function setTags(sql: Sql, ref: Tagged, areas: string[]): void {
   const [table, id] = ref.startsWith("log:") ? ["log", ref.slice(4)] : ["records", ref.slice(4)];
   sql.exec(`UPDATE ${table} SET areas = ? WHERE id = ?`, JSON.stringify([...new Set(areas)]), id);

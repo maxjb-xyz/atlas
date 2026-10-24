@@ -68,6 +68,7 @@ const done = (out: { ok: boolean; text: string }) => (out.ok ? { ok: true, outpu
 export const jobStep = defineTool({
   name: "job_step",
   kind: "change_own",
+  status: "Working on the next step.",
   description: [
     "Start the job's next step: a helper does it, in the job's folder, from your brief, and its result comes back to your next look.",
     "The helper sees nothing but the brief: give it the goal, what earlier steps made (file names in the folder, decisions, the owner's edits) and exactly what to hand back.",
@@ -87,6 +88,7 @@ export const jobStep = defineTool({
 export const jobCheckpoint = defineTool({
   name: "job_checkpoint",
   kind: "change_own",
+  status: "Saving where the job is.",
   description: [
     "Ask the owner at a checkpoint, or about a decision only they can make: one question in Inbox, with what they should look at in `content` (the script, the itinerary, the three quotes side by side).",
     "Offer `options` when the answer is a choice; they can always write their own. Their answer, edits included, comes back to your next look, and the job waits until then.",
@@ -107,6 +109,7 @@ export const jobCheckpoint = defineTool({
 export const jobPlan = defineTool({
   name: "job_plan",
   kind: "change_own",
+  status: "Planning the job.",
   description:
     "Change the job's plan when what came back changes it: add steps (after one, or at the end) and drop steps that haven't started. The owner sees the plan in Jobs.",
   input: z.object({
@@ -125,6 +128,7 @@ export const jobPlan = defineTool({
 export const jobMark = defineTool({
   name: "job_mark",
   kind: "change_own",
+  status: "Updating the job.",
   description:
     "Mark a step done (what it needed is already there, or you did it yourself in this look) or skipped (no longer needed), with a line on what came of it.",
   input: z.object({
@@ -141,6 +145,7 @@ export const jobMark = defineTool({
 export const jobFinish = defineTool({
   name: "job_finish",
   kind: "change_own",
+  status: "Finishing the job.",
   description: [
     "Finish the job when its goal is met: keep what it made for the owner (files in its folder go into Library), and say what it came to in a few sentences for the owner.",
     "Only when every step that matters is done and the last checkpoint is answered.",
@@ -167,6 +172,7 @@ export const jobFinish = defineTool({
 export const jobFail = defineTool({
   name: "job_fail",
   kind: "change_own",
+  status: "Stopping the job.",
   description: "End the job when its goal can't be met, with why in a sentence or two and what would make it possible.",
   input: z.object({ why: z.string().min(1).max(2_000) }),
   async run(input, ctx) {

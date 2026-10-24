@@ -302,7 +302,8 @@ export function defineTool<S extends z.ZodType>(t: {
   description: string;
   kind: ToolKind;
   input: S;
-  status?: string;
+  /** Said or shown while it runs, when Atlas hasn't said anything yet: every tool has one, so voice is never quiet while it works. */
+  status: string;
   timeoutMs?: number;
   run(input: z.infer<S>, ctx: ToolContext): Promise<ToolResult>;
 }): Tool {

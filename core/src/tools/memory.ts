@@ -30,6 +30,7 @@ const Detail = z.union([z.string().max(500), z.number(), z.boolean(), z.null()])
 export const remember = defineTool({
   name: "remember",
   kind: "change_own",
+  status: "Noting that down.",
   description: [
     "Save something worth knowing later: a fact about the owner, a preference, a person, a place, a plan or a commitment.",
     "Use it in the same step whenever the owner tells you something they'd expect you to remember, or says to note it; no tool call means it isn't saved.",
@@ -99,6 +100,7 @@ export const remember = defineTool({
 export const forget = defineTool({
   name: "forget",
   kind: "change_own",
+  status: "Forgetting that.",
   description: [
     "Forget a record when the owner asks you to, or when it's plainly wrong and they've told you so.",
     "Find its id first with recall if it isn't in the standing facts. It stops being used and leaves recall; History still shows it was saved and forgotten, and the owner can undo from the chip.",

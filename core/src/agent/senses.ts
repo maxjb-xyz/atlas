@@ -973,6 +973,7 @@ export function nudgeTool(
   return defineTool({
     name: "nudge",
     kind: "look",
+    status: "Letting you know.",
     description: [
       "Tell the owner something now, on your own: in the app if it's open, else a notification on their phone, or out loud in a call.",
       "Use it at most once, only when hearing it now would help them, in a sentence or two, the way you'd text a friend. Not using it is silence, which is often right.",
@@ -999,6 +1000,7 @@ export function nudgeTool(
 export const speakingUp = defineTool({
   name: "speaking_up",
   kind: "change_own",
+  status: "Changing what I tell you about.",
   description: [
     "Change what you bring up on your own, when the owner asks: add or remove subjects they don't want to hear about (in their words, as narrow or broad as they meant: 'the weather unless it's severe', 'errands'), subjects they always want to hear about ('anything from my landlord', 'reviews requested on my PRs'), or switch what you notice and the look before leaving for events.",
     "The morning brief and the evening wrap-up are automations: change their time or turn them off with automation_save or automation_set.",

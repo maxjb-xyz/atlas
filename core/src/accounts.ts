@@ -5,7 +5,7 @@
 // are all read together. The model is told the accounts, and can pick one
 // when the owner says to.
 
-import type { Area } from "./store/areas";
+import { type Area, listAreas } from "./store/areas";
 import { accountName, type Installed, methodsOf, providing, ready } from "./extensions";
 import type { Sql } from "./store/db";
 import { readSettings } from "./store/settings";
@@ -26,6 +26,24 @@ export function mailAccountFor(sql: Sql, areas: Area[]): Installed | null {
     areas.map((a) => a.settings.mail),
     readSettings(sql).accounts.mail,
   );
+}
+
+/**
+ * The areas mail from one of the owner's own addresses belongs to: the areas
+ * that send from the account with that address ("work@keyframes.studio" is
+ * Keyframes' account, so mail from it is Keyframes'). None when no area names it.
+ */
+export function areasOfAddress(sql: Sql, address: string): string[] {
+  const a = address.trim().toLowerCase();
+  if (!a) return [];
+  const account = providing(sql, "mail").find((e) => {
+    const email = (e.data as { email?: unknown } | null)?.email;
+    return typeof email === "string" && email.toLowerCase() === a;
+  });
+  if (!account) return [];
+  return listAreas(sql)
+    .filter((x) => x.state !== "archived" && x.settings.mail === account.id)
+    .map((x) => x.id);
 }
 
 /** A calendar as areas and settings name it: a whole account ("gmail--2"), or one calendar in it ("gmail--2::Work"). */

@@ -114,6 +114,7 @@ const inParent = async () => fail("This runs in Atlas, not here.");
 export const agentReply = defineTool({
   name: "agent_reply",
   kind: "change_own",
+  status: "Answering the coding agent.",
   description: [
     "Send the coding agent your answer or next instruction, and let it carry on. Use it to answer a routine question yourself (which test runner, where a file is, a naming choice the project already shows), to send it back when its work isn't right yet (say exactly what's wrong), or to tell it to carry on.",
     "When you answer one of its questions, fill `answered` with the question, your answer and where the answer came from (a file in the repo, the owner's notes, the project's conventions), so the owner sees it in Jobs.",
@@ -132,6 +133,7 @@ export const agentReply = defineTool({
 export const ownerAsk = defineTool({
   name: "owner_ask",
   kind: "change_own",
+  status: "Asking the owner.",
   description: [
     "Bring the owner one real decision: something only they can choose (dropping or keeping an API, a trade-off with no right answer, anything that changes what they asked for, or costs money). Ask in one plain question, with the choices when there are a few. Never for something the repo, their notes or good practice answers.",
     "The job waits for their answer, which comes back to the agent. This ends your turn on the job.",
@@ -147,6 +149,7 @@ export const ownerAsk = defineTool({
 export const siteAsk = defineTool({
   name: "site_ask",
   kind: "change_own",
+  status: "Asking about that site.",
   description:
     "Ask the owner to let the workspace reach a website the job needs (the agent said a site was blocked, such as registry.npmjs.org to install packages). The owner is asked once per site and it's remembered. The job waits for their answer. This ends your turn on the job.",
   input: z.object({
@@ -159,6 +162,7 @@ export const siteAsk = defineTool({
 export const jobRun = defineTool({
   name: "job_run",
   kind: "change_own",
+  status: "Running it in the job.",
   description:
     "Run a shell command in the job's repo, in the workspace: read a file (cat package.json), see the changes (git diff, git log), or run the tests yourself before you trust the agent's word. It changes only the job's own branch. It reaches only the sites the owner allowed.",
   input: z.object({
@@ -171,6 +175,7 @@ export const jobRun = defineTool({
 export const jobReady = defineTool({
   name: "job_ready",
   kind: "change_own",
+  status: "Wrapping up the job.",
   description: [
     "The work is done and you've reviewed it: the diff does what was asked and no more, and the tests pass when you ran them yourself. Atlas then commits what's left, pushes the branch and opens a pull request with your title and description. Nothing is merged; the owner reviews it.",
     "Write `body` for the owner and their reviewers: what changed and why, how it was tested, and anything they should look at. This ends the job.",
@@ -185,6 +190,7 @@ export const jobReady = defineTool({
 export const jobGiveUp = defineTool({
   name: "job_give_up",
   kind: "change_own",
+  status: "Stopping the job.",
   description:
     "End the job without a pull request, when it can't be done this way (the agent went in circles, the task needs something the workspace can't reach). Say why, and what would help. The branch is kept. This ends the job.",
   input: z.object({ reason: z.string().min(1).max(1_000) }),

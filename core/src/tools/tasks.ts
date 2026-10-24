@@ -12,6 +12,7 @@ import { defineTool, fail } from "./types";
 export const taskAdd = defineTool({
   name: "task_add",
   kind: "change_own",
+  status: "Adding it to your list.",
   description: [
     "Keep a thing to do for the owner, from any part of life: 'tell Doug about the offsite when I see him', 'ask Sam about the budget next time we talk', 'when the release ships, update the changelog', 'grab the charger at the office', 'I need oat milk', 'try Bern's next time I'm in Tampa'.",
     "Say when it fits, if it does: a kind of place, a place, a person, or plain words. You'll keep it in mind and bring it up when it fits (passing a store, a meeting with Doug coming up, Sam emailing them); with only a deadline, it reminds them once then.",
@@ -73,6 +74,7 @@ export const taskAdd = defineTool({
 export const taskDone = defineTool({
   name: "task_done",
   kind: "change_own",
+  status: "Ticking it off.",
   description:
     "Close a task: done (the owner did it) or dropped (they don't need it any more), so you stop bringing it up. Its id is in the open tasks in your context.",
   input: z.object({ id: z.string().max(64), why: z.enum(["done", "dropped"]).default("done") }),

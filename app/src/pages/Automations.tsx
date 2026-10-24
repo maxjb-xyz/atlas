@@ -241,16 +241,47 @@ const REPORT: Record<AutomationView["report"], [string, string]> = {
   silent: ["History", "Only in History"],
 };
 
-/** Where an automation can tell the owner: wherever they are, a notification, or a chat they've linked. */
-function places(atlas: Atlas): Array<{ value: string; label: string; sub?: string }> {
-  const chats = (atlas.state.view?.channels ?? []).filter((c) => c.linked);
-  return [
-    { value: "you", label: "Wherever you are", sub: "Here if Atlas is open, else as your Notifications settings say" },
-    { value: "push", label: "A notification", sub: "On your phone, every time" },
-    ...chats.map((c) => ({ value: c.ext, label: c.name, sub: `Your chat with Atlas on ${c.name}, every time` })),
+/**
+ * Where an automation can tell the owner, only what's really there: wherever
+ * they are (in Atlas when it's open, else their Notifications lists), a chat
+ * they've linked, or a notification once a device takes them.
+ */
+function places(atlas: Atlas, keep?: string): Array<{ value: string; label: string; sub?: string; phrase: string }> {
+  const v = atlas.state.view;
+  const chats = (v?.channels ?? []).filter((c) => c.linked);
+  const devices = v?.settings.notifications.push ? (v?.push.devices ?? []) : [];
+  const word = (p: string) => (p === "push" ? (devices.length ? "a notification" : null) : (chats.find((c) => c.ext === p)?.name ?? null));
+  const usual = (v?.settings.notifications.lists.soon ?? []).map(word).filter((w): w is string => !!w);
+  const out = [
+    {
+      value: "you",
+      label: "Where you are",
+      sub: usual.length ? `In Atlas when it's open, otherwise ${usual.join(", then ")}` : "In Atlas, for when you next open it",
+      phrase: "wherever you are",
+    },
+    ...chats.map((c) => ({ value: c.ext, label: c.name, sub: `Always in your ${c.name} chat with Atlas`, phrase: `in ${c.name}` })),
+    ...(devices.length
+      ? [
+          {
+            value: "push",
+            label: "A notification",
+            sub: `Always, on ${devices.length === 1 ? devices[0]!.name : "the device you used last"}`,
+            phrase: "as a notification",
+          },
+        ]
+      : []),
   ];
+  // A place saved before it went away (a chat unlinked) still shows, so it can be changed.
+  if (keep && !out.some((p) => p.value === keep))
+    out.push({
+      value: keep,
+      label: keep === "push" ? "A notification" : keep,
+      sub: "Not set up now, so it goes where you are",
+      phrase: "where you are",
+    });
+  return out;
 }
-const placeName = (atlas: Atlas, to: string) => places(atlas).find((p) => p.value === to)?.label ?? to;
+const placePhrase = (atlas: Atlas, to: string) => places(atlas, to).find((p) => p.value === to)?.phrase ?? "wherever you are";
 
 /** One automation as a When → Do → Report flow, with what it may do and its runs (docs/ui screen 12). Also its stage view. */
 export function AutomationFlow({
@@ -385,7 +416,7 @@ export function AutomationFlow({
           <div className="flow-item">
             <span className="lab faint">{REPORT[a.report][0]}</span>
             <span>
-              {a.report === "thread" || a.report === "worth" ? `${placeName(atlas, a.to)}. ${REPORT[a.report][1]}.` : REPORT[a.report][1]}
+              {a.report === "thread" || a.report === "worth" ? `${REPORT[a.report][1]}, ${placePhrase(atlas, a.to)}.` : REPORT[a.report][1]}
             </span>
           </div>
         </div>
@@ -813,14 +844,15 @@ function AutomationForm({
           onPick={(report) => setF({ ...f, report: report as AutomationInput["report"] })}
         />
       </div>
-      {(f.report === "thread" || f.report === "worth") && (
+      {/* Where only shows when there's more than one place to pick: a linked chat, or a device that takes notifications. */}
+      {(f.report === "thread" || f.report === "worth") && places(atlas, f.to).length > 1 && (
         <div className="field">
           <span>Where</span>
           <Picker
             label="Where it tells you"
             width={380}
             value={f.to ?? "you"}
-            options={places(atlas)}
+            options={places(atlas, f.to)}
             onPick={(to) => setF({ ...f, to })}
           />
         </div>

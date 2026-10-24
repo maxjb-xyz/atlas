@@ -24,6 +24,7 @@ const names = (sql: Parameters<typeof getAutomation>[0]) => (id: string) => getA
 export const automationSave = defineTool({
   name: "automation_save",
   kind: "change_own",
+  status: "Setting up the automation.",
   description: [
     "Make an automation, or change one (pass its id): when it runs, what it does, and where it reports.",
     "`to` is where it tells the owner: you (wherever they are, by their Notifications settings), push (a notification), or a chat they've linked (telegram), when they ask for it there. Changing only where it goes, or its name, keeps it on.",
@@ -148,6 +149,7 @@ export const automationRun = defineTool({
 export const automationSet = defineTool({
   name: "automation_set",
   kind: "change_own",
+  status: "Changing the automation.",
   description:
     "Turn an automation on, or pause it, when the owner asks. One you made or changed needs a test run first; if it hasn't had one, run automation_test and show the owner what it would do.",
   input: z.object({ automation: z.string().min(1).max(80).describe("The automation's name or id."), on: z.boolean() }),
@@ -172,6 +174,7 @@ export const automationSet = defineTool({
 export const automationList = defineTool({
   name: "automation_list",
   kind: "look",
+  status: "Checking your automations.",
   description: "List the owner's automations: each one's id, name, when it runs, what it does, and whether it's on.",
   input: z.object({}),
   async run(_input, ctx) {

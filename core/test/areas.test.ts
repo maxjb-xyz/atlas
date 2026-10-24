@@ -24,6 +24,7 @@ import {
   mergeAreas,
   setAreaLook,
   setScope,
+  setTags,
   tagsOf,
   updateArea,
 } from "../src/store/areas";
@@ -78,6 +79,38 @@ describe("tagging", () => {
       // Nothing is asked twice.
       const again = await tagPending(sql, fakeDecider());
       expect(again.tagged).toBe(0);
+    }));
+
+  it("keeps a mail conversation in its area, and doesn't ask about a message whose area was sure as it came in", () =>
+    withSql(async (sql) => {
+      const work = createArea(sql, { name: "Keyframes", by: "owner" });
+      const runId = startRun(sql, { actor: "owner", trigger: "message", surface: "app", role: "main" });
+      const sure = append(sql, {
+        actor: "owner",
+        kind: "message.in",
+        run_id: runId,
+        surface: "app",
+        body: { text: "Doug, next week?", thread: "mail:<c1>" },
+      });
+      setTags(sql, `log:${sure.id}`, [work.id]);
+      const reply = append(sql, {
+        actor: "system",
+        kind: "sense",
+        body: { source: "email", event: "reply", what: "Mail", thread: "mail:<c1>" },
+      });
+      const elsewhere = append(sql, {
+        actor: "system",
+        kind: "sense",
+        body: { source: "email", event: "received", what: "Mail", thread: "mail:<x>" },
+      });
+      let asked = 0;
+      const d = fakeDecider();
+      const counting = { ...d, yesNo: (...a: Parameters<typeof d.yesNo>) => (asked++, d.yesNo(...a)) };
+      await tagPending(sql, counting);
+      expect(asked).toBe(0);
+      expect(tagsOf(sql, `log:${sure.id}`)).toEqual([work.id]);
+      expect(tagsOf(sql, `log:${reply.id}`)).toEqual([work.id]);
+      expect(tagsOf(sql, `log:${elsewhere.id}`)).toEqual([]);
     }));
 
   it("collects messages that fit no area, and starts the areas the brain finds, once each", () =>

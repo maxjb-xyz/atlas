@@ -207,14 +207,15 @@ export function withMessage(messages: Message[], content: string): Message[] {
 
 /**
  * The "hat" a run wears (§6.2): the area the owner is focused on, or else
- * the areas of the latest tagged message in the last half hour.
+ * the areas of the latest tagged message in the last half hour, this one
+ * included when its area was sure as it came in (mail from an area's account).
  */
 export function hat(sql: Sql, beforeSeq?: number): Area[] {
   const scope = getScope(sql);
   if (scope) return [getArea(sql, scope)!];
   const r = sql
     .exec<{ areas: string }>(
-      `SELECT areas FROM log WHERE kind = 'message.in' AND areas != '[]' AND seq < ? AND at > ? ORDER BY seq DESC LIMIT 1`,
+      `SELECT areas FROM log WHERE kind = 'message.in' AND areas != '[]' AND seq <= ? AND at > ? ORDER BY seq DESC LIMIT 1`,
       beforeSeq ?? Number.MAX_SAFE_INTEGER,
       Date.now() - 30 * 60_000,
     )

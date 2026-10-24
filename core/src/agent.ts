@@ -30,7 +30,18 @@ import { history as logHistory, historyStats, inbox, inboxDone, listRecords, run
 import { correctRecord, createRecord, findRecords, forgetRecord, getRecord } from "./store/records";
 import { type Decider, workersAIDecider } from "./brains/decide";
 import { type Extractor, workersAIExtractor } from "./brains/extract";
-import { createArea, getArea, getScope, listAreas, mergeAreas, setAreaLook, setScope, type Tagged, updateArea } from "./store/areas";
+import {
+  createArea,
+  getArea,
+  getScope,
+  listAreas,
+  mergeAreas,
+  setAreaLook,
+  setScope,
+  setTags,
+  type Tagged,
+  updateArea,
+} from "./store/areas";
 import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
 import { seams } from "./agent/seams";
 import { liveTest, settingsView } from "./agent/settings";
@@ -772,7 +783,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         (...args) =>
           (seams.fetch ?? fetch)(...args),
       origin: () => getState<string>(this.#sql, "origin"),
-      owner: (text, note) => this.keepAliveWhile(() => this.#textTurn(text, `mail-${Date.now()}`, note ?? undefined)),
+      owner: (text, note, o) => this.keepAliveWhile(() => this.#textTurn(text, `mail-${Date.now()}`, note ?? undefined, undefined, o)),
       take: (items, o) => void this.#senses.take(items, o),
       face: (o) => this.#faces.mail(o),
       changed,
@@ -1903,14 +1914,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** The owner's text runs that can still be stopped, waiting in line or under way. */
   #stops = new Map<string, AbortController>();
 
-  async #textTurn(text: string, clientId: string, note?: string, via?: ChatVia): Promise<void> {
+  async #textTurn(text: string, clientId: string, note?: string, via?: ChatVia, mail?: { thread: string; areas: string[] }): Promise<void> {
     const surface: Surface = via ? "chat" : "app";
     const runId = startRun(this.#sql, { actor: "owner", trigger: "message", surface, role: "main" });
     const stop = new AbortController();
     this.#stops.set(runId, stop);
     if (via) this.#chatRuns.set(runId, via);
     try {
-      await this.#textRun(runId, text, clientId, stop.signal, note, via);
+      await this.#textRun(runId, text, clientId, stop.signal, note, via, mail);
     } finally {
       this.#stops.delete(runId);
       this.#chatRuns.delete(runId);
@@ -2035,15 +2046,33 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** Runs asked on a chat channel, and where they answer (§16.1). */
   #chatRuns = new Map<string, ChatVia>();
 
-  async #textRun(runId: string, text: string, clientId: string, signal: AbortSignal, note?: string, via?: ChatVia): Promise<void> {
+  async #textRun(
+    runId: string,
+    text: string,
+    clientId: string,
+    signal: AbortSignal,
+    note?: string,
+    via?: ChatVia,
+    mail?: { thread: string; areas: string[] },
+  ): Promise<void> {
     const surface: Surface = via ? "chat" : "app";
     const inRow = append(this.#sql, {
       actor: "owner",
       kind: "message.in",
       run_id: runId,
       surface,
-      body: { text, client_id: clientId, ...(via ? { channel: via.ext, ...(via.voice ? { voice_note: true } : {}) } : {}) },
+      body: {
+        text,
+        client_id: clientId,
+        ...(via ? { channel: via.ext, ...(via.voice ? { voice_note: true } : {}) } : {}),
+        ...(mail ? { thread: mail.thread } : {}),
+      },
     });
+    // Mail whose area is sure (its conversation's, its account's, its people's) wears it from the start.
+    if (mail?.areas.length) {
+      setTags(this.#sql, `log:${inRow.id}`, mail.areas);
+      inRow.areas = [...new Set(mail.areas)];
+    }
     this.#broadcast({ type: "atlas.rows", rows: [inRow] });
     this.#broadcast({ type: "atlas.run", run_id: runId, state: "running", surface, client_id: clientId });
     const chat = via ? this.#chatPresence(runId, via) : null;

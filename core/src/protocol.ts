@@ -772,8 +772,10 @@ export interface MailView {
   sending: string | null;
   sending_ok: boolean;
   sending_note: string | null;
-  /** What the domain's account token needs. */
-  permissions: string[];
+  /** What the domain's account token needs, in Cloudflare's words. */
+  permissions: Array<{ text: string; why: string; cloudflare?: boolean }>;
+  /** Cloudflare's "Create token" page with those filled in: with Email Sending, and without it for another sender. */
+  token_links: { cloudflare: string; other: string };
   /** Extensions that can send from Atlas's address. */
   senders: Array<{ id: string; name: string }>;
 }

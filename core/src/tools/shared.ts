@@ -8,6 +8,7 @@ import { defineTool, fail } from "./types";
 export const sharedLook = defineTool({
   name: "shared_look",
   kind: "look",
+  status: "Checking what's shared.",
   description:
     "What's in the areas shared between the owner and the people they share Atlas with (a household, a project): each area, who shares it, and what's kept there. Use it for questions about those shared things.",
   input: z.object({ area: z.string().max(80).optional() }),
@@ -27,6 +28,7 @@ export const sharedLook = defineTool({
 export const sharedSave = defineTool({
   name: "shared_save",
   kind: "change_own",
+  status: "Saving it to share.",
   description:
     "Keep something in a shared area, where everyone who shares it sees it: 'the plumber comes Tuesday' in Home. Only for things meant for both; anything private stays in your own memory (remember).",
   input: z.object({

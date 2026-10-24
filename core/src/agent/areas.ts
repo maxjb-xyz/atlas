@@ -15,6 +15,7 @@ import {
   setTags,
   type Tagged,
   tagsOf,
+  threadAreas,
   updateArea,
 } from "../store/areas";
 import { parse, type Sql } from "../store/db";
@@ -98,7 +99,7 @@ export async function tagPending(
   const since = getState<number>(sql, "areas_seq") ?? 0;
   const rows = sql
     .exec<{ seq: number; id: string }>(
-      `SELECT seq, id FROM log WHERE seq > ? AND kind IN ('message.in', 'message.out') ORDER BY seq LIMIT ?`,
+      `SELECT seq, id FROM log WHERE seq > ? AND (kind IN ('message.in', 'message.out') OR (kind = 'sense' AND json_extract(body, '$.thread') IS NOT NULL)) ORDER BY seq LIMIT ?`,
       since,
       limit,
     )
@@ -121,6 +122,21 @@ export async function tagPending(
         setState(sql, "areas_seq", r.seq);
         continue;
       }
+    }
+    // Already in an area as it came in (mail from an area's account): nothing to ask.
+    if (row.areas.length) {
+      setState(sql, "areas_seq", r.seq);
+      continue;
+    }
+    // A conversation stays in its area: mail answering mail that has one takes it.
+    const thread = typeof row.body.thread === "string" ? row.body.thread : null;
+    const inThread = thread ? threadAreas(sql, thread) : [];
+    if (inThread.length) {
+      setTags(sql, `log:${row.id}`, inThread);
+      changed.push(row.id);
+      tagged += 1;
+      setState(sql, "areas_seq", r.seq);
+      continue;
     }
     if (text.trim() && row.actor === "owner") {
       const p = await ask(decider, text, questions, row.id);
