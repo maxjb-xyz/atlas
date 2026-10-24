@@ -36,6 +36,8 @@ export interface CalendarSource {
 export interface CalendarRead {
   events: CalendarEvent[];
   stale?: { as_of: number; why: string };
+  /** Calendars that couldn't be read at all, each with why, while the others could. */
+  missing?: string[];
 }
 
 /** The calendar as runs and the app see it: reads that fall back to what's held when the provider can't be asked. */

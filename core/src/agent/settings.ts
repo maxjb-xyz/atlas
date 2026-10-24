@@ -22,7 +22,7 @@ import { vault, vaultView } from "../vault";
 import type { VapidKeys } from "../push";
 import type { ChatGPTSignIn } from "./chatgpt";
 import { here, nearest, pins } from "../location";
-import { installed, providing } from "../extensions";
+import { accountName, installed, providing } from "../extensions";
 import type { ExtensionDesk } from "./extensions";
 import type { MailDesk } from "./mail";
 import { faces } from "../faces";
@@ -57,6 +57,11 @@ export function settingsView(
     calendar: {
       provider: provider ? { id: provider.id, name: provider.name } : null,
       refused: refusal ? { ...refusal, note: parts.calendar.note(refusal, settings) } : null,
+      // Every calendar account, each with its own refusal (§17).
+      providers: parts.calendar.providers().map((p) => {
+        const r = parts.calendar.refusal(p.id);
+        return { id: p.id, name: p.name, account: accountName(p), refused: r ? { ...r, note: parts.calendar.note(r, settings) } : null };
+      }),
     },
     extensions: parts.extensions?.views() ?? [],
     members: members(sql).map((m) => ({

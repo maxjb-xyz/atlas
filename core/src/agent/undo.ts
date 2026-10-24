@@ -10,6 +10,7 @@ import { SettingsPatch, writeSettings } from "../store/settings";
 import { forgetRecord, getRecord, restoreRecord, revertRecord } from "../store/records";
 import type { ToolContext } from "../tools/types";
 import { deletePage, getPage, pageVersion, savePage } from "../pages";
+import { getArea, updateArea } from "../store/areas";
 
 export type UndoOutcome = { ok: true; row: LogRow; agenda: boolean } | { ok: false; message: string };
 
@@ -106,6 +107,15 @@ export async function undoReceipt(
       if (!before.success || !before.data) return { ok: false, message: "That change to Speaking up can't be undone from here." };
       writeSettings(sql, { speaking: before.data });
       const row = append(sql, { actor: "owner", kind: "settings.change", body: { keys: ["speaking"], ...mark } });
+      return { ok: true, row, agenda: false };
+    }
+    case "account.restore": {
+      if (undo.area) {
+        const a = getArea(sql, undo.area);
+        if (!a) return { ok: false, message: "That area is gone." };
+        updateArea(sql, a.id, { settings: { ...a.settings, mail: undo.before } }, "owner");
+      } else writeSettings(sql, { accounts: { mail: undo.before } });
+      const row = append(sql, { actor: "owner", kind: "settings.change", body: { keys: ["accounts"], ...mark } });
       return { ok: true, row, agenda: false };
     }
     case "page.undo": {

@@ -36,10 +36,17 @@ export function CalendarNote({ atlas, cal }: { atlas: Atlas; cal: CalendarState 
       </p>
     );
   }
+  if (cal?.missing?.length && !cal.stale)
+    return (
+      <p className="small err" style={{ marginBottom: 10 }}>
+        Not shown: {cal.missing.join(" ")}
+      </p>
+    );
   if (!cal?.stale) return null;
   return (
     <p className="small muted" style={{ marginBottom: 10 }} title={cal.stale.why}>
-      Showing Atlas's copy from {clock(new Date(cal.stale.as_of))}; iCloud can't be asked right now. Abilities → Services says why.
+      Showing Atlas's copy from {clock(new Date(cal.stale.as_of))}; the calendar can't be asked right now. Abilities → Services says why.
+      {cal.missing?.length ? ` Not shown: ${cal.missing.join(" ")}` : ""}
     </p>
   );
 }

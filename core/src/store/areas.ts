@@ -13,6 +13,8 @@ export const AreaSettings = z.object({
   tone: z.string().max(300).default(""),
   /** Members it's shared with (§7.1): its records live here, and both see and write them. */
   shared_with: z.array(z.string().max(40)).max(20).default([]),
+  /** Accounts (§6.2): which of the owner's mail accounts new mail here goes from, by extension id. Empty is the default. */
+  mail: z.string().max(40).default(""),
 });
 export type AreaSettings = z.infer<typeof AreaSettings>;
 

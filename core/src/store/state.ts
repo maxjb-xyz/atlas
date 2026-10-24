@@ -6,6 +6,8 @@
 import { parse, type Sql } from "./db";
 
 export type StateName =
+  /** Each calendar's refusal of its sign-in, by its extension (the first calendar's was "icloud_refused"). */
+  | "calendar_refusals"
   /** Calendar events' areas by series (§6.3): what Clef said or the owner set. */
   | "event_areas"
   /** Calendar events waiting for Clef to sort them into areas. */

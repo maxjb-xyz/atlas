@@ -16,6 +16,7 @@
 // is someone else's words.
 
 import { BUNDLED } from "../extensions.gen";
+import { accountName, baseOf, type Installed } from "../extensions";
 import { z } from "zod";
 import type { Manifest, ToolKind as ExtToolKind, ToolSpec } from "../../../extensions/sdk";
 import type { Action } from "../approvals";
@@ -52,7 +53,7 @@ export function heldAs(t: ToolSpec, all: ToolSpec[], ext?: string): ExtToolKind 
   if (t.kind !== "change_own") return t.kind;
   // Only an extension that ships with Atlas is taken at its word that a tool only changes the owner's own things.
   // Anyone else's asks until trusted, as speaking does: a "change" could be anything, and nothing checks it.
-  if (!ext || !BUNDLED[ext]) return "speak";
+  if (!ext || !BUNDLED[baseOf(ext)]) return "speak";
   // The undo runs on the owner's Undo without a card, so it must itself be a change to their own things (a tool may
   // be its own undo: renaming back is a rename), never one that speaks, can't be undone or moves money.
   return t.undo && all.some((x) => x.name === t.undo && x.kind === "change_own") ? "change_own" : "speak";
@@ -78,7 +79,10 @@ const coreKind: Record<ExtToolKind, ToolKind> = {
 /** The tools that every extension that's on offers, as the model sees them. */
 export function extensionTools(exts: Array<{ id: string; name: string; manifest: Manifest; methods: string[] }>): Tool[] {
   const out: Tool[] = [];
-  for (const e of exts) {
+  for (const x of exts) {
+    // Two accounts of one service read apart: "Gmail (you@work.com)".
+    const account = "label" in x ? accountName(x as unknown as Pick<Installed, "label" | "data">) : null;
+    const e = account ? { ...x, name: `${x.name} (${account})` } : x;
     if (!e.methods.includes("tool") || !e.manifest.provides.includes("tools")) continue;
     const specs = ToolsShape.safeParse(e.manifest.tools ?? []);
     if (!specs.success) continue;

@@ -323,6 +323,9 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.ext.install"), id: z.string().max(40) }),
   z.object({ type: z.literal("atlas.ext.remove"), id: z.string().max(40) }),
   z.object({ type: z.literal("atlas.ext.state"), id: z.string().max(40), on: z.boolean() }),
+  /** Accounts (§17): another account of a service that's set up, and a name for one ("Work"). */
+  z.object({ type: z.literal("atlas.ext.account.add"), id: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.ext.account.name"), id: z.string().max(40), name: z.string().max(60) }),
   /** An extension's secrets (an empty or null value removes one) and settings, as its manifest names them. */
   z.object({
     type: z.literal("atlas.ext.secrets"),
@@ -385,7 +388,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
     name: z.string().min(1).max(60).optional(),
     about: z.string().max(500).optional(),
     state: z.enum(["active", "dormant", "archived"]).optional(),
-    settings: z.object({ tone: z.string().max(300).optional() }).optional(),
+    settings: z.object({ tone: z.string().max(300).optional(), mail: z.string().max(40).optional() }).optional(),
   }),
   z.object({ type: z.literal("atlas.area.merge"), from: z.string().max(64), into: z.string().max(64) }),
   /**
@@ -648,6 +651,13 @@ export interface SettingsView {
   calendar: {
     provider: { id: string; name: string } | null;
     refused: { at: number; message: string; tries: number; next_try: number; note: string } | null;
+    /** Every calendar account that's on, oldest first, each with its own refusal. */
+    providers: Array<{
+      id: string;
+      name: string;
+      account: string | null;
+      refused: { at: number; message: string; tries: number; next_try: number; note: string } | null;
+    }>;
   };
   /** Extensions (§17): the installed ones, drafts, and the bundled ones not installed. */
   extensions: ExtensionView[];
@@ -743,8 +753,13 @@ export interface MailView {
 }
 
 export interface ExtensionView {
+  /** Its id: the service's ("gmail"), or another account of it ("gmail--2"). */
   id: string;
   name: string;
+  /** Which account it is: the name the owner gave it, or what it signed into. */
+  account: string | null;
+  /** Whether the service can be had more than once (mail, calendars, address books, tools). */
+  many: boolean;
   version: string;
   about: string;
   provides: string[];
@@ -845,6 +860,10 @@ export interface ServiceView {
   };
   /** An update from the index that would reach or hold more than before, waiting for the owner's OK (`atlas.service.update`). */
   update: { version: string; widens: { hosts: string[]; secrets: string[]; tools?: string[] } } | null;
+  /** Its accounts (§17), oldest first: the extension behind each, and its name (what it signed into, or the owner's). */
+  accounts: Array<{ ext: string; name: string | null }>;
+  /** Whether another account can be added. */
+  more: boolean;
 }
 
 /** An index the catalog reads (§17): Atlas's own first, then the ones the owner added. */
@@ -932,7 +951,15 @@ export type ServerMessage =
   | { type: "atlas.history.rows"; filter: HistoryFilter; rows: LogRow[]; has_more: boolean; older: boolean; stats?: HistoryStats }
   | { type: "atlas.run.detail.result"; run_id: string; run: Record<string, unknown> | null; rows: LogRow[] }
   /** `stale` is set when iCloud couldn't be asked: the events are Atlas's copy from `as_of`, and `why` says why. */
-  | { type: "atlas.calendar.events"; ref: string; events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } }
+  | {
+      type: "atlas.calendar.events";
+      ref: string;
+      events: CalendarEventView[];
+      error?: string;
+      stale?: { as_of: number; why: string };
+      /** Calendars that couldn't be read at all, each with why, while the others could. */
+      missing?: string[];
+    }
   /** Events' areas changed (Clef sorted some, or the owner moved one): pages showing the calendar ask again. */
   | { type: "atlas.calendar.changed" }
   | { type: "atlas.inbox.items"; items: InboxItem[] }

@@ -95,7 +95,7 @@ import {
 } from "./store/settings";
 import { addLocalDays, isoLocal, isValidZone, longLocal, parseWhen, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import { calendarMove, calendarRead } from "./tools/calendar";
-import { emailSend } from "./tools/mail";
+import { emailSend, mailAccount } from "./tools/mail";
 import { delegate } from "./tools/delegate";
 import { memoryTools, recall } from "./tools/memory";
 import { agendaList, agendaTools } from "./tools/agenda";
@@ -164,7 +164,17 @@ import type { BrowserApi, ExitApi, MapsApi, McpApi, RunResult, Tool, ToolContext
 import { roughArea, temp, unitsFor, type Weather } from "./weather";
 import { placeKind, type Found, type Route } from "./maps";
 import type { SearchResult } from "../../extensions/sdk";
-import { ExtensionHost, type GateProps, getExt, setExtSecrets, setExtSettings, setExtState, uninstall } from "./extensions";
+import {
+  addAccount,
+  ExtensionHost,
+  type GateProps,
+  getExt,
+  nameAccount,
+  setExtSecrets,
+  setExtSettings,
+  setExtState,
+  uninstall,
+} from "./extensions";
 import { ExtensionDesk } from "./agent/extensions";
 import { nameFor, provide } from "./providers";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
@@ -278,6 +288,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     extensionDraft,
     ...peopleTools,
     emailSend,
+    mailAccount,
     ...sharedTools,
     areaLook,
     ...codingTools,
@@ -1113,18 +1124,24 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         return;
       }
       case "atlas.ext.install":
+      case "atlas.ext.account.add":
+      case "atlas.ext.account.name":
       case "atlas.ext.remove":
       case "atlas.ext.state":
       case "atlas.ext.secrets":
       case "atlas.ext.settings": {
         try {
           if (msg.type === "atlas.ext.install") await this.#extensions.install(msg.id);
+          else if (msg.type === "atlas.ext.account.add") {
+            const added = addAccount(this.#sql, msg.id);
+            append(this.#sql, { actor: "owner", kind: "settings.change", body: { extension: "account added", id: added.id } });
+          } else if (msg.type === "atlas.ext.account.name") nameAccount(this.#sql, msg.id, msg.name);
           else if (msg.type === "atlas.ext.remove") uninstall(this.#sql, msg.id);
           else if (msg.type === "atlas.ext.state") setExtState(this.#sql, msg.id, msg.on ? "on" : "off");
           else if (msg.type === "atlas.ext.secrets") setExtSecrets(this.#sql, msg.id, msg.secrets);
           else setExtSettings(this.#sql, msg.id, msg.settings);
           // A provider whose sign-in changed is asked fresh, without waiting out an earlier refusal.
-          if (msg.type !== "atlas.ext.install" && this.#calendar.provider()?.id === msg.id) this.#calendar.reconnect();
+          if (msg.type !== "atlas.ext.install" && this.#calendar.providers().some((p) => p.id === msg.id)) this.#calendar.reconnect(msg.id);
           if (msg.type === "atlas.ext.remove" || msg.type === "atlas.ext.state") this.#calendar.reset();
         } catch (err) {
           this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
@@ -1139,7 +1156,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       }
       case "atlas.ext.test": {
         const out = await this.#extensions.test(msg.id);
-        if (this.#calendar.provider()?.id === msg.id && out.ok) this.#calendar.reconnect();
+        if (this.#calendar.providers().some((p) => p.id === msg.id) && out.ok) this.#calendar.reconnect(msg.id);
         this.#send(connection, { type: "atlas.ext.test", id: msg.id, ...out });
         return;
       }
@@ -1429,7 +1446,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           return;
         }
         try {
-          const { events, stale } = await source.read({ start, end });
+          const { events, stale, missing } = await source.read({ start, end });
           const waitingBefore = (getState<unknown[]>(this.#sql, "events_untagged") ?? []).length;
           const areas = eventAreas(this.#sql, events);
           this.#send(connection, {
@@ -1437,6 +1454,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             ref: msg.ref,
             events: events.map(({ notes: _n, people: _p, ...e }, i) => ({ ...e, areas: areas[i]! })),
             ...(stale ? { stale } : {}),
+            ...(missing?.length ? { missing } : {}),
           });
           // New events to sort: Clef looks at them in the background.
           if ((getState<unknown[]>(this.#sql, "events_untagged") ?? []).length > waitingBefore) void this.#tendMemory();

@@ -181,6 +181,12 @@ export const Settings = z.object({
   /** Maps (§19.1): which maps extension answers (§17): OpenStreetMap's by default, Mapbox's by key, or another. */
   maps: z.object({ provider: z.string().min(1).max(40).default("osm") }).default({ provider: "osm" }),
   /**
+   * Accounts (§6.2, §17): with more than one, which one new mail goes from,
+   * by extension id ("gmail--2"). Empty is the first. An area can name its
+   * own (Library → Areas).
+   */
+  accounts: z.object({ mail: z.string().max(40).default("") }).default({ mail: "" }),
+  /**
    * Speaking up (§10.3): whether Atlas may tell the owner things on its own.
    * `noticing` covers whatever its senses notice (a move, a change on the
    * calendar, the weather, traffic, a device, a webhook); `leave` the look
@@ -225,6 +231,7 @@ export const SettingsPatch = z.object({
   web: f.web.unwrap().optional(),
   location: f.location.unwrap().optional(),
   maps: f.maps.unwrap().optional(),
+  accounts: f.accounts.unwrap().optional(),
   units: f.units.unwrap().optional(),
   speaking: f.speaking.unwrap().optional(),
 } satisfies { [K in keyof typeof f]: z.ZodType });

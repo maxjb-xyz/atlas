@@ -419,10 +419,11 @@ describe("the thread", () => {
     // Once the wait is over, the next read tries iCloud again; it accepts, and the refusal clears with no help from the owner.
     refuse = false;
     await runInDurableObject(owner(), async (_a: PersonAgent, state) => {
-      const row = state.storage.sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = 'icloud_refused'`).one();
-      const waiting = JSON.parse(row.value) as { next_try: number };
-      waiting.next_try = Date.now() - 1;
-      state.storage.sql.exec(`UPDATE state SET value = ? WHERE key = 'icloud_refused'`, JSON.stringify(waiting));
+      // Each calendar's refusal is kept by its extension; the test calendar has none, so it's "".
+      const row = state.storage.sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = 'calendar_refusals'`).one();
+      const all = JSON.parse(row.value) as Record<string, { next_try: number }>;
+      all[""]!.next_try = Date.now() - 1;
+      state.storage.sql.exec(`UPDATE state SET value = ? WHERE key = 'calendar_refusals'`, JSON.stringify(all));
     });
     const today = new Date().toISOString().slice(0, 10);
     s.send({ type: "atlas.calendar", ref: "now", start: today, end: today + "T23:59" });
@@ -453,7 +454,7 @@ describe("the thread", () => {
     expect(r.next_try - r.at).toBe(30 * 60_000);
     expect(r.note).toContain("Atlas will try again by itself after");
     await runInDurableObject(owner(), async (_a: PersonAgent, state) =>
-      state.storage.sql.exec(`DELETE FROM state WHERE key = 'icloud_refused'`),
+      state.storage.sql.exec(`DELETE FROM state WHERE key IN ('icloud_refused', 'calendar_refusals')`),
     );
     s.ws.close();
   });

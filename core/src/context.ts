@@ -4,6 +4,7 @@
 // surface), then every message since that summary. Compaction (§4.1) keeps
 // that last part in bounds; recall finds the rest, on demand.
 
+import { accountsLine } from "./accounts";
 import { codingLines } from "./agent/coding";
 import { goalLines } from "./agent/goals";
 import { lookedAt } from "./agent/helpers";
@@ -372,5 +373,7 @@ function areaContext(sql: Sql, beforeSeq?: number): string {
     }
   }
   lines.push(`The owner's areas: ${all.map((a) => a.name).join(", ")}. You can talk about any of them at any time.`);
+  const accounts = accountsLine(sql, worn);
+  if (accounts) lines.push(accounts);
   return lines.join(" ");
 }

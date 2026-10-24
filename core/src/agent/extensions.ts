@@ -10,8 +10,10 @@ import { z } from "zod";
 import type { Json, Manifest, Message, Received, Request as ExtRequest } from "../../../extensions/sdk";
 import { BUNDLED } from "../extensions.gen";
 import {
+  accountName,
   armLooks,
   codeOf,
+  manyAccounts,
   type ExtensionHost,
   extSecrets,
   getExt,
@@ -86,8 +88,10 @@ export class ExtensionDesk {
     const view = (m: Manifest, e: Installed | null, source: ExtensionView["source"], methods: string[]): ExtensionView => {
       const secrets = e ? extSecrets(this.d.sql, e.id) : {};
       return {
-        id: m.id,
+        id: e?.id ?? m.id,
         name: m.name,
+        account: e ? accountName(e) : null,
+        many: manyAccounts(m),
         version: m.version,
         about: m.about,
         provides: m.provides,

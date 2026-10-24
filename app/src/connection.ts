@@ -24,7 +24,13 @@ import type {
 } from "../../core/src/protocol";
 
 /** One calendar read for a page: the events, why it failed, or how old Atlas's copy is when iCloud couldn't be asked. */
-export type CalendarState = { events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } };
+export type CalendarState = {
+  events: CalendarEventView[];
+  error?: string;
+  stale?: { as_of: number; why: string };
+  /** Calendars that couldn't be read at all, each with why. */
+  missing?: string[];
+};
 
 export type Look = Extract<ServerMessage, { type: "atlas.setup.look.result" }>["look"];
 
@@ -301,7 +307,12 @@ function reduce(s: State, a: Action): State {
         ...s,
         calendar: {
           ...s.calendar,
-          [m.ref]: { events: m.events, ...(m.error ? { error: m.error } : {}), ...(m.stale ? { stale: m.stale } : {}) },
+          [m.ref]: {
+            events: m.events,
+            ...(m.error ? { error: m.error } : {}),
+            ...(m.stale ? { stale: m.stale } : {}),
+            ...(m.missing ? { missing: m.missing } : {}),
+          },
         },
       };
     case "atlas.calendar.changed":

@@ -19,6 +19,9 @@ import {
   methodsOf,
   setExtSecrets,
   uninstall,
+  accountName,
+  baseOf,
+  manyAccounts,
 } from "../extensions";
 import { forModel, readOnly, type McpClient, type McpServer } from "../mcp";
 import type { IndexView, ServicePreview, ServiceView } from "../protocol";
@@ -112,8 +115,10 @@ export class ServiceDesk {
 
     for (const s of catalog(sql)) {
       const extId = s.extension ? ("bundled" in s.extension ? s.extension.bundled : s.extension.id) : null;
-      const e = extId ? (mine.find((x) => x.id === extId) ?? null) : null;
-      if (e) claimedExt.add(e.id);
+      // Its accounts (§17): the first holds the card's setup; each has its own sign-in, listed on the card.
+      const accounts = extId ? mine.filter((x) => baseOf(x.id) === extId).sort((a, b) => a.installed_at - b.installed_at) : [];
+      const e = accounts[0] ?? null;
+      for (const a of accounts) claimedExt.add(a.id);
       const server = s.mcp ? (servers.find((x) => sameUrl(x.url, s.mcp!.url)) ?? null) : null;
       if (server) claimedMcp.add(server.id);
       const m: Manifest | null = e?.manifest ?? (extId && BUNDLED[extId] ? BUNDLED[extId]!.manifest : null);
@@ -176,6 +181,8 @@ export class ServiceDesk {
           skills,
         },
         update: e && updates[e.id] ? { version: updates[e.id]!.version, widens: updates[e.id]!.widens } : null,
+        accounts: accounts.map((a) => ({ ext: a.id, name: accountName(a) })),
+        more: Boolean(e && e.source === "bundled" && manyAccounts(e.manifest)),
       });
     }
 
@@ -210,6 +217,8 @@ export class ServiceDesk {
           skills: [],
         },
         update: null,
+        accounts: [{ ext: e.id, name: accountName(e) }],
+        more: false,
       });
     }
     for (const s of servers.filter((x) => !claimedMcp.has(x.id))) {
@@ -236,6 +245,8 @@ export class ServiceDesk {
         },
         parts: { extension: null, mcp: { id: s.id, url: s.url, state: s.state, signin: null }, skills: [] },
         update: null,
+        accounts: [],
+        more: false,
       });
     }
     const rank = (c: ServiceView) => (c.state === "available" ? 1 : 0);

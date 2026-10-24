@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { seams } from "../src/agent";
 import { BUNDLED } from "../src/extensions.gen";
-import { getExt, install, uninstall } from "../src/extensions";
+import { extSecrets, getExt, install, saveData, setExtSecrets, setExtSettings, uninstall } from "../src/extensions";
 import type { McpClient, McpServer } from "../src/mcp";
 import type { ServiceView } from "../src/protocol";
 import { catalog, DEFAULT_INDEX, pinned, readIndex, sha256Hex, snapshot, widening } from "../src/services";
@@ -445,6 +445,44 @@ async function lookNow(): Promise<void> {
 }
 
 describe("one card per service", () => {
+  it("holds a service's accounts on its card, each with its own sign-in, and an account id is only ever Atlas's own copy", async () => {
+    const s = await connect();
+    await inOwner((_a, sql) => {
+      for (const id of ["gmail", "gmail--2", "gmail--3", "telegram"]) uninstall(sql, id);
+      install(sql, { id: "gmail", source: "bundled" });
+      setExtSettings(sql, "gmail", { client_id: "client-1" });
+      setExtSecrets(sql, "gmail", { client_secret: "shh", refresh_token: "first-account" });
+      install(sql, { id: "telegram", source: "bundled" });
+    });
+    s.send({ type: "atlas.ext.account.add", id: "gmail" });
+    const two = await card(s, "gmail", (c) => c.accounts.length === 2);
+    expect(two.accounts.map((a) => a.ext)).toEqual(["gmail", "gmail--2"]);
+    expect(two.more).toBe(true);
+    await inOwner((_a, sql) => {
+      // The sign-in client carries over; the sign-in itself doesn't.
+      expect(getExt(sql, "gmail--2")!.settings.client_id).toBe("client-1");
+      expect(extSecrets(sql, "gmail--2")).toEqual({ client_secret: "shh" });
+      saveData(sql, "gmail--2", { email: "me@work.example" });
+    });
+    expect((await card(s, "gmail", (c) => c.accounts[1]?.name === "me@work.example")).accounts[1]!.name).toBe("me@work.example");
+    s.send({ type: "atlas.ext.account.name", id: "gmail--2", name: "Work" });
+    await card(s, "gmail", (c) => c.accounts[1]?.name === "Work");
+    // A chat bot is one per Atlas.
+    s.send({ type: "atlas.ext.account.add", id: "telegram" });
+    expect((await s.next("atlas.error")).message).toMatch(/one per Atlas/);
+    await inOwner((_a, sql) => {
+      expect(() =>
+        install(sql, {
+          id: "gmail--9",
+          source: "owner",
+          code: "export default {}",
+          manifest: { id: "gmail--9", name: "Mine", version: "1.0.0", about: "", provides: ["tools"], hosts: [] },
+        }),
+      ).toThrow(/only Atlas's own accounts/);
+      for (const id of ["gmail", "gmail--2", "telegram"]) uninstall(sql, id);
+    });
+  });
+
   it("makes Linear one card over its extension and its MCP server, with one key for both", async () => {
     const s = await connect();
     const before = await card(s, "linear");

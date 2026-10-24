@@ -92,7 +92,7 @@ export default {
         url.searchParams.get("code"),
         url.searchParams.get("error"),
       );
-      const back = `${url.origin}/#/settings/extensions?signin=${out.ok ? "ok" : "failed"}&note=${encodeURIComponent(out.text)}`;
+      const back = `${url.origin}/#/abilities/services?signin=${out.ok ? "ok" : "failed"}&note=${encodeURIComponent(out.text)}`;
       return Response.redirect(back, 302);
     }
 

@@ -323,6 +323,11 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE areas ADD COLUMN custom_color TEXT;
   ALTER TABLE areas ADD COLUMN icon TEXT;
   `,
+  // 16. M7: accounts (§17): a service added more than once, each its own extension row ("gmail--2"), and the name
+  // the owner gives it, when what it signed into doesn't say.
+  `
+  ALTER TABLE extensions ADD COLUMN label TEXT;
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */
