@@ -39,7 +39,7 @@ export function CalendarNote({ atlas, cal }: { atlas: Atlas; cal: CalendarState 
   if (!cal?.stale) return null;
   return (
     <p className="small muted" style={{ marginBottom: 10 }} title={cal.stale.why}>
-      Showing Atlas's copy from {clock(new Date(cal.stale.as_of))}; iCloud can't be asked right now. Settings → Connections says why.
+      Showing Atlas's copy from {clock(new Date(cal.stale.as_of))}; iCloud can't be asked right now. Abilities → Services says why.
     </p>
   );
 }

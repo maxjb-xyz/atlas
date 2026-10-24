@@ -1,11 +1,12 @@
 // Setup (§22): a passkey, meeting Atlas, a brain, a calendar, Atlas's first
 // look, and the default routines, each off until the owner turns it on. Every step can be skipped and picked up again from
-// Settings → Your data.
+// Atlas settings → Account.
 
 import { useEffect, useState } from "react";
 import { PRESETS, type Preset } from "../../core/src/character";
 import type { Atlas } from "./connection";
-import { AddPasskey, ChatGPT, ExtensionCard, SecretField, TestRow } from "./Settings";
+import { ExtensionCard } from "./abilities/Services";
+import { AddPasskey, ChatGPTSignIn as ChatGPT, SecretField, TestRow } from "./settings/parts";
 import { AsciiDiamond, Diamond, Icon } from "./ui";
 import type { AutomationView } from "../../core/src/protocol";
 import { Switch, useAutomations } from "./pages/Automations";
@@ -106,7 +107,7 @@ function PasskeyStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
       <p className="muted">
         A passkey signs you in with your face, fingerprint or device code. Nothing to remember, and it only works on this Atlas.
       </p>
-      {has ? <p className="ok">You have a passkey. You can add one for each device in Settings → Devices.</p> : <AddPasskey />}
+      {has ? <p className="ok">You have a passkey. You can add one for each device in Atlas settings → Account.</p> : <AddPasskey />}
       <Footer step="passkey" onNext={onNext} ready={has} />
     </>
   );
@@ -136,7 +137,7 @@ function MeetStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
   return (
     <>
       <div className="row" style={{ gap: 18, flexWrap: "nowrap" }}>
-        <AsciiDiamond rows={16} />
+        <AsciiDiamond height={140} />
         <div>
           <h1 className="disp">Hi. I'm {name || "Atlas"}.</h1>
           <p className="muted">I'll learn your world as we go. First, a few things about how I should be.</p>
@@ -162,7 +163,7 @@ function MeetStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
             </button>
           ))}
         </div>
-        <span className="faint small">You can fine-tune this, or write your own, in Settings → Character & voice.</span>
+        <span className="faint small">You can fine-tune this, or write your own, in Atlas settings → Atlas.</span>
       </div>
       <div className="field">
         <span>My voice</span>
@@ -248,8 +249,8 @@ function ConnectStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
   return (
     <>
       <h1 className="disp">Your calendar</h1>
-      <p className="muted">So I can see your week. iCloud ships with Atlas; others are extensions you can add any time in Settings.</p>
-      {icloud && <ExtensionCard atlas={atlas} e={icloud} open />}
+      <p className="muted">So I can see your week. iCloud ships with Atlas; others you can add any time in Abilities.</p>
+      {icloud && <ExtensionCard atlas={atlas} e={icloud} />}
       <TestRow
         label="Test calendar"
         k="calendar"

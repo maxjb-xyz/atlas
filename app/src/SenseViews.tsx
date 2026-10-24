@@ -445,7 +445,7 @@ export function SensesView({ page: p, onClose }: { page: SensesPage; onClose?: (
           })}
         </ul>
       ) : (
-        <p className="muted small">No sources yet: set up OwnTracks, the calendar, a device or a webhook in Settings.</p>
+        <p className="muted small">No sources yet: set up OwnTracks, the calendar, a device or a webhook in Abilities.</p>
       )}
     </>
   );

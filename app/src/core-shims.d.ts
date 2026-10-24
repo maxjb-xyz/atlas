@@ -1,3 +1,6 @@
+/** The release tag or commit this app was built from (vite.config.ts). */
+declare const __ATLAS_VERSION__: string;
+
 // The app imports types from core, which pulls in the Workers SqlStorage type.
 // This is just enough of its shape for the app's own type check.
 interface SqlStorageCursor<T> extends Iterable<T> {
