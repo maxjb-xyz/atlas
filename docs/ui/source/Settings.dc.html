@@ -92,6 +92,8 @@ a{color:inherit}
 .hold span{position:relative}
 .slot{cursor:pointer;transition:border-color .12s}
 .slot:hover{border-color:var(--tx3)}
+.nch{height:26px;padding:0 10px 0 7px;margin:0 1px;border-radius:13px;border:1px solid var(--sep2);background:var(--win);display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;line-height:normal;vertical-align:middle;white-space:nowrap}
+.say{font-size:14px;line-height:31px;color:var(--tx)}
 </style>
 </helmet>
 <div class="app {{tc}}" style="min-height: 100vh; display: flex; flex-wrap: wrap;">
@@ -136,8 +138,8 @@ a{color:inherit}
 
   <header style="height: 48px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 16px; border-bottom: 1px solid var(--sep); background: var(--win); position: relative; z-index: 5;">
     <button type="button" class="it" style="height: 28px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--sep2); background: var(--win); display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;">
-      <span style="display: inline-flex; gap: 2px;"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--P);"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--K);"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--U);"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--F);"></span></span>
-      All areas<svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M6 9l6 6 6-6"></path></svg></button>
+      <span style="display: inline-flex; gap: 2px;"><sc-for list="{{scopeDots}}" as="sd" hint-placeholder-count="4"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{sd}};"></span></sc-for></span>
+      {{scopeName}}<svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M6 9l6 6 6-6"></path></svg></button>
     <span style="flex: 1;"></span>
     <div style="position: relative;">
       <button type="button" class="it" onClick="{{toggleJobs}}" aria-expanded="{{jobsOpen}}" style="height: 28px; padding: 0 9px; border-radius: 6px; border: 1px solid {{jobsBd}}; background: {{jobsBg}}; display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;"><span class="mono spin" aria-hidden="true" style="color: var(--ac); width: 9px;"></span>2 jobs running</button>
@@ -495,6 +497,44 @@ a{color:inherit}
               </div>
             </sc-if>
 
+            <!-- ============ NOTIFICATIONS, SIMPLE ============ -->
+            <sc-if value="{{isNotifSimple}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: flex; flex-direction: column;">
+                <sc-if value="{{showSugg}}" hint-placeholder-val="{{true}}">
+                  <div class="pick" style="border: 1px solid var(--ac); background: var(--acs); border-radius: 10px; padding: 12px 14px 12px 16px; display: flex; align-items: center; gap: 14px; margin-bottom: 14px;">
+                    <svg viewBox="290 128 444 768" width="9" height="16" aria-hidden="true" style="flex: none;"><polygon points="512,128.96 290.84,418.52 512,505.16" style="fill: var(--m1);"></polygon><polygon points="512,128.96 512,505.16 733.16,418.52" style="fill: var(--m2);"></polygon><polygon points="512,895.04 290.84,418.52 512,505.16" style="fill: var(--m3);"></polygon><polygon points="512,895.04 512,505.16 733.16,418.52" style="fill: var(--m4);"></polygon></svg>
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 2px;"><span style="font-weight: 500;">You open Telegram faster than notifications. Want me to try it first when something can’t wait?</span><span class="aside">Over the last month you opened Telegram in about a minute, and notifications in about six.</span></div>
+                    <button type="button" class="btnp s" onClick="{{acceptSugg}}">Try it</button><button type="button" class="btn s" onClick="{{dismissSugg}}">Not now</button>
+                  </div>
+                </sc-if>
+                <sc-for list="{{nsimple}}" as="u" hint-placeholder-count="3">
+                  <div style="display: grid; grid-template-columns: 128px minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 10px 0; border-top: 1px solid var(--sep);">
+                    <span style="display: flex; flex-direction: column; gap: 1px;"><span class="disp" style="font-size: 16px; font-weight: 600;">{{u.n}}</span><span class="aside">{{u.count}}</span></span>
+                    <span class="say"><sc-for list="{{u.parts}}" as="p" hint-placeholder-count="5"><sc-if value="{{p.t}}" hint-placeholder-val="{{true}}">{{p.t}}</sc-if><sc-if value="{{p.c}}" hint-placeholder-val="{{false}}"><span class="nch"><sc-if value="{{p.lg}}" hint-placeholder-val="{{true}}"><img class="lg {{p.inv}}" src="{{p.lg}}" width="14" height="14" alt=""></sc-if><sc-if value="{{p.ic}}" hint-placeholder-val="{{false}}"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx2);"><path d="{{p.ic}}"></path></svg></sc-if><sc-if value="{{p.dia}}" hint-placeholder-val="{{false}}"><svg viewBox="290 128 444 768" width="7" height="12" aria-hidden="true" style="flex: none;"><polygon points="512,128.96 290.84,418.52 512,505.16" style="fill: var(--m1);"></polygon><polygon points="512,128.96 512,505.16 733.16,418.52" style="fill: var(--m2);"></polygon><polygon points="512,895.04 290.84,418.52 512,505.16" style="fill: var(--m3);"></polygon><polygon points="512,895.04 512,505.16 733.16,418.52" style="fill: var(--m4);"></polygon></svg></sc-if>{{p.n}}</span></sc-if></sc-for></span>
+                    <button type="button" class="btn s">Change</button>
+                  </div>
+                </sc-for>
+                <div class="aside" style="padding: 10px 0 0; border-top: 1px solid var(--sep);">Read it anywhere and it’s cleared everywhere.</div>
+
+                <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px;">
+                  <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+                    <div style="display: flex; align-items: center; gap: 10px; height: 24px;"><span style="font-weight: 600;">Quiet hours</span><span style="flex: 1;"></span><button type="button" class="{{quietCls}}" onClick="{{toggleQuiet}}" aria-label="Quiet hours"></button></div>
+                    <div style="display: flex; flex-direction: column; gap: 2px;"><span style="font-size: 13.5px;">From 10 pm to 7 am, only what can’t wait gets through.</span><span class="aside">They start in 7 hours.</span></div>
+                    <div class="mtr"><sc-for list="{{dayCells}}" as="c" hint-placeholder-count="24"><i class="{{c.k}}" style="height: 8px;"></i></sc-for></div>
+                    <div style="display: flex; font-size: 11.5px; color: var(--tx3);"><span style="flex: 1;">Midnight</span><span style="flex: 1; text-align: center;">Noon</span><span style="flex: 1; text-align: right;">Midnight</span></div>
+                  </div>
+                  <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+                    <div style="display: flex; align-items: center; gap: 10px; height: 24px;"><span style="font-weight: 600;">Interruptions</span><span style="flex: 1;"></span>
+                      <div style="display: inline-flex; align-items: center; border: 1px solid var(--sep2); border-radius: 6px; height: 24px;"><button type="button" aria-label="Fewer" style="width: 24px; height: 22px; border: 0; background: transparent; color: var(--tx2); padding: 0;">−</button><span class="num" style="font-size: 12px; padding: 0 4px;">10 a day</span><button type="button" aria-label="More" style="width: 24px; height: 22px; border: 0; background: transparent; color: var(--tx2); padding: 0;">+</button></div></div>
+                    <div style="display: flex; align-items: baseline; gap: 8px;"><span class="disp num" style="font-size: 22px; font-weight: 600;">4</span><span style="font-size: 13.5px; color: var(--tx2);">of 10 so far today</span></div>
+                    <div class="mtr"><sc-for list="{{budget}}" as="c" hint-placeholder-count="10"><i class="{{c.k}}" style="height: 8px;"></i></sc-for></div>
+                    <span class="aside">Atlas’s own check-ins count too. The count starts again at 7 am.</span>
+                  </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; padding-top: 16px;"><span style="font-size: 12.5px; color: var(--tx3);">Focus times, the order Atlas tries, and each channel’s settings are in the details.</span><button type="button" class="btn" style="height: 26px; font-size: 12px;">Show details</button></div>
+              </div>
+            </sc-if>
+
             <!-- ============ NOTIFICATIONS ============ -->
             <sc-if value="{{isNotif}}" hint-placeholder-val="{{false}}">
               <div class="rise" style="display: flex; flex-direction: column;">
@@ -558,6 +598,33 @@ a{color:inherit}
               </div>
             </sc-if>
 
+            <!-- ============ PERMISSIONS, SIMPLE ============ -->
+            <sc-if value="{{isPermsSimple}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: flex; flex-direction: column;">
+                <sc-for list="{{psimple}}" as="k" hint-placeholder-count="4">
+                  <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 11px 0; border-top: 1px solid var(--sep);">
+                    <span class="logo" style="width: 36px; height: 36px; border-radius: 9px;"><svg class="ic" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true" style="color: {{k.icc}};"><path d="{{k.d}}"></path></svg></span>
+                    <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0;"><span style="font-size: 14.5px; font-weight: 500;">{{k.n}}</span><span class="aside">{{k.s}}</span></span>
+                    <sc-if value="{{k.lock}}" hint-placeholder-val="{{false}}"><span style="display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--tx3);"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4"></path></svg>Always, and it can’t be turned off</span></sc-if>
+                    <sc-if value="{{k.free}}" hint-placeholder-val="{{true}}"><div class="seg"><sc-for list="{{k.opts}}" as="o" hint-placeholder-count="2"><button type="button" class="{{o.cls}}" onClick="{{o.pick}}">{{o.l}}</button></sc-for></div></sc-if>
+                  </div>
+                </sc-for>
+
+                <div style="display: flex; align-items: baseline; gap: 10px; padding: 16px 0 10px; border-top: 1px solid var(--sep);"><span class="h2">Your own rules</span><span class="aside">Trust you’ve given Atlas, and rules you’ve set.</span><span style="flex: 1;"></span><button type="button" class="btn s">Show all rules</button></div>
+                <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+                  <sc-for list="{{ptrust}}" as="t" hint-placeholder-count="6">
+                    <div style="border: 1px {{t.bs}} var(--sep2); border-radius: 8px; background: {{t.bg}}; padding: 0 12px; height: 54px; box-sizing: border-box; display: flex; align-items: center; gap: 12px;">
+                      <sc-if value="{{t.lg}}" hint-placeholder-val="{{true}}"><span class="logo" style="width: 32px; height: 32px;"><img class="lg {{t.inv}}" src="{{t.lg}}" width="17" height="17" alt=""></span></sc-if>
+                      <sc-if value="{{t.av}}" hint-placeholder-val="{{false}}"><span class="avc" style="width: 32px; height: 32px; font-size: 11.5px; --c: {{t.c}}; --rgb: {{t.rgb}};">{{t.av}}</span></sc-if>
+                      <sc-if value="{{t.ic}}" hint-placeholder-val="{{false}}"><span class="logo" style="width: 32px; height: 32px; border-style: dashed; background: transparent;"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="{{t.ic}}"></path></svg></span></sc-if>
+                      <span style="display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0;"><span style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: {{t.fg}};">{{t.n}}</span><span style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--tx3); white-space: nowrap;"><sc-if value="{{t.area}}" hint-placeholder-val="{{false}}"><span class="ach" style="height: 18px; font-size: 11.5px; --c: {{t.c}}; --rgb: {{t.rgb}};">{{t.area}}</span></sc-if>{{t.s}}</span></span>
+                      <sc-if value="{{t.act}}" hint-placeholder-val="{{true}}"><button type="button" class="tbtn">{{t.act}}</button></sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
             <!-- ============ PERMISSIONS ============ -->
             <sc-if value="{{isPerms}}" hint-placeholder-val="{{false}}">
               <div class="rise" style="display: flex; flex-direction: column;">
@@ -592,6 +659,61 @@ a{color:inherit}
                       <div class="seg sm"><sc-for list="{{r.opts}}" as="o" hint-placeholder-count="2"><button type="button" class="{{o.cls}}" onClick="{{o.pick}}">{{o.l}}</button></sc-for></div>
                     </div>
                   </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- ============ ACCOUNT, SIMPLE ============ -->
+            <sc-if value="{{isAccountSimple}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px;">
+                <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column;">
+                  <div style="display: flex; align-items: center; gap: 10px; padding-bottom: 10px;"><span class="h2" style="white-space: nowrap;">Signing in</span><span class="aside" style="white-space: nowrap;">With passkeys, no passwords.</span><span style="flex: 1;"></span><button type="button" class="btn s">Add a device</button></div>
+                  <sc-for list="{{passkeysS}}" as="p" hint-placeholder-count="2">
+                    <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--sep);">
+                      <span class="logo" style="width: 34px; height: 34px;"><img class="lg {{p.inv}}" src="{{p.lg}}" width="17" height="17" alt=""></span>
+                      <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">{{p.n}}</span><span class="aside">{{p.s}}</span></div>
+                      <span class="{{p.uc}}">{{p.used}}</span>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+                  <div style="display: flex; align-items: center; gap: 10px;"><span class="h2">Passwords and cards</span><span class="aside">Locked away.</span><span style="flex: 1;"></span><button type="button" class="btn s">Open</button></div>
+                  <div style="display: flex; align-items: baseline; gap: 10px; padding-top: 2px;"><span class="disp num" style="font-size: 26px; font-weight: 600;">14</span><span style="color: var(--tx2);">kept safe</span></div>
+                  <div style="display: flex; gap: 6px; flex-wrap: wrap;"><sc-for list="{{vault}}" as="v" hint-placeholder-count="4"><span style="height: 24px; padding: 0 10px; border: 1px solid var(--sep2); border-radius: 12px; display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--tx2);"><span class="num" style="color: var(--tx); font-weight: 500;">{{v.c}}</span>{{v.s}}</span></sc-for></div>
+                  <span class="aside">Atlas uses them without ever seeing them. Last used 2 hours ago, to sign in to your bank.</span>
+                </div>
+
+                <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+                  <div style="display: flex; align-items: center; gap: 10px;"><span class="h2">Updates</span><span class="aside">Checked this morning.</span></div>
+                  <div class="cardb" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; align-items: baseline; gap: 8px;"><span class="disp" style="font-size: 16px; font-weight: 600;">A new Atlas is ready</span><span class="aside">Out since yesterday</span></div>
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                      <sc-for list="{{notesS}}" as="n" hint-placeholder-count="3"><div style="display: flex; gap: 9px; font-size: 12.5px; color: var(--tx2);"><span style="color: var(--tx3);">·</span><span>{{n}}</span></div></sc-for>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px; padding-top: 4px;">
+                      <button type="button" class="btnp s">Update now</button>
+                      <span class="aside">Takes about a minute, and you can go back.</span>
+                    </div>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 10px; padding-top: 2px;"><button type="button" class="{{autoCls}}" onClick="{{toggleAuto}}" aria-label="Update on its own"></button><span style="font-size: 12.5px;">Update on its own</span><span class="aside">Overnight, when you’re not talking.</span></div>
+                </div>
+
+                <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column;">
+                  <div style="display: flex; align-items: center; gap: 10px; padding-bottom: 10px;"><span class="h2">Your data</span><span class="aside">It’s yours, and it only grows.</span></div>
+                  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--sep);">
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Take a copy of everything</span><span class="aside">Conversations, records, files, skills and settings.</span></div>
+                    <button type="button" class="btn s">Download</button>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--sep);">
+                    <div style="display: flex; align-items: center; gap: 12px;"><div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Go back in time</span><span class="aside">To any moment in the last 30 days.</span></div><button type="button" class="btn s">Choose a day</button></div>
+                    <div class="mtr"><sc-for list="{{days}}" as="c" hint-placeholder-count="30"><i class="{{c.k}}" style="height: 10px;"></i></sc-for></div>
+                    <div style="display: flex; font-size: 11.5px; color: var(--tx3);"><span style="flex: 1;">A month ago</span><span>Today</span></div>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0 2px; border-top: 1px solid var(--sep);">
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Delete everything</span><span class="aside">Everything, and every backup. There’s no undo.</span></div>
+                    <button type="button" class="btn s hold"><span class="fill"></span><span>Hold to delete</span></button>
+                  </div>
                 </div>
               </div>
             </sc-if>
@@ -714,7 +836,7 @@ class Component extends DCLogic {
     ];
     var secs = S.map(function (s) {
       var on = s[0] === sec;
-      return { n: s[1], d: s[2], meta: s[3], bg: on ? 'var(--sel)' : 'transparent', fg: on ? 'var(--tx)' : 'var(--tx2)', fw: on ? 500 : 400, ic: on ? 'var(--tx)' : 'var(--tx3)', pick: function () { self.setState({ sec: s[0], picker: false }); } };
+      return { n: s[1], d: s[2], meta: st.level === 'developer' ? s[3] : (s[0] === 'account' ? '1 update' : ''), bg: on ? 'var(--sel)' : 'transparent', fg: on ? 'var(--tx)' : 'var(--tx2)', fw: on ? 500 : 400, ic: on ? 'var(--tx)' : 'var(--tx3)', pick: function () { self.setState({ sec: s[0], picker: false }); } };
     });
 
     // ---------- Atlas ----------
@@ -828,6 +950,19 @@ class Component extends DCLogic {
     var order = [['1', 'Where you’re talking now'], ['2', 'Where it started'], ['3', 'Your list for its urgency']].map(function (o, k) {
       return { i: o[0], n: o[1], join: k > 0, c: 'var(--tx2)', bd: 'var(--sep2)' };
     });
+    // The same lists as plain sentences, for the Simple detail level (the default).
+    function tx(t) { return { t: t, c: false }; }
+    function lc(k, n) { return { t: '', c: true, n: n, lg: L[k].uri, inv: L[k].inv, ic: '', dia: false }; }
+    function icp(d, n) { return { t: '', c: true, n: n, lg: '', inv: '', ic: d, dia: false }; }
+    function dia(n) { return { t: '', c: true, n: n, lg: '', inv: '', ic: '', dia: true }; }
+    var nowParts = accepted
+      ? [tx('When something can’t wait, Atlas messages you on '), lc('telegram', 'Telegram'), tx(', then pushes to your '), lc('apple', 'iPhone'), tx(', and gives you a '), lc('telnyx', 'phone call'), tx(' if you still haven’t seen it after 10 minutes.')]
+      : [tx('When something can’t wait, Atlas pushes to your '), lc('apple', 'iPhone'), tx(', then messages you on '), lc('telegram', 'Telegram'), tx(', and gives you a '), lc('telnyx', 'phone call'), tx(' if you still haven’t seen it after 10 minutes.')];
+    var nsimple = [
+      { n: 'Now', count: 'Twice this week', parts: nowParts },
+      { n: 'Soon', count: '7 today', parts: [tx('When it can wait a little, Atlas sends it to '), lc('telegram', 'Telegram'), tx(' at your next free moment.')] },
+      { n: 'Later', count: '11 waiting', parts: [tx('Everything else waits until you next open '), dia('Atlas'), tx(', or for your '), icp(BRIEF, 'morning brief'), tx(' at 8 am.')] }
+    ];
     // quiet hours strip: 24 hours, 22 to 7 quiet, now at 14
     var dayCells = cells(24, function (k) { if (k === 14) return 'n'; return (k >= 22 || k < 7) ? 'f' : 'q'; });
     var budget = cells(10, function (k) { return k < 4 ? 'f' : ''; });
@@ -869,13 +1004,44 @@ class Component extends DCLogic {
       return { n: r[1], opts: r[2].map(function (o, k) { return { l: o, cls: k === cur ? 'on' : '', pick: function () { set(r[0], k); } }; }) };
     });
 
+    // Permissions in plain statements, for the Simple detail level. The words follow the choice.
+    var EYE = 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z';
+    var PEN = 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z';
+    var SAY = 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z';
+    var CASH = 'M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6';
+    function stmt(key, d, opts, def, words, s) {
+      var cur = st[key] || def;
+      return { d: d, icc: 'var(--tx2)', n: words[opts.indexOf(cur)], s: s, lock: false, free: true,
+        opts: opts.map(function (o) { return { l: o, cls: o === cur ? 'on' : '', pick: function () { set(key, o); } }; }) };
+    }
+    var psimple = [
+      stmt('p_look', EYE, ['Asks first', 'Just looks'], 'Just looks', ['Atlas asks before it looks', 'Atlas looks without asking'], 'Your mail, calendar, files and the web.'),
+      stmt('p_own', PEN, ['Asks first', 'Does it, tells you'], 'Does it, tells you', ['Asks before it changes your own things', 'Changes your own things and tells you, with undo'], 'Your calendar, notes and lists.'),
+      stmt('p_speak', SAY, ['Always asks', 'Until trusted', 'Never asks'], 'Until trusted', ['Always asks before it speaks for you', 'Asks before it speaks for you, until you trust it', 'Speaks for you without asking'], 'Messages, email and posts. Say yes to the same kind a few times and it stops asking.'),
+      { d: CASH, icc: 'var(--tx2)', n: 'Always asks about money and anything it can’t undo', s: 'It shows you the amount, and you hold to confirm.', lock: true, free: false, opts: [] }
+    ];
+    function tr(o) { return Object.assign({ lg: '', inv: '', av: '', ic: '', area: '', c: '', rgb: '', act: 'Ask again', bs: 'solid', bg: 'var(--win)', fg: 'var(--tx)' }, o); }
+    var ptrust = [
+      tr({ lg: L.gmail.uri, inv: L.gmail.inv, n: 'Sends meeting confirmations', s: 'Since Oct 9, after you said yes to five as they were' }),
+      tr({ av: 'M', c: 'var(--P)', rgb: 'var(--Prgb)', n: 'Texts Mom', s: 'Since Sep 30' }),
+      tr({ ic: '', lg: L.linear.uri, inv: L.linear.inv, n: 'Uses Linear', s: 'Everything it can do there, since Oct 2' }),
+      tr({ av: 'FD', c: 'var(--K)', rgb: 'var(--Krgb)', n: 'Front desk replies to your clients', area: 'Keyframes', s: 'Since Oct 14' }),
+      tr({ lg: L.telnyx.uri, inv: L.telnyx.inv, n: 'Calls you when something’s urgent', s: 'You turned this on', act: 'Turn off' }),
+      tr({ ic: 'M12 5v14M5 12h14', n: 'Add a rule by asking', s: 'Like: never email my professors without asking', act: '', bs: 'dashed', bg: 'transparent', fg: 'var(--tx2)' })
+    ];
+
     // ---------- Account ----------
+    var passkeysS = [
+      { lg: L.apple.uri, inv: L.apple.inv, n: 'MacBook Pro', s: 'Touch ID, on this Mac', used: 'In use now', uc: 'ok' },
+      { lg: L.apple.uri, inv: L.apple.inv, n: 'iPhone 17 Pro', s: 'Face ID', used: 'Yesterday evening', uc: 'aside' }
+    ];
     var passkeys = [
       { d: 'M4 5h16v10H4zM2 19h20', n: 'MacBook Pro', s: 'Touch ID · this device', used: 'In use now' },
       { d: PH, n: 'iPhone 17 Pro', s: 'Face ID', used: 'Yesterday, 9:14 pm' }
     ];
-    var vault = [['8', 'logins'], ['2', 'cards'], ['3', 'two-factor codes'], ['1', 'API key']].map(function (v) { return { c: v[0], n: v[1] }; });
+    var vault = [['8', 'logins', 'logins'], ['2', 'cards', 'cards'], ['3', 'two-factor codes', 'sign-in codes'], ['1', 'API key', 'service key']].map(function (v) { return { c: v[0], n: v[1], s: v[2] }; });
     var notes = ['Voice answers start about 80 ms sooner.', 'Approvals on Telegram show the whole draft.', 'Fixes calendar sync stalling after the Mac sleeps.'];
+    var notesS = ['Voice answers start a little sooner.', 'Approvals on Telegram show the whole draft.', 'Your calendar keeps up after the Mac wakes from sleep.'];
     var days = cells(30, function (k) { return k === 29 ? 'f' : 'q'; });
 
     var H = {
@@ -885,9 +1051,14 @@ class Component extends DCLogic {
       permissions: ['Permissions', 'When Atlas asks first. Each area can raise or lower these; Health asks for everything.', ''],
       account: ['Account', 'How you sign in, your secrets, updates and your data.', '']
     };
+    var dev = st.level === 'developer';
+    if (!dev) {
+      H.permissions = ['Permissions', 'When Atlas asks you first. Each area can change these, and Health always asks.', ''];
+      H.account = ['Account', 'How you sign in, your passwords, updates and your data.', ''];
+    }
     var hd = H[sec];
     return Object.assign(this.shellVals('Settings'), {
-      tabs: this.mkTabs([[hd[0], '']], hd[0], 'crumb'), meta: 'Atlas 0.7.0 · 0.7.1 ready',
+      tabs: this.mkTabs([[hd[0], '']], hd[0], 'crumb'), meta: st.level === 'developer' ? 'Atlas 0.7.0 · 0.7.1 ready' : 'An update is ready',
       secs: secs, secTitle: hd[0], secSub: hd[1], secBtn: hd[2],
       isAtlas: sec === 'atlas', apills: apills,
       isCharacter: sec === 'atlas' && atab === 'Character', isVoice: sec === 'atlas' && atab === 'Voice', isLook: sec === 'atlas' && atab === 'Look',
@@ -896,11 +1067,11 @@ class Component extends DCLogic {
       themes: themes, accents: accents, lookSegs: lookSegs, followCls: tg('follow', true), toggleFollow: flip('follow', true),
       isBrains: sec === 'brains' && st.level === 'developer', isBrainsSimple: sec === 'brains' && st.level !== 'developer', bs: bsimple, roles: roles, named: named, usedFor: usedFor, provs: provs,
       pickProv: pickProv, pickRows: pickRows, pickNote: pickNote, pickCostHd: pickCostHd, pickFoot: pickFoot,
-      isNotif: sec === 'notifications', showSugg: !accepted && !st.dismissed, acceptSugg: function () { set('accepted', true); }, dismissSugg: function () { set('dismissed', true); },
+      isNotif: sec === 'notifications' && dev, isNotifSimple: sec === 'notifications' && !dev, nsimple: nsimple, showSugg: !accepted && !st.dismissed, acceptSugg: function () { set('accepted', true); }, dismissSugg: function () { set('dismissed', true); },
       order: order, urg: urg, dayCells: dayCells, budget: budget,
       quietCls: tg('quiet', true), toggleQuiet: flip('quiet', true), focusCls: tg('focus', true), toggleFocus: flip('focus', true),
-      isPerms: sec === 'permissions', kinds: kinds, trusted: trusted, rules: rules,
-      isAccount: sec === 'account', passkeys: passkeys, vault: vault, notes: notes, days: days,
+      isPerms: sec === 'permissions' && dev, isPermsSimple: sec === 'permissions' && !dev, psimple: psimple, ptrust: ptrust, kinds: kinds, trusted: trusted, rules: rules,
+      isAccount: sec === 'account' && dev, isAccountSimple: sec === 'account' && !dev, passkeysS: passkeysS, notesS: notesS, passkeys: passkeys, vault: vault, notes: notes, days: days,
       autoCls: tg('auto', false), toggleAuto: flip('auto', false)
     });
   }
@@ -921,6 +1092,7 @@ class Component extends DCLogic {
     var jobsOpen = !!self.state.jobsOpen;
   return {
     tc: self.props.theme === 'Dark' ? 'dk' : 'lt',
+    scopeDots: ['var(--P)', 'var(--K)', 'var(--U)', 'var(--F)'], scopeName: 'All areas',
     nav: NAV.map(function (n) { var on = n.name === active; return { name: n.name, d: n.d, badge: n.badge || '', gap: n.gap || 0, bg: on ? 'var(--sel)' : 'transparent', fw: on ? 500 : 400, ic: on ? 'var(--tx)' : 'var(--tx2)' }; }),
     pinned: [
       { n: 'Keyframes', isArea: true, c: 'var(--K)', meta: '' },

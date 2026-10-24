@@ -149,7 +149,21 @@ OPEN = r"""
             <div class="rise" style="position: absolute; left: 22px; right: 22px; top: 50px; bottom: 86px; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 22px;">
               <div style="display: flex; flex-direction: column; gap: 14px;">
                 <div style="display: flex; align-items: center; gap: 12px;"><span class="logo" style="width: 48px; height: 48px; border-radius: 11px;"><img class="lg" src="{{linearLogo}}" width="28" height="28" alt=""></span><span style="display: flex; flex-direction: column;"><span class="disp" style="font-size: 22px; font-weight: 600;">Linear</span><span style="color: var(--tx2);">Issues and projects for your team</span></span></div>
+                <sc-if value="{{isSimple}}" hint-placeholder-val="{{true}}"><div style="display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--tx2);">Used for<span class="ach" style="--c: var(--K); --rgb: var(--Krgb);">Keyframes</span></div></sc-if>
                 <div style="display: flex; align-items: center; gap: 8px;"><span class="dot" style="background: var(--F);"></span><span>On</span><span style="color: var(--tx3);">· heard 18 min ago</span><span style="flex: 1;"></span><span class="tg on" aria-label="On"></span></div>
+                <sc-if value="{{isSimple}}" hint-placeholder-val="{{true}}">
+                  <div class="card" style="background: var(--bg); padding: 12px 14px; display: flex; flex-direction: column; gap: 9px;">
+                    <span style="display: flex; align-items: center; gap: 8px;"><span style="font-weight: 600;">Connected with your key</span><span style="flex: 1;"></span><span style="color: var(--F); font-size: 12px;">✓ Works</span></span>
+                    <span style="font-size: 12px; color: var(--tx3);">Atlas keeps it locked away and adds it as each request leaves. Nothing else ever sees it.</span>
+                    <span><button type="button" class="btn" style="height: 26px; padding: 0 10px; font-size: 12px;">Change the key</button></span>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 3px;">
+                    <span style="font-weight: 600;">Costs nothing</span>
+                    <span style="color: var(--tx2);">Linear’s free plan covers it.</span>
+                  </div>
+                  <div style="display: flex; gap: 8px; padding-top: 4px;"><button type="button" class="btn">Turn off</button><button type="button" class="btn">Remove</button><span style="flex: 1;"></span><button type="button" class="btn">Show details</button></div>
+                </sc-if>
+                <sc-if value="{{isDev}}" hint-placeholder-val="{{false}}">
                 <div class="card" style="background: var(--bg); padding: 12px 14px; display: flex; flex-direction: column; gap: 9px;">
                   <span style="font-weight: 600;">Set up with one key</span>
                   <span style="display: flex; align-items: center; gap: 8px; height: 30px; border: 1px solid var(--sep2); border-radius: 6px; padding: 0 10px; background: var(--win); font-size: 12.5px;"><span class="mono" style="letter-spacing: .1em; color: var(--tx2);">lin_api_••••••••4f2a</span><span style="flex: 1;"></span><span style="color: var(--F); font-size: 12px;">✓ Works</span></span>
@@ -164,13 +178,14 @@ OPEN = r"""
                   <span style="color: var(--tx2);">Nothing. Linear's free plan covers it.</span>
                 </div>
                 <div style="display: flex; gap: 8px; padding-top: 4px;"><button type="button" class="btn">Turn off</button><button type="button" class="btn">Remove</button></div>
+                </sc-if>
               </div>
               <div style="display: flex; flex-direction: column; gap: 12px; min-width: 0;">
                 <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
                   <div class="card" style="padding: 10px 14px 4px; display: flex; flex-direction: column;">
                     <span style="display: flex; align-items: baseline; gap: 8px; padding-bottom: 6px;"><span style="font-weight: 600;">Hears</span><span style="font-size: 12px; color: var(--tx3);">What Atlas notices from Linear</span></span>
                     <sc-for list="{{hears}}" as="h" hint-placeholder-count="4">
-                      <span style="display: flex; align-items: center; gap: 10px; height: 34px; border-top: 1px dashed var(--sep);"><span style="flex: 1;">{{h.n}}</span><span class="mono" style="font-size: 11px; color: var(--tx3);">{{h.m}}</span><span class="tg {{h.t}}"></span></span>
+                      <span style="display: flex; align-items: center; gap: 10px; height: 34px; border-top: 1px dashed var(--sep);"><span style="flex: 1;">{{h.n}}</span><span class="{{h.mcls}}" style="font-size: {{h.mfs}}px; color: var(--tx3);">{{h.m}}</span><span class="tg {{h.t}}"></span></span>
                     </sc-for>
                   </div>
                   <div class="card" style="padding: 12px 14px; display: flex; flex-direction: column;">
@@ -183,11 +198,12 @@ OPEN = r"""
                 <div class="card" style="padding: 12px 14px; display: flex; flex-direction: column;">
                   <span style="display: flex; align-items: baseline; gap: 8px; padding-bottom: 6px;"><span style="font-weight: 600;">Lately</span><span style="flex: 1;"></span><span style="font-size: 12px; color: var(--tx3);">Every one is in History</span></span>
                   <sc-for list="{{lately}}" as="r" hint-placeholder-count="4">
-                    <span style="display: grid; grid-template-columns: 70px minmax(0, 1fr) auto 64px; align-items: center; gap: 12px; height: 33px; border-top: 1px dashed var(--sep);">
-                      <span class="tag" style="justify-self: start; color: {{r.tc}}; border-color: {{r.tb}};">{{r.k}}</span>
+                    <span style="display: grid; grid-template-columns: {{r.cols}}; align-items: center; gap: 12px; height: 33px; border-top: 1px dashed var(--sep);">
+                      <sc-if value="{{r.dev}}" hint-placeholder-val="{{false}}"><span class="tag" style="justify-self: start; color: {{r.tc}}; border-color: {{r.tb}};">{{r.k}}</span></sc-if>
+                      <sc-if value="{{r.simple}}" hint-placeholder-val="{{true}}"><span style="display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: {{r.sc}};"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{r.dc}};"></span>{{r.ks}}</span></sc-if>
                       <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{r.n}}</span>
                       <span style="font-size: 12px; color: var(--tx3); white-space: nowrap;">{{r.why}}</span>
-                      <span class="mono" style="font-size: 11px; color: var(--tx3); text-align: right;">{{r.t}}</span>
+                      <span class="{{r.mcls}}" style="font-size: {{r.mfs}}px; color: var(--tx3); text-align: right;">{{r.t}}</span>
                     </span>
                   </sc-for>
                 </div>
@@ -196,7 +212,8 @@ OPEN = r"""
                   <sc-for list="{{rules}}" as="r" hint-placeholder-count="2">
                     <span style="display: flex; align-items: center; gap: 10px; height: 36px; border-top: 1px dashed var(--sep);">
                       <svg class="ic" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
-                      <span class="tag">{{r.when}}</span><span class="mono" style="color: var(--dash);">──</span><span class="tag">{{r.do}}</span>
+                      <sc-if value="{{r.dev}}" hint-placeholder-val="{{false}}"><span class="tag">{{r.when}}</span><span class="mono" style="color: var(--dash);">──</span><span class="tag">{{r.do}}</span></sc-if>
+                      <sc-if value="{{r.simple}}" hint-placeholder-val="{{true}}"><span>{{r.say}}</span></sc-if>
                       <span style="flex: 1;"></span>
                       <span style="font-size: 12px; color: var(--tx3);">{{r.m}}</span>
                     </span>
@@ -344,14 +361,15 @@ JS = r"""
     ];
     var chips = [['All', '34', 'on'], ['On', '8'], ['Mail and calendar', '6'], ['Chat and calls', '7'], ['Work', '9'], ['Coding', '4'], ['Maps and weather', '5']].map(function (c) { return { n: c[0], k: c[1], cls: c[2] || '' }; });
 
-    var hears = [{ n: 'Issues assigned to you', m: '3 this week', t: 'on' }, { n: 'Mentions and comments', m: '11 this week', t: 'on' }, { n: 'Reviews waiting on you', m: 'none', t: 'on' }, { n: 'Every change in the team', m: '', t: 'off' }];
+    var lv = { dev: dev, simple: !dev, mcls: dev ? 'mono' : '', mfs: dev ? 11 : 12 };
+    var hears = [{ n: 'Issues assigned to you', m: '3 this week', t: 'on' }, { n: 'Mentions and comments', m: '11 this week', t: 'on' }, { n: 'Reviews waiting on you', m: 'none', t: 'on' }, { n: 'Every change in the team', m: '', t: 'off' }].map(function (h) { return Object.assign(h, lv); });
     var cando = [{ n: 'Find issues and projects', m: 'Never asks', c: 'var(--tx3)' }, { n: 'File an issue', m: 'Trusted since Oct 20', c: 'var(--F)' }, { n: 'Update an issue', m: 'Asks until trusted', c: 'var(--tx2)' }, { n: 'Comment', m: 'Asks until trusted', c: 'var(--tx2)' }];
     var lately = [
-      { k: 'Heard', n: 'KEY-142 Color grade export fails on long clips', why: 'Assigned to you by Jordan Lee', t: '18 min', tc: 'var(--tx2)', tb: 'var(--sep2)' },
-      { k: 'Filed', n: 'KEY-141 Client portal shows the wrong invoice', why: 'From Dev Patel’s email, your rule', t: 'Yesterday', tc: 'var(--ac)', tb: 'var(--ac)' },
-      { k: 'Heard', n: 'Jordan Lee commented on KEY-138', why: '“Can you check the LUT?”', t: 'Mon', tc: 'var(--tx2)', tb: 'var(--sep2)' },
-      { k: 'Updated', n: 'KEY-136 moved to Done', why: 'You asked in Telegram', t: 'Mon', tc: 'var(--tx2)', tb: 'var(--sep2)' }
-    ];
+      { k: 'Heard', ks: 'Heard', n: 'KEY-142 Color grade export fails on long clips', ns: 'Color grade export fails on long clips', why: 'Assigned to you by Jordan Lee', t: '18 min', ts: '18 min ago', tc: 'var(--tx2)', tb: 'var(--sep2)', sc: 'var(--tx2)', dc: 'var(--tx3)' },
+      { k: 'Filed', ks: 'Filed', n: 'KEY-141 Client portal shows the wrong invoice', ns: 'Client portal shows the wrong invoice', why: 'From Dev Patel’s email, your rule', t: 'Yesterday', ts: 'Yesterday', tc: 'var(--ac)', tb: 'var(--ac)', sc: 'var(--ac)', dc: 'var(--ac)' },
+      { k: 'Heard', ks: 'Heard', n: 'Jordan Lee commented on KEY-138', ns: 'Jordan Lee asked about the color issue', why: '“Can you check the LUT?”', t: 'Mon', ts: 'Monday', tc: 'var(--tx2)', tb: 'var(--sep2)', sc: 'var(--tx2)', dc: 'var(--tx3)' },
+      { k: 'Updated', ks: 'Moved', n: 'KEY-136 moved to Done', ns: 'Gallery captions marked done', why: 'You asked in Telegram', t: 'Mon', ts: 'Monday', tc: 'var(--tx2)', tb: 'var(--sep2)', sc: 'var(--tx2)', dc: 'var(--tx3)' }
+    ].map(function (r) { if (!dev) { r.n = r.ns; r.t = r.ts; } return Object.assign(r, lv, { cols: dev ? '70px minmax(0, 1fr) auto 64px' : '64px minmax(0, 1fr) auto 76px' }); });
 
     function sk(n, d, area, uses, by, check, fresh) {
       var k = Math.min(6, Math.round(uses / 2));
@@ -389,7 +407,7 @@ JS = r"""
       isMap: tab === 'Map', isDev: dev, isSimple: !dev, linearLogo: L.linear.uri, isServices: tab === 'Services' && !open, isOpen: !!open, isSkills: tab === 'Skills', isDevices: tab === 'Devices',
       groups: groups, on: on, more: more, chips: chips,
       hears: hears, cando: cando, lately: lately,
-      rules: [{ when: 'A client emails about a bug', do: 'File it in Linear', m: 'Ran 3 times · last yesterday' }, { when: 'Friday 4 PM', do: 'Tell Jordan what’s open', m: 'Ran 6 times' }], back: function () { self.setState({ open: null }); },
+      rules: [{ when: 'A client emails about a bug', do: 'File it in Linear', say: 'When a client emails about a bug, file it in Linear', m: dev ? 'Ran 3 times · last yesterday' : 'Ran 3 times, last yesterday' }, { when: 'Friday 4 PM', do: 'Tell Jordan what’s open', say: 'Every Friday at 4 pm, tell Jordan what’s open', m: 'Ran 6 times' }].map(function (r) { return Object.assign(r, lv); }), back: function () { self.setState({ open: null }); },
       scols: ['Skill', 'Area', 'Used', 'Made by', 'Check'], skills: skills,
       devices: devices, qr: qr
     });

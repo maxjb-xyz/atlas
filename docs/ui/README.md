@@ -287,6 +287,9 @@ Waiting for the owner's OK (smoke test step 1 in [docs/M7.md](../M7.md)). The de
 |---|---|
 | ![Map, simple](screenshots/m7/abilities-map.png) | ![Map, developer](screenshots/m7/abilities-map-developer.png) |
 | ![Brains, simple](screenshots/m7/settings-brains.png) | ![Brains, developer](screenshots/m7/settings-brains-developer.png) |
+| ![Notifications, simple](screenshots/m7/settings-notifications.png) | ![Notifications, developer](screenshots/m7/settings-notifications-developer.png) |
+| ![Permissions, simple](screenshots/m7/settings-permissions.png) | ![Permissions, developer](screenshots/m7/settings-permissions-developer.png) |
+| ![A face, simple](screenshots/m7/people-face-open.png) | ![A face, developer](screenshots/m7/people-face-open-developer.png) |
 
 | | |
 |---|---|

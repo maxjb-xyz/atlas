@@ -357,6 +357,63 @@ BODY = r"""
               </div>
             </div>
           </sc-if>
+
+          <sc-if value="{{isFaceSimple}}" hint-placeholder-val="{{false}}">
+            <div class="rise" style="padding: 16px 22px 0; display: flex; flex-direction: column;">
+              <div style="display: flex; align-items: center; gap: 8px; height: 30px;">
+                <button type="button" class="lnk" onClick="{{closeFace}}">BACKAll faces</button>
+                <span style="flex: 1;"></span>
+                <button type="button" class="btn">Show details</button>
+                <button type="button" class="btnp"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width: 2;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>Talk to it as a stranger</button>
+                <button type="button" class="btn">Pause</button>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px; margin-top: 12px;">
+                <span style="width: 36px; height: 36px; box-sizing: border-box; border: 1px solid var(--sep2); border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: var(--bg);">FDIA</span>
+                <span class="disp" style="font-size: 26px; font-weight: 600; line-height: 1.1;">Keyframes front desk</span>
+                <span class="ach" style="margin-left: 4px; --c: var(--K); --rgb: var(--Krgb);">Keyframes</span>
+                <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--tx2); margin-left: 8px;"><span class="live" style="width: 6px; height: 6px; border-radius: 50%; background: var(--F);"></span>Live, and replied 4 min ago on<img class="lg {{tgInv}}" src="{{tgLogo}}" width="13" height="13" alt="">Telegram</span>
+              </div>
+              <span style="color: var(--tx2); margin-top: 7px; padding-left: 48px;">Introduces itself: “Hi, this is Atlas at Keyframes Studio. I’m an AI that helps Max with bookings.”</span>
+
+              <div style="margin-top: 20px; border: 1px solid var(--sep); border-radius: 10px; background: var(--bg); padding: 4px 20px;">
+                <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 34px;">
+                  <sc-for list="{{story}}" as="s" hint-placeholder-count="6">
+                    <div style="display: flex; align-items: flex-start; gap: 12px; padding: 13px 0; border-top: 1px solid {{s.bt}};">
+                      <span class="logo" style="width: 28px; height: 28px; border-radius: 7px; margin-top: 1px;"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="color: {{s.icc}};"><path d="{{s.d}}"></path></svg></span>
+                      <span style="font-size: 13.5px; line-height: 26px; color: var(--tx); min-width: 0;"><sc-for list="{{s.parts}}" as="p" hint-placeholder-count="5"><sc-if value="{{p.t}}" hint-placeholder-val="{{true}}">{{p.t}}</sc-if><sc-if value="{{p.c}}" hint-placeholder-val="{{false}}"><span style="height: 23px; padding: 0 9px 0 7px; margin: 0 1px; border-radius: 12px; border: 1px solid var(--sep2); background: var(--win); display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; line-height: normal; vertical-align: middle; white-space: nowrap;"><sc-if value="{{p.lg}}" hint-placeholder-val="{{true}}"><img class="lg {{p.inv}}" src="{{p.lg}}" width="13" height="13" alt=""></sc-if><sc-if value="{{p.ic}}" hint-placeholder-val="{{false}}"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx2);"><path d="{{p.ic}}"></path></svg></sc-if>{{p.n}}</span></sc-if><sc-if value="{{p.area}}" hint-placeholder-val="{{false}}"><span class="ach" style="vertical-align: middle; margin: 0 1px; line-height: normal; --c: {{p.ac}}; --rgb: {{p.argb}};">{{p.area}}</span></sc-if></sc-for></span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+
+              <div style="display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; margin-top: 24px;">
+                <div style="display: flex; flex-direction: column;">
+                  <div style="display: flex; align-items: baseline; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--sep);"><span class="sh">Recent conversations</span><span style="font-size: 12px; color: var(--tx3);">All of them are in History</span></div>
+                  <sc-for list="{{convsS}}" as="c" hint-placeholder-count="4">
+                    <div class="row" style="display: grid; grid-template-columns: 26px 136px minmax(0, 1fr) 176px 64px; gap: 12px; align-items: center; height: 40px; border-bottom: 1px solid var(--sep);">
+                      <sc-if value="{{c.known}}" hint-placeholder-val="{{true}}"><span class="avc" style="width: 26px; height: 26px; font-size: 9.5px; --c: {{c.ac}}; --rgb: {{c.argb}};">{{c.i}}</span></sc-if>
+                      <sc-if value="{{c.stranger}}" hint-placeholder-val="{{false}}"><span class="av" style="width: 26px; height: 26px; font-size: 9.5px; border: 1px dashed var(--dash); background: transparent;">{{c.i}}</span></sc-if>
+                      <span style="display: flex; align-items: center; gap: 7px; min-width: 0;"><span style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{c.n}}</span><sc-if value="{{c.lg}}" hint-placeholder-val="{{false}}"><img class="lg {{c.inv}}" src="{{c.lg}}" width="12" height="12" alt="{{c.via}}"></sc-if><sc-if value="{{c.ic}}" hint-placeholder-val="{{true}}"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-label="{{c.via}}" style="color: var(--tx3);"><path d="{{c.ic}}"></path></svg></sc-if></span>
+                      <span style="color: var(--tx2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{c.what}}</span>
+                      <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: {{c.oc}}; white-space: nowrap;"><span style="color: {{c.mc}};">{{c.m}}</span>{{c.out}}</span>
+                      <span style="font-size: 12px; color: var(--tx3); text-align: right;">{{c.t}}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="border: 1px solid var(--sep); border-radius: 8px; background: var(--bg); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; align-self: start;">
+                  <div style="display: flex; align-items: baseline;"><span class="sh">This week</span><span style="flex: 1;"></span><span style="font-size: 12px; color: var(--tx3);">Since Monday</span></div>
+                  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;">
+                    <sc-for list="{{stats}}" as="s" hint-placeholder-count="3"><span style="display: flex; flex-direction: column;"><span class="disp num" style="font-size: 22px; font-weight: 600; color: {{s.c}};">{{s.v}}</span><span style="font-size: 12px; color: var(--tx3);">{{s.l}}</span></span></sc-for>
+                  </div>
+                  <div style="display: flex; align-items: flex-end; gap: 6px; height: 34px; padding-top: 4px;">
+                    <sc-for list="{{weekS}}" as="d" hint-placeholder-count="7"><span style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;"><span style="width: 100%; height: {{d.h}}px; background: {{d.c}}; border-radius: 1px;"></span></span></sc-for>
+                  </div>
+                  <div style="display: flex; gap: 6px; font-size: 11px; color: var(--tx3); margin-top: -4px;"><sc-for list="{{weekS}}" as="d" hint-placeholder-count="7"><span style="flex: 1; text-align: center;">{{d.l}}</span></sc-for></div>
+                  <div style="display: flex; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px solid var(--sep); font-size: 12.5px;"><span style="color: var(--F);">✓</span><span style="color: var(--tx2); flex: 1;">Today’s digest went out at 6 pm</span><button type="button" class="qb">Read it</button></div>
+                </div>
+              </div>
+            </div>
+          </sc-if>
 """.replace('DIA_AC', DIA_AC).replace('ADM', ADM).replace('LOCK', LOCK).replace('BACK', BACK).replace('ARROW', ARROW).replace('FDIA', diamond(9, 16))
 
 JS = r"""
@@ -364,6 +421,8 @@ JS = r"""
     var self = this;
     var st = this.state;
     var tab = st.tab || 'Contacts';
+    LOGOS_JS
+    var dev = st.level === 'developer';
     var A = { Personal: 'var(--P)', Keyframes: 'var(--K)', UCF: 'var(--U)', Fitness: 'var(--F)', Health: 'var(--H)', Home: 'var(--Hm)' };
     var G = {
       mail: 'M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM3.5 6.5 12 13l8.5-6.5',
@@ -491,11 +550,37 @@ JS = r"""
       { i: 'PN', n: 'Priya Nair', d: G.mail, what: 'Full-day wedding film with extras', m: '■', mc: 'var(--ac)', out: 'Handed to you: price', oc: 'var(--ac)', t: '11:22 AM', avb: '0', avbg: 'var(--sel)' },
       { i: 'MH', n: 'Marcus Hill', d: G.tg, what: 'Rates for a 30 second product spot', m: '✓', mc: 'var(--F)', out: 'Sent the rate card', oc: 'var(--tx2)', t: 'Mon', avb: '0', avbg: 'var(--sel)' }
     ];
+    // The same face in plain sentences, for the Simple detail level (the default).
+    function tx(t) { return { t: t, c: false, area: '' }; }
+    function lc(k, n) { return { t: '', c: true, n: n, lg: L[k].uri, inv: L[k].inv, ic: '', area: '' }; }
+    function icp(d, n) { return { t: '', c: true, n: n, lg: '', inv: '', ic: d, area: '' }; }
+    function ar(n) { return { t: '', c: false, area: n, ac: A[n], argb: RGB[n] }; }
+    var asYou = st.speaks === 'You';
+    var SI = {
+      book: 'M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z',
+      cal: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 16l2 2 4-4',
+      hand: 'M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15',
+      sun: 'M12 3v2M5.6 5.6l1.4 1.4M3 12h2M19 12h2M17 7l1.4-1.4M7 16a5 5 0 0 1 10 0M3 20h18',
+      shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'
+    };
+    var story = [
+      { d: G.msg, icc: 'var(--tx2)', parts: [tx('Answers anyone who writes to '), icp(G.mail, 'bookings@keyframes.studio'), tx(', on '), lc('telegram', 'Telegram'), tx(', or in '), icp(G.web, 'your website’s chat'), tx('.')] },
+      { d: SI.book, icc: 'var(--tx2)', parts: [tx('Talks about '), ar('Keyframes'), tx(' only: the 2026 rate card, answers to 18 common questions, and when you’re free. Never your other areas.')] },
+      { d: SI.cal, icc: 'var(--tx2)', parts: [tx('Can hold time on your calendar for up to 7 days, take messages, answer questions and send the rate card.')] },
+      { d: SI.hand, icc: 'var(--ac)', parts: [tx('Pulls you in when money’s involved, something’s urgent, or it can’t answer. Those go straight to your Inbox.')] },
+      { d: SI.sun, icc: 'var(--tx2)', parts: [tx('Sends you a recap of its day at 6 pm, and anything urgent right away.')] },
+      { d: SI.shield, icc: 'var(--tx2)', parts: [tx(asYou ? 'Always says it’s an AI, and speaks for you, in your name.' : 'Always says it’s an AI, and speaks as Atlas, never as you.')] }
+    ].map(function (x, k) { x.bt = k < 2 ? 'transparent' : 'var(--sep)'; return x; });
+    var convsS = convs.map(function (c) {
+      var tg = c.d === G.tg, web = c.d === G.web;
+      return Object.assign({}, c, { known: !web, stranger: web, ac: A.Keyframes, argb: RGB.Keyframes, lg: tg ? L.telegram.uri : '', inv: tg ? L.telegram.inv : '', ic: tg ? '' : c.d, via: tg ? 'Telegram' : (web ? 'Website chat' : 'Email'), t: c.t.replace('PM', 'pm').replace('AM', 'am') });
+    });
     var latest = convs.slice(0, 3).map(function (c) { return Object.assign({ face: 'Front desk', fc: 'var(--K)' }, c); });
     latest.push({ i: 'D', n: 'Dad', d: G.msg, what: 'Is Max free for lunch on Sunday?', face: 'Family', fc: 'var(--P)', m: '✓', mc: 'var(--F)', out: 'Said Max is free after 1 PM', oc: 'var(--tx2)', t: 'Yesterday', avb: '0', avbg: 'var(--sel)' });
     var stats = [{ v: '14', l: 'conversations', c: 'var(--tx)' }, { v: '11', l: 'handled alone', c: 'var(--tx)' }, { v: '3', l: 'handed to you', c: 'var(--tx)' }];
     var wk = [2, 3, 1, 4, 4], wl = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
     var week = wl.map(function (l, k) { var v = wk[k]; return { l: l, h: v == null ? 2 : Math.round(v / 4 * 28), c: v == null ? 'var(--sep)' : (k === 4 ? 'var(--tx)' : 'var(--tx3)') }; });
+    var weekS = wl.map(function (l, k) { var v = wk[k]; return { l: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][k], h: v == null ? 2 : Math.round(v / 4 * 28), c: v == null ? 'var(--sep)' : (k === 4 ? 'var(--K)' : 'rgba(var(--Krgb), .45)') }; });
 
     var person = tab === 'Contacts' && st.person === 'priya';
     var face = tab === 'Faces' && st.face === 'desk';
@@ -505,7 +590,7 @@ JS = r"""
 
     return Object.assign(this.shellVals('People'), {
       tabs: tabs, meta: meta,
-      isContacts: tab === 'Contacts' && !person, isPerson: person, isMembers: tab === 'Members', isFaces: tab === 'Faces' && !face, isFace: face,
+      isContacts: tab === 'Contacts' && !person, isPerson: person, isMembers: tab === 'Members', isFaces: tab === 'Faces' && !face, isFace: face && dev, isFaceSimple: face && !dev, story: story, convsS: convsS, weekS: weekS, tgLogo: L.telegram.uri, tgInv: L.telegram.inv,
       filters: filters, people: people,
       closePerson: function () { self.setState({ person: '' }); },
       facts: facts, threads: threads, chans: chans, commits: commits, trustSeg: trustSeg, pfaces: pfaces,
@@ -518,7 +603,8 @@ JS = r"""
 """
 
 if __name__ == '__main__':
-    out = page(title='Atlas · People', active='People', label='People', body=BODY, js=JS, extra_css=CSS,
+    from shell import logos_js
+    out = page(title='Atlas · People', active='People', label='People', body=BODY, js=JS.replace('LOGOS_JS', logos_js()), extra_css=CSS,
                placeholder='Ask about anyone, or say who a face should answer', state="{ tab: 'Contacts' }")
     open('../People.dc.html', 'w').write(out)
     print('wrote People')
