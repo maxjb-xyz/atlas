@@ -1,5 +1,5 @@
 // Screenshots of each board rendered by the canvas's own runtime (support.js = dc-runtime.js).
-// Usage: node shoot_real.js outDir [onlyName]
+// Usage: node shoot_real.cjs outDir [onlyName]
 const { chromium } = require('playwright');
 const out = process.argv[2];
 const only = process.argv[3];

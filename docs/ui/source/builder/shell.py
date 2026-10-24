@@ -177,6 +177,8 @@ SHELL_JS = r"""
   { name: 'Agenda', d: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z' },
   { name: 'Automations', d: 'M13 2 3 14h9l-1 8 10-12h-9l1-8z', gap: 10 },
   { name: 'Library', d: 'M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z' },
+  { name: 'People', d: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' },
+  { name: 'Abilities', d: 'M9 2h6v6H9zM2 16h6v6H2zM16 16h6v6h-6zM5 16v-3h14v3M12 13V8' },
   { name: 'History', d: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2' }
 ];
     var jobsOpen = !!self.state.jobsOpen;

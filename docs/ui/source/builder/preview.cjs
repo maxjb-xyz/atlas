@@ -1,5 +1,5 @@
 // Minimal local renderer for .dc.html files, for screenshots only.
-// Usage: node preview.js out.png file.dc.html [stateJSON] [propsJSON]
+// Usage: node preview.cjs out.png file.dc.html [stateJSON] [propsJSON]
 const fs = require('fs');
 const { chromium } = require('playwright');
 const [out, file, stateArg, propsArg] = process.argv.slice(2);
