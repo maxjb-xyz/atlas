@@ -687,6 +687,7 @@ function Uses({ atlas, e, view }: { atlas: Atlas; e: ExtensionView; view: Settin
     );
   if (e.provides.includes("calendar")) parts.push(<Calendars key="cal" atlas={atlas} view={view} />);
   if (e.provides.includes("channel")) parts.push(<ChatLink key="chat" atlas={atlas} view={view} ext={e.id} />);
+  if ((e.provides as string[]).includes("calls")) parts.push(<Phone key="calls" atlas={atlas} view={view} />);
   if (e.methods.includes("contacts"))
     parts.push(
       <div className="line" key="contacts">
@@ -758,6 +759,90 @@ function Calendars({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
       <div className="line">
         <span className="grow">Read your calendar now</span>
         <TestRow label="Test" k="calendar" atlas={atlas} run={() => atlas.test("calendar", { type: "atlas.test", what: "calendar" })} />
+      </div>
+    </>
+  );
+}
+
+/**
+ * Phone calls (§16.1): the account's numbers with what each is connected to,
+ * one moved to Atlas and given back, numbers to buy with their price, and a
+ * test call. Only the number picked changes; the account's others stay.
+ */
+function Phone({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
+  const c = atlas.state.calls;
+  const [area, setArea] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    atlas.send({ type: "atlas.calls.numbers" });
+  }, [atlas]);
+  useEffect(() => setBusy(false), [c]);
+  const ask = (m: Parameters<Atlas["send"]>[0]) => {
+    setBusy(true);
+    atlas.send(m);
+  };
+  const calls = view.settings.permissions.calls;
+  return (
+    <>
+      <div className="line">
+        <span className="grow">
+          {c?.number ? `Atlas answers ${c.number}.` : "Atlas doesn't have a number yet: use one of yours, or buy one."}
+        </span>
+        {c?.number && (
+          <button className="btn s" disabled={busy} onClick={() => ask({ type: "atlas.calls.test" })}>
+            Call me to test
+          </button>
+        )}
+      </div>
+      {(c?.numbers ?? []).map((n) => (
+        <div className="line" key={n.id}>
+          <span className="grow">
+            <span className="mono">{n.number}</span>
+            <span className="aside"> · {n.ours ? "Atlas" : n.connected ? `now goes to ${n.connected}` : "not connected to anything"}</span>
+          </span>
+          {n.ours ? (
+            <button className="btn s" disabled={busy} onClick={() => ask({ type: "atlas.calls.release" })}>
+              Give the number back
+            </button>
+          ) : (
+            <button className="btn s" disabled={busy || n.status !== "active"} onClick={() => ask({ type: "atlas.calls.use", id: n.id })}>
+              Use for Atlas
+            </button>
+          )}
+        </div>
+      ))}
+      <div className="line">
+        <span className="grow">Buy a number for Atlas</span>
+        <input value={area} placeholder="Area code" onChange={(e) => setArea(e.target.value)} style={{ width: 110 }} />
+        <button
+          className="btn s"
+          disabled={busy}
+          onClick={() => ask({ type: "atlas.calls.available", ...(area.trim() ? { area: area.trim() } : {}) })}
+        >
+          Look
+        </button>
+      </div>
+      {(c?.offers ?? []).map((o) => (
+        <div className="line" key={o.number}>
+          <span className="grow">
+            <span className="mono">{o.number}</span>
+            <span className="aside">
+              {o.where ? ` · ${o.where}` : ""} · {o.currency === "USD" ? "$" : `${o.currency} `}
+              {o.monthly} a month, {o.currency === "USD" ? "$" : `${o.currency} `}
+              {o.upfront} to start
+            </span>
+          </span>
+          <button className="btn s" disabled={busy} onClick={() => ask({ type: "atlas.calls.order", number: o.number })}>
+            Buy
+          </button>
+        </div>
+      ))}
+      {c?.text && <p className={`small line ${c.ok ? "" : "err"}`}>{c.text}</p>}
+      <div className="line">
+        <span className="grow">
+          Atlas calls you {calls === "urgent" ? "about what can't wait, when a call is on your list" : "never"}. Change it in Permissions,
+          and put a call on your list in Notifications.
+        </span>
       </div>
     </>
   );
