@@ -239,12 +239,16 @@ describe("jobs Atlas owns (§8.3)", () => {
 
   it("ask the owner when two looks in a row can't see what to do, and when the budget is used", () =>
     withSql(async (sql) => {
-      const { desk, st } = testDesk(sql, [() => "Hmm.", () => "Still unsure which tool to use."]);
+      const { desk, st } = testDesk(sql, [() => "I need GitHub access to get the brand assets.", () => "Still unsure which tool to use."]);
       const job = await desk.start({ ...video, budget: { looks: 3 } } as never);
       await desk.wake(job.id);
       expect(st.asked).toEqual([]);
       await desk.wake(job.id);
-      expect(st.asked[0]).toContain("I'm not sure how to go on with Launch video. Still unsure which tool to use.");
+      // The second look heard what the first said, and that the move is its own to make.
+      expect(st.notes[1]).toContain('Your last look made no move; it said: "I need GitHub access to get the brand assets."');
+      expect(st.notes[1]).toContain("you don't wait for the owner to tell you what to do");
+      expect(st.notes[0]).toContain("job_site asks the owner on a card");
+      expect(st.asked[0]).toBe("Launch video is stuck. Still unsure which tool to use.");
 
       await desk.answer(job.id, "Use ffmpeg.");
       // Its third look is its last: the budget is used, so it asks before going on.

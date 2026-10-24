@@ -3280,6 +3280,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return this.#goals.startStep(id, o);
   }
 
+  /** For tests: Stop on a job Atlas owns, as from the app. */
+  async apiGoalStop(id: string): Promise<boolean> {
+    return this.#goals.stop(id);
+  }
+
   /** For tests: Stop on a coding job, as from the app. */
   async apiJobStop(id: string): Promise<boolean> {
     return this.#coding.stop(id);

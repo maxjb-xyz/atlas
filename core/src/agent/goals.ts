@@ -84,6 +84,8 @@ export interface GoalJob {
   spent: { looks: number; steps: number; by: Record<string, number> };
   /** A look in a row that didn't move the job. */
   unsure: number;
+  /** What that look said instead of making a move, for the next look to act on. */
+  stalled?: string | null;
   result: string | null;
   /** Files it kept for the owner, by name. */
   files: string[];
@@ -304,19 +306,20 @@ export class GoalDesk {
     const moved = JSON.stringify([after.plan, after.phase, after.question]) !== before;
     let job2 = out.text.trim() ? this.#note(after, "atlas", clip(out.text.trim(), 2_000)) : after;
     if (moved) {
-      saveGoal(this.h.sql, { ...job2, unsure: 0 });
+      saveGoal(this.h.sql, { ...job2, unsure: 0, stalled: null });
     } else if (job2.unsure >= 1) {
-      // Twice in a row it couldn't see what to do: the owner decides.
-      job2 = { ...job2, unsure: 0 };
+      // Twice in a row, told the second time what it said the first, it made no move: the owner decides.
+      job2 = { ...job2, unsure: 0, stalled: null };
       saveGoal(this.h.sql, job2);
       await this.#ask(job2, {
         step: null,
-        text: `I'm not sure how to go on with ${job2.title}.${out.text.trim() ? ` ${clip(out.text.trim(), 600)}` : ""} What should I do next?`,
+        text: `${job2.title} is stuck.${out.text.trim() ? ` ${clip(out.text.trim(), 600)}` : ""}`,
         options: [],
       });
       return;
     } else {
-      saveGoal(this.h.sql, { ...job2, unsure: job2.unsure + 1 });
+      // The next look hears what this one said, and that it has to act on it.
+      saveGoal(this.h.sql, { ...job2, unsure: job2.unsure + 1, stalled: out.text.trim() || "(nothing)" });
       await this.h.watch(id, Date.now() + 2_000);
       return;
     }
@@ -729,15 +732,21 @@ export function lookNote(job: GoalJob, mail: GoalJob["mail"]): string {
     `Its folder in the workspace: ${job.folder}. Its steps run on the ${job.brain} brain. Used: ${job.spent.looks} of ${job.budget.looks} looks, ${job.spent.steps} of ${job.budget.steps} steps.`,
     `The plan:\n${steps}`,
     `Since the last look:\n${news}`,
+    job.unsure && job.stalled
+      ? `Your last look made no move; it said: "${clip(job.stalled, 800)}". Act on that now with one of the moves below. If something blocks the job, the move is the one that unblocks it: you don't wait for the owner to tell you what to do.`
+      : "",
     [
-      "Make one move with the job's tools, then end your turn with a line on where it stands:",
-      "start the next step with job_step (a helper does it, in the folder, from the brief you write: give it everything it needs, since it sees nothing else);",
+      "You own this job: decide what it needs the way its owner would, and keep it moving. Make one move with the job's tools, then end your turn with a line on where it stands:",
+      "start the next step with job_step (a helper does it, in the folder, from the brief you write: give it everything it needs, since it sees nothing else); for building something in code (a site, a video, a script), job_step with `agent` hands it to the owner's coding agent;",
+      "when the job needs a website the workspace can't reach yet, job_site asks the owner on a card and the job waits: public sites and public repos (github.com for a public repo, a music library, a package registry) need only that, no sign-in;",
       "at a checkpoint, or for a decision only the owner can make, ask with job_checkpoint, putting what they should look at in `content`;",
       "change the plan with job_plan when what came back changes it; mark a step done or skipped with job_mark;",
       "when the goal is met, job_finish with what to keep for the owner; if it can't be met, job_fail with why.",
-      "Answer what you can yourself, as a good assistant would; bring the owner only what needs them. The owner's edits at a checkpoint are what the job goes on with.",
+      "Answer what you can yourself, as a good assistant would; bring the owner only what only they can give (a choice that's theirs, their OK, a sign-in), never a question of what to do next. The owner's edits at a checkpoint are what the job goes on with.",
     ].join(" "),
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function view(g: GoalJob): JobView {
