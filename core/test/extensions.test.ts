@@ -383,3 +383,14 @@ describe("the gate's placeholders", () => {
     }
   });
 });
+
+describe("an extension's hosts", () => {
+  it("cover their subdomains, but a shared suffix or a bare name covers only itself", async () => {
+    const { allowedHost } = await import("../src/extensions");
+    expect(allowedHost("api.linear.app", ["linear.app"])).toBe(true);
+    expect(allowedHost("atlas.someone.workers.dev", ["workers.dev"])).toBe(false);
+    expect(allowedHost("evil.github.io", ["github.io"])).toBe(false);
+    expect(allowedHost("anything.com", ["com"])).toBe(false);
+    expect(allowedHost("workers.dev", ["workers.dev"])).toBe(true);
+  });
+});

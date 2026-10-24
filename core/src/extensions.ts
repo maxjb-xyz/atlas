@@ -248,9 +248,42 @@ export interface GateProps {
   nonce: string;
 }
 
+/**
+ * Suffixes that many people's sites share, Atlas's own deployment among
+ * them: a manifest naming one reaches only that exact host, never everything
+ * under it. A name with no dot (a top-level domain) is the same.
+ */
+const SHARED = new Set([
+  "workers.dev",
+  "pages.dev",
+  "r2.dev",
+  "github.io",
+  "githubusercontent.com",
+  "vercel.app",
+  "netlify.app",
+  "herokuapp.com",
+  "appspot.com",
+  "web.app",
+  "firebaseapp.com",
+  "cloudfront.net",
+  "amazonaws.com",
+  "azurewebsites.net",
+  "blob.core.windows.net",
+  "ngrok.io",
+  "ngrok.app",
+  "fly.dev",
+  "onrender.com",
+  "co.uk",
+  "com.au",
+  "co.jp",
+  "co.nz",
+  "com.br",
+]);
+
 export const allowedHost = (host: string, hosts: string[]) =>
   hosts.some((h) => {
     const want = h.toLowerCase().replace(/^\*\./, "");
+    if (!want.includes(".") || SHARED.has(want)) return host === want;
     return host === want || host.endsWith(`.${want}`);
   });
 
