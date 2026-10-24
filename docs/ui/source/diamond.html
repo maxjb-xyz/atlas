@@ -8,20 +8,23 @@
 <style>
 /* The ASCII diamond for Home's Now and voice (VISION §21.8), as a prototype for M7.
    Four facets drawn in characters, lit by a light that slowly circles them, so the
-   facets brighten and fade in turn. Each facet takes an area's color (the four dots
-   of "All areas"); scoped to one area, the whole diamond takes that area's color.
+   facets brighten and fade in turn. It is the mark from brand/atlas-mark.svg, seams
+   and all, in ember: lightest at the top left to deepest red at the bottom right.
    It moves with what Atlas is doing: a sweep now and then while idle, ripples with
    your voice while listening, a shimmer while thinking, a pulse with its voice while
    speaking. No glow, no gradient, no orb: only characters and their color. */
 :root, :root[data-theme="dark"] { --bg:#141413; --win:#1b1a19; --sep:#2c2a28; --sep2:#3a3835; --dash:#3f3c37; --tx:#f1efea; --tx2:#aaa69e; --tx3:#918d86; --dot:rgba(241,239,234,.07); --btn:#f1efea; --btntx:#191817; --sel:#2c2a27;
-  --P:#e27aaa; --K:#e0a548; --U:#6c9ef0; --F:#4cc48f; --ac:#ff6a3d; --mono:#f4eee8; }
+  --P:#e27aaa; --K:#e0a548; --U:#6c9ef0; --F:#4cc48f; --ac:#ff6a3d; --mono:#f4eee8;
+  --d1:#ffb48c; --d2:#ff6a3d; --d3:#e2442a; --d4:#b02e1d; }
 :root[data-theme="light"] { --bg:#faf9f6; --win:#ffffff; --sep:#e7e5df; --sep2:#d9d6ce; --dash:#cdc9c0; --tx:#191817; --tx2:#5c5954; --tx3:#6f6b65; --dot:rgba(25,24,23,.09); --btn:#191817; --btntx:#ffffff; --sel:#e7e5df;
-  --P:#c0588a; --K:#c08423; --U:#3d74cf; --F:#2e9a6b; --ac:#e8501b; --mono:#191817; }
+  --P:#c0588a; --K:#c08423; --U:#3d74cf; --F:#2e9a6b; --ac:#e8501b; --mono:#191817;
+  --d1:#f08a5d; --d2:#e8501b; --d3:#c2391b; --d4:#8f2412; }
 @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg:#faf9f6; --win:#ffffff; --sep:#e7e5df; --sep2:#d9d6ce; --dash:#cdc9c0; --tx:#191817; --tx2:#5c5954; --tx3:#6f6b65; --dot:rgba(25,24,23,.09); --btn:#191817; --btntx:#ffffff; --sel:#e7e5df;
-  --P:#c0588a; --K:#c08423; --U:#3d74cf; --F:#2e9a6b; --ac:#e8501b; --mono:#191817; } }
+  --P:#c0588a; --K:#c08423; --U:#3d74cf; --F:#2e9a6b; --ac:#e8501b; --mono:#191817;
+  --d1:#f08a5d; --d2:#e8501b; --d3:#c2391b; --d4:#8f2412; } }
 html, body { margin: 0; height: 100%; }
 body { background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1.2px); background-size: 16px 16px; color: var(--tx); font: 13px/1.45 Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 24px 16px; box-sizing: border-box; min-height: 100vh; }
-#d { font-family: 'Geist Mono', ui-monospace, monospace; font-size: 12px; line-height: 12px; letter-spacing: 0; margin: 0; white-space: pre; user-select: none; font-weight: 500; }
+#d { font-family: 'Geist Mono', ui-monospace, monospace; font-size: 7px; line-height: 7px; letter-spacing: 0; margin: 0; white-space: pre; user-select: none; font-weight: 500; }
 .say { text-align: center; display: flex; flex-direction: column; gap: 4px; min-height: 44px; }
 .say b { font-family: 'Inter Tight', Inter, sans-serif; font-size: 20px; font-weight: 600; letter-spacing: -.02em; }
 .say span { color: var(--tx2); }
@@ -40,18 +43,33 @@ body { background-color: var(--bg); background-image: radial-gradient(var(--dot)
 <div class="say"><b id="say1">Good evening, Max.</b><span id="say2">Two things need you before tomorrow.</span></div>
 <div class="bar">
   <div class="grp"><span>Atlas is</span><div class="seg" id="state"></div></div>
-  <div class="grp"><span>Area</span><div class="seg" id="scope"></div></div>
   <div class="grp"><span>Theme</span><div class="seg" id="theme"></div></div>
 </div>
 <script>
 (function () {
   // The mark's geometry, from brand/: top, left, right, bottom and the point where the facets meet.
-  var TOP = [0.5, 0], LEFT = [0, 0.377], RIGHT = [1, 0.377], BOT = [0.5, 1], MID = [0.5, 0.493];
+  // brand/atlas-mark.svg: top (512,176), left (318,430), right (706,430), bottom (512,848), where they meet (512,506).
+  var TOP = [0.5, 0], LEFT = [0, 0.378], RIGHT = [1, 0.378], BOT = [0.5, 1], MID = [0.5, 0.491];
   var FACETS = [[TOP, LEFT, MID], [TOP, MID, RIGHT], [BOT, LEFT, MID], [BOT, MID, RIGHT]];
   // Where each facet faces, as if the mark were cut from stone: up-left, up-right, down-left, down-right.
   var NORMALS = [[-0.62, -0.52, 0.6], [0.62, -0.52, 0.6], [-0.5, 0.62, 0.6], [0.5, 0.62, 0.6]];
-  var RAMP = ':-=+*#%@';
-  var ROWS = 30, COLS = 29; // a character is 0.6 as wide as it is tall, and the mark is 0.578
+  var RAMP = '.:-=+*#%@';
+  var ROWS = 44, COLS = 43; // a character is 0.6 as wide as it is tall, and the mark is 0.577
+  // The mark's shading: its facets go from lightest (top left) to darkest (bottom right).
+  var SHADE = [1, 0.8, 0.6, 0.46];
+  // The seams between facets, as in the mark: from where they meet to each corner.
+  var SEAMS = [[MID, TOP], [MID, LEFT], [MID, RIGHT], [MID, BOT]];
+  // How far a cell is from the nearest seam, in cell heights (a cell is 0.6 as wide as it is tall).
+  function seamDist(px, py) {
+    var best = 9;
+    SEAMS.forEach(function (sg) {
+      var ax = sg[0][0] * COLS * 0.6, ay = sg[0][1] * ROWS, bx = sg[1][0] * COLS * 0.6, by = sg[1][1] * ROWS;
+      var dx = bx - ax, dy = by - ay, x = px * 0.6, l2 = dx * dx + dy * dy;
+      var t = Math.max(0, Math.min(1, ((x - ax) * dx + (py - ay) * dy) / l2));
+      best = Math.min(best, Math.hypot(x - (ax + t * dx), py - (ay + t * dy)));
+    });
+    return best;
+  }
 
   function side(p, a, b) { return (p[0] - b[0]) * (a[1] - b[1]) - (a[0] - b[0]) * (p[1] - b[1]); }
   function inside(p, t) { var d1 = side(p, t[0], t[1]), d2 = side(p, t[1], t[2]), d3 = side(p, t[2], t[0]); return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0)); }
@@ -61,6 +79,7 @@ body { background-color: var(--bg); background-image: radial-gradient(var(--dot)
     for (var x = 0; x < COLS; x++) {
       var p = [(x + 0.5) / COLS, (y + 0.5) / ROWS], f = -1;
       for (var i = 0; i < 4; i++) if (inside(p, FACETS[i])) { f = i; break; }
+      if (f >= 0 && seamDist(x + 0.5, y + 0.5) < 0.62) f = -1;
       row.push({ f: f, u: p[0], v: p[1], r: Math.hypot(p[0] - MID[0], (p[1] - MID[1]) * 1.6), seed: (x * 73856093 ^ y * 19349663) >>> 0 });
     }
     cells.push(row);
@@ -79,10 +98,10 @@ body { background-color: var(--bg); background-image: radial-gradient(var(--dot)
   var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function colors() {
-    var cs = getComputedStyle(document.documentElement), list = AREAS[st.scope];
+    var cs = getComputedStyle(document.documentElement), list = ['--d1', '--d2', '--d3', '--d4'];
     // With #vars=1 the colors stay as the theme's variables, so a captured frame works in either theme.
-    if (new URLSearchParams(location.hash.slice(1)).get('vars')) return [0, 1, 2, 3].map(function (i) { return 'var(' + list[i % list.length] + ')'; });
-    return [0, 1, 2, 3].map(function (i) { return cs.getPropertyValue(list[i % list.length]).trim(); });
+    if (new URLSearchParams(location.hash.slice(1)).get('vars')) return list.map(function (v) { return 'var(' + v + ')'; });
+    return list.map(function (v) { return cs.getPropertyValue(v).trim(); });
   }
   var COL = colors();
 
@@ -108,15 +127,15 @@ body { background-color: var(--bg); background-image: radial-gradient(var(--dot)
         if (c.f < 0) { out += ' '; continue; }
         var N = NORMALS[c.f];
         var b = Math.max(0, N[0] * L[0] + N[1] * L[1] + N[2] * L[2]);
-        b = 0.38 + 0.62 * b;
+        b = SHADE[c.f] * (0.78 + 0.3 * b);
         b *= breathe;
         if (s === 'Idle' && t % 7 < 1.6) { var d = (c.u + c.v) - sweep; b += 0.55 * Math.exp(-(d * d) / 0.012); }
         if (s === 'Listening') b += 0.32 * lv * Math.sin(c.r * 22 - t * 7) * Math.exp(-c.r * 1.4);
         if (s === 'Speaking') b *= 0.62 + 0.62 * lv;
         b += ((hash(c.seed, tick) - 0.5) * (s === 'Thinking' ? 0.5 : 0.14));
         b = Math.min(1, Math.max(0, b));
-        var ch = RAMP[Math.min(RAMP.length - 1, Math.max(0, Math.round(b * (RAMP.length - 1))))];
-        out += '<span style="color:' + COL[c.f] + ';opacity:' + (0.4 + 0.6 * b).toFixed(2) + '">' + ch + '</span>';
+        var ch = RAMP[Math.min(RAMP.length - 1, Math.max(1, Math.round(b * (RAMP.length - 1))))];
+        out += '<span style="color:' + COL[c.f] + ';opacity:' + (0.55 + 0.45 * b).toFixed(2) + '">' + ch + '</span>';
       }
       html += out + '\n';
     }
@@ -145,7 +164,6 @@ body { background-color: var(--bg); background-image: radial-gradient(var(--dot)
     document.getElementById('say1').textContent = SAY[st.state][0];
     document.getElementById('say2').textContent = SAY[st.state][1];
     seg('state', ['Idle', 'Listening', 'Thinking', 'Speaking'], 'state');
-    seg('scope', ['All areas', 'Personal', 'Keyframes', 'UCF', 'Fitness'], 'scope', true);
     seg('theme', ['Dark', 'Light'], 'theme');
     try { localStorage.setItem('atlas-diamond', JSON.stringify(st)); } catch (e) {}
     if (reduce) frame(1200);

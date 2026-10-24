@@ -5,7 +5,8 @@ from shell import page
 
 # Home's Now tab for M7 (docs/ui §8): the colored diamond, a glance at what's next with
 # a map, the weather, what needs you, and the week in area colors. A second state shows
-# Home scoped to Keyframes: the stage's rails and the diamond take the area's color.
+# Home scoped to Keyframes: the stage's rails take the area's color. The diamond is the
+# mark in ember (brand/atlas-mark.svg), the same in every scope.
 # The diamond here is one frame of docs/ui/source/diamond.html, which shows it moving.
 
 FRAMES = json.load(open(os.path.join(os.path.dirname(__file__), 'diamond_frames.json')))
@@ -13,7 +14,8 @@ FRAMES = json.load(open(os.path.join(os.path.dirname(__file__), 'diamond_frames.
 EXTRA_CSS = r"""
 .scK{--dash:rgba(var(--Krgb),.55);--dot:rgba(var(--Krgb),.16)}
 .card{border:1px solid var(--sep);border-radius:10px;background:var(--win);box-sizing:border-box}
-.dia{font-family:'Geist Mono',ui-monospace,monospace;font-size:10px;line-height:10px;margin:0;white-space:pre;font-weight:500;flex:none}
+.dk{--d1:#ffb48c;--d2:#ff6a3d;--d3:#e2442a;--d4:#b02e1d}.lt{--d1:#f08a5d;--d2:#e8501b;--d3:#c2391b;--d4:#8f2412}
+.dia{font-family:'Geist Mono',ui-monospace,monospace;font-size:6.2px;line-height:6.2px;margin:0;white-space:pre;font-weight:500;flex:none}
 .soft{color:var(--tx2)}
 """
 

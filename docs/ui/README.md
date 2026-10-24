@@ -252,9 +252,9 @@ Hermes-style profiles split memory and settings, and you switch between them. At
 - **Editing.** Change a screen in the design canvas, or edit the builders in `source/builder/` and regenerate. [`source/builder/README.md`](source/builder/README.md) explains how.
 - **The builders.** `shell.py` holds the shared shell (sidebar, toolbar, stage frame, composer, theme tokens), so a change there reaches every page when you re-run them.
 
-## 8. M7: the new places and settings (proposed 2026-10-24)
+## 8. M7: the new places and settings (approved 2026-10-24)
 
-Waiting for the owner's OK (smoke test step 1 in [docs/M7.md](../M7.md)). The decisions are in [VISION §21.2](../../VISION.md#212-eight-places). The built app's settings read as pre-alpha (browser controls, raw model ids, a paragraph under every control, one thing in three places), so these screens redo them against two bars: simplicity and Jarvis.
+**Approved by the owner on 2026-10-24** (smoke test step 1 in [docs/M7.md](../M7.md)), with one change made after the review: the diamond on Now is smaller, finer, drawn from the real mark, and ember instead of the area colors. The decisions are in [VISION §21.2](../../VISION.md#212-eight-places). The built app's settings read as pre-alpha (browser controls, raw model ids, a paragraph under every control, one thing in three places), so these screens redo them against two bars: simplicity and Jarvis.
 
 ![The M7 screens](screenshots/m7/00-overview.png)
 
@@ -273,9 +273,9 @@ Waiting for the owner's OK (smoke test step 1 in [docs/M7.md](../M7.md)). The de
 - **Simple is the default detail level** (VISION §21.5). It speaks in plain words ("Thinks with", "Keeps you safe", "Atlas thinks with ChatGPT, on your Plus plan") and hides model ids, speeds, prices per million tokens and mono metadata. Detailed and Developer show the rest, the way these screens first did. The soul stays at every level: the diamond, the stage frame, receipts and ember.
 
 **Home's Now and the living diamond** (approved direction 2026-10-24):
-- **The diamond** is drawn in characters, its facets in the four area colors, lit by a light that circles it. It sweeps now and then while idle, ripples with your voice while listening, shimmers while thinking and pulses while speaking. Open [`source/diamond.html`](source/diamond.html) in a browser to see it move; it has controls for each state, an area and the theme. The screenshots here are single frames of it.
+- **The diamond** is the mark from `brand/atlas-mark.svg`, seams and all, drawn finely in characters in ember: lightest at the top left to deep red at the bottom right, lit by a light that circles it. It sweeps now and then while idle, ripples with your voice while listening, shimmers while thinking and pulses while speaking. Open [`source/diamond.html`](source/diamond.html) in a browser to see it move; it has controls for each state, an area and the theme. The screenshots here are single frames of it.
 - **Now** shows what's next on a small map with when to leave, the weather with tomorrow's rain, what needs you, the jobs running, and the week stacked in area colors. Its builder is `p_now.py`.
-- **Scoped to an area,** the stage's rails, the diamond and the switcher take that area's color.
+- **Scoped to an area,** the stage's rails and the switcher take that area's color; the diamond stays ember.
 - **People's photos** come from the address book where they have one (not drawn here, since the mockups use made-up people).
 
 | | |
