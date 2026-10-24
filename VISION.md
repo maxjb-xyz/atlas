@@ -346,7 +346,17 @@ Atlas acts as the middleman:
 
 You can ask "How's the Keyframes job?" by voice from the car, or watch the live terminal in the app.
 
-### 8.3 One Atlas, not many bots
+### 8.3 Jobs Atlas owns
+
+Coding jobs were the first long work that changes things. Any long piece of work can be a job Atlas owns (decided 2026-10-24, for M7): "make the launch video", "plan the Lisbon trip", "get three quotes for the roof". The coding job's way of working is the model.
+- **A job is a goal Atlas owns:** a goal record (§5.1), a plan of steps, a folder of its own in the workspace, a budget (time, steps and money), and the brain it runs on (§18).
+- **It runs as short looks.** Each wake takes one step or reads how one went, then saves the job's state, so a job waits for free, survives a deploy, and can change brains between steps. It's on the one clock (§4.3).
+- **Helpers do the work,** with powers scoped to the job: inside its folder they can change things, and anything that leaves Atlas goes through the outbox (§4.4) as always. A step that writes code is a coding job (§8.2). A video, for example, is a coding job on a video project plus Atlas's own voiceover.
+- **Checkpoints with you.** The plan marks what needs your OK before Atlas goes on ("approve the script", "approve the cut"), and a decision only you can make comes to Inbox as one question. Atlas answers the rest itself, as the middleman does.
+- **It lands as things you keep:** files and pages (§21.7), with a receipt, and the result in Inbox.
+- **In the app** it's a job like any other (§21.4): its steps, what it has made so far, what it's waiting on, what it has cost, with Steer and Stop.
+
+### 8.4 One Atlas, not many bots
 
 Many people split their assistant into several separate bots. Atlas doesn't: you keep one relationship, and Atlas gets many hands.
 - **Helpers** keep context clean.
@@ -766,8 +776,15 @@ Everything installs from the app: browse, preview what it can touch, install, un
   - `speech_out`.
 
   Each role is filled by a model you pick, with a fallback.
+- **Named brains for kinds of work** (decided 2026-10-24, for M7). Beside the fixed roles, the owner can name brains ("Quick", "Deep", "Long reading", "Vision"), each a chain with a line saying what it's good for. Each kind of work has a default the owner sets: helpers, research, a job's work, a job's looks, the skill review (§9.3). Handing work to a helper, Atlas can pick another named brain, seeing only the names and their lines, never a vendor or a model, so it can't pick one that doesn't exist (Hermes's Advanced Delegation works the same way). A job keeps the brain it started with, shown in Jobs, and Steer can change it.
+- **When a brain runs out partway through a job.** A job saves its state after every step, so changing brains or pausing is safe.
+  - A short outage or a rate limit: the brain's own chain falls back for that step, and the job notes it.
+  - A plan's limit or a spending cap: the job pauses at a clean step and asks in Inbox whether to wait until the limit resets or go on with a paid brain, with what that costs so far. The answer can be kept for that job or that brain. With no answer, it waits, so it never spends what the owner didn't approve.
+  - Only a weaker brain left: it keeps working, but the decisions (calling the job done, pushing, sending) wait for the chosen brain or for the owner.
+
+  A coding agent on a plan, like Codex, pauses the same way.
 - **Any provider, by key or by sign-in:**
-  - **API keys** through AI Gateway: Anthropic, OpenAI, Google, xAI, Workers AI, OpenRouter and others.
+  - **API keys** through AI Gateway: Anthropic, OpenAI, Google, xAI, Workers AI, OpenRouter and others. Anthropic comes first (M7), with prompt caching on the stable block (§5.2).
   - **ChatGPT plan sign-in.** "Sign in with ChatGPT" in the app, so a Plus or Pro plan powers Atlas at a flat cost. This is OpenAI's official plan usage for open-source tools (launched at DevDay, September 2026): Atlas calls the public Responses API at `api.openai.com` with the sign-in token, refreshes the token on its own, tracks the plan's usage limits, and falls back when they're hit. Atlas doesn't use chatgpt.com's own backend, which blocks requests from Cloudflare. OpenAI only redirects sign-in to `127.0.0.1`, so on a deployed Atlas the last step of signing in is pasting the address the browser lands on.
   - **Workers AI can fill every role,** including `main` and `voice`. It comes with the Cloudflare account (with a free daily allowance), and it runs on the same network as the agent, which makes it the fastest option for voice.
   - **Claude subscriptions can't be used.** Since early 2026, Anthropic's terms reserve Pro and Max sign-in for Claude Code and Claude.ai, so Claude models in Atlas need an API key. Whether a Claude plan can power Claude Code inside Atlas's coding jobs (§8.2) depends on Anthropic's terms at the time; check before M6.
