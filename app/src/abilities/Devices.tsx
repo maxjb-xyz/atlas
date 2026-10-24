@@ -36,7 +36,7 @@ export function Devices({ atlas, go }: { atlas: Atlas; go: (d: string) => void }
         {view.nodes.map((n) => {
           const lg = logoOf(n.platform, n.kind);
           return (
-            <div key={n.id} className="card2 pad dev">
+            <div key={n.id} className="card2 pad devcard">
               <div className="row" style={{ flexWrap: "nowrap", gap: 10 }}>
                 {lg ? (
                   <Logo of={lg} size={34} />
@@ -105,7 +105,7 @@ export function Devices({ atlas, go }: { atlas: Atlas; go: (d: string) => void }
           );
         })}
         {owntracks && (
-          <div className="card2 pad dev">
+          <div className="card2 pad devcard">
             <div className="row" style={{ flexWrap: "nowrap", gap: 10 }}>
               <Logo of="owntracks" size={34} />
               <span style={{ display: "flex", flexDirection: "column" }} className="grow">

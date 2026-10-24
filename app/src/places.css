@@ -520,7 +520,7 @@ button.card2:hover {
   padding: 15px 0;
   border-top: 1px dashed var(--dash);
 }
-.set-line.center {
+.set-line.mid {
   align-items: center;
   padding: 13px 0;
 }
@@ -531,7 +531,7 @@ button.card2:hover {
   font-weight: 500;
   padding-top: 4px;
 }
-.set-line.center .set-label {
+.set-line.mid .set-label {
   padding-top: 0;
 }
 .set-label .aside {
@@ -1040,7 +1040,7 @@ button.card2:hover {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
-.dev {
+.devcard {
   min-height: 260px;
   display: flex;
   flex-direction: column;
@@ -1481,4 +1481,10 @@ button.card2:hover {
     flex-direction: column;
     align-items: flex-start;
   }
+}
+.stats3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 10px 0;
 }

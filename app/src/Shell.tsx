@@ -8,7 +8,7 @@ import type { Atlas } from "./connection";
 import { Markdown } from "./Markdown";
 import { openOnStage, type Shown, shownFrom, StageCard } from "./StageViews";
 import { Thread } from "./Thread";
-import { AreaChip, AreaDot, areaColor, Diamond, Icon, type IconName, initials, type Place, shortDay, useDismiss } from "./ui";
+import { AreaChip, AreaDot, areaColor, AsciiDiamond, Diamond, Icon, type IconName, initials, type Place, shortDay, useDismiss } from "./ui";
 
 /** The eight places, in three groups: what's yours today, what Atlas knows and can do, and what it did. */
 export const PLACES: Array<{ id: Place; label: string; icon: IconName; gap?: boolean }> = [
@@ -649,7 +649,7 @@ export function VoiceStrip({ atlas }: { atlas: Atlas }) {
   );
   return (
     <div className="voice rise">
-      <Diamond size={30} />
+      <AsciiDiamond height={48} level={level} state={status} />
       <div className="vbody">
         <span className={`lab ${status === "speaking" ? "ac" : ""}`}>{label}</span>
         <p className="vtext">

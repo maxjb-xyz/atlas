@@ -47,10 +47,13 @@ export function Brains({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
   const details = more || at("detailed");
   const main = draft.brains.main;
   const voice = draft.brains.voice;
-  const first = main[0]!;
-  const names = (chain: BrainChoice[]) => [...new Set(chain.map((b) => PROVIDER[b.provider].name))];
-  const mainNames = names(main);
   const signedIn = view.chatgpt.state === "signed_in";
+  // Who answers today: the first in the chain that can (ChatGPT only once signed in).
+  const usable = (b: BrainChoice) => b.provider !== "chatgpt" || signedIn;
+  const first = main.find(usable) ?? main[0]!;
+  const waiting = main[0]!.provider === "chatgpt" && !signedIn;
+  const names = (chain: BrainChoice[]) => [...new Set(chain.filter(usable).map((b) => PROVIDER[b.provider].name))];
+  const mainNames = names(main);
   const providers: Provider[] = ["chatgpt", "workers-ai"];
 
   return (
@@ -65,6 +68,7 @@ export function Brains({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
               {first.provider === "chatgpt" ? ", on your plan." : ", in your Cloudflare account."}
             </span>
             <span className="muted">
+              {waiting ? "Sign in with ChatGPT, below, and it thinks with your plan first. " : ""}
               {mainNames.length > 1 ? `If ${mainNames[0]} is busy, ${mainNames[1]} takes over for that answer. ` : ""}
               Voice uses {PROVIDER[voice[0]!.provider].name}
               {voice[0]!.provider === "workers-ai" ? ", because it starts talking fastest." : "."}
@@ -218,7 +222,8 @@ function Chain({
   onChange: (c: BrainChoice[]) => void;
 }) {
   const set = (i: number, b: BrainChoice) => onChange(chain.map((x, j) => (j === i ? b : x)));
-  const inUse = chain.findIndex((b) => health(view, b)?.ok !== false);
+  // The first that can answer: healthy, and for ChatGPT, signed in.
+  const inUse = chain.findIndex((b) => health(view, b)?.ok !== false && (b.provider !== "chatgpt" || view.chatgpt.state === "signed_in"));
   return (
     <div className="chain-slots">
       {chain.map((b, i) => {

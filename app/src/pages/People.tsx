@@ -833,18 +833,21 @@ function FaceOpen({ atlas, view, face: f, onBack }: { atlas: Atlas; view: Settin
         <div className="card2 rules">
           <div className="rule-s">
             <Icon name="chat" size={15} />
-            <p className="say">
-              Answers {f.audience === "anyone" ? "anyone" : f.audience === "known" ? "people you know" : list(f.people_names)} who writes to{" "}
-              {where.length
-                ? where.map((a, i) => (
-                    <span key={a!.id}>
-                      {i > 0 && (i === where.length - 1 ? ", or " : ", ")}
-                      {chip(a!)}
-                    </span>
-                  ))
-                : "nowhere yet"}
-              .
-            </p>
+            {where.length ? (
+              <p className="say">
+                Answers {f.audience === "anyone" ? "anyone" : f.audience === "known" ? "people you know" : list(f.people_names)} who writes
+                to{" "}
+                {where.map((a, i) => (
+                  <span key={a!.id}>
+                    {i > 0 && (i === where.length - 1 ? ", or " : ", ")}
+                    {chip(a!)}
+                  </span>
+                ))}
+                .
+              </p>
+            ) : (
+              <p className="say">Answers nowhere yet. Pick where in Edit, once Atlas's email or a chat is set up.</p>
+            )}
           </div>
           <div className="rule-s">
             <Icon name="book" size={15} />
@@ -955,7 +958,7 @@ function FaceOpen({ atlas, view, face: f, onBack }: { atlas: Atlas; view: Settin
             <span className="h2 grow">This week</span>
             <span className="aside">Since Monday</span>
           </div>
-          <div className="row" style={{ gap: 24, margin: "10px 0" }}>
+          <div className="stats3">
             <span className="stat">
               <b className="disp">{week.length}</b>
               <span className="aside">conversations</span>

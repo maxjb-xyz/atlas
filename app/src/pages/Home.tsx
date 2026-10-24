@@ -151,7 +151,8 @@ export function Home({
       setTab("jobs");
       setJob(detail.slice(5));
     } else if (detail.startsWith("view:")) {
-      const row = s.rows.find((r) => r.id === detail.slice(5));
+      const id = detail.slice(5);
+      const row = s.rows.find((r) => r.id === id) ?? s.history?.rows.find((r) => r.id === id);
       const shown = row && shownFrom(row);
       if (shown) openView(shown);
       go("");

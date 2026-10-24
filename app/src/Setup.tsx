@@ -7,7 +7,7 @@ import { PRESETS, type Preset } from "../../core/src/character";
 import type { Atlas } from "./connection";
 import { ExtensionCard } from "./abilities/Services";
 import { AddPasskey, ChatGPTSignIn as ChatGPT, SecretField, TestRow } from "./settings/parts";
-import { AsciiDiamond, Diamond, Icon } from "./ui";
+import { AsciiDiamond, Diamond, Icon, Toggle } from "./ui";
 import type { AutomationView } from "../../core/src/protocol";
 import { Switch, useAutomations } from "./pages/Automations";
 
@@ -346,13 +346,7 @@ function LookStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
               <span>Areas I can see. Keep the ones that fit; rename any, and give two the same name to make them one.</span>
               {result.look.areas.map((a) => (
                 <div key={a.name} className="row small" style={{ flexWrap: "nowrap" }}>
-                  <input
-                    type="checkbox"
-                    aria-label={`Keep ${a.name}`}
-                    style={{ height: "auto", flex: "none" }}
-                    checked={areas.has(a.name)}
-                    onChange={() => toggle(areas, a.name, setAreas)}
-                  />
+                  <Toggle label={`Keep ${a.name}`} on={areas.has(a.name)} onChange={() => toggle(areas, a.name, setAreas)} />
                   <input
                     aria-label={`Name for ${a.name}`}
                     maxLength={60}
@@ -370,16 +364,11 @@ function LookStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
             <div className="field">
               <span>People who matter</span>
               {result.look.people.map((p) => (
-                <label key={p.name} className="row small">
-                  <input
-                    type="checkbox"
-                    style={{ height: "auto" }}
-                    checked={people.has(p.name)}
-                    onChange={() => toggle(people, p.name, setPeople)}
-                  />
+                <div key={p.name} className="row small">
+                  <Toggle label={`Keep ${p.name}`} on={people.has(p.name)} onChange={() => toggle(people, p.name, setPeople)} />
                   <strong>{p.name}</strong>
                   <span className="muted">{p.why}</span>
-                </label>
+                </div>
               ))}
             </div>
           )}

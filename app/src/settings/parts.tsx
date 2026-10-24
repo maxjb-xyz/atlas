@@ -25,7 +25,7 @@ export function Head({ title, sub, right }: { title: string; sub: string; right?
 /** One setting: its name (and at most one short line under it) on the left, the control on the right. */
 export function Line({ label, sub, children, center }: { label: string; sub?: string; children: ReactNode; center?: boolean }) {
   return (
-    <div className={`set-line ${center ? "center" : ""}`}>
+    <div className={`set-line ${center ? "mid" : ""}`}>
       <div className="set-label">
         <span>{label}</span>
         {sub && <span className="aside">{sub}</span>}
