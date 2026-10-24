@@ -14,7 +14,7 @@ import { AREA_ICON_PATHS, AreaChip, areaColor, AreaDot, Empty, Icon, Picker, pre
 type LibTab = "overview" | "places" | "memory" | "areas" | "files";
 
 /** Asks for records under `ref`, and again whenever they change. */
-function useRecords(atlas: Atlas, ref: string, q: { record_type?: RecordView["type"]; text?: string; limit?: number }) {
+function useRecords(atlas: Atlas, ref: string, q: { record_type?: RecordView["type"]; text?: string; limit?: number; learned?: boolean }) {
   const s = atlas.state;
   useEffect(() => {
     if (!atlas.voice.connected) return;
@@ -112,7 +112,9 @@ function Overview({
   const of = (t: string) => records.filter((r) => r.type === t).slice(0, 5);
   const others = records.filter((r) => !["person", "place", "preference", "note"].includes(r.type)).slice(0, 5);
   const corrections = records.reduce((n, r) => n + r.corrections, 0);
-  const week = records.filter((r) => r.learned_at > Date.now() - 7 * 86_400_000).length;
+  // Imported contacts and addresses seen on mail aren't learning: these are what Atlas wrote down itself, newest first.
+  const learned = useRecords(atlas, "lib:learned", { learned: true, limit: 100 })?.records ?? records.filter((r) => r.learned);
+  const week = learned.filter((r) => r.learned_at > Date.now() - 7 * 86_400_000).length;
   const areas = s.areas.filter((a) => a.state !== "archived");
   const maxArea = Math.max(1, ...areas.map((a) => a.messages + a.records));
   const total = counts.all ?? 0;
@@ -220,15 +222,15 @@ function Overview({
         <div className="section-rule">
           <span className="lab ac">■ Recently learned</span>
         </div>
-        {!records.length && (
+        {!learned.length && (
           <Empty title="Nothing learned yet">Tell Atlas something worth remembering, and it shows up here with where it came from.</Empty>
         )}
         <div className="rows">
-          {records.slice(0, 8).map((r) => (
+          {learned.slice(0, 8).map((r) => (
             <RecordRow key={r.id} atlas={atlas} r={r} go={go} />
           ))}
         </div>
-        {records.length > 8 && (
+        {learned.length > 8 && (
           <p style={{ marginTop: 12 }}>
             <button className="link" onClick={() => go("memory")}>
               See everything

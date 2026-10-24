@@ -15,7 +15,7 @@ export const deviceCall = defineTool({
   timeoutMs: 120_000,
   description: [
     "Use a tool on one of the owner's paired devices (their Mac, their phone app), from the paired devices in your context.",
-    "Tools marked off are turned off by the owner: say so, and that Settings → Devices turns them on. Tools that act on the device ask the owner first, on a card in Atlas (Inbox, and a notification), not on the device itself.",
+    "Tools marked off are turned off by the owner: say so, and that Abilities → Devices turns them on. Tools that act on the device ask the owner first, on a card in Atlas (Inbox, and a notification), not on the device itself.",
     "When the device is offline, the call waits and runs when it's back; tell the owner it isn't connected and that you'll do it when it is, without guessing why (asleep, closed, off the network).",
     "Give `input` exactly as the tool's schema in your context says: its field names, nothing else.",
     "A command runs with no terminal and no one to type a password, so never use sudo or anything that waits for input.",
@@ -32,7 +32,7 @@ export const deviceCall = defineTool({
       return fail(
         all.length
           ? `There's no paired device called "${input.device}". Paired: ${all.join(", ")}.`
-          : "No device is paired yet. The owner pairs one in Settings → Devices.",
+          : "No device is paired yet. The owner pairs one in Abilities → Devices.",
       );
     }
     const cap = n.capabilities.find((c) => c.name === input.tool);
@@ -43,7 +43,7 @@ export const deviceCall = defineTool({
           : `${n.name} hasn't said what it can do yet; it does when it first connects.`,
       );
     }
-    if (!allowed(n, cap)) return fail(`${cap.name} is off on ${n.name}. The owner turns it on in Settings → Devices.`);
+    if (!allowed(n, cap)) return fail(`${cap.name} is off on ${n.name}. The owner turns it on in Abilities → Devices.`);
     const args = input.input as Record<string, Json>;
     // Checked here, so a wrong input doesn't wait for the device to be back only to fail.
     const wrong = checkInput(cap.input, args);

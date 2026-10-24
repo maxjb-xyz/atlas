@@ -32,7 +32,7 @@ function hereNow(ctx: ToolContext): Where {
     return {
       ok: false,
       error:
-        "No location has come in yet (OwnTracks isn't set up in Settings → Devices, or hasn't reported). Ask where they are, or use a saved place or an address.",
+        "No location has come in yet (OwnTracks isn't set up in Abilities → Devices, or hasn't reported). Ask where they are, or use a saved place or an address.",
     };
   return { ok: true, point: { lat: h.fix.lat, lon: h.fix.lon }, name: h.place?.name ?? "where you are" };
 }

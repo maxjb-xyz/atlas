@@ -1090,3 +1090,29 @@ describe("what extract asks Clairic", () => {
     }
   });
 });
+
+describe("the weather with nowhere new to look", () => {
+  it("looks again near where it last looked when there's no fix and no Home pin", async () => {
+    const { runInDurableObject, env } = await import("cloudflare:test");
+    const { migrate } = await import("../src/store/db");
+    const { refresh, cache, WEATHER_MS } = await import("../src/situation");
+    const ns = (env as unknown as { PersonAgent: DurableObjectNamespace }).PersonAgent;
+    await runInDurableObject(ns.get(ns.idFromName(`wx-${crypto.randomUUID()}`)), async (_a, state) => {
+      const sql = state.storage.sql as unknown as Sql;
+      migrate(sql);
+      const area = { lat: 28.6, lon: -81.2 };
+      const old = { at: Date.now() - 2 * WEATHER_MS, area, now: { temp_c: 20, feels_c: 20, code: 0, wind_kmh: 0 }, hours: [], days: [] };
+      setState(sql, "situation", { ...cache(sql), weather: old });
+      const asked: Array<{ lat: number; lon: number }> = [];
+      const maps = {
+        weather: async (p: { lat: number; lon: number }) => {
+          asked.push(p);
+          return { ok: true, value: { ...old, at: Date.now(), now: { ...old.now, temp_c: 27 } } };
+        },
+      };
+      await refresh({ sql, settings: readSettings(sql), calendar: null, maps: maps as never, full: true });
+      expect(asked).toEqual([area]);
+      expect(cache(sql).weather?.now.temp_c).toBe(27);
+    });
+  });
+});

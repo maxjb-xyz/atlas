@@ -953,7 +953,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** Closes the sockets opened by sessions that just ended; with no list, every socket. */
   #signOutSockets(ended?: Set<string>): void {
     for (const c of this.getConnections()) {
-      // Paired devices aren't signed in with a session; they're unpaired in Settings → Devices.
+      // Paired devices aren't signed in with a session; they're unpaired in Abilities → Devices.
       if ((c.state as SocketState | null)?.node) continue;
       const session = (c.state as SocketState | null)?.session;
       if (ended && !(session && ended.has(session))) continue;
@@ -1350,7 +1350,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#signOutSockets();
         return;
       case "atlas.records.list": {
-        const out = listRecords(this.#sql, { type: msg.record_type, area: msg.area, text: msg.text, limit: msg.limit });
+        const out = listRecords(this.#sql, {
+          type: msg.record_type,
+          area: msg.area,
+          text: msg.text,
+          limit: msg.limit,
+          ...(msg.learned ? { learned: true } : {}),
+        });
         this.#send(connection, { type: "atlas.records", ref: msg.ref, ...out });
         return;
       }

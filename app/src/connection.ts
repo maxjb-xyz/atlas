@@ -99,7 +99,7 @@ export interface State {
   kept: { id: string; name: string } | null;
   /** Bumped when the situation changes, so Now and the situation, weather and place views ask again. */
   situationVersion: number;
-  /** OwnTracks' setup, shown once in Settings → Devices. */
+  /** OwnTracks' setup, shown once in Abilities → Devices. */
   /** An extension's setup, shown once (a link and its QR code, a password), by the extension's id. */
   extSetup: Record<string, { ok: boolean; text: string; link?: string; fields?: Array<{ label: string; value: string }> }>;
   /** A face's answers in "talk to it as a stranger", by test conversation (§7.2). */

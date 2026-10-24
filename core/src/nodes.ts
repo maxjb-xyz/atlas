@@ -315,7 +315,7 @@ export function nodesLine(sql: Sql): string {
     .map((n) => {
       const tools = n.capabilities.map(
         (c) =>
-          `${c.name}${fields(c)}${allowed(n, c) ? (c.acts ? " (asks first)" : "") : " (off; the owner turns it on in Settings → Devices)"}`,
+          `${c.name}${fields(c)}${allowed(n, c) ? (c.acts ? " (asks first)" : "") : " (off; the owner turns it on in Abilities → Devices)"}`,
       );
       const st = Object.entries(n.state)
         .map(([k, v]) => `${k.replace(/_/g, " ")}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
@@ -325,7 +325,7 @@ export function nodesLine(sql: Sql): string {
     .join("\n")}`;
 }
 
-/** What Settings → Devices shows of each node. */
+/** What Abilities → Devices shows of each node. */
 export interface NodeView {
   id: string;
   name: string;

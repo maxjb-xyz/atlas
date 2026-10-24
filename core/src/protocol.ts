@@ -37,6 +37,8 @@ export interface RecordView {
   details: Record<string, unknown>;
   areas: string[];
   learned_at: number;
+  /** Whether Atlas learned it (from a conversation, a message or setup), not an import of contacts or an address seen on mail. */
+  learned: boolean;
   updated_at: number;
   confidence: number;
   /** Where it came from: the message it was learned from, when there is one. */
@@ -422,7 +424,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   }),
   /** The voices the owner can pick from, with samples. */
   z.object({ type: z.literal("atlas.voices.list") }),
-  /** Remove a passkey (Settings → Devices). It also ends the sessions it opened. */
+  /** Remove a passkey (Abilities → Devices). It also ends the sessions it opened. */
   z.object({ type: z.literal("atlas.passkey.remove"), id: z.string().max(512) }),
   /** Sign out everywhere. */
   z.object({ type: z.literal("atlas.sessions.end") }),
@@ -434,6 +436,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
     area: z.string().max(64).nullable().optional(),
     text: z.string().max(200).optional(),
     limit: z.number().int().min(1).max(500).optional(),
+    /** Only what Atlas learned itself, newest first: not imported contacts. */
+    learned: z.boolean().optional(),
   }),
   /** Correct a record by hand (Library's Correct link): the old value stays in history. */
   z.object({
@@ -654,7 +658,7 @@ export interface SettingsView {
   chatgpt: ChatGPTView;
   /** Provider health, by "provider:model". */
   health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
-  /** The owner's passkeys, without their keys (Settings → Devices). */
+  /** The owner's passkeys, without their keys (Abilities → Devices). */
   passkeys: Array<{ id: string; name: string; created_at: number; last_used: number | null }>;
   /** The vault's entries, without their values (Settings → Vault). */
   vault: import("./vault-fields").VaultView[];
@@ -675,9 +679,9 @@ export interface SettingsView {
   /** Focus in force, if any (§14). */
   focus: { until: number; about: string } | null;
   setup: { done: string[]; skipped: string[]; finished: boolean };
-  /** Location (Settings → Devices, §10.1): whether OwnTracks is set up, the last fix and place, and the last refused post. */
+  /** Location (Abilities → Devices, §10.1): whether OwnTracks is set up, the last fix and place, and the last refused post. */
   location: LocationView;
-  /** Paired devices (Settings → Devices, §16.3). */
+  /** Paired devices (Abilities → Devices, §16.3). */
   nodes: import("./nodes").NodeView[];
   /** The intake's sources (Settings → Connections → Senses, §10.4): webhook sources, and each source's state. */
   senses: SensesView;

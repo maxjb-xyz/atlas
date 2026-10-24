@@ -15,6 +15,7 @@ import { ApprovalCard } from "../Approval";
 import {
   addDays,
   areaColor,
+  AreaDot,
   AreaTag,
   AsciiDiamond,
   clock,
@@ -30,7 +31,7 @@ import {
   StateDot,
   useNow,
 } from "../ui";
-import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
+import { CalendarNote, eventArea, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
 type HomeTab = "now" | "week" | "jobs" | "receipt" | "approval" | `view:${string}`;
 
@@ -297,11 +298,13 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
   const inbox = s.inbox ?? [];
   const running = s.jobs.filter((j) => j.state === "running");
   const scoped = s.areas.find((a) => a.id === s.scope);
-  const load = Array.from({ length: 7 }, (_, i) => {
+  // Each day's events, so its bar stacks in the colors of their areas.
+  const days = Array.from({ length: 7 }, (_, i) => {
     const d = addDays(monday, i);
     const e = addDays(d, 1);
-    return (cal?.events ?? []).filter((x) => eventStart(x) < e && eventEnd(x) > d).length;
+    return (cal?.events ?? []).filter((x) => eventStart(x) < e && eventEnd(x) > d);
   });
+  const load = days.map((d) => d.length);
   const busiest = load.indexOf(Math.max(...load));
   const max = Math.max(1, ...load);
   const underway = next && !next.all_day && eventStart(next).getTime() <= Date.now();
@@ -327,6 +330,9 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
   const tMax = Math.max(...hours.map((h) => h.temp_c), 1);
   const tMin = Math.min(...hours.map((h) => h.temp_c), 0);
   const travel = sit?.next?.travel && next && sit.next.title === next.title ? sit.next.travel : null;
+  const nextArea = next ? eventArea(next, s.areas) : undefined;
+  // What comes after the next thing, so the card shows the next few days and not one line.
+  const after = next ? events.filter((e) => e.id !== next.id && eventStart(e) >= eventStart(next)).slice(0, 3) : [];
   const point = sit?.where.known ? sit.where.point : null;
   // On a phone the diamond is smaller, so what's next shows without scrolling.
   const narrow = useMemo(() => window.matchMedia("(max-width: 760px)").matches, []);
@@ -373,16 +379,36 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
               <span className="h2">Next</span>
               {scoped && <AreaTag area={scoped} />}
               <span className="grow" />
-              {next && (
-                <span className="aside">
-                  {next.all_day ? dayName(eventStart(next)) : `${shortDay(eventStart(next))} · ${clock(eventStart(next))}`}
-                </span>
-              )}
             </div>
             {next ? (
               <>
-                <span style={{ fontWeight: 500, fontSize: 15 }}>{next.title}</span>
-                {next.location && <span className="aside clip">{next.location}</span>}
+                <span className="disp next-title">{next.title}</span>
+                <span className="row aside" style={{ gap: 8, flexWrap: "wrap" }}>
+                  <span>{until(eventStart(next), next.all_day, nowMs)}</span>
+                  {nextArea && !scoped && <AreaTag area={nextArea} />}
+                </span>
+                {next.location && (
+                  <span className="row small" style={{ gap: 6, color: "var(--tx2)", minWidth: 0 }}>
+                    <Icon name="place" size={13} />
+                    <span className="clip" title={next.location}>
+                      {next.location.split("\n")[0]}
+                    </span>
+                  </span>
+                )}
+                {after.length > 0 && (
+                  <div className="next-after">
+                    <span className="lab">After that</span>
+                    {after.map((e) => (
+                      <span key={e.id} className="row small" style={{ gap: 8, minWidth: 0 }}>
+                        <AreaDot area={eventArea(e, s.areas)} />
+                        <span className="clip grow">{e.title}</span>
+                        <span className="aside" style={{ flex: "none" }}>
+                          {e.all_day ? dayName(eventStart(e)) : `${shortDay(eventStart(e))} · ${clock(eventStart(e))}`}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </>
             ) : reminder ? (
               <>
@@ -505,16 +531,20 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
             <span className="h2" style={{ fontSize: 14 }}>
               This week
             </span>
-            {/* TODO(core): events carry no areas yet, so each day's bar is one color: the scoped area's, else neutral. Stacked by area once they do. */}
+            {/* Each day's bar stacks its events by area (from the calendar's name); an event in no area is neutral. */}
             <span className="week-bars" aria-hidden>
               {load.map((n, i) => (
                 <span key={i} className="wk">
-                  <i
-                    style={{
-                      height: n ? 6 + (n / max) * 24 : 3,
-                      background: n ? (scoped ? areaColor(scoped) : "var(--tx3)") : "var(--sep2)",
-                    }}
-                  />
+                  {n ? (
+                    <span className="wk-stack" style={{ height: 6 + (n / max) * 24 }}>
+                      {days[i]!.map((e) => {
+                        const a = eventArea(e, s.areas);
+                        return <i key={e.id} style={{ flex: 1, background: a ? areaColor(a) : "var(--tx3)" }} />;
+                      })}
+                    </span>
+                  ) : (
+                    <i style={{ height: 3, background: "var(--sep2)" }} />
+                  )}
                   <span className={`aside ${i === (today.getDay() + 6) % 7 ? "today" : ""}`}>
                     {i === (today.getDay() + 6) % 7 ? "Today" : addDays(monday, i).toLocaleDateString([], { weekday: "short" })}
                   </span>
@@ -565,7 +595,7 @@ function WeekTab({ atlas }: { atlas: Atlas }) {
           </button>
         </div>
         <CalendarNote atlas={atlas} cal={cal} />
-        <WeekGrid events={cal?.events ?? []} agenda={atlas.state.agenda} start={start} />
+        <WeekGrid events={cal?.events ?? []} agenda={atlas.state.agenda} start={start} areas={atlas.state.areas} />
       </div>
     </Sheet>
   );
@@ -735,6 +765,18 @@ function GoalPlan({ atlas, job }: { atlas: Atlas; job: JobView }) {
       </p>
     </>
   );
+}
+
+/** How far off something is, in a few words: "in 40 min", "tomorrow at 9:00 AM", "Sunday, in 2 days". */
+function until(d: Date, allDay: boolean, now: number): string {
+  const ms = d.getTime() - now;
+  const days = Math.round((startOfDay(d).getTime() - startOfDay(new Date(now)).getTime()) / 86_400_000);
+  if (!allDay && ms > 0 && ms < 60 * 60_000) return `In ${Math.max(1, Math.round(ms / 60_000))} min`;
+  const at = allDay ? "" : ` at ${clock(d)}`;
+  if (!allDay && ms <= 0) return `Started at ${clock(d)}`;
+  if (days <= 0) return allDay ? "Today" : `Today${at}, in ${Math.round(ms / 3_600_000)} h`;
+  if (days === 1) return `Tomorrow${at}`;
+  return `${dayName(d)}${at}, in ${days} days`;
 }
 
 /** One line of a coding job's stream, as its terminal shows it. */

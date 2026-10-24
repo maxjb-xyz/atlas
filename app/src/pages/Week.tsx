@@ -2,9 +2,9 @@
 // as small outlined markers. Used on Home's Week tab and Agenda's Week.
 
 import { useEffect } from "react";
-import type { AgendaItem, CalendarEventView } from "../../../core/src/protocol";
+import type { AgendaItem, AreaView, CalendarEventView } from "../../../core/src/protocol";
 import type { Atlas, CalendarState } from "../connection";
-import { addDays, clock, localDate, startOfDay } from "../ui";
+import { addDays, areaColor, clock, localDate, startOfDay } from "../ui";
 
 const FIRST_HOUR = 7;
 const LAST_HOUR = 22;
@@ -44,15 +44,38 @@ export function CalendarNote({ atlas, cal }: { atlas: Atlas; cal: CalendarState 
   );
 }
 
+/**
+ * The area an event belongs to: the one named like its calendar ("School" for
+ * the School calendar). An event on a calendar no area is named after has none.
+ */
+export function eventArea(e: CalendarEventView, areas: AreaView[]): AreaView | undefined {
+  const cal = e.calendar.trim().toLowerCase();
+  return areas.find((a) => a.state !== "archived" && a.name.trim().toLowerCase() === cal);
+}
+
 export const eventStart = (e: CalendarEventView) => (e.all_day ? new Date(`${e.start}T00:00`) : new Date(e.start));
 export const eventEnd = (e: CalendarEventView) => (e.all_day ? new Date(`${e.end}T00:00`) : new Date(e.end));
 
-export function WeekGrid({ events, agenda, start }: { events: CalendarEventView[]; agenda: AgendaItem[]; start: Date }) {
+export function WeekGrid({
+  events,
+  agenda,
+  start,
+  areas = [],
+}: {
+  events: CalendarEventView[];
+  agenda: AgendaItem[];
+  start: Date;
+  areas?: AreaView[];
+}) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
   const today = localDate(new Date());
   const hours = Array.from({ length: LAST_HOUR - FIRST_HOUR }, (_, i) => FIRST_HOUR + i);
   const calendars = [...new Set(events.map((e) => e.calendar))];
-  const color = (cal: string) => `var(--a${(calendars.indexOf(cal) + 2) % 8})`;
+  // A calendar named after an area takes the area's color, so School is the same color here as everywhere else.
+  const color = (cal: string) => {
+    const area = eventArea({ calendar: cal } as CalendarEventView, areas);
+    return area ? areaColor(area) : `var(--a${(calendars.indexOf(cal) + 2) % 8})`;
+  };
   const now = new Date();
   const nowTop = (now.getHours() + now.getMinutes() / 60 - FIRST_HOUR) * HOUR_PX;
 

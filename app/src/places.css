@@ -1483,6 +1483,31 @@ button.card2:hover {
   width: 28px;
   border-radius: 2px;
 }
+/* A day's events by area, bottom up. */
+.wk-stack {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 1px;
+  width: 28px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.wk-stack i {
+  border-radius: 0;
+  min-height: 2px;
+}
+.next-title {
+  font-size: 21px;
+  line-height: 1.2;
+}
+.next-after {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--sep);
+}
 .wk .today {
   color: var(--tx);
   font-weight: 600;

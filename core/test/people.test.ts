@@ -97,7 +97,7 @@ describe("contacts", () => {
       handles: [{ kind: "github", value: "doug-h" }],
       details: { organization: "Acme" },
     });
-    await inOwner((_a, sql) => {
+    await inOwner(async (_a, sql) => {
       ownerLearned(sql, ["owner@icloud.com"], "iCloud");
       // Someone Atlas already knows by an address is merged, not made twice.
       importCards(sql, [{ name: "doug@acme.com", emails: ["doug@acme.com"], phones: [], handles: [], details: {} }], "mail");
@@ -119,6 +119,10 @@ describe("contacts", () => {
       ).toEqual(["Dana Whitfield", "Doug Henderson"]);
       expect(ownerAddresses(sql).has("owner@icloud.com")).toBe(true);
       expect(ownerRecord(sql).name).not.toBe("Max Owner");
+      // Imported people aren't something Atlas learned.
+      const { listRecords } = await import("../src/agent/views");
+      expect(listRecords(sql, { type: "person" }).records.map((r) => r.learned)).not.toContain(true);
+      expect(listRecords(sql, { learned: true }).records.filter((r) => r.type === "person")).toEqual([]);
     });
   });
 

@@ -1,13 +1,13 @@
 // Inbox and Agenda (§21.2). Automations has its own page.
 
 import { useEffect, useState } from "react";
-import type { CalendarEventView, InboxItem } from "../../../core/src/protocol";
+import type { AreaView, CalendarEventView, InboxItem } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { ApprovalCard } from "../Approval";
 import { Markdown } from "../Markdown";
 import { Composer, compose } from "../Shell";
-import { addDays, AreaChip, clock, dayName, Empty, pressable, Sheet, shortDay, Stage, startOfDay } from "../ui";
-import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
+import { addDays, AreaChip, AreaTag, clock, dayName, Empty, pressable, Sheet, shortDay, Stage, startOfDay } from "../ui";
+import { CalendarNote, eventArea, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
 // --- Inbox: everything waiting on you ------------------------------------------------------
 
@@ -223,6 +223,8 @@ interface AgendaEntry {
   kind: "Event" | "Reminder" | "Promise" | "Job" | "Automation" | "Waiting";
   title: string;
   source: string;
+  /** An event's area, from its calendar's name. */
+  area?: AreaView;
   id: string;
   /** Where it was said: the owner's words, for reminders and promises (§13.4). */
   said?: { text: string; at: number };
@@ -244,7 +246,15 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
   const entries: AgendaEntry[] = [
     ...(cal?.events ?? [])
       .filter((e: CalendarEventView) => eventEnd(e).getTime() > Date.now())
-      .map((e) => ({ at: eventStart(e), allDay: e.all_day, kind: "Event" as const, title: e.title, source: e.calendar, id: e.id })),
+      .map((e) => ({
+        at: eventStart(e),
+        allDay: e.all_day,
+        kind: "Event" as const,
+        title: e.title,
+        source: e.calendar,
+        area: eventArea(e, s.areas),
+        id: e.id,
+      })),
     ...s.agenda
       // Notifications held for quiet hours are the outbox's, and approvals wait in Inbox: neither is something on your clock.
       .filter(
@@ -319,7 +329,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                 <h1 className="disp">This week</h1>
               </div>
               <CalendarNote atlas={atlas} cal={week} />
-              <WeekGrid events={week?.events ?? []} agenda={s.agenda} start={start} />
+              <WeekGrid events={week?.events ?? []} agenda={s.agenda} start={start} areas={s.areas} />
             </>
           ) : (
             <>
@@ -405,7 +415,13 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                               </span>
                             )}
                           </span>
-                          <span className="faint small hide-phone">{e.source}</span>
+                          {e.area ? (
+                            <span className="hide-phone">
+                              <AreaTag area={e.area} />
+                            </span>
+                          ) : (
+                            <span className="faint small hide-phone">{e.source}</span>
+                          )}
                           {e.cancel && (
                             <button className="link small" onClick={() => atlas.send({ type: "atlas.agenda.cancel", id: e.id })}>
                               Cancel

@@ -45,6 +45,8 @@ export function recordView(sql: Sql, r: AtlasRecord): RecordView {
     details: details as Record<string, unknown>,
     areas: r.areas,
     learned_at: r.learned_at,
+    // Written down by Atlas from something said or done (a run, a message, setup), not brought in by an import or seen on mail.
+    learned: Boolean(r.source.run_id || r.source.log_id || r.source.via === "setup"),
     updated_at: r.updated_at,
     confidence: r.confidence,
     source: from
@@ -64,7 +66,7 @@ export const TAGGED = `EXISTS (SELECT 1 FROM json_each(areas) WHERE value = ?)`;
 
 export function listRecords(
   sql: Sql,
-  q: { type?: RecordType | "all"; area?: string | null; text?: string; limit?: number },
+  q: { type?: RecordType | "all"; area?: string | null; text?: string; limit?: number; learned?: boolean },
 ): { records: RecordView[]; counts: Record<string, number> } {
   const where = [`state = 'active'`, `NOT (type = 'person' AND coalesce(json_extract(fields, '$.is_owner'), 0) = 1)`];
   const args: unknown[] = [];
@@ -80,8 +82,17 @@ export function listRecords(
     where.push(`(instr(lower(name), lower(?)) > 0 OR instr(lower(fields), lower(?)) > 0)`);
     args.push(q.text.trim(), q.text.trim());
   }
+  // Learned, as recordView says: from a run, a message or setup, newest first.
+  if (q.learned)
+    where.push(
+      `(json_extract(source, '$.run_id') IS NOT NULL OR json_extract(source, '$.log_id') IS NOT NULL OR json_extract(source, '$.via') = 'setup')`,
+    );
   const rows = sql
-    .exec<{ id: string }>(`SELECT id FROM records WHERE ${where.join(" AND ")} ORDER BY updated_at DESC LIMIT ?`, ...args, q.limit ?? 100)
+    .exec<{ id: string }>(
+      `SELECT id FROM records WHERE ${where.join(" AND ")} ORDER BY ${q.learned ? "learned_at" : "updated_at"} DESC LIMIT ?`,
+      ...args,
+      q.limit ?? 100,
+    )
     .toArray();
   const counts: Record<string, number> = { all: 0 };
   for (const t of RECORD_TYPES) counts[t] = 0;
