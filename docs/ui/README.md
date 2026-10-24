@@ -272,6 +272,17 @@ Waiting for the owner's OK (smoke test step 1 in [docs/M7.md](../M7.md)). The de
 - **Color carries meaning, never decoration.** Areas are the color system: area chips are tinted, and a person's avatar takes the color of the area you know them from. Logos bring their brands' colors. Meters take the color of what they measure (Claude's orange, Cloudflare's). Ember stays rare: only what needs you and what Atlas just changed. Still no gradients or glows.
 - **Simple is the default detail level** (VISION §21.5). It speaks in plain words ("Thinks with", "Keeps you safe", "Atlas thinks with ChatGPT, on your Plus plan") and hides model ids, speeds, prices per million tokens and mono metadata. Detailed and Developer show the rest, the way these screens first did. The soul stays at every level: the diamond, the stage frame, receipts and ember.
 
+**Home's Now and the living diamond** (approved direction 2026-10-24):
+- **The diamond** is drawn in characters, its facets in the four area colors, lit by a light that circles it. It sweeps now and then while idle, ripples with your voice while listening, shimmers while thinking and pulses while speaking. Open [`source/diamond.html`](source/diamond.html) in a browser to see it move; it has controls for each state, an area and the theme. The screenshots here are single frames of it.
+- **Now** shows what's next on a small map with when to leave, the weather with tomorrow's rain, what needs you, the jobs running, and the week stacked in area colors. Its builder is `p_now.py`.
+- **Scoped to an area,** the stage's rails, the diamond and the switcher take that area's color.
+- **People's photos** come from the address book where they have one (not drawn here, since the mockups use made-up people).
+
+| | |
+|---|---|
+| ![Now](screenshots/m7/home-now.png) | ![Now, scoped to Keyframes](screenshots/m7/home-now-keyframes.png) |
+| ![Now, light](screenshots/m7/home-now-light.png) | |
+
 | Simple (the default) | Developer |
 |---|---|
 | ![Map, simple](screenshots/m7/abilities-map.png) | ![Map, developer](screenshots/m7/abilities-map-developer.png) |
