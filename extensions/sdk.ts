@@ -128,6 +128,8 @@ export interface CodingAgent {
   mode?: string;
   /** It reports what it spends (ACP's usage with a cost), so a job can stop at a cap. */
   costs_money?: boolean;
+  /** The environment variables that pick its model and how hard it thinks, when the owner picks them for a job. */
+  choose?: { model?: string; effort?: string };
 }
 
 /** Where code lives (§8.2): how the workspace clones and pushes, with a token only the gate holds. */

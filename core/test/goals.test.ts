@@ -27,6 +27,7 @@ function testDesk(sql: Sql, looks: Look[], o: { brains?: string[]; helperFails?:
     kept: [] as string[],
     notes: [] as string[],
     stopped: [] as string[],
+    coders: [] as Array<{ step: string; brief: string; agent?: string; model?: string; effort?: string }>,
   };
   let n = 0;
   const host: GoalHost = {
@@ -44,6 +45,11 @@ function testDesk(sql: Sql, looks: Look[], o: { brains?: string[]; helperFails?:
       st.helpers.push({ step: step.id, brief, brain, folder: job.folder });
       return `helper_${++n}`;
     },
+    coder: async ({ step, brief, agent, model, effort }) => {
+      st.coders.push({ step: step.id, brief, agent, model, effort });
+      return { id: `coding_${++n}`, name: "Claude Code" };
+    },
+    site: async ({ host }) => (host === "pixabay.com" ? { allowed: true } : { approval: `appr_${host}` }),
     stopHelper: (id) => void st.stopped.push(id),
     folder: async () => {},
     keep: async ({ path, name }) => {
@@ -129,6 +135,66 @@ describe("jobs Atlas owns (§8.3)", () => {
       const result = sql.exec<{ body: string }>(`SELECT body FROM log WHERE kind = 'job.result'`).toArray();
       expect(result.map((r) => JSON.parse(r.body).goal)).toEqual([true]);
       expect(desk.list()[0]).toMatchObject({ title: "Launch video", state: "done", goal: { files: ["Atlas launch.mp4"] } });
+    }));
+
+  it("hand a building step to a coding agent, on the model and effort the owner picked, and take its result back", () =>
+    withSql(async (sql) => {
+      const { desk, st } = testDesk(sql, [
+        async (d, j) =>
+          (
+            await d.startStep(j.id, {
+              step: "s3",
+              brief: "Build the cut in Remotion.",
+              agent: "claude-code",
+              model: "claude-opus-5-5",
+              effort: "low",
+            })
+          ).text,
+        async (_d, _j, note) => {
+          expect(note).toContain("Rendered out/launch.mp4.");
+          return "Looked.";
+        },
+      ]);
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      expect(st.helpers).toEqual([]);
+      expect(st.coders).toEqual([
+        { step: "s3", brief: "Build the cut in Remotion.", agent: "claude-code", model: "claude-opus-5-5", effort: "low" },
+      ]);
+      expect(getGoal(sql, job.id)!.plan[2]).toMatchObject({
+        state: "doing",
+        job: "coding_1",
+        brain: "Claude Code, claude-opus-5-5, low effort",
+      });
+      expect(await desk.stepDone("coding_1", { state: "done", text: "Rendered out/launch.mp4." })).toBe(true);
+      await desk.wake(job.id);
+      expect(getGoal(sql, job.id)!.plan[2]).toMatchObject({ state: "done", result: "Rendered out/launch.mp4." });
+    }));
+
+  it("ask for a site it needs on a card, wait for it, and carry on when the owner answers", () =>
+    withSql(async (sql) => {
+      const { desk, st } = testDesk(sql, [
+        async (d, j) => (await d.site(j.id, { host: "https://freemusicarchive.org/music", why: "To download the song." })).text,
+        async (_d, _j, note) => {
+          expect(note).toContain("The owner let the workspace reach freemusicarchive.org.");
+          return "Looked.";
+        },
+      ]);
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      expect(getGoal(sql, job.id)).toMatchObject({
+        phase: "waiting",
+        site: { approval: "appr_freemusicarchive.org", host: "freemusicarchive.org" },
+      });
+      expect(desk.waitsOn("appr_freemusicarchive.org")).toBe(true);
+      // Waiting, a wake costs nothing.
+      await desk.wake(job.id);
+      expect(st.notes).toHaveLength(1);
+      await desk.settled("appr_freemusicarchive.org", true);
+      await desk.wake(job.id);
+      expect(getGoal(sql, job.id)).toMatchObject({ phase: "working", site: null });
+      // One already allowed needs no card.
+      expect((await desk.site(job.id, { host: "pixabay.com", why: "Songs." })).text).toContain("can reach pixabay.com");
     }));
 
   it("pause when a brain runs out partway, and go on with another one only when the owner says", () =>

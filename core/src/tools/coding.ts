@@ -10,6 +10,10 @@
 import { z } from "zod";
 import { defineTool, fail, type Tool } from "./types";
 
+/** How hard a coding agent thinks, for agents that take it (Claude Code's effort levels). */
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
+
 // --- the owner's runs ------------------------------------------------------------------
 
 export const codeRepos = defineTool({
@@ -53,6 +57,8 @@ export const codeJob = defineTool({
       .optional()
       .describe("Which coding agent, when the owner asked for one: 'codex' or 'claude-code'. Default: the one set up first."),
     base: z.string().max(120).optional().describe("The branch to start from. Default: the repo's default branch."),
+    model: z.string().max(80).optional().describe("The agent's model, when the owner named one: 'claude-opus-5-5'."),
+    effort: z.enum(EFFORTS).optional().describe("How hard the agent thinks, when the owner said: low, medium, high, xhigh or max."),
   }),
   async run(input, ctx) {
     if (!ctx.coding) return fail("Coding jobs can't be started from here.");
@@ -177,7 +183,7 @@ export const jobReady = defineTool({
   kind: "change_own",
   status: "Wrapping up the job.",
   description: [
-    "The work is done and you've reviewed it: the diff does what was asked and no more, and the tests pass when you ran them yourself. Atlas then commits what's left, pushes the branch and opens a pull request with your title and description. Nothing is merged; the owner reviews it.",
+    "The work is done and you've reviewed it: the diff does what was asked and no more, and the tests pass when you ran them yourself. Atlas then commits what's left, pushes the branch and opens a pull request with your title and description. Nothing is merged; the owner reviews it. For a step of a job you own, nothing is pushed: your title and description go back to that job.",
     "Write `body` for the owner and their reviewers: what changed and why, how it was tested, and anything they should look at. This ends the job.",
   ].join(" "),
   input: z.object({

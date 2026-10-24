@@ -21,7 +21,7 @@ import {
 } from "./agent/areas";
 import { HelperDesk, helperBrain, RESEARCH_BUDGET } from "./agent/helpers";
 import { CodingDesk, getJob, type JobWorkspace, type PullRequest } from "./agent/coding";
-import { codingTools } from "./tools/coding";
+import { codingTools, type Effort } from "./tools/coding";
 import { getGoal, type GoalHost, GoalDesk, type GoalJob, inFolder } from "./agent/goals";
 import { CallDesk } from "./agent/calls";
 import { folderRun, jobOwn, lookTools } from "./tools/goals";
@@ -3223,6 +3223,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return getJob(this.#sql, id);
   }
 
+  /** For tests: a job's look starting a step, as its job_step would. */
+  async apiGoalStep(
+    id: string,
+    o: { step: string; brief: string; agent?: string; model?: string; effort?: string },
+  ): Promise<{ ok: boolean; text: string }> {
+    return this.#goals.startStep(id, o);
+  }
+
   /** For tests: Stop on a coding job, as from the app. */
   async apiJobStop(id: string): Promise<boolean> {
     return this.#coding.stop(id);
@@ -3343,8 +3351,22 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
         });
         return item.id;
       },
+      site: ({ job, host, why }) => this.#askSite({ run_id: job.asked_in ?? job.id, host, why }),
+      coder: async ({ job, step, brief, agent, model, effort }) => {
+        const started = await this.#coding.start({
+          title: `${job.title}: ${step.title}`,
+          step: { goal: job.id, step: step.id },
+          task: brief,
+          ...(agent ? { agent } : {}),
+          ...(model ? { model } : {}),
+          ...(effort ? { effort: effort as Effort } : {}),
+          asked_in: job.asked_in,
+        });
+        return { id: started.id, name: getExt(sql, started.agent)?.name ?? started.agent };
+      },
       stopHelper: (id) => {
-        this.#helpers.stop(id);
+        if (this.#coding.owns(id)) void this.#coding.stop(id);
+        else this.#helpers.stop(id);
       },
       folder: async (path) => {
         await this.#workspaceApi.run(`mkdir -p '${path.replace(/'/g, `'\''`)}'`, { run_id: "goal", timeout_s: 30 });
@@ -3409,6 +3431,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
           mark: (o) => g.mark(job.id, o),
           finish: (o) => g.finish(job.id, o),
           fail: (why) => g.fail(job.id, why),
+          site: (o) => g.site(job.id, o),
         },
       },
     }).catch((err: unknown) => ({
@@ -4724,6 +4747,9 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
         const host = origin ? new URL(origin).hostname : "localhost";
         return { name: readSettings(sql).assistant_name, email: `atlas@${host}` };
       },
+      handBack: async ({ id, state, text, error }) => {
+        await this.#goals.stepDone(id, { state, text, ...(error ? { error } : {}) });
+      },
       report: (item, result) => this.#tellJob(item, result),
       ask: ({ job, question, row }) =>
         this.#askOwner({
@@ -4734,22 +4760,25 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
           options: question.options,
           row,
         }),
-      site: async (o) => {
-        if ((getState<string[]>(sql, "workspace_sites") ?? []).some((h) => o.host === h || o.host.endsWith(`.${h}`)))
-          return { allowed: true };
-        const out = await this.#exit.request(
-          { kind: "site", host: o.host, name: `Let the workspace reach ${o.host}`, why: o.why },
-          { run_id: o.run_id, source_log_id: null },
-        );
-        const waiting = (out.output as { waiting_for_ok?: string } | null)?.waiting_for_ok;
-        if (waiting) return { approval: waiting };
-        if (out.ok) return { allowed: true };
-        throw new Error(String((out.output as { error?: string } | null)?.error ?? "The site couldn't be asked for."));
-      },
+      site: (o) => this.#askSite(o),
       publish: (a, runId) => this.#outbox.perform(a as unknown as Action, { run_id: runId, by: "trusted" }),
       rows: (rows) => this.#broadcast({ type: "atlas.rows", rows }),
       changed: () => this.#jobsChanged(),
     };
+  }
+
+  /** Asks the owner to let the workspace reach a site, on an approval card: its id, or that it's already allowed. */
+  async #askSite(o: { run_id: string; host: string; why: string }): Promise<{ approval: string } | { allowed: true }> {
+    if ((getState<string[]>(this.#sql, "workspace_sites") ?? []).some((h) => o.host === h || o.host.endsWith(`.${h}`)))
+      return { allowed: true };
+    const out = await this.#exit.request(
+      { kind: "site", host: o.host, name: `Let the workspace reach ${o.host}`, why: o.why },
+      { run_id: o.run_id, source_log_id: null },
+    );
+    const waiting = (out.output as { waiting_for_ok?: string } | null)?.waiting_for_ok;
+    if (waiting) return { approval: waiting };
+    if (out.ok) return { allowed: true };
+    throw new Error(String((out.output as { error?: string } | null)?.error ?? "The site couldn't be asked for."));
   }
 
   /** The workspace as its view shows it: up or asleep, its files while up, the sites it may reach, and what ran lately. */
@@ -5223,6 +5252,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
       countDecline(this.#sql, actions);
       this.#approvalSettled(id);
       if (this.#coding.waitsOn(id)) void this.keepAliveWhile(() => this.#coding.settled(id, false));
+      if (this.#goals.waitsOn(id)) void this.keepAliveWhile(() => this.#goals.settled(id, false));
       return { ok: true, text: "Declined. Nothing was done." };
     }
     // An edit made in the card is what goes out (§12.2), and it doesn't count as approved as-is.
@@ -5287,6 +5317,11 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
       void this.keepAliveWhile(() => this.#coding.settled(id, ok));
       return { ok, text: results.map((r) => r.text).join(" ") };
     }
+    // So does a job Atlas owns (§8.3).
+    if (this.#goals.waitsOn(id)) {
+      void this.keepAliveWhile(() => this.#goals.settled(id, ok));
+      return { ok, text: results.map((r) => r.text).join(" ") };
+    }
     if (!inRun) {
       const chat = item.source.detail?.chat as unknown as ChatVia | undefined;
       // What it did and gave back goes with the yes, so the run reports it instead of asking again for what's done.
@@ -5317,6 +5352,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
     finish(this.#sql, id, "failed", null, { expired: true });
     const row = this.#approvalSettled(id);
     if (this.#coding.waitsOn(id)) void this.keepAliveWhile(() => this.#coding.settled(id, false));
+    if (this.#goals.waitsOn(id)) void this.keepAliveWhile(() => this.#goals.settled(id, false));
     if (row && !this.#looking()) {
       await this.#outbox.notify(
         { id: row.id, run_id: item.source.run_id ?? null, text: `Your OK for ${item.title} ran out, so it didn't happen.` },

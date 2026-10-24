@@ -7,6 +7,7 @@
 // - a step's helper works in the job's folder, with a shell there.
 
 import { z } from "zod";
+import { EFFORTS } from "./coding";
 import { defineTool, fail, type Tool } from "./types";
 
 const Kind = z
@@ -25,7 +26,7 @@ export const jobOwn = defineTool({
   description: [
     "Take on a long piece of work as a job you own: a goal with a plan of steps, a folder of its own in the workspace, and checkpoints where the owner looks before you go on ('make a 60-second launch video', 'plan the Lisbon trip', 'get three quotes for the roof').",
     "Use it for work of many steps that runs over hours or days, not for a quick answer (answer that yourself, or delegate one lookup). A change to one of the owner's code repos is a coding job (code_job) instead.",
-    "Write `goal` as what done looks like, in the owner's words and with everything they said about it. Plan the steps in order, a few words each; put a checkpoint wherever the owner should see something before you go on (the script before the voiceover, the cut before it's final). You can change the plan as you go.",
+    "Write `goal` as what done looks like, in the owner's words and with everything they said about it, including which coding agent, model and effort should build what's made in code when they said (the job's looks hand those steps to it). Plan the steps in order, a few words each; put a checkpoint wherever the owner should see something before you go on (the script before the voiceover, the cut before it's final). You can change the plan as you go.",
     "It runs in the background: tell the owner in a sentence it's started and where to watch it (Home → Jobs), then end your turn.",
   ].join(" "),
   input: z.object({
@@ -71,13 +72,17 @@ export const jobStep = defineTool({
   status: "Working on the next step.",
   description: [
     "Start the job's next step: a helper does it, in the job's folder, from your brief, and its result comes back to your next look.",
-    "The helper sees nothing but the brief: give it the goal, what earlier steps made (file names in the folder, decisions, the owner's edits) and exactly what to hand back.",
+    "For building something (code, a site, a video made in code), give it to a coding agent instead with `agent` ('claude-code' or 'codex', as the owner set up), and `model` and `effort` when the owner picked them: it works in repo/ in the job's folder, with you as its middleman, and its result comes back the same way.",
+    "The helper or agent sees nothing but the brief: give it the goal, what earlier steps made (file names in the folder, decisions, the owner's edits) and exactly what to hand back.",
     "One step at a time. This ends your turn on the job.",
   ].join(" "),
   input: z.object({
     step: z.string().min(1).max(8).describe("The step's id: 's2'."),
-    brief: z.string().min(1).max(12_000).describe("The helper's complete brief."),
+    brief: z.string().min(1).max(12_000).describe("The helper's or agent's complete brief."),
     brain: z.string().max(24).optional().describe("A named brain for this step only, when another suits it better."),
+    agent: z.string().max(40).optional().describe("A coding agent for this step: 'claude-code' or 'codex'."),
+    model: z.string().max(80).optional().describe("The coding agent's model, when the owner named one: 'claude-opus-5-5'."),
+    effort: z.enum(EFFORTS).optional().describe("How hard the coding agent thinks, when the owner said."),
   }),
   async run(input, ctx) {
     if (!ctx.goalLook) return fail("This only works in a job's look.");
@@ -182,7 +187,23 @@ export const jobFail = defineTool({
 });
 
 /** A job's looks: its moves, and a look at its folder. */
-export const lookTools: Tool[] = [jobStep, jobCheckpoint, jobPlan, jobMark, jobFinish, jobFail];
+export const jobSite = defineTool({
+  name: "job_site",
+  kind: "change_own",
+  status: "Asking about that site.",
+  description:
+    "Ask the owner to let the workspace reach a website the job needs (a step said one was blocked, or you know it will need it: a music library to download a song, a package registry). The owner is asked once per site on a card and it's remembered; the job waits for the answer. Ask for the site the files come from, not a search engine.",
+  input: z.object({
+    host: z.string().min(3).max(200).describe("The site, as a host name: 'pixabay.com'."),
+    why: z.string().min(1).max(300).describe("Why the job needs it, in a few words."),
+  }),
+  async run(input, ctx) {
+    if (!ctx.goalLook) return fail("This only works in a job's look.");
+    return done(await ctx.goalLook.site(input));
+  },
+});
+
+export const lookTools: Tool[] = [jobStep, jobCheckpoint, jobPlan, jobMark, jobFinish, jobFail, jobSite];
 
 // --- a step's helper ---------------------------------------------------------------------
 
@@ -196,7 +217,7 @@ export const folderRun = defineTool({
   status: "Working in the job's folder.",
   timeoutMs: 16 * 60_000,
   description: [
-    "Run a shell command in the job's folder in the workspace: a Linux computer with bash, Python 3 (pandas, openpyxl, python-docx, reportlab, matplotlib, requests), Node, ffmpeg if installed, git, curl, jq and sqlite3. It starts in the job's folder, which keeps its files.",
+    "Run a shell command in the job's folder in the workspace: a Linux computer with bash, Python 3 (pandas, openpyxl, python-docx, reportlab, matplotlib, requests), Node, ffmpeg, Chromium (/usr/bin/chromium), git, curl, jq and sqlite3. It starts in the job's folder, which keeps its files.",
     "Write what you make into the folder, so the job's next steps and the owner find it. Only websites the owner allowed are reachable; a blocked one is listed, and asking for sites is the job's to do, not yours: say which you needed.",
   ].join(" "),
   input: z.object({

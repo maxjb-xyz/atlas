@@ -1,3 +1,4 @@
+import { getGoal } from "../src/agent/goals";
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams, type WorkspaceStub } from "../src/agent";
@@ -144,7 +145,10 @@ function fakeWorkspace(turns: Turn[]) {
         ...(o.as ? { as: o.as } : {}),
       });
       let out = "";
-      if (o.command.includes("fetch -q --depth 50")) {
+      if (o.command.includes('echo "base:')) out = "base: 0123456789abcdef0123456789abcdef01234567\n";
+      else if (o.command.includes('echo "head:'))
+        out = "head: 89abcdef0123456789abcdef0123456789abcdef\n 3 files changed, 120 insertions(+)\n";
+      else if (o.command.includes("fetch -q --depth 50")) {
         st.here = true;
         out = "0123456789abcdef0123456789abcdef01234567\n";
       } else if (o.command.includes("rev-list --count")) out = "commits: 2\npublish: 89abcdef0123456789abcdef0123456789abcdef\n";
@@ -471,6 +475,65 @@ describe("coding jobs", { timeout: 30_000 }, () => {
       expect(view.coding!.log.some((e) => e.who === "tool" && e.text === "npm test")).toBe(true);
       // The owner hears it in the thread.
       await until(() => rows(sql, "message.out").some((r) => String(r.text).includes("opened a pull request")), "the report");
+    });
+  });
+
+  it("work as a step of a job Atlas owns: in its folder, on the model and effort picked, with the result back to the job and nothing pushed", async () => {
+    const { ws, st } = fakeWorkspace([{ say: "Built the Remotion project and rendered out/launch.mp4." }]);
+    seams.workspace = ws;
+    const b = brain(
+      [
+        call("job_own", {
+          title: "Launch video",
+          goal: "A 30-second launch video for X.",
+          steps: [
+            { title: "Find a song", kind: "work" },
+            { title: "Build the video", kind: "work" },
+          ],
+        }),
+        say("Started."),
+      ],
+      [
+        call("job_run", { command: "git diff --stat" }, "c_diff"),
+        call("job_ready", { title: "The launch video, rendered", body: "out/launch.mp4, 30 seconds, with the song under it." }, "c_ready"),
+        say("Handing it back."),
+      ],
+    );
+    await runInDurableObject(fresh(), async (agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      setUp(sql);
+      await agent.apiTurn("make a launch video");
+      const goal = sql.exec<{ key: string }>(`SELECT key FROM state WHERE key LIKE 'goal:%'`).one().key.slice(5);
+      const started = await agent.apiGoalStep(goal, {
+        step: "s2",
+        brief: "Build a 30-second launch video in Remotion, with ../song.mp3 under it.",
+        agent: "claude-code",
+        model: "claude-opus-5-5",
+        effort: "low",
+      });
+      expect(started).toMatchObject({ ok: true });
+      const id = getGoal(sql, goal)!.plan[1]!.job!;
+      expect(getGoal(sql, goal)!.plan[1]!.brain).toBe("Claude Code, claude-opus-5-5, low effort");
+
+      await stepTo(agent, id, "working");
+      // Its repo is made in the job's folder, as the job's user; nothing is cloned.
+      const init = st.commands.find((c) => c.command.includes('echo "base:'))!;
+      expect(init).toMatchObject({ as: goal, cwd: `/srv/jobs/${goal}` });
+      expect(st.clones).toEqual([]);
+      expect(st.envs[0]).toMatchObject({ ANTHROPIC_MODEL: "claude-opus-5-5", CLAUDE_CODE_EFFORT_LEVEL: "low" });
+      expect(st.prompts[0]).toContain("../song.mp3");
+      expect(st.prompts[0]).toContain("inside the folder of a longer job");
+
+      const done = await stepTo(agent, id, "done");
+      expect(done.pr).toBeNull();
+      expect(st.pushes).toEqual([]);
+      expect(b.looks.requests[0]!.system).toContain("one step of a longer job you own");
+      // The result is the job's, for its next look; the owner isn't told of the step on its own.
+      const step = getGoal(sql, goal)!.plan[1]!;
+      expect(step.state).toBe("done");
+      expect(step.result).toContain("The launch video, rendered");
+      expect(step.result).toContain("3 files changed");
+      expect(rows(sql, "job.result").filter((r) => r.coding)).toEqual([]);
     });
   });
 

@@ -37,6 +37,10 @@ const PACKAGES = [
   "sqlite3",
   "file",
   "tmux",
+  // Video and audio, and a browser to render with (a job's video made in code, §8.3).
+  "ffmpeg",
+  "chromium",
+  "fonts-noto-core",
 ];
 const BASE = `atlas-base-1:${PACKAGES.join(",")}`;
 /** Where the setup's packages come from: allowed only while setting up. */
@@ -822,7 +826,7 @@ export class Workspace extends DurableObject<Env> {
    * and the work not yet committed (as a commit of its own, `refs/atlas/wip`)
    * in a git bundle, and its agent's home as a tarball, both in R2.
    */
-  async jobSave(id: string, o: { base: string }): Promise<{ ok: boolean; note: string }> {
+  async jobSave(id: string, o: { base: string; full?: boolean }): Promise<{ ok: boolean; note: string }> {
     safeId(id);
     if (!/^[0-9a-f]{7,64}$/.test(o.base)) throw new Error(`"${o.base}" isn't a commit.`);
     if (!this.ctx.container?.running) return { ok: false, note: "The workspace is asleep; nothing new to keep." };
@@ -836,7 +840,10 @@ export class Workspace extends DurableObject<Env> {
         `rm -f "$GIT_INDEX_FILE" && git read-tree HEAD && git -c core.hooksPath=/dev/null add -A >/dev/null 2>&1`,
         `tree=$(git write-tree) && wip=$(git -c user.name=Atlas -c user.email=atlas@localhost commit-tree "$tree" -p HEAD -m "Work in progress, kept by Atlas") && git update-ref refs/atlas/wip "$wip"`,
         `rm -f "$GIT_INDEX_FILE" && unset GIT_INDEX_FILE`,
-        `(git bundle create ${file} --branches refs/atlas/wip ^${o.base} >/dev/null 2>&1 || git bundle create ${file} --branches refs/atlas/wip >/dev/null 2>&1)`,
+        // A step's repo was made in the workspace, so a new container has no base to build on: all of it is kept.
+        o.full
+          ? `git bundle create ${file} --branches refs/atlas/wip >/dev/null 2>&1`
+          : `(git bundle create ${file} --branches refs/atlas/wip ^${o.base} >/dev/null 2>&1 || git bundle create ${file} --branches refs/atlas/wip >/dev/null 2>&1)`,
         `s=$(stat -c %s ${file}) && if [ "$s" -gt ${SAVE_LIMIT} ]; then rm -f ${file}; echo "The job's work is $((s / 1000000)) MB, over the ${SAVE_LIMIT / 1_000_000} MB that's kept; ignore big generated files in .gitignore." >&2; exit 3; fi`,
         `cat ${file}; rm -f ${file}`,
       ].join(" && "),

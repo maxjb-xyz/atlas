@@ -265,7 +265,15 @@ export interface GoalsApi {
 
 /** A job's look: one move, on the job it's looking at. */
 export interface GoalLookApi {
-  step(o: { step: string; brief: string; brain?: string }): Promise<{ ok: boolean; text: string }>;
+  step(o: {
+    step: string;
+    brief: string;
+    brain?: string;
+    agent?: string;
+    model?: string;
+    effort?: string;
+  }): Promise<{ ok: boolean; text: string }>;
+  site(o: { host: string; why: string }): Promise<{ ok: boolean; text: string }>;
   checkpoint(o: { step?: string; text: string; content?: string; options?: string[] }): Promise<{ ok: boolean; text: string }>;
   plan(o: { add?: Array<{ title: string; kind: "work" | "research" | "checkpoint"; after?: string }>; drop?: string[] }): {
     ok: boolean;

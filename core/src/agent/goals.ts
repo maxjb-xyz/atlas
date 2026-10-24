@@ -87,6 +87,8 @@ export interface GoalJob {
   result: string | null;
   /** Files it kept for the owner, by name. */
   files: string[];
+  /** A website it asked the owner to let the workspace reach, while it waits for the card. */
+  site?: { approval: string; host: string } | null;
   started_at: number;
   progress_at: number;
 }
@@ -151,7 +153,19 @@ export interface GoalHost {
   look(job: GoalJob, note: string): Promise<{ text: string; error?: string }>;
   /** Starts a helper on one step, in the job's folder, on the named brain. Its id. */
   helper(o: { job: GoalJob; step: GoalStep; brief: string; brain: string }): Promise<string>;
-  /** Stops a step's helper. */
+  /**
+   * Starts a coding agent on one step (§8.3): Claude Code or Codex, working
+   * in repo/ in the job's folder, with Atlas as its middleman. Its coding job's id, and the agent's name.
+   */
+  coder(o: {
+    job: GoalJob;
+    step: GoalStep;
+    brief: string;
+    agent?: string;
+    model?: string;
+    effort?: string;
+  }): Promise<{ id: string; name: string }>;
+  /** Stops a step's helper, or its coding agent. */
   stopHelper(id: string): void;
   /** Makes sure the folder is there before a step works in it. */
   folder(path: string): Promise<void>;
@@ -159,6 +173,8 @@ export interface GoalHost {
   keep(o: { job: GoalJob; path: string; name?: string; note?: string }): Promise<string>;
   /** Brings the owner a question: a push, or the chat with buttons. */
   ask(o: { job: GoalJob; question: GoalQuestion; row: LogRow }): Promise<void>;
+  /** Asks the owner to let the workspace reach a site: an approval card. Its id, or that it's already allowed. */
+  site(o: { job: GoalJob; host: string; why: string }): Promise<{ approval: string } | { allowed: true }>;
   /** Tells the owner how the job ended, in the thread. */
   report(item: AgendaItem, result: { state: "done" | "failed"; text: string }): void;
   /** The named brains the owner has, with the one for a job's work first. */
@@ -359,7 +375,10 @@ export class GoalDesk {
   // --- the look's moves (its tools) ---------------------------------------------
 
   /** Starts a step: a helper on it, in the folder; a checkpoint is asked with `checkpoint` instead. */
-  async startStep(id: string, o: { step: string; brief: string; brain?: string }): Promise<{ ok: boolean; text: string }> {
+  async startStep(
+    id: string,
+    o: { step: string; brief: string; brain?: string; agent?: string; model?: string; effort?: string },
+  ): Promise<{ ok: boolean; text: string }> {
     const job = getGoal(this.h.sql, id);
     if (!job || ENDED.includes(job.phase)) return { ok: false, text: "That job has ended." };
     const step = job.plan.find((s) => s.id === o.step);
@@ -368,13 +387,18 @@ export class GoalDesk {
     if (step.state === "doing") return { ok: false, text: `${step.id} is already under way.` };
     if (job.plan.some((s) => s.state === "doing")) return { ok: false, text: "Another step is under way; wait for it to come back." };
     const { names } = this.h.brains();
-    const brain = o.brain ?? job.brain;
-    if (brain !== "Main" && !names.some((n) => n.toLowerCase() === brain.toLowerCase()))
+    const coding = o.agent != null || o.model != null || o.effort != null;
+    let brain = o.brain ?? job.brain;
+    if (!coding && brain !== "Main" && !names.some((n) => n.toLowerCase() === brain.toLowerCase()))
       return { ok: false, text: `There's no brain called "${brain}". The brains are: ${["Main", ...names].join(", ")}.` };
     await this.h.folder(job.folder);
     let helper: string;
     try {
-      helper = await this.h.helper({ job, step, brief: o.brief, brain });
+      if (coding) {
+        const c = await this.h.coder({ job, step, brief: o.brief, agent: o.agent, model: o.model, effort: o.effort });
+        helper = c.id;
+        brain = [c.name, o.model, o.effort ? `${o.effort} effort` : ""].filter(Boolean).join(", ");
+      } else helper = await this.h.helper({ job, step, brief: o.brief, brain });
     } catch (err) {
       const why = err instanceof Error ? err.message : String(err);
       if (ranOut(why)) {
@@ -391,6 +415,48 @@ export class GoalDesk {
     );
     this.h.changed();
     return { ok: true, text: `Started ${step.id}. It reports back when it's done; end your turn.` };
+  }
+
+  /** A website the job needs: allowed already, or an approval card the job waits on. */
+  async site(id: string, o: { host: string; why: string }): Promise<{ ok: boolean; text: string }> {
+    const job = getGoal(this.h.sql, id);
+    if (!job || ENDED.includes(job.phase)) return { ok: false, text: "That job has ended." };
+    const host = o.host
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/.*$/, "");
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(host)) return { ok: false, text: `"${o.host}" isn't a site's name, like pixabay.com.` };
+    const r = await this.h.site({ job, host, why: o.why });
+    if ("allowed" in r) return { ok: true, text: `The workspace can reach ${host}; carry on.` };
+    saveGoal(
+      this.h.sql,
+      this.#note({ ...job, phase: "waiting", site: { approval: r.approval, host } }, "atlas", `Asked to reach ${host}.`),
+    );
+    this.h.changed();
+    return { ok: true, text: "The owner is asked on a card; the job waits for their answer. End your turn." };
+  }
+
+  /** A job is waiting on this approval card (a site it asked for). */
+  waitsOn(approval: string): boolean {
+    return goals(this.h.sql).some((g) => !ENDED.includes(g.phase) && g.site?.approval === approval);
+  }
+
+  /** The owner settled the card for a site: the job hears it at its next look, now. */
+  async settled(approval: string, yes: boolean): Promise<void> {
+    const job = goals(this.h.sql).find((g) => !ENDED.includes(g.phase) && g.site?.approval === approval);
+    if (!job) return;
+    await this.#line(job.id, async () => {
+      const g = getGoal(this.h.sql, job.id)!;
+      const host = g.site!.host;
+      const text = yes ? `The owner let the workspace reach ${host}.` : `The owner didn't let the workspace reach ${host}.`;
+      saveGoal(
+        this.h.sql,
+        this.#note({ ...g, phase: "working", site: null, mail: [...g.mail, { kind: "answer", text, at: Date.now() }] }, "owner", text),
+      );
+      this.h.changed();
+      await this.h.watch(g.id, Date.now());
+    });
   }
 
   /** A checkpoint (or a question only the owner can answer): one question in Inbox, and the job waits for it. */
@@ -546,9 +612,10 @@ export class GoalDesk {
       if (q?.pause) {
         const brain = q.pause.brains[text];
         if (text === q.pause.wait) {
-          saveGoal(this.h.sql, { ...job, question: null, phase: "paused", until: Date.now() + RETRY_AFTER_MS });
+          const until = Date.now() + RETRY_AFTER_MS;
+          saveGoal(this.h.sql, { ...job, question: null, phase: "paused", until });
           this.h.changed();
-          await this.h.watch(id, Date.now() + RETRY_AFTER_MS);
+          await this.h.watch(id, until);
           return { ok: true, text: "It waits, and tries again in an hour." };
         }
         if (brain) job = this.#note({ ...job, brain }, "atlas", `Going on with ${brain}.`);
