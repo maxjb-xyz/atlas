@@ -99,6 +99,7 @@ export function systemPrompt(opts: {
     focusLine(sql, tz),
     pagesLine(sql),
     skillsLine(sql),
+    brainsLine(settings),
     serversLine(opts.mcp ?? []),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     tasksLine(sql, tz),
@@ -223,6 +224,18 @@ export function hat(sql: Sql, beforeSeq?: number): Area[] {
  * waiting for their OK, and what was settled in the last two hours, so
  * Atlas never says something is done that's still waiting, or the reverse.
  */
+/**
+ * The named brains (§18), by name and what each is good for, never a vendor
+ * or a model: delegate's `brain` takes one, when the work suits it.
+ */
+function brainsLine(settings: Settings): string {
+  const named = settings.named_brains.brains;
+  if (!named.length) return "";
+  return `Brains you can hand work to (delegate's brain, by name; leave it out for the usual one):\n${named
+    .map((b) => `- ${b.name}${b.line ? `: ${b.line}` : ""}`)
+    .join("\n")}`;
+}
+
 /** The skills index (§9.3): every active skill's one line, most used first, so Atlas finds them again. */
 function skillsLine(sql: Sql): string {
   const skills = listSkills(sql).slice(0, 60);

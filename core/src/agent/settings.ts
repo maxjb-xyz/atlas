@@ -51,6 +51,7 @@ export function settingsView(
     settings,
     secrets: {
       elevenlabs_api_key: Boolean(getSecret(sql, "elevenlabs_api_key")),
+      anthropic_api_key: Boolean(getSecret(sql, "anthropic_api_key")),
       sealed: dataKeyView(),
     },
     calendar: {

@@ -79,6 +79,8 @@ export class HelperDesk {
     system: string;
     tools: string[];
     chain: BrainChoice[];
+    /** The named brain it runs on (§18), shown in Jobs: "Quick", or "Main". */
+    brain?: string;
     askedIn: string;
     /** Its own budget (§8.1); a quick lookup's by default. */
     budget?: Budget;
@@ -98,7 +100,14 @@ export class HelperDesk {
       source: {
         run_id: o.askedIn,
         via: "chat",
-        detail: { brief: o.brief, helper_run: run_id, tools, chain: o.chain as never, ...(o.research ? { research: true } : {}) },
+        detail: {
+          brief: o.brief,
+          helper_run: run_id,
+          tools,
+          chain: o.chain as never,
+          ...(o.brain ? { brain: o.brain } : {}),
+          ...(o.research ? { research: true } : {}),
+        },
       },
     });
     // The helper holds the job's lease; if it runs out before the job ends, the clock counts the job as lost.
@@ -316,7 +325,8 @@ export class HelperDesk {
       )
       .toArray()
       .map((r) => {
-        const detail = (JSON.parse(r.source) as { detail?: { helper_run?: string; brief?: string; research?: boolean } }).detail;
+        const detail = (JSON.parse(r.source) as { detail?: { helper_run?: string; brief?: string; research?: boolean; brain?: string } })
+          .detail;
         const run = detail?.helper_run;
         const out = r.state === "running" ? null : this.#outcomeOf(r.id);
         return {
@@ -332,6 +342,7 @@ export class HelperDesk {
           brief: detail?.brief ?? "",
           result: out ? out.text || out.error || null : null,
           run_id: run ?? null,
+          ...(detail?.brain ? { brain: detail.brain } : {}),
         };
       });
   }

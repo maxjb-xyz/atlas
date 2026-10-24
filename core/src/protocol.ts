@@ -152,6 +152,8 @@ export interface JobView {
   brief: string;
   result: string | null;
   run_id: string | null;
+  /** The named brain it runs on (§18), when it isn't the main one. */
+  brain?: string;
   /** A coding job (§8.2, §21.4): its steps, the agent's stream, what Atlas answered for the owner, and what waits on them. */
   coding?: CodingView;
 }
@@ -188,11 +190,14 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Older thread rows, for scrolling back. */
   z.object({ type: z.literal("atlas.more"), before_seq: z.number().int() }),
   z.object({ type: z.literal("atlas.settings.update"), patch: SettingsPatch }),
+  /** A provider's live list of models, for the model picker (§11.4: from the provider's catalog, not from code). */
+  z.object({ type: z.literal("atlas.brain.models"), provider: z.enum(["chatgpt", "workers-ai", "anthropic"]) }),
   /** Set or clear (null) a secret. */
   z.object({
     type: z.literal("atlas.secret.set"),
     secret: z.discriminatedUnion("name", [
       z.object({ name: z.literal("elevenlabs_api_key"), value: z.string().min(8).max(200).nullable() }),
+      z.object({ name: z.literal("anthropic_api_key"), value: z.string().min(20).max(300).nullable() }),
     ]),
   }),
   /** Whether this device has Atlas in view, sent on connect and whenever it changes, so a message goes to one channel (§14). */
@@ -543,6 +548,7 @@ export interface SettingsView {
   settings: import("./store/settings").Settings;
   secrets: {
     elevenlabs_api_key: boolean;
+    anthropic_api_key: boolean;
     /** Atlas's own sealing of secrets (§20): on, or why not; and a value that couldn't be opened, with the fix. */
     sealed: { state: "on" | "missing" | "short"; unreadable: string | null };
   };
@@ -732,6 +738,8 @@ export type ServerMessage =
   | { type: "atlas.pages"; pages: PageSummary[] }
   | { type: "atlas.files"; files: import("./stage").FileRow[] }
   | { type: "atlas.skills"; skills: SkillView[] }
+  /** A provider's models for the picker, or why they couldn't be listed. */
+  | { type: "atlas.brain.models"; provider: string; models: Array<{ id: string; name: string }>; error?: string }
   | { type: "atlas.mcp.servers"; servers: McpServerView[] }
   | { type: "atlas.mcp.app.result"; req: string; page?: McpAppPage; error?: string }
   /** What the page's own tool call or read answered: MCP's result as-is, or why it didn't happen. */

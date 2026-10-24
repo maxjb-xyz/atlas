@@ -11,10 +11,22 @@ import { getState } from "./state";
 export const DEFAULT_CHATGPT_MODEL = "gpt-5.6-terra";
 
 export const BrainChoice = z.object({
-  provider: z.enum(["chatgpt", "workers-ai"]),
+  provider: z.enum(["chatgpt", "workers-ai", "anthropic"]),
   model: z.string().min(1).max(200),
 });
 export type BrainChoice = z.infer<typeof BrainChoice>;
+
+/** A named brain for a kind of work (§18): "Quick", "Deep", with a line on what it's good for. */
+export const NamedBrain = z.object({
+  name: z.string().trim().min(1).max(24),
+  line: z.string().trim().max(120).default(""),
+  chain: z.array(BrainChoice).min(1).max(5),
+});
+export type NamedBrain = z.infer<typeof NamedBrain>;
+
+/** The kinds of work that each use a named brain when the owner picks one, and the main chain otherwise. */
+export const WORK_KINDS = ["helpers", "research", "job_work", "job_looks", "skill_review"] as const;
+export type WorkKind = (typeof WORK_KINDS)[number];
 
 export const Settings = z.object({
   /** What the assistant is called (§26 open question 3: "Atlas" by default). */
@@ -38,6 +50,16 @@ export const Settings = z.object({
         { provider: "chatgpt", model: DEFAULT_CHATGPT_MODEL },
       ],
     }),
+  /**
+   * Named brains for kinds of work (§18), and which one each kind uses (none means the main chain). Kept apart
+   * from `brains`, which the role chains replace whole when they're saved.
+   */
+  named_brains: z
+    .object({
+      brains: z.array(NamedBrain).max(8).default([]),
+      uses: z.object(Object.fromEntries(WORK_KINDS.map((k) => [k, z.string().max(24).nullable().default(null)]))).prefault({}),
+    })
+    .prefault({}),
   voice: z
     .object({
       speech_in: z.enum(["workers-ai-flux", "elevenlabs-scribe"]).default("workers-ai-flux"),
@@ -136,6 +158,7 @@ export const SettingsPatch = z.object({
   owner_name: f.owner_name.unwrap().optional(),
   timezone: f.timezone.unwrap().optional(),
   brains: f.brains.unwrap().optional(),
+  named_brains: f.named_brains.unwrap().optional(),
   voice: f.voice.unwrap().optional(),
   character: f.character.unwrap().optional(),
   pins: f.pins.unwrap().optional(),
@@ -183,6 +206,8 @@ export function writeSettings(sql: Sql, patch: SettingsPatch): string[] {
 
 export type SecretName =
   | "elevenlabs_api_key"
+  /** An Anthropic API key, for Claude as a brain (§18). */
+  | "anthropic_api_key"
   /** Keys for the web searches that need one (§9.1). */
   | "tavily_api_key"
   | "brave_api_key"
@@ -255,6 +280,7 @@ export function secretValues(sql: Sql): string[] {
     path.reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), v);
   const wanted: Array<[SecretName, string[]]> = [
     ["elevenlabs_api_key", []],
+    ["anthropic_api_key", []],
     ["tavily_api_key", []],
     ["brave_api_key", []],
     ["exa_api_key", []],
@@ -293,4 +319,28 @@ export function secretValues(sql: Sql): string[] {
   const hint = getState<{ id_token?: unknown }>(sql, "chatgpt_client")?.id_token;
   if (typeof hint === "string" && hint.length >= 8 && !out.includes(hint)) out.push(hint);
   return out;
+}
+
+/**
+ * The chain for a kind of work (§18): the named brain asked for when it
+ * exists, else the one the owner set for this kind, else the main chain.
+ * An unknown name is refused with the names there are, so a model can't
+ * pick a brain that doesn't exist.
+ */
+export function chainFor(settings: Settings, kind: WorkKind, asked?: string | null): { name: string; chain: BrainChoice[] } {
+  const named = settings.named_brains.brains;
+  const find = (n: string | null | undefined) => (n ? named.find((b) => b.name.toLowerCase() === n.trim().toLowerCase()) : undefined);
+  if (asked) {
+    const b = find(asked);
+    if (!b) {
+      throw new Error(
+        named.length
+          ? `There's no brain called "${asked}". The brains are: ${named.map((x) => x.name).join(", ")}.`
+          : `There are no named brains yet, so helpers use the main one. Leave out brain.`,
+      );
+    }
+    return { name: b.name, chain: b.chain };
+  }
+  const b = find((settings.named_brains.uses as Record<string, string | null>)[kind]);
+  return b ? { name: b.name, chain: b.chain } : { name: "Main", chain: settings.brains.main };
 }

@@ -45,7 +45,7 @@ export type BrainEvent =
   | { type: "done"; finish: "stop" | "tool_calls" | "length"; usage?: Usage };
 
 export interface Brain {
-  provider: "chatgpt" | "workers-ai";
+  provider: "chatgpt" | "workers-ai" | "anthropic";
   model: string;
   stream(req: BrainRequest): AsyncIterable<BrainEvent>;
 }

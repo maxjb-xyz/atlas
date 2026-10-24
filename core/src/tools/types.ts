@@ -209,7 +209,7 @@ export interface ExitApi {
 
 export interface HelperDeskApi {
   /** Starts a job; `asked_in` is the run that asked. Throws, with the reason, if the helper can't start. */
-  start(o: { title: string; brief: string; tools: string[]; asked_in: string; research?: boolean }): Promise<{ id: string }>;
+  start(o: { title: string; brief: string; tools: string[]; asked_in: string; research?: boolean; brain?: string }): Promise<{ id: string }>;
   /** The job's result, or null if it's still running after `ms` (it's then reported when it ends). */
   wait(id: string, ms: number): Promise<{ state: "done" | "failed" | "cancelled"; text: string; error?: string } | null>;
 }

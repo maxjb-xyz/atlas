@@ -40,6 +40,7 @@ import { type Embedder, embedPending, workersAIEmbedder } from "./brains/embed";
 import { BrainRouter } from "./brains/router";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
+import { anthropicBrain, anthropicModels } from "./brains/anthropic";
 import { runCharacterCheck, summary as characterSummary } from "./character-check";
 import { newSessionId, type Session, SESSION_DAYS, SESSION_HEADER } from "./auth";
 import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
@@ -64,7 +65,16 @@ import { type Actor, append, forRun, get as getRow, type LogRow, logTo, type Sur
 import { indexNewMessages } from "./store/memory";
 import { getState, setState } from "./store/state";
 import { endRun, getRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
-import { type BrainChoice, getSecret, readSettings, sealSecrets, type Settings, setSecret, writeSettings } from "./store/settings";
+import {
+  type BrainChoice,
+  chainFor,
+  getSecret,
+  readSettings,
+  sealSecrets,
+  type Settings,
+  setSecret,
+  writeSettings,
+} from "./store/settings";
 import { addLocalDays, isoLocal, isValidZone, longLocal, parseWhen, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import { calendarMove, calendarRead } from "./tools/calendar";
 import { emailSend } from "./tools/mail";
@@ -403,6 +413,8 @@ interface ConverseOpts {
   extra?: string;
   /** Its last words are only a note for the log, so it may end without any (awareness's runs). */
   silentOk?: boolean;
+  /** The brains, when they aren't the role's chain: a named brain for this kind of work (§18). */
+  chain?: BrainChoice[];
 }
 
 export class PersonAgent extends VoiceAgent implements HelperHost {
@@ -932,6 +944,27 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       case "atlas.settings.update":
         this.#updateSettings(msg.patch);
         return;
+      case "atlas.brain.models": {
+        const reply = (models: Array<{ id: string; name: string }>, error?: string) =>
+          this.#send(connection, { type: "atlas.brain.models", provider: msg.provider, models, ...(error ? { error } : {}) });
+        try {
+          if (msg.provider === "anthropic") {
+            const key = getSecret<string>(this.#sql, "anthropic_api_key");
+            if (!key) return reply([], "Add an Anthropic API key first.");
+            return reply(await anthropicModels(key, (...a) => (seams.fetch ?? fetch)(...a)));
+          }
+          if (msg.provider === "chatgpt") {
+            const v = this.#chatgpt.view();
+            return reply(
+              v.state === "signed_in" ? v.models.map((id) => ({ id, name: id })) : [],
+              v.state === "signed_in" ? undefined : "Sign in with ChatGPT first.",
+            );
+          }
+          return reply([], "Workers AI's catalog isn't listed here yet.");
+        } catch (err) {
+          return reply([], err instanceof Error ? err.message : String(err));
+        }
+      }
       case "atlas.secret.set":
         setSecret(this.#sql, msg.secret.name, msg.secret.value);
         append(this.#sql, { actor: "owner", kind: "settings.change", body: { secret: msg.secret.name, set: msg.secret.value !== null } });
@@ -2555,7 +2588,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       {
         log: logTo(this.#sql),
         router: this.#router,
-        chain: settings.brains[o.role],
+        chain: o.chain ?? settings.brains[o.role],
         toolContext: {
           ...this.#toolContext(settings, now, via, o.sourceLogId),
           // Code Mode (§9.1): a program calls this run's own tools, and each call is a row of this run, with its receipt.
@@ -2644,10 +2677,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       },
       helpers: {
         start: async (o) => {
+          // A named brain for this kind of work (§18): the one asked for, else the owner's pick, else main.
+          const brain = chainFor(settings, o.research ? "research" : "helpers", o.brain);
           const job = await this.#helpers.start({
             ...o,
             system: o.research ? `${helperSystem(settings, now)}\n\n${RESEARCH_BRIEF}` : helperSystem(settings, now),
-            chain: settings.brains.main,
+            chain: brain.chain,
+            brain: brain.name,
             askedIn: o.asked_in,
             ...(o.research ? { budget: RESEARCH_BUDGET } : {}),
           });
@@ -3355,6 +3391,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (seams.makeBrain) return seams.makeBrain(choice);
     // Tests never reach a real provider (CLAUDE.md), even from background work that outlives a test's fake.
     if (choice.provider === "workers-ai") return this.env.ATLAS_TEST ? null : workersAIBrain(this.env.AI as never, choice.model);
+    if (choice.provider === "anthropic") {
+      // Without a key it's left out of the chain, like ChatGPT signed out.
+      if (!getSecret<string>(this.#sql, "anthropic_api_key")) return null;
+      return anthropicBrain(
+        () => getSecret<string>(this.#sql, "anthropic_api_key"),
+        choice.model,
+        (...a) => (seams.fetch ?? fetch)(...a),
+      );
+    }
     return this.#chatgpt.brain(choice.model);
   }
 
@@ -3828,6 +3873,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       },
       tools: reviewTools,
       silentOk: true,
+      chain: chainFor(readSettings(this.#sql), "skill_review").chain,
     }).catch((err: unknown) => ({
       state: "failed" as const,
       text: "",
@@ -4068,7 +4114,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           name: settings.assistant_name,
           owner: settings.owner_name.trim() || "the owner",
           now: `${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}`,
-          chain: settings.brains.main,
+          // A job's looks are judgment calls: the brain the owner picked for them (§18), else main.
+          chain: chainFor(settings, "job_looks").chain,
         };
       },
       identity: () => {
