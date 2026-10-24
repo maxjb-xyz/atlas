@@ -9,7 +9,7 @@ import type { AutomationInput, Step, Trigger } from "../../../core/src/automatio
 import type { AutomationView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Composer } from "../Shell";
-import { Empty, Icon, type ICONS, Sheet, shortDay, Stage, startOfDay } from "../ui";
+import { Empty, Icon, type ICONS, Picker, Seg, Sheet, shortDay, Stage, startOfDay } from "../ui";
 
 type Filter = "all" | "request" | "schedule" | "event" | "watch";
 
@@ -697,14 +697,12 @@ function AutomationForm({
         </label>
       )}
       {t.kind === "event" && t.on === "automation" && (
-        <select value={t.after ?? ""} onChange={(e) => setT({ after: e.target.value })}>
-          <option value="">After which automation?</option>
-          {others.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name}
-            </option>
-          ))}
-        </select>
+        <Picker
+          label="After which automation"
+          value={t.after ?? ""}
+          options={[{ value: "", label: "After which automation?" }, ...others.map((o) => ({ value: o.id, label: o.name }))]}
+          onPick={(after) => setT({ after })}
+        />
       )}
 
       <span className="lab">Do</span>
@@ -713,11 +711,12 @@ function AutomationForm({
           <span className="mono faint" style={{ paddingTop: 8 }}>
             {String(i + 1).padStart(2, "0")}
           </span>
-          <select
+          <Seg
+            small
+            label="What this step does"
             value={s.kind}
-            style={{ width: 120 }}
-            onChange={(e) => {
-              const k = e.target.value as Step["kind"];
+            options={[["say", "Say"], ...(webhooks.length ? [["webhook", "Webhook"] as const] : []), ["atlas", "Atlas does"]]}
+            onChange={(k) =>
               setStep(
                 i,
                 k === "say"
@@ -725,15 +724,9 @@ function AutomationForm({
                   : k === "webhook"
                     ? { kind: k, webhook: webhooks[0]?.name ?? "" }
                     : { kind: k, instructions: "" },
-              );
-            }}
-          >
-            <option value="say">Say</option>
-            <option value="webhook" disabled={!webhooks.length}>
-              Webhook
-            </option>
-            <option value="atlas">Atlas does</option>
-          </select>
+              )
+            }
+          />
           {s.kind === "say" && (
             <input
               className="grow"
@@ -745,13 +738,12 @@ function AutomationForm({
           )}
           {s.kind === "webhook" && (
             <>
-              <select value={s.webhook} onChange={(e) => setStep(i, { ...s, webhook: e.target.value })}>
-                {webhooks.map((w) => (
-                  <option key={w.id} value={w.name}>
-                    {w.name}
-                  </option>
-                ))}
-              </select>
+              <Picker
+                label="Which webhook"
+                value={s.webhook}
+                options={webhooks.map((w) => ({ value: w.name, label: w.name }))}
+                onPick={(webhook) => setStep(i, { ...s, webhook })}
+              />
               <input
                 className="grow"
                 value={s.message ?? ""}
@@ -793,15 +785,21 @@ function AutomationForm({
         <span className="faint small">Say and webhook steps run as written, with no model. An Atlas step uses judgment.</span>
       </div>
 
-      <label className="field" style={{ width: 420 }}>
+      <div className="field">
         <span>Report</span>
-        <select value={f.report} onChange={(e) => setF({ ...f, report: e.target.value as AutomationInput["report"] })}>
-          <option value="thread">In the thread, and a notification if Atlas isn't open</option>
-          <option value="worth">In the thread, only when it's worth saying</option>
-          <option value="inbox">In Inbox</option>
-          <option value="silent">Only in History</option>
-        </select>
-      </label>
+        <Picker
+          label="Report"
+          width={380}
+          value={f.report}
+          options={[
+            { value: "thread", label: "In the thread", sub: "And a notification if Atlas isn't open" },
+            { value: "worth", label: "In the thread, when it's worth saying" },
+            { value: "inbox", label: "In Inbox" },
+            { value: "silent", label: "Only in History" },
+          ]}
+          onPick={(report) => setF({ ...f, report: report as AutomationInput["report"] })}
+        />
+      </div>
 
       <div className="row">
         <button className="btn primary" disabled={!!problem}>

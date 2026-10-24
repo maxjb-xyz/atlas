@@ -24,6 +24,7 @@ import { BrainChoice, Settings, SettingsPatch } from "./store/settings";
 import { RECORD_TYPES } from "./store/records";
 import { StageView, type AutomationView, type StagePage } from "./stage";
 import { AutomationInput } from "./automations";
+import { AreaLook } from "./store/areas";
 
 export type { LogRow, AgendaItem };
 export type { StagePage, AutomationView };
@@ -133,6 +134,9 @@ export interface AreaView {
   about: string;
   state: "active" | "dormant" | "archived";
   color: number;
+  /** A color the owner picked instead of the palette's (#rrggbb), and the area's icon: a line icon's name or "file:<id>" (§6.4). */
+  custom_color: string | null;
+  icon: string | null;
   settings: { tone: string; shared_with: string[] };
   messages: number;
   records: number;
@@ -380,6 +384,23 @@ export const ClientMessage = z.discriminatedUnion("type", [
     settings: z.object({ tone: z.string().max(300).optional() }).optional(),
   }),
   z.object({ type: z.literal("atlas.area.merge"), from: z.string().max(64), into: z.string().max(64) }),
+  /**
+   * An area's color and icon (Library → Areas, §6.4): a palette color or one of the owner's own, and a line icon,
+   * or a logo they upload (`image`, base64, kept in the files store and used as the icon).
+   */
+  z.object({
+    type: z.literal("atlas.area.look"),
+    id: z.string().max(64),
+    ...AreaLook.shape,
+    image: z
+      .object({
+        name: z.string().trim().min(1).max(120),
+        type: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"]),
+        /** At most about 300 KB once decoded. */
+        data: z.string().max(400_000),
+      })
+      .optional(),
+  }),
   /** Move an item to other areas by tapping its chip (§6.3): a message (`log:<id>`) or a record (`rec:<id>`). */
   z.object({
     type: z.literal("atlas.areas.set"),

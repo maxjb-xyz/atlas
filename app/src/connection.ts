@@ -63,6 +63,10 @@ export interface State {
   jobs: JobView[];
   areas: AreaView[];
   scope: string | null;
+  /** Each provider's live list of models (§18), once asked for. */
+  models: Record<string, { models: Array<{ id: string; name: string }>; error?: string }>;
+  /** The phone's last answer (§16.1): numbers, numbers to buy, and what happened. */
+  calls: Extract<ServerMessage, { type: "atlas.calls" }> | null;
   voices: { voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>; error?: string } | null;
   look: { look: Look; error?: string } | "pending" | null;
   /** Library's answers, by the ref they asked with. */
@@ -124,6 +128,8 @@ const initial: State = {
   areas: [],
   scope: null,
   voices: null,
+  models: {},
+  calls: null,
   look: null,
   records: {},
   recordsVersion: 0,
@@ -263,6 +269,10 @@ function reduce(s: State, a: Action): State {
       return { ...s, jobs: m.jobs };
     case "atlas.areas":
       return { ...s, areas: m.areas, scope: m.scope };
+    case "atlas.brain.models":
+      return { ...s, models: { ...s.models, [m.provider]: { models: m.models, ...(m.error ? { error: m.error } : {}) } } };
+    case "atlas.calls":
+      return { ...s, calls: m };
     case "atlas.voices":
       return { ...s, voices: { voices: m.voices, ...(m.error ? { error: m.error } : {}) } };
     case "atlas.setup.look.result":

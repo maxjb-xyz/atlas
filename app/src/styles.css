@@ -26,14 +26,20 @@
   --m4: rgba(250, 244, 238, 0.16);
   --ok: #4cc48f;
   --bad: #ff6a3d;
-  --a0: #e27aaa;
-  --a1: #e0a548;
-  --a2: #6c9ef0;
-  --a3: #4cc48f;
-  --a4: #a593f0;
-  --a5: #4fc1c9;
-  --a6: #e8746a;
-  --a7: #a8b0bd;
+  /* Areas are the color system (docs/ui §5, §8): deep and saturated, never pastel. */
+  --a0: #f0458a;
+  --a1: #f5a524;
+  --a2: #3b82f6;
+  --a3: #10b981;
+  --a4: #8b5cf6;
+  --a5: #06b6d4;
+  --a6: #84cc16;
+  --a7: #94a3b8;
+  /* The living diamond in ember: lightest at the top left to deep red at the bottom right. */
+  --d1: #ffb48c;
+  --d2: #ff6a3d;
+  --d3: #e2442a;
+  --d4: #b02e1d;
   --sh: 0 18px 48px -16px rgba(0, 0, 0, 0.6);
   color-scheme: dark;
 }
@@ -60,14 +66,18 @@
   --m4: #c9c5bd;
   --ok: #2e9a6b;
   --bad: #c43f12;
-  --a0: #c0588a;
-  --a1: #c08423;
-  --a2: #3d74cf;
-  --a3: #2e9a6b;
-  --a4: #7a68c9;
-  --a5: #1f8f97;
-  --a6: #c4483d;
-  --a7: #5f6672;
+  --a0: #d61f69;
+  --a1: #d97706;
+  --a2: #2563eb;
+  --a3: #059669;
+  --a4: #7c3aed;
+  --a5: #0891b2;
+  --a6: #65a30d;
+  --a7: #475569;
+  --d1: #f08a5d;
+  --d2: #e8501b;
+  --d3: #c2391b;
+  --d4: #8f2412;
   --sh: 0 14px 40px -18px rgba(0, 0, 0, 0.22);
   color-scheme: light;
 }
@@ -645,7 +655,7 @@ button.chip:hover {
   position: absolute;
   top: 0;
   bottom: 0;
-  border-left: 1px dashed var(--dash);
+  border-left: 1px dashed var(--rail, var(--dash));
   pointer-events: none;
 }
 .rail.l {
@@ -659,8 +669,11 @@ button.chip:hover {
   left: 0;
   right: 0;
   top: 56px;
-  border-top: 1px dashed var(--dash);
+  border-top: 1px dashed var(--rail, var(--dash));
   pointer-events: none;
+}
+.stage.scoped > .node {
+  border-color: var(--rail);
 }
 .node {
   position: absolute;
@@ -719,9 +732,6 @@ button.chip:hover {
   position: relative;
   padding: 18px 60px 96px;
   overflow-y: auto;
-}
-.stage-body.home {
-  padding-bottom: 230px;
 }
 .sheet {
   position: relative;
@@ -946,37 +956,24 @@ button.chip:hover {
 
 .ascii {
   font-family: "Geist Mono", ui-monospace, monospace;
-  font-size: 7px;
-  line-height: 7px;
+  font-weight: 500;
+  flex: none;
   letter-spacing: 0;
   margin: 0;
   white-space: pre;
   user-select: none;
 }
-.ascii .f1 {
-  color: var(--m1);
+.ascii .d1 {
+  color: var(--d1);
 }
-.ascii .f2 {
-  color: var(--m2);
+.ascii .d2 {
+  color: var(--d2);
 }
-.ascii .f3 {
-  color: var(--m3);
+.ascii .d3 {
+  color: var(--d3);
 }
-.ascii .f4 {
-  color: var(--m4);
-}
-.ascii.breathe .f1,
-.ascii.breathe .f3 {
-  animation: breathe 4.8s ease-in-out infinite;
-}
-.ascii.breathe .f2,
-.ascii.breathe .f4 {
-  animation: breathe 4.8s ease-in-out infinite 2.4s;
-}
-@keyframes breathe {
-  50% {
-    opacity: 0.55;
-  }
+.ascii .d4 {
+  color: var(--d4);
 }
 
 /* --- the stage's views (§21.6) -------------------------------------------------------- */
@@ -1425,12 +1422,24 @@ button.chip:hover {
 }
 .seg button {
   height: 28px;
-  padding: 0 12px;
+  padding: 0 11px;
   border: 0;
   border-right: 1px solid var(--sep2);
   background: transparent;
-  color: var(--tx2);
-  font-size: 12.5px;
+  color: var(--tx3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.seg.sm button {
+  height: 24px;
+  padding: 0 9px;
+  font-size: 11.5px;
+}
+.seg.lock {
+  opacity: 0.55;
+}
+.seg button:disabled {
+  opacity: 1;
 }
 .seg button:last-child {
   border-right: 0;
@@ -1756,9 +1765,6 @@ button.chip:hover {
   }
   .stage-body {
     padding: 6px 10px 96px;
-  }
-  .stage-body.home {
-    padding-bottom: 260px;
   }
   .dock,
   .dock.slim {

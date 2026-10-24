@@ -168,7 +168,7 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
   );
 }
 
-/** A coding job's question (§8.2): pick one of its choices, or answer in your own words; the answer goes back to its agent. */
+/** A job's question (§8.2, §8.3): pick one of its choices, or answer in your own words (a checkpoint's edits too); the answer goes back to the job. */
 function JobQuestion({ atlas, item }: { atlas: Atlas; item: InboxItem }) {
   const q = item.job!;
   const [text, setText] = useState("");
@@ -177,6 +177,11 @@ function JobQuestion({ atlas, item }: { atlas: Atlas; item: InboxItem }) {
     <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }} onClick={(e) => e.stopPropagation()}>
       <p style={{ fontSize: 15 }}>{q.question}</p>
       {q.why && <p className="muted">{q.why}</p>}
+      {q.content && (
+        <div className="card2 pad" style={{ whiteSpace: "pre-wrap", maxHeight: 360, overflow: "auto" }}>
+          {q.content}
+        </div>
+      )}
       {q.options.length > 0 && (
         <div className="row">
           {q.options.map((o, n) => (
@@ -245,7 +250,9 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
       .filter(
         (a) =>
           (a.state === "scheduled" || a.state === "running") &&
-          !["notify", "follow_up", "approval", "skills", "skill_review", "situation", "rhythm", "errand", "looks", "device"].includes(a.kind),
+          !["notify", "follow_up", "approval", "skills", "skill_review", "situation", "rhythm", "errand", "looks", "device"].includes(
+            a.kind,
+          ),
       )
       .map((a): AgendaEntry => {
         const d = a.source.detail ?? {};

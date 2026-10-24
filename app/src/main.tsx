@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles.css";
+import "./places.css";
 import { startServiceWorker } from "./notify";
 import { startLook } from "./theme";
 

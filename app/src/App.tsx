@@ -6,10 +6,13 @@ import { Home } from "./pages/Home";
 import { Library } from "./pages/Library";
 import { Agenda, Inbox } from "./pages/Places";
 import { Automations } from "./pages/Automations";
-import { Pair, SettingsPage } from "./Settings";
+import { Pair } from "./abilities/Devices";
+import { Abilities } from "./pages/Abilities";
+import { People } from "./pages/People";
+import { MOVED, SettingsPage } from "./settings";
 import { Setup } from "./Setup";
 import { Palette, Sidebar, TabBar, Toolbar, Transcript } from "./Shell";
-import { AsciiDiamond, Diamond, useRoute } from "./ui";
+import { areaColor, AsciiDiamond, Diamond, ScopeColor, useRoute } from "./ui";
 
 type Session = {
   signed_in: boolean;
@@ -91,7 +94,7 @@ function SignIn({ first, onDone }: { first: boolean; onDone: () => void }) {
   return (
     <div className="center">
       <div className="solo rise">
-        <AsciiDiamond rows={14} />
+        <AsciiDiamond height={120} />
         <h1 className="disp">{first ? "Welcome to Atlas" : "Sign in to Atlas"}</h1>
         {useCode ? (
           <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -151,7 +154,7 @@ function Join({ token }: { token: string }) {
   return (
     <div className="center">
       <div className="solo rise">
-        <AsciiDiamond rows={14} />
+        <AsciiDiamond height={120} />
         <h1 className="disp">Welcome, {who.name}</h1>
         <p className="muted">
           You've been invited to share an Atlas. You get one of your own: your conversations, what you tell it and your voice settings are
@@ -241,34 +244,47 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
     location.reload();
   }
 
+  // Sections that moved in M7 (Connections, Devices, Faces...) send old links, and sign-ins that come back to one, to their new place.
+  useEffect(() => {
+    if (place !== "settings") return;
+    const [base = "", query] = detail.split("?");
+    const moved = MOVED[base];
+    if (moved) location.replace(`#/${moved[0]}/${encodeURIComponent(moved[1] + (query ? `?${query}` : ""))}`);
+  }, [place, detail]);
+
   const error = atlas.state.error ?? (atlas.voice.connected ? atlas.voice.error : null);
   const sub = (d: string) => go(place, d);
+  const scoped = atlas.state.areas.find((a) => a.id === atlas.state.scope);
 
   return (
-    <div className="app">
-      <Sidebar atlas={atlas} place={place} go={go} />
-      <div className="main">
-        <Toolbar atlas={atlas} go={go} onSearch={() => setPalette(true)} />
-        {error && (
-          <div className="banner" style={{ margin: "8px 16px 0", position: "relative", zIndex: 6 }}>
-            <span className="grow">{error}</span>
-            <button className="link" onClick={atlas.dismiss}>
-              Dismiss
-            </button>
-          </div>
-        )}
-        {place === "home" && <Home atlas={atlas} detail={detail} go={sub} onTranscript={() => setTranscript(true)} />}
-        {place === "inbox" && <Inbox atlas={atlas} />}
-        {place === "agenda" && <Agenda atlas={atlas} />}
-        {place === "automations" && <Automations atlas={atlas} detail={detail} go={sub} />}
-        {place === "library" && <Library atlas={atlas} detail={detail} go={sub} />}
-        {place === "history" && <History atlas={atlas} />}
-        {place === "settings" && <SettingsPage atlas={atlas} detail={detail} go={sub} onSignOut={signOut} onSetup={onSetup} />}
-        {place === "pair" && <Pair atlas={atlas} code={detail} />}
+    <ScopeColor.Provider value={scoped ? areaColor(scoped) : null}>
+      <div className="app">
+        <Sidebar atlas={atlas} place={place} go={go} />
+        <div className="main">
+          <Toolbar atlas={atlas} go={go} onSearch={() => setPalette(true)} />
+          {error && (
+            <div className="banner" style={{ margin: "8px 16px 0", position: "relative", zIndex: 6 }}>
+              <span className="grow">{error}</span>
+              <button className="link" onClick={atlas.dismiss}>
+                Dismiss
+              </button>
+            </div>
+          )}
+          {place === "home" && <Home atlas={atlas} detail={detail} go={sub} onTranscript={() => setTranscript(true)} />}
+          {place === "inbox" && <Inbox atlas={atlas} />}
+          {place === "agenda" && <Agenda atlas={atlas} />}
+          {place === "automations" && <Automations atlas={atlas} detail={detail} go={sub} />}
+          {place === "library" && <Library atlas={atlas} detail={detail} go={sub} />}
+          {place === "people" && <People atlas={atlas} detail={detail} go={sub} />}
+          {place === "abilities" && <Abilities atlas={atlas} detail={detail} go={sub} place={go} />}
+          {place === "history" && <History atlas={atlas} />}
+          {place === "settings" && <SettingsPage atlas={atlas} detail={detail} go={sub} onSignOut={signOut} onSetup={onSetup} />}
+          {place === "pair" && <Pair atlas={atlas} code={detail} />}
+        </div>
+        <TabBar atlas={atlas} place={place} />
+        {transcript && <Transcript atlas={atlas} onClose={() => setTranscript(false)} />}
+        {palette && <Palette atlas={atlas} go={go} onClose={() => setPalette(false)} />}
       </div>
-      <TabBar atlas={atlas} place={place} />
-      {transcript && <Transcript atlas={atlas} onClose={() => setTranscript(false)} />}
-      {palette && <Palette atlas={atlas} go={go} onClose={() => setPalette(false)} />}
-    </div>
+    </ScopeColor.Provider>
   );
 }

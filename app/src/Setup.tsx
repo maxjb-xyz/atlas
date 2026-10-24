@@ -1,12 +1,13 @@
 // Setup (§22): a passkey, meeting Atlas, a brain, a calendar, Atlas's first
 // look, and the default routines, each off until the owner turns it on. Every step can be skipped and picked up again from
-// Settings → Your data.
+// Atlas settings → Account.
 
 import { useEffect, useState } from "react";
 import { PRESETS, type Preset } from "../../core/src/character";
 import type { Atlas } from "./connection";
-import { AddPasskey, ChatGPT, ExtensionCard, SecretField, TestRow } from "./Settings";
-import { AsciiDiamond, Diamond, Icon } from "./ui";
+import { ExtensionCard } from "./abilities/Services";
+import { AddPasskey, ChatGPTSignIn as ChatGPT, SecretField, TestRow } from "./settings/parts";
+import { AsciiDiamond, Diamond, Icon, Toggle } from "./ui";
 import type { AutomationView } from "../../core/src/protocol";
 import { Switch, useAutomations } from "./pages/Automations";
 
@@ -106,7 +107,7 @@ function PasskeyStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
       <p className="muted">
         A passkey signs you in with your face, fingerprint or device code. Nothing to remember, and it only works on this Atlas.
       </p>
-      {has ? <p className="ok">You have a passkey. You can add one for each device in Settings → Devices.</p> : <AddPasskey />}
+      {has ? <p className="ok">You have a passkey. You can add one for each device in Atlas settings → Account.</p> : <AddPasskey />}
       <Footer step="passkey" onNext={onNext} ready={has} />
     </>
   );
@@ -136,7 +137,7 @@ function MeetStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
   return (
     <>
       <div className="row" style={{ gap: 18, flexWrap: "nowrap" }}>
-        <AsciiDiamond rows={16} />
+        <AsciiDiamond height={140} />
         <div>
           <h1 className="disp">Hi. I'm {name || "Atlas"}.</h1>
           <p className="muted">I'll learn your world as we go. First, a few things about how I should be.</p>
@@ -162,7 +163,7 @@ function MeetStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
             </button>
           ))}
         </div>
-        <span className="faint small">You can fine-tune this, or write your own, in Settings → Character & voice.</span>
+        <span className="faint small">You can fine-tune this, or write your own, in Atlas settings → Atlas.</span>
       </div>
       <div className="field">
         <span>My voice</span>
@@ -248,8 +249,8 @@ function ConnectStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
   return (
     <>
       <h1 className="disp">Your calendar</h1>
-      <p className="muted">So I can see your week. iCloud ships with Atlas; others are extensions you can add any time in Settings.</p>
-      {icloud && <ExtensionCard atlas={atlas} e={icloud} open />}
+      <p className="muted">So I can see your week. iCloud ships with Atlas; others you can add any time in Abilities.</p>
+      {icloud && <ExtensionCard atlas={atlas} e={icloud} />}
       <TestRow
         label="Test calendar"
         k="calendar"
@@ -345,13 +346,7 @@ function LookStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
               <span>Areas I can see. Keep the ones that fit; rename any, and give two the same name to make them one.</span>
               {result.look.areas.map((a) => (
                 <div key={a.name} className="row small" style={{ flexWrap: "nowrap" }}>
-                  <input
-                    type="checkbox"
-                    aria-label={`Keep ${a.name}`}
-                    style={{ height: "auto", flex: "none" }}
-                    checked={areas.has(a.name)}
-                    onChange={() => toggle(areas, a.name, setAreas)}
-                  />
+                  <Toggle label={`Keep ${a.name}`} on={areas.has(a.name)} onChange={() => toggle(areas, a.name, setAreas)} />
                   <input
                     aria-label={`Name for ${a.name}`}
                     maxLength={60}
@@ -369,16 +364,11 @@ function LookStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
             <div className="field">
               <span>People who matter</span>
               {result.look.people.map((p) => (
-                <label key={p.name} className="row small">
-                  <input
-                    type="checkbox"
-                    style={{ height: "auto" }}
-                    checked={people.has(p.name)}
-                    onChange={() => toggle(people, p.name, setPeople)}
-                  />
+                <div key={p.name} className="row small">
+                  <Toggle label={`Keep ${p.name}`} on={people.has(p.name)} onChange={() => toggle(people, p.name, setPeople)} />
                   <strong>{p.name}</strong>
                   <span className="muted">{p.why}</span>
-                </label>
+                </div>
               ))}
             </div>
           )}

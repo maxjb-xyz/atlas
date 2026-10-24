@@ -3,9 +3,21 @@ import { afterEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
 import { correctAreas, DISCOVER_AFTER, readyToDiscover, startDiscovered, tagPending, triedDiscovery, unfiled } from "../src/agent/areas";
 import { hat, systemPrompt } from "../src/context";
-import { areaByName, createArea, examples, getArea, listAreas, mergeAreas, setScope, tagsOf, updateArea } from "../src/store/areas";
+import {
+  AreaLook,
+  areaByName,
+  createArea,
+  examples,
+  getArea,
+  listAreas,
+  mergeAreas,
+  setAreaLook,
+  setScope,
+  tagsOf,
+  updateArea,
+} from "../src/store/areas";
 import { migrate, type Sql } from "../src/store/db";
-import { append, get as getRow, thread } from "../src/store/log";
+import { append, get as getRow, recent, thread } from "../src/store/log";
 import { createRecord } from "../src/store/records";
 import { readSettings } from "../src/store/settings";
 import { startRun } from "../src/store/runs";
@@ -181,6 +193,34 @@ describe("the hat", () => {
       expect(getArea(sql, run.id)!.state).toBe("archived");
       expect(listAreas(sql).map((x) => x.name)).toEqual(["Gym"]);
     }));
+});
+
+describe("an area's look", () => {
+  it("keeps a palette color, a color of the owner's own and an icon, and logs each change", () =>
+    withSql((sql) => {
+      const a = createArea(sql, { name: "Keyframes", by: "owner" });
+      expect(getArea(sql, a.id)).toMatchObject({ custom_color: null, icon: null });
+      setAreaLook(sql, a.id, { custom_color: "#F5A524", icon: "camera" }, "owner");
+      expect(getArea(sql, a.id)).toMatchObject({ color: a.color, custom_color: "#f5a524", icon: "camera" });
+      // Leaving a field out keeps it; a palette color drops the owner's own color.
+      setAreaLook(sql, a.id, { color: 3 }, "owner");
+      expect(getArea(sql, a.id)).toMatchObject({ color: 3, custom_color: null, icon: "camera" });
+      setAreaLook(sql, a.id, { icon: "file:file_abc" }, "owner");
+      setAreaLook(sql, a.id, { icon: null }, "owner");
+      expect(getArea(sql, a.id)!.icon).toBeNull();
+      const looks = recent(sql, ["area.change"], 50).filter((r) => r.body.change === "look");
+      expect(looks).toHaveLength(4);
+      expect(looks[1]!.body).toMatchObject({ before: { custom_color: "#f5a524" }, after: { color: 3, custom_color: null } });
+      expect(() => setAreaLook(sql, "area_nope", { color: 1 }, "owner")).toThrow(/no area/);
+    }));
+
+  it("takes only a known line icon or an uploaded file, and a real hex color", () => {
+    expect(AreaLook.safeParse({ icon: "camera" }).success).toBe(true);
+    expect(AreaLook.safeParse({ icon: "file:file_lzx3k1a9f2c4" }).success).toBe(true);
+    expect(AreaLook.safeParse({ icon: "rocket-ship" }).success).toBe(false);
+    expect(AreaLook.safeParse({ custom_color: "red" }).success).toBe(false);
+    expect(AreaLook.safeParse({ color: 8 }).success).toBe(false);
+  });
 });
 
 describe("in the agent", () => {

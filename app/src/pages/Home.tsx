@@ -8,9 +8,28 @@ import type { StageView } from "../../../core/src/stage";
 import type { Atlas } from "../connection";
 import { Console, VoiceStrip } from "../Shell";
 import { type Shown, shownFrom, StageSheet, titleOf } from "../StageViews";
-import { whereLine } from "../SenseViews";
+import { MapCanvas, whereLine } from "../SenseViews";
+import { sky, temp } from "../../../core/src/weather";
+import { useDetail } from "../theme";
 import { ApprovalCard } from "../Approval";
-import { addDays, AsciiDiamond, clock, dayName, Diamond, Empty, Sheet, shortDay, Stage, startOfDay, useNow } from "../ui";
+import {
+  addDays,
+  areaColor,
+  AreaTag,
+  AsciiDiamond,
+  clock,
+  dayName,
+  Diamond,
+  type DiamondState,
+  Empty,
+  Icon,
+  Sheet,
+  shortDay,
+  Stage,
+  startOfDay,
+  StateDot,
+  useNow,
+} from "../ui";
 import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
 type HomeTab = "now" | "week" | "jobs" | "receipt" | "approval" | `view:${string}`;
@@ -132,7 +151,8 @@ export function Home({
       setTab("jobs");
       setJob(detail.slice(5));
     } else if (detail.startsWith("view:")) {
-      const row = s.rows.find((r) => r.id === detail.slice(5));
+      const id = detail.slice(5);
+      const row = s.rows.find((r) => r.id === id) ?? s.history?.rows.find((r) => r.id === id);
       const shown = row && shownFrom(row);
       if (shown) openView(shown);
       go("");
@@ -239,13 +259,32 @@ function greeting(d: Date): string {
   return h < 5 ? "Late night" : h < 12 ? "Morning" : h < 17 ? "Afternoon" : "Evening";
 }
 
+/** What the diamond is doing: listening, thinking or speaking in a call, thinking while a run is under way, idle otherwise. */
+function diamondState(atlas: Atlas): DiamondState {
+  if (atlas.inCall) {
+    const v = atlas.voice.status;
+    return v === "listening" || v === "thinking" || v === "speaking" ? v : "idle";
+  }
+  return Object.values(atlas.state.live).some((l) => l.surface !== "voice") ? "thinking" : "idle";
+}
+
+/**
+ * Now (§21.6, docs/ui §8): the living diamond and a line about your day,
+ * with receipts for what Atlas just did; what's next on a small map with
+ * when to leave; the weather; what needs you and the jobs running; and the
+ * week, stacked in area colors.
+ */
 function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void }) {
   const s = atlas.state;
+  const { at } = useDetail();
   // The situation (§10.2): where you are, leave-by and weather that matters, rebuilt by the agent from what the senses said.
   useEffect(() => {
-    if (atlas.voice.connected) atlas.send({ type: "atlas.stage", ref: "situation", view: { kind: "situation" } });
+    if (!atlas.voice.connected) return;
+    atlas.send({ type: "atlas.stage", ref: "situation", view: { kind: "situation" } });
+    atlas.send({ type: "atlas.stage", ref: "weather", view: { kind: "weather" } });
   }, [atlas.voice.connected, s.situationVersion]);
   const sit = s.stage.situation?.kind === "situation" ? s.stage.situation : null;
+  const wx = s.stage.weather?.kind === "weather" ? s.stage.weather : null;
   const nowMs = useNow();
   const today = startOfDay(new Date());
   // From Monday, so the week's load counts the days already gone, through a week from today for Next.
@@ -257,6 +296,7 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
   const owner = s.view?.settings.owner_name?.split(" ")[0];
   const inbox = s.inbox ?? [];
   const running = s.jobs.filter((j) => j.state === "running");
+  const scoped = s.areas.find((a) => a.id === s.scope);
   const load = Array.from({ length: 7 }, (_, i) => {
     const d = addDays(monday, i);
     const e = addDays(d, 1);
@@ -274,21 +314,32 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
         ? `Nothing on the calendar until ${dayName(eventStart(next))}${next.all_day ? "" : ` at ${clock(eventStart(next))}`}.`
         : s.view?.calendar.provider
           ? "Nothing on the calendar this week."
-          : "Connect a calendar in Settings and I'll keep an eye on your week.";
+          : "Connect a calendar in Abilities and I'll keep an eye on your week.";
   const where = sit && sit.where.known ? whereLine(sit, nowMs) : null;
+  const needs = inbox.length ? `${inbox.length === 1 ? "One thing needs" : `${inbox.length} things need`} you.` : "";
+  // What Atlas did today, as receipts under the greeting.
+  const done = s.rows
+    .filter((r) => r.kind === "tool.result" && r.body.receipt && r.body.ok !== false && r.at >= today.getTime())
+    .slice(-2)
+    .reverse();
+  const u = wx?.units ?? sit?.units ?? "metric";
+  const hours = (wx?.weather?.hours ?? []).filter((h) => h.t > Date.now() - 3_600_000).slice(0, 24);
+  const tMax = Math.max(...hours.map((h) => h.temp_c), 1);
+  const tMin = Math.min(...hours.map((h) => h.temp_c), 0);
+  const travel = sit?.next?.travel && next && sit.next.title === next.title ? sit.next.travel : null;
+  const point = sit?.where.known ? sit.where.point : null;
 
   return (
     <Sheet>
-      <div className="sheet-in">
-        <div className="row" style={{ gap: 24, alignItems: "center", marginBottom: 24, flexWrap: "nowrap" }}>
-          <AsciiDiamond level={atlas.inCall ? atlas.voice.level : 0} />
-          <div>
-            <h1 className="disp" style={{ fontSize: 30 }}>
-              {greeting(new Date())}
-              {owner ? `, ${owner}` : ""}.
+      <div className="sheet-in now">
+        <div className="now-head">
+          <AsciiDiamond height={280} level={atlas.inCall ? atlas.voice.level : 0} state={diamondState(atlas)} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
+            <h1 className="disp now-hello">
+              {scoped ? `${scoped.name}, this week.` : `${greeting(new Date())}${owner ? `, ${owner}` : ""}.`}
             </h1>
-            {where && (
-              <p style={{ fontSize: 15, marginTop: 4 }}>
+            <p className="now-line muted">
+              {where ? (
                 <a
                   className="link"
                   href="#/home"
@@ -299,96 +350,166 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
                 >
                   {where}
                 </a>
-              </p>
-            )}
-            <p className="muted" style={{ fontSize: 15, marginTop: 4 }}>
-              {line}
+              ) : null}{" "}
+              {line} {needs}
             </p>
-            {sit?.weather && sit.weather.matters.length > 0 && (
-              <p className="ac-text small" style={{ marginTop: 4 }}>
-                {sit.weather.matters.join(" · ")}
-              </p>
+            {done.length > 0 && (
+              <div className="row" style={{ gap: 8 }}>
+                {done.map((r) => (
+                  <span key={r.id} className="done-chip">
+                    <Icon name="check" size={12} style={{ color: "var(--ok)" }} />
+                    {(r.body.receipt as { text: string }).text}
+                  </span>
+                ))}
+              </div>
             )}
           </div>
         </div>
-        <div className="cells">
-          <div className="cell">
-            <span className="lab">Next</span>
+        <div className="now-cards">
+          <div className="card2 pad now-card">
+            <div className="card-head">
+              <span className="h2">Next</span>
+              {scoped && <AreaTag area={scoped} />}
+              <span className="grow" />
+              {next && (
+                <span className="aside">
+                  {next.all_day ? dayName(eventStart(next)) : `${shortDay(eventStart(next))} · ${clock(eventStart(next))}`}
+                </span>
+              )}
+            </div>
             {next ? (
               <>
-                <p style={{ fontWeight: 500, fontSize: 15 }}>{next.title}</p>
-                <p className="muted">
-                  {dayName(eventStart(next))}
-                  {next.all_day ? ", all day" : `, ${clock(eventStart(next))}`}
-                </p>
-                {next.location && (
-                  <p className="lab" style={{ marginTop: 6 }}>
-                    {next.location}
-                  </p>
-                )}
-                {sit?.next?.travel && sit.next.title === next.title && (
-                  <p className="small" style={{ marginTop: 6 }}>
-                    Leave by <b>{clock(sit.next.travel.leave_by)}</b> · {Math.max(1, Math.round(sit.next.travel.s / 60))} min by car
-                  </p>
-                )}
+                <span style={{ fontWeight: 500, fontSize: 15 }}>{next.title}</span>
+                {next.location && <span className="aside clip">{next.location}</span>}
               </>
             ) : reminder ? (
               <>
-                <p style={{ fontWeight: 500, fontSize: 15 }}>{reminder.title}</p>
-                <p className="muted">
+                <span style={{ fontWeight: 500, fontSize: 15 }}>{reminder.title}</span>
+                <span className="aside">
                   {reminder.kind === "promise" ? "Atlas promised" : "Reminder"}, {shortDay(reminder.due_at)}
-                </p>
+                </span>
               </>
             ) : (
-              <p className="muted">{cal?.error ?? "Nothing coming up."}</p>
+              <span className="muted">{cal?.error ?? "Nothing coming up."}</span>
+            )}
+            {/* TODO(core): the route to what's next (its line and where it ends) on SituationPage.next.travel, to draw it here; until then, where you are. */}
+            {point && <MapCanvas markers={[{ name: "You", lat: point.lat, lon: point.lon, here: true }]} height={128} />}
+            {travel ? (
+              <span className="row small" style={{ marginTop: "auto" }}>
+                <StateDot state="on" />
+                <span className="grow">Leave by {clock(travel.leave_by)}</span>
+                <span className="aside">
+                  {Math.max(1, Math.round(travel.s / 60))} min by car{travel.traffic ? " · with traffic" : ""}
+                </span>
+              </span>
+            ) : sit?.next?.travel_error ? (
+              <span className="aside">{sit.next.travel_error}</span>
+            ) : null}
+          </div>
+          <div className="card2 pad now-card">
+            <div className="card-head">
+              <span className="h2">Weather</span>
+              <span className="grow" />
+              {sit?.where.known && sit.where.place && <span className="aside">{sit.where.place.name}</span>}
+            </div>
+            {wx?.weather ? (
+              <>
+                <span className="row" style={{ gap: 10, alignItems: "center" }}>
+                  <Icon name="sun" size={30} style={{ color: "var(--a1)" }} />
+                  <span style={{ display: "flex", flexDirection: "column" }}>
+                    <span className="disp" style={{ fontSize: 26 }}>
+                      {temp(wx.weather.now.temp_c, u)}
+                    </span>
+                    <span className="aside">{sky(wx.weather.now.code)[0]!.toUpperCase() + sky(wx.weather.now.code).slice(1)}</span>
+                  </span>
+                </span>
+                <span className="small">{wx.matters.length ? wx.matters.join(" ") : (sit?.weather?.line ?? "Nothing unusual.")}</span>
+                <div className="wx-bars" aria-hidden>
+                  {hours.map((h) => (
+                    <span
+                      key={h.t}
+                      className="wx-col"
+                      title={`${new Date(h.t).toLocaleTimeString([], { hour: "numeric" })}: ${temp(h.temp_c, u)}, ${h.pop}% rain`}
+                    >
+                      {h.pop >= 20 && <i className="rain" style={{ height: `${Math.round(h.pop / 5)}px` }} />}
+                      <i className="t" style={{ height: `${6 + ((h.temp_c - tMin) / Math.max(1, tMax - tMin)) * 16}px` }} />
+                    </span>
+                  ))}
+                </div>
+                <span className="row aside" style={{ justifyContent: "space-between" }}>
+                  <span>Now</span>
+                  {hours[8] && <span>{new Date(hours[8].t).toLocaleTimeString([], { hour: "numeric" })}</span>}
+                  {hours[16] && <span>{new Date(hours[16].t).toLocaleTimeString([], { hour: "numeric" })}</span>}
+                </span>
+              </>
+            ) : (
+              <span className="muted">{wx?.error ?? sit?.weather?.line ?? "Looking."}</span>
             )}
           </div>
-          <div className="cell">
-            <span className={`lab ${inbox.length ? "ac" : ""}`}>Needs you{inbox.length ? ` · ${inbox.length}` : ""}</span>
-            {inbox.length ? (
-              <>
-                <p style={{ fontWeight: 500, fontSize: 15 }}>{inbox[0]!.title}</p>
-                <p className="muted">
-                  {inbox.length > 1 ? `and ${inbox.length - 1} more` : inbox[0]!.kind === "failed" ? "Didn't finish" : "Ready for review"}
-                </p>
-                <p className="lab" style={{ marginTop: 6 }}>
-                  <a href="#/inbox">Open Inbox</a>
-                </p>
-              </>
-            ) : (
-              <p className="muted">Nothing is waiting on you.</p>
-            )}
-          </div>
-          <div className="cell">
-            <span className="lab">Jobs{running.length ? ` · ${running.length}` : ""}</span>
-            {running.length ? (
-              <>
-                <p style={{ fontWeight: 500, fontSize: 15 }}>{running[0]!.title}</p>
-                <p className="muted">{running[0]!.status ?? "Working"}</p>
-                <p className="lab" style={{ marginTop: 6 }}>
-                  {running[0]!.steps} lookups so far
-                </p>
-              </>
-            ) : (
-              <p className="muted">No helpers working right now.</p>
-            )}
+          <div className="card2 pad now-card">
+            <div className="card-head">
+              <span className="h2">Needs you</span>
+              <span className="grow" />
+              {inbox.length > 0 && <span className="mono small ac">{inbox.length}</span>}
+            </div>
+            {inbox.slice(0, 2).map((i) => (
+              <div key={i.id} className="need">
+                <span className="sq-ac" />
+                <span className="grow" style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                  <span style={{ fontWeight: 500 }} className="clip">
+                    {i.title}
+                  </span>
+                  <span className="aside clamp">{i.text}</span>
+                </span>
+                <a className="btn s" href="#/inbox" style={{ textDecoration: "none" }}>
+                  {i.kind === "approval" ? "Review" : i.kind === "face" || i.kind === "question" ? "Answer" : "Open"}
+                </a>
+              </div>
+            ))}
+            {!inbox.length && <span className="muted">Nothing is waiting on you.</span>}
+            <span className="aside row" style={{ marginTop: "auto", gap: 6, paddingTop: 8, borderTop: "1px dashed var(--sep)" }}>
+              {running.length ? (
+                <>
+                  <span className="mono spin" aria-hidden style={{ color: "var(--ac)", width: 9 }} />
+                  {running.length} {running.length === 1 ? "job" : "jobs"} running: {running.map((j) => j.title).join(", ")}
+                </>
+              ) : (
+                "No jobs running."
+              )}
+            </span>
           </div>
         </div>
         {cal && !cal.error && (
-          <div className="row" style={{ marginTop: 22, gap: 16 }}>
-            <span className="lab">Week load</span>
-            <span className="meter" aria-hidden>
+          <div className="now-week">
+            <span className="h2" style={{ fontSize: 14 }}>
+              This week
+            </span>
+            {/* TODO(core): events carry no areas yet, so each day's bar is one color: the scoped area's, else neutral. Stacked by area once they do. */}
+            <span className="week-bars" aria-hidden>
               {load.map((n, i) => (
-                <i key={i} style={{ height: 4 + (n / max) * 14, width: 8, background: i === busiest && n ? "var(--tx)" : "var(--tx3)" }} />
+                <span key={i} className="wk">
+                  <i
+                    style={{
+                      height: n ? 6 + (n / max) * 24 : 3,
+                      background: n ? (scoped ? areaColor(scoped) : "var(--tx3)") : "var(--sep2)",
+                    }}
+                  />
+                  <span className={`aside ${i === (today.getDay() + 6) % 7 ? "today" : ""}`}>
+                    {i === (today.getDay() + 6) % 7 ? "Today" : addDays(monday, i).toLocaleDateString([], { weekday: "short" })}
+                  </span>
+                </span>
               ))}
             </span>
-            <span className="lab">M T W T F S S</span>
             <span className="grow" />
-            {load[busiest]! > 0 && (
-              <span className="muted">
-                {addDays(weekStart(new Date()), busiest).toLocaleDateString([], { weekday: "long" })} is the busy one.
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+              {load[busiest]! > 0 && <span>{addDays(monday, busiest).toLocaleDateString([], { weekday: "long" })} is the busy one.</span>}
+              <span className="row" style={{ gap: 6 }}>
+                {(scoped ? [scoped] : s.areas.filter((a) => a.state === "active").slice(0, 5)).map((a) => (
+                  <AreaTag key={a.id} area={a} />
+                ))}
               </span>
-            )}
+            </span>
+            {at("developer") && <span className="mono aside">{(cal.events ?? []).length} events</span>}
           </div>
         )}
       </div>
@@ -447,6 +568,7 @@ function Jobs({ atlas, selected, onSelect }: { atlas: Atlas; selected: string | 
   const detail = job.run_id ? atlas.state.runDetail[job.run_id] : undefined;
   const lookups = (detail?.rows ?? []).filter((r) => r.kind === "tool.call");
   if (job.coding) return <CodingJob atlas={atlas} jobs={jobs} job={job} onSelect={onSelect} />;
+  const goal = job.goal;
   return (
     <Sheet>
       <div className="sheet-in">
@@ -484,6 +606,7 @@ function Jobs({ atlas, selected, onSelect }: { atlas: Atlas; selected: string | 
                   : "Stopped"}
           </span>
         </div>
+        {goal && <GoalPlan atlas={atlas} job={job} />}
         {lookups.length > 0 && (
           <>
             <div className="section-rule">
@@ -512,6 +635,84 @@ function Jobs({ atlas, selected, onSelect }: { atlas: Atlas; selected: string | 
         )}
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * A job Atlas owns (§8.3): its plan with each step's state and brain, what
+ * it waits on, what it has used, the files it kept, and Steer.
+ */
+function GoalPlan({ atlas, job }: { atlas: Atlas; job: JobView }) {
+  const g = job.goal!;
+  const [steer, setSteer] = useState("");
+  const mark = { todo: "·", doing: "▸", done: "✓", failed: "×", skipped: "–" } as const;
+  return (
+    <>
+      <div className="section-rule">
+        <span className="lab">The plan</span>
+        <span className="grow" />
+        <span className="aside">
+          {g.spent.steps} of {g.budget.steps} steps · {g.spent.looks} of {g.budget.looks} looks
+        </span>
+      </div>
+      <div className="rows">
+        {g.plan.map((s) => (
+          <div className="r small" key={s.id}>
+            <span className="mono faint" style={{ width: 14 }}>
+              {mark[s.state]}
+            </span>
+            <span className={s.state === "doing" ? "" : s.state === "todo" ? "muted" : ""} style={{ flex: 1 }}>
+              {s.title}
+              {s.kind === "checkpoint" && <span className="aside"> · your look</span>}
+            </span>
+            {s.brain && s.brain !== "Main" && <span className="aside">{s.brain}</span>}
+          </div>
+        ))}
+      </div>
+      {g.question && (
+        <div className="card2 pad" style={{ marginTop: 12 }}>
+          <p style={{ fontWeight: 500 }}>{g.question.text}</p>
+          {g.question.content && <p style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>{g.question.content}</p>}
+          <p className="aside" style={{ marginTop: 8 }}>
+            Answer it in Inbox, or below.
+          </p>
+        </div>
+      )}
+      {Object.keys(g.spent.by).length > 0 && (
+        <p className="aside" style={{ marginTop: 8 }}>
+          Steps by brain:{" "}
+          {Object.entries(g.spent.by)
+            .map(([b, n]) => `${b} ${n}`)
+            .join(", ")}
+        </p>
+      )}
+      {g.files.length > 0 && <p className="aside">Kept in Library: {g.files.join(", ")}</p>}
+      {job.state === "running" && (
+        <form
+          className="row"
+          style={{ marginTop: 10 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!steer.trim()) return;
+            atlas.send({ type: "atlas.job.say", id: job.id, text: steer.trim() });
+            setSteer("");
+          }}
+        >
+          <input
+            className="grow"
+            placeholder={g.question ? "Your answer" : "Steer: a word for its next step"}
+            value={steer}
+            onChange={(e) => setSteer(e.target.value)}
+          />
+          <button className="btn" type="submit" disabled={!steer.trim()}>
+            {g.question ? "Answer" : "Steer"}
+          </button>
+        </form>
+      )}
+      <p className="aside mono" style={{ marginTop: 6 }}>
+        {g.folder}
+      </p>
+    </>
   );
 }
 

@@ -25,6 +25,10 @@ export interface Area {
   state: AreaState;
   /** An index into the app's area palette. */
   color: number;
+  /** A color the owner picked instead of the palette's, as #rrggbb (§6.4). */
+  custom_color: string | null;
+  /** A line icon's name from AREA_ICONS, or "file:<id>" for a logo the owner uploaded. Null shows the color's dot. */
+  icon: string | null;
   settings: AreaSettings;
   created_at: number;
   updated_at: number;
@@ -41,6 +45,79 @@ const fromRaw = (r: RawArea): Area => ({
 
 /** How many colors the app has for areas; new areas take the next one. */
 export const AREA_COLORS = 8;
+
+/** The line icons an area can take (§6.4). The app draws each; an uploaded logo is a file instead. */
+export const AREA_ICONS = [
+  "home",
+  "work",
+  "school",
+  "heart",
+  "health",
+  "camera",
+  "film",
+  "music",
+  "code",
+  "money",
+  "plane",
+  "leaf",
+  "dumbbell",
+  "people",
+  "star",
+  "paw",
+] as const;
+
+/** An area's look as the owner sets it: a palette color, a color of their own, and an icon. */
+export const AreaLook = z.object({
+  color: z
+    .number()
+    .int()
+    .min(0)
+    .max(AREA_COLORS - 1)
+    .optional(),
+  custom_color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .nullable()
+    .optional(),
+  icon: z
+    .union([z.enum(AREA_ICONS), z.string().regex(/^file:[\w-]{1,64}$/)])
+    .nullable()
+    .optional(),
+});
+export type AreaLook = z.infer<typeof AreaLook>;
+
+/**
+ * Sets an area's color and icon. Picking a palette color drops a color of
+ * the owner's own; a color of their own keeps the palette index beside it,
+ * so clearing it goes back to where it was.
+ */
+export function setAreaLook(sql: Sql, id: string, look: AreaLook, by: "owner" | "atlas"): Area {
+  const before = getArea(sql, id);
+  if (!before) throw new Error(`There's no area ${id}.`);
+  const color = look.color ?? before.color;
+  const custom = look.custom_color !== undefined ? look.custom_color : look.color != null ? null : before.custom_color;
+  const icon = look.icon === undefined ? before.icon : look.icon;
+  sql.exec(
+    `UPDATE areas SET color = ?, custom_color = ?, icon = ?, updated_at = ? WHERE id = ?`,
+    color,
+    custom?.toLowerCase() ?? null,
+    icon,
+    Date.now(),
+    id,
+  );
+  append(sql, {
+    actor: by,
+    kind: "area.change",
+    body: {
+      area_id: id,
+      name: before.name,
+      change: "look",
+      before: { color: before.color, custom_color: before.custom_color, icon: before.icon },
+      after: { color, custom_color: custom?.toLowerCase() ?? null, icon },
+    },
+  });
+  return getArea(sql, id)!;
+}
 
 export function listAreas(sql: Sql, opts: { all?: boolean } = {}): Area[] {
   return sql

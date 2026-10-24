@@ -19,7 +19,7 @@ import { history as logHistory, historyStats, inbox, inboxDone, listRecords, run
 import { correctRecord, createRecord, findRecords, forgetRecord, getRecord } from "./store/records";
 import { type Decider, workersAIDecider } from "./brains/decide";
 import { type Extractor, workersAIExtractor } from "./brains/extract";
-import { createArea, getArea, getScope, listAreas, mergeAreas, setScope, type Tagged, updateArea } from "./store/areas";
+import { createArea, getArea, getScope, listAreas, mergeAreas, setAreaLook, setScope, type Tagged, updateArea } from "./store/areas";
 import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
 import { seams } from "./agent/seams";
 import { liveTest, settingsView } from "./agent/settings";
@@ -1231,6 +1231,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         return;
       case "atlas.scope.set":
         setScope(this.#sql, msg.area && listAreas(this.#sql).some((a) => a.id === msg.area) ? msg.area : null);
+        this.#areasChanged();
+        return;
+      case "atlas.area.look":
+        try {
+          await this.#areaLook(msg);
+        } catch (err) {
+          this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
+        }
         this.#areasChanged();
         return;
       case "atlas.area.create":
@@ -3434,12 +3442,43 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
         about: a.about,
         state: a.state,
         color: a.color,
+        custom_color: a.custom_color,
+        icon: a.icon,
         settings: a.settings,
         messages: messages.get(a.id) ?? 0,
         records: records.get(a.id) ?? 0,
         last_seen: a.last_seen,
       };
     });
+  }
+
+  /** An area's color and icon (§6.4). An uploaded logo goes to the files store first, and the area points at it. */
+  async #areaLook(msg: Extract<ClientMessage, { type: "atlas.area.look" }>): Promise<void> {
+    const area = getArea(this.#sql, msg.id);
+    if (!area) throw new Error("That area isn't there any more.");
+    let icon = msg.icon;
+    if (msg.image) {
+      const bucket = this.#bucket();
+      if (!bucket) throw new Error("Atlas has no files store (the FILES bucket in wrangler.jsonc), so it can't keep a logo.");
+      let bytes: Uint8Array;
+      try {
+        bytes = Uint8Array.from(atob(msg.image.data), (c) => c.charCodeAt(0));
+      } catch {
+        throw new Error("That image didn't arrive whole. Try picking it again.");
+      }
+      if (bytes.byteLength > 300_000)
+        throw new Error(`That image is ${Math.round(bytes.byteLength / 1000)} KB; a logo can be at most 300 KB.`);
+      const ext = msg.image.type === "image/svg+xml" ? "svg" : msg.image.type.split("/")[1]!;
+      const { file } = await saveFile(this.#sql, bucket, {
+        name: `${area.name} icon.${ext}`,
+        body: bytes,
+        type: msg.image.type,
+        made_by: "owner",
+        note: `The icon for ${area.name}, from ${msg.image.name}`,
+      });
+      icon = `file:${file.id}`;
+    }
+    setAreaLook(this.#sql, area.id, { color: msg.color, custom_color: msg.custom_color, icon }, "owner");
   }
 
   #areasChanged(): void {

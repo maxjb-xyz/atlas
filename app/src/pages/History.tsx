@@ -7,6 +7,7 @@ import type { HistoryFilter, LogRow } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Markdown } from "../Markdown";
 import { Composer } from "../Shell";
+import { openOnStage, shownFrom } from "../StageViews";
 import { AreaChip, clock, dayName, Diamond, Empty, pressable, Sheet, Stage, startOfDay } from "../ui";
 
 /** A line written for Atlas ("The owner arrived at ...") as the owner reads it here. */
@@ -437,6 +438,21 @@ function Entry({ atlas, row, open, onToggle }: { atlas: Atlas; row: LogRow; open
     | undefined;
   const asked = detail?.rows.find((r) => r.kind === "message.in");
   const calls = detail?.rows.filter((r) => r.kind === "tool.call") ?? [];
+  // What it opens on the stage: the view it showed, or the record it changed.
+  const shown = shownFrom(row);
+  const rid = typeof row.body.record_id === "string" ? row.body.record_id : null;
+  const recordLink =
+    row.kind === "record.change" && rid && row.body.change !== "deleted"
+      ? {
+          name: str(row.body.name) || "the record",
+          href:
+            row.body.type === "person"
+              ? `#/people/${encodeURIComponent(`person:${rid}`)}`
+              : row.body.type === "place"
+                ? `#/library/${encodeURIComponent(`place:${rid}`)}`
+                : `#/library/${encodeURIComponent(`memory:${rid}`)}`,
+        }
+      : null;
 
   return (
     <div
@@ -486,6 +502,20 @@ function Entry({ atlas, row, open, onToggle }: { atlas: Atlas; row: LogRow; open
       </div>
       {open && (
         <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {(shown || recordLink) && (
+            <div className="row">
+              {shown && (
+                <button className="btnp s" onClick={() => openOnStage(row.id)}>
+                  Open {shown.title || "it"} on the stage
+                </button>
+              )}
+              {recordLink && (
+                <a className="btn s" href={recordLink.href} style={{ textDecoration: "none" }}>
+                  Open {recordLink.name}
+                </a>
+              )}
+            </div>
+          )}
           <div className="chain">
             <span className="tag">{asked ? `You · ${asked.surface === "voice" ? "voice" : "chat"}` : (run?.trigger ?? "Atlas")}</span>
             <span className="dash" />

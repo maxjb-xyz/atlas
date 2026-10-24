@@ -245,6 +245,32 @@ describe("the thread", () => {
     s.ws.close();
   });
 
+  it("sets an area's color and icon from the app, keeping an uploaded logo in the files store", async () => {
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "America/New_York" });
+    await s.next("atlas.snapshot");
+    s.send({ type: "atlas.area.create", name: "Riverside", about: "A client" });
+    const made = await s.next("atlas.areas", (m) => m.areas.some((a) => a.name === "Riverside"));
+    const area = made.areas.find((a) => a.name === "Riverside")!;
+    expect(area).toMatchObject({ custom_color: null, icon: null });
+
+    s.send({ type: "atlas.area.look", id: area.id, custom_color: "#123abc", icon: "film" });
+    const looked = await s.next("atlas.areas", (m) => m.areas.some((a) => a.id === area.id && a.icon === "film"));
+    expect(looked.areas.find((a) => a.id === area.id)).toMatchObject({ custom_color: "#123abc", icon: "film" });
+
+    // A logo: kept as a file, and the area points at it.
+    const png = btoa(String.fromCharCode(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a));
+    s.send({ type: "atlas.area.look", id: area.id, image: { name: "logo.png", type: "image/png", data: png } });
+    const logo = await s.next("atlas.areas", (m) => m.areas.some((a) => a.id === area.id && a.icon?.startsWith("file:") === true));
+    const file = logo.areas.find((a) => a.id === area.id)!.icon!.slice(5);
+    expect(await (await env.FILES.get(`files/${file}`))!.arrayBuffer()).toHaveProperty("byteLength", 8);
+
+    // Something it can't use says why, in words.
+    s.send({ type: "atlas.area.look", id: area.id, image: { name: "x.png", type: "image/png", data: "%%%" } });
+    expect((await s.next("atlas.error")).message).toMatch(/didn't arrive whole/);
+    s.ws.close();
+  });
+
   it("keeps a reminder's promise when it comes due, even with no brain", async () => {
     brains([call("reminder_create", { text: "Take the bread out", at: "2099-01-01T09:00" }), say("Will do."), new Error("down")]);
     const s = await connect();

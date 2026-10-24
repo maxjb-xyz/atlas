@@ -1,6 +1,6 @@
-// The shell (§21.1): sidebar with the six places, the toolbar (scope switcher,
-// jobs, Talk, search), one stage, and the console on Home or the composer on
-// every other page. No side panes.
+// The shell (§21.1): the sidebar with the eight places (§21.2), the toolbar
+// (scope switcher, jobs, Talk, search), one stage, and the console on Home or
+// the composer on every other page. No side panes.
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { LogRow, RecordView } from "../../core/src/protocol";
@@ -8,24 +8,19 @@ import type { Atlas } from "./connection";
 import { Markdown } from "./Markdown";
 import { openOnStage, type Shown, shownFrom, StageCard } from "./StageViews";
 import { Thread } from "./Thread";
-import { AreaChip, AreaDot, Diamond, Icon, type Place, shortDay, useDismiss } from "./ui";
+import { AreaChip, AreaDot, areaColor, AsciiDiamond, Diamond, Icon, type IconName, initials, type Place, shortDay, useDismiss } from "./ui";
 
-const NAV: Array<{ id: Place; label: string; icon: "home" | "inbox" | "agenda" | "automations" | "library" | "history"; gap?: boolean }> = [
+/** The eight places, in three groups: what's yours today, what Atlas knows and can do, and what it did. */
+export const PLACES: Array<{ id: Place; label: string; icon: IconName; gap?: boolean }> = [
   { id: "home", label: "Home", icon: "home" },
   { id: "inbox", label: "Inbox", icon: "inbox" },
   { id: "agenda", label: "Agenda", icon: "agenda" },
   { id: "automations", label: "Automations", icon: "automations", gap: true },
   { id: "library", label: "Library", icon: "library" },
-  { id: "history", label: "History", icon: "history" },
+  { id: "people", label: "People", icon: "people" },
+  { id: "abilities", label: "Abilities", icon: "abilities" },
+  { id: "history", label: "History", icon: "history", gap: true },
 ];
-
-const initials = (name: string) =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
-    .join("") || "Me";
 
 export function Sidebar({ atlas, place, go }: { atlas: Atlas; place: Place; go: (p: Place, d?: string) => void }) {
   const s = atlas.state;
@@ -44,7 +39,7 @@ export function Sidebar({ atlas, place, go }: { atlas: Atlas; place: Place; go: 
         <span className="disp">{settings?.assistant_name ?? "Atlas"}</span>
       </div>
       <div className="nav">
-        {NAV.map((n) => (
+        {PLACES.map((n) => (
           <a
             key={n.id}
             href={`#/${n.id}`}
@@ -115,7 +110,7 @@ export function Sidebar({ atlas, place, go }: { atlas: Atlas; place: Place; go: 
           <span>Atlas settings</span>
         </a>
         <div className="me">
-          <span className="avatar">{initials(owner)}</span>
+          <span className="avatar">{owner === "You" ? "Me" : initials(owner)}</span>
           <span>{owner}</span>
         </div>
       </div>
@@ -134,6 +129,11 @@ export function TabBar({ atlas, place }: { atlas: Atlas; place: Place }) {
     { id: "agenda", label: "Agenda", icon: "agenda" },
     { id: "library", label: "Library", icon: "library" },
   ];
+  // The rest of the places, under More, in the sidebar's order.
+  const rest: Array<{ id: Place; label: string; icon: IconName }> = [
+    ...PLACES.filter((p) => !tabs.some((t) => t.id === p.id)),
+    { id: "settings", label: "Atlas settings", icon: "settings" },
+  ];
   return (
     <nav className="tabbar" aria-label="Places" ref={moreRef}>
       {tabs.map((t) => (
@@ -145,7 +145,7 @@ export function TabBar({ atlas, place }: { atlas: Atlas; place: Place }) {
       ))}
       <button
         type="button"
-        className={`tab ${["automations", "history", "settings"].includes(place) ? "on" : ""}`}
+        className={`tab ${rest.some((r) => r.id === place) ? "on" : ""}`}
         aria-expanded={more}
         onClick={() => setMore(!more)}
       >
@@ -154,15 +154,18 @@ export function TabBar({ atlas, place }: { atlas: Atlas; place: Place }) {
       </button>
       {more && (
         <div className="pop rise" role="menu" style={{ bottom: 60, top: "auto", right: 6, position: "fixed" }}>
-          <a className="item" role="menuitem" href="#/automations" onClick={() => setMore(false)}>
-            Automations
-          </a>
-          <a className="item" role="menuitem" href="#/history" onClick={() => setMore(false)}>
-            History
-          </a>
-          <a className="item" role="menuitem" href="#/settings" onClick={() => setMore(false)}>
-            Atlas settings
-          </a>
+          {rest.map((r) => (
+            <a
+              key={r.id}
+              className={`item ${place === r.id ? "on" : ""}`}
+              role="menuitem"
+              href={`#/${r.id}`}
+              onClick={() => setMore(false)}
+            >
+              <Icon name={r.icon} size={15} />
+              {r.label}
+            </a>
+          ))}
         </div>
       )}
     </nav>
@@ -188,7 +191,7 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
               <AreaDot area={scoped} />
             ) : (
               (live.length ? live.slice(0, 4) : [undefined, undefined, undefined, undefined]).map((a, i) => (
-                <AreaDot key={a?.id ?? i} area={a} />
+                <AreaDot key={a?.id ?? i} area={a} plain />
               ))
             )}
           </span>
@@ -209,7 +212,7 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
             >
               <span className="dots">
                 {live.slice(0, 4).map((a) => (
-                  <AreaDot key={a.id} area={a} />
+                  <AreaDot key={a.id} area={a} plain />
                 ))}
               </span>
               <span className="grow">All areas</span>
@@ -646,7 +649,7 @@ export function VoiceStrip({ atlas }: { atlas: Atlas }) {
   );
   return (
     <div className="voice rise">
-      <Diamond size={30} />
+      <AsciiDiamond height={48} level={level} state={status} />
       <div className="vbody">
         <span className={`lab ${status === "speaking" ? "ac" : ""}`}>{label}</span>
         <p className="vtext">
@@ -690,15 +693,7 @@ export function Palette({ atlas, go, onClose }: { atlas: Atlas; go: (p: Place, d
     if (q.trim().length >= 2) atlas.send({ type: "atlas.records.list", ref: "palette", text: q.trim(), limit: 6 });
   }, [q]);
   const found: RecordView[] = q.trim().length >= 2 ? (atlas.state.records.palette?.records ?? []) : [];
-  const places: Array<[Place, string]> = [
-    ["home", "Home"],
-    ["inbox", "Inbox"],
-    ["agenda", "Agenda"],
-    ["automations", "Automations"],
-    ["library", "Library"],
-    ["history", "History"],
-    ["settings", "Atlas settings"],
-  ];
+  const places: Array<[Place, string]> = [...PLACES.map((p) => [p.id, p.label] as [Place, string]), ["settings", "Atlas settings"]];
   const items: Array<{ label: ReactNode; run: () => void }> = [
     ...places
       .filter(([, l]) => l.toLowerCase().includes(q.trim().toLowerCase()))
@@ -710,7 +705,7 @@ export function Palette({ atlas, go, onClose }: { atlas: Atlas; go: (p: Place, d
           {r.fact ? <span className="muted"> · {r.fact}</span> : null}
         </>
       ),
-      run: () => go("library", `memory:${r.id}`),
+      run: () => (r.type === "person" ? go("people", `person:${r.id}`) : go("library", `memory:${r.id}`)),
     })),
     // Asked from search: the transcript opens, so the answer is in view wherever this was asked.
     ...(q.trim()

@@ -1,15 +1,17 @@
-// Library (§5.5, §21.2): everything Atlas knows. Each record shows its
-// source, can be corrected (the old value stays, struck through) and
-// forgotten. Areas live here too, with their settings (§6.4, §21.3).
+// Library (§5.5, §21.2): everything Atlas knows, except people, who have
+// their own place (People). Each record shows its source, can be corrected
+// (the old value stays, struck through) and forgotten, and opens on the
+// stage. Areas live here too, with their settings, color and icon (§6.4, §21.3).
 
 import { useEffect, useState } from "react";
 import type { AreaView, RecordView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Composer } from "../Shell";
 import { StageSheet } from "../StageViews";
-import { AreaChip, areaColor, AreaDot, Empty, Icon, pressable, Sheet, shortDay, Stage } from "../ui";
+import { fileBase64 } from "../settings/parts";
+import { AREA_ICON_PATHS, AreaChip, areaColor, AreaDot, Empty, Icon, Picker, pressable, Sheet, shortDay, Stage, Toggle } from "../ui";
 
-type LibTab = "overview" | "people" | "places" | "memory" | "areas" | "files";
+type LibTab = "overview" | "places" | "memory" | "areas" | "files";
 
 /** Asks for records under `ref`, and again whenever they change. */
 function useRecords(atlas: Atlas, ref: string, q: { record_type?: RecordView["type"]; text?: string; limit?: number }) {
@@ -25,15 +27,20 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
   const s = atlas.state;
   // An area's or a person's page opens in place: "area:<id>" under Areas, "person:<id>" under People (§21.2).
   const [head, rest = ""] = [detail.split(":")[0]!, detail.split(":").slice(1).join(":")];
-  const page = head === "area" || head === "person" || head === "page" || head === "file" ? { kind: head, id: rest } : null;
+  // A person opens in People now; an old link to one here goes there.
+  useEffect(() => {
+    if (head === "person" && rest) location.replace(`#/people/${encodeURIComponent(`person:${rest}`)}`);
+    if (head === "people") location.replace("#/people");
+  }, [head, rest]);
+  const page = head === "area" || head === "place" || head === "page" || head === "file" ? { kind: head, id: rest } : null;
   const tab = (
     page
       ? page.kind === "area"
         ? "areas"
         : page.kind === "page" || page.kind === "file"
           ? "files"
-          : "people"
-      : ["overview", "people", "places", "memory", "areas", "files"].includes(head)
+          : "places"
+      : ["overview", "places", "memory", "areas", "files"].includes(head)
         ? head
         : "overview"
   ) as LibTab;
@@ -45,7 +52,6 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
       label="Library"
       tabs={[
         { id: "overview", label: "Overview" },
-        { id: "people", label: "People", badge: counts.person || null },
         { id: "places", label: "Places", badge: counts.place || null },
         { id: "areas", label: "Areas", badge: s.areas.filter((a) => a.state !== "archived").length || null },
         { id: "memory", label: "Memory", badge: counts.all || null },
@@ -72,23 +78,18 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
                   ? { kind: "page", page: page.id }
                   : page.kind === "file"
                     ? { kind: "file", file: page.id }
-                    : { kind: "person", person: page.id },
+                    : { kind: "place", place: page.id },
             title: "",
           }}
-          onClose={() => go(page.kind === "area" ? "areas" : page.kind === "page" || page.kind === "file" ? "files" : "people")}
+          onClose={() => go(page.kind === "area" ? "areas" : page.kind === "page" || page.kind === "file" ? "files" : "places")}
           onOpen={(v) => {
-            if (v.kind === "person") go(`person:${v.person}`);
+            if (v.kind === "person") location.hash = `#/people/${encodeURIComponent(`person:${v.person}`)}`;
+            if (v.kind === "place") go(`place:${v.place}`);
           }}
         />
       )}
       {!page && tab === "overview" && <Overview atlas={atlas} records={all?.records ?? []} counts={counts} go={go} />}
-      {!page && tab === "people" && (
-        <>
-          <ImportContacts atlas={atlas} />
-          <Records atlas={atlas} type="person" title="People" go={go} />
-        </>
-      )}
-      {tab === "places" && <Records atlas={atlas} type="place" title="Places" go={go} />}
+      {!page && tab === "places" && <Records atlas={atlas} type="place" title="Places" go={go} />}
       {tab === "memory" && <Records atlas={atlas} title="Everything Atlas knows" focus={detail.split(":")[1]} search go={go} />}
       {!page && tab === "areas" && <Areas atlas={atlas} go={go} />}
       {!page && tab === "files" && <Pages atlas={atlas} go={go} />}
@@ -119,7 +120,7 @@ function Overview({
   const List = ({ list }: { list: RecordView[] }) => (
     <>
       {list.map((r) => (
-        <div className="li" key={r.id}>
+        <div className="li pickable" key={r.id} {...pressable(() => openRecord(r, go))}>
           <AreaDot area={s.areas.find((a) => r.areas.includes(a.id))} />
           <span>{r.name}</span>
           <span className="mono faint small" style={{ marginLeft: 8 }}>
@@ -249,6 +250,13 @@ function sourceText(r: RecordView): string {
 }
 
 /** One record: what Atlas knows, where it came from, its areas, and Correct. */
+/** Opens a record on the stage: a person in People, a place as its view here, anything else where it sits in Memory. */
+function openRecord(r: RecordView, go: (d: string) => void) {
+  if (r.type === "person") location.hash = `#/people/${encodeURIComponent(`person:${r.id}`)}`;
+  else if (r.type === "place") go(`place:${r.id}`);
+  else go(`memory:${r.id}`);
+}
+
 function RecordRow({ atlas, r, go }: { atlas: Atlas; r: RecordView; go: (d: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [fact, setFact] = useState(r.fact);
@@ -327,8 +335,8 @@ function RecordRow({ atlas, r, go }: { atlas: Atlas; r: RecordView; go: (d: stri
       </span>
       {!editing && (
         <span className="row" style={{ gap: 10 }}>
-          {r.type === "person" && (
-            <button className="link" onClick={() => go(`person:${r.id}`)}>
+          {(r.type === "person" || r.type === "place") && (
+            <button className="link" onClick={() => openRecord(r, go)}>
               Open
             </button>
           )}
@@ -531,7 +539,7 @@ function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; ot
     <div className="r" style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
       <div className="row" style={{ cursor: "pointer", flexWrap: "nowrap" }} {...pressable(() => setOpen(!open))} aria-expanded={open}>
         <AreaDot area={area} square />
-        <span style={{ fontWeight: 500 }}>{area.name}</span>
+        <span style={{ fontWeight: 500, color: areaColor(area) }}>{area.name}</span>
         <span className="muted small grow" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {area.about}
         </span>
@@ -542,7 +550,8 @@ function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; ot
         <Icon name="down" size={13} style={{ transform: open ? "rotate(180deg)" : undefined }} />
       </div>
       {open && (
-        <div className="rise" style={{ display: "grid", gap: 10, paddingLeft: 18 }}>
+        <div className="rise" style={{ display: "grid", gap: 12, paddingLeft: 18 }}>
+          <AreaLook atlas={atlas} area={area} />
           <label className="field">
             <span>Name</span>
             <input maxLength={60} value={draft.name} onChange={(e) => change({ name: e.target.value })} />
@@ -567,17 +576,17 @@ function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; ot
           </label>
           {members.length > 0 && (
             <div className="field">
-              <span>Shared with (they see and add to what's in it)</span>
-              <div className="row small" style={{ gap: 12 }}>
+              <span>Shared with: they see and add to what's in it</span>
+              <div className="lines">
                 {members.map((m) => (
-                  <label key={m.id} className="row">
-                    <input
-                      type="checkbox"
-                      checked={area.settings.shared_with.includes(m.id)}
-                      onChange={(e) => atlas.send({ type: "atlas.area.share", area: area.id, member: m.id, shared: e.target.checked })}
-                    />{" "}
-                    {m.name}
-                  </label>
+                  <div key={m.id} className="line">
+                    <span className="grow">{m.name}</span>
+                    <Toggle
+                      on={area.settings.shared_with.includes(m.id)}
+                      label={`Share with ${m.name}`}
+                      onChange={(shared) => atlas.send({ type: "atlas.area.share", area: area.id, member: m.id, shared })}
+                    />
+                  </div>
                 ))}
               </div>
             </div>
@@ -604,20 +613,15 @@ function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; ot
             </button>
             <span className="grow" />
             {others.length > 0 && (
-              <select
-                value=""
-                onChange={(e) => {
-                  if (e.target.value) atlas.send({ type: "atlas.area.merge", from: area.id, into: e.target.value });
-                }}
-                style={{ height: 24, fontSize: 12 }}
-              >
-                <option value="">Merge into…</option>
-                {others.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name}
-                  </option>
-                ))}
-              </select>
+              <Picker
+                label="Merge into another area"
+                value={"" as string}
+                options={[
+                  { value: "", label: "Merge into…" },
+                  ...others.map((o) => ({ value: o.id, label: o.name, lead: <AreaDot area={o} /> })),
+                ]}
+                onPick={(into) => into && atlas.send({ type: "atlas.area.merge", from: area.id, into })}
+              />
             )}
             <button
               className="btn sm"
@@ -631,6 +635,90 @@ function AreaRow({ atlas, area, others, go }: { atlas: Atlas; area: AreaView; ot
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** An area's color and icon, which the owner picks (§6.4): a deep preset or any color, a line icon or a logo they upload. */
+function AreaLook({ atlas, area }: { atlas: Atlas; area: AreaView }) {
+  const [error, setError] = useState<string | null>(null);
+  const look = (patch: Omit<Extract<Parameters<Atlas["send"]>[0], { type: "atlas.area.look" }>, "type" | "id">) =>
+    atlas.send({ type: "atlas.area.look", id: area.id, ...patch });
+  return (
+    <div className="area-look">
+      <div className="row" style={{ gap: 8 }}>
+        <span className="small muted" style={{ width: 52 }}>
+          Color
+        </span>
+        {Array.from({ length: 8 }, (_, i) => (
+          <button
+            key={i}
+            className={`swatch ${!area.custom_color && area.color % 8 === i ? "on" : ""}`}
+            style={{ background: `var(--a${i})` }}
+            aria-label={`Color ${i + 1}`}
+            aria-pressed={!area.custom_color && area.color % 8 === i}
+            onClick={() => look({ color: i })}
+          />
+        ))}
+        <label
+          className={`swatch any ${area.custom_color ? "on" : ""}`}
+          style={area.custom_color ? { background: area.custom_color } : undefined}
+          title="Any color"
+        >
+          {!area.custom_color && <Icon name="plus" size={11} />}
+          <input
+            type="color"
+            className="sr"
+            aria-label="Any color"
+            value={area.custom_color ?? "#f5a524"}
+            onChange={(e) => look({ custom_color: e.target.value })}
+          />
+        </label>
+      </div>
+      <div className="row" style={{ gap: 6 }}>
+        <span className="small muted" style={{ width: 52 }}>
+          Icon
+        </span>
+        <button
+          className={`icon-pick ${!area.icon ? "on" : ""}`}
+          aria-label="No icon"
+          aria-pressed={!area.icon}
+          onClick={() => look({ icon: null })}
+        >
+          <span className="dot sq" style={{ background: areaColor(area) }} />
+        </button>
+        {Object.entries(AREA_ICON_PATHS).map(([name, d]) => (
+          <button
+            key={name}
+            className={`icon-pick ${area.icon === name ? "on" : ""}`}
+            aria-label={name}
+            aria-pressed={area.icon === name}
+            onClick={() => look({ icon: name as never })}
+          >
+            <svg className="ic" width={14} height={14} viewBox="0 0 24 24" aria-hidden style={{ color: areaColor(area) }}>
+              <path d={d} />
+            </svg>
+          </button>
+        ))}
+        <label className={`icon-pick wide ${area.icon?.startsWith("file:") ? "on" : ""}`} title="Upload a logo">
+          {area.icon?.startsWith("file:") ? <AreaDot area={area} size={14} /> : <Icon name="up" size={12} />}
+          <span className="small">Your logo</span>
+          <input
+            type="file"
+            className="sr"
+            accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (!f) return;
+              if (f.size > 300_000) return setError(`That image is ${Math.round(f.size / 1000)} KB; a logo can be at most 300 KB.`);
+              setError(null);
+              look({ image: { name: f.name, type: f.type as never, data: await fileBase64(f) } });
+            }}
+          />
+        </label>
+      </div>
+      {error && <p className="err small">{error}</p>}
     </div>
   );
 }
@@ -734,38 +822,5 @@ function Pages({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
         )}
       </div>
     </Sheet>
-  );
-}
-
-/**
- * Library → People → Bring in contacts (§7.1): from a contacts extension
- * (iCloud), or a vCard file. People Atlas knows are merged by an address,
- * a number or a handle, not made twice.
- */
-function ImportContacts({ atlas }: { atlas: Atlas }) {
-  const r = atlas.state.tests.contacts;
-  const from = (atlas.state.view?.extensions ?? []).filter((e) => e.state === "on" && e.provides.includes("contacts"));
-  return (
-    <div className="row" style={{ flexWrap: "wrap", gap: 10, margin: "0 0 12px" }}>
-      {from.map((e) => (
-        <button key={e.id} className="btn" onClick={() => atlas.send({ type: "atlas.contacts.import", from: e.id })}>
-          Bring in contacts from {e.name}
-        </button>
-      ))}
-      <label className="btn">
-        Bring in a vCard file
-        <input
-          type="file"
-          accept=".vcf,text/vcard,text/x-vcard"
-          style={{ display: "none" }}
-          onChange={async (ev) => {
-            const f = ev.target.files?.[0];
-            if (f) atlas.send({ type: "atlas.contacts.import", vcards: await f.text() });
-            ev.target.value = "";
-          }}
-        />
-      </label>
-      {r && <span className={`small ${r.ok ? "ok" : "err"}`}>{r.message}</span>}
-    </div>
   );
 }
