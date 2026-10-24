@@ -164,7 +164,7 @@ Atlas shouldn't forget. It keeps everything and gets good at finding it.
    - **Corrections replace the current value,** and the old value stays in history.
 3. **Summaries:**
    - a daily journal and weekly roll-ups;
-   - a portrait of each person Atlas serves: one overall, plus one per area.
+   - a portrait of each person Atlas serves: one overall, plus one per area. It includes their routines, usual places and rhythms, from where they go, their calendar and their mail (M7).
 
    All are rewritten nightly from the records and the log.
 
@@ -1270,7 +1270,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 | M4 | **Senses:** nodes (phone, desktop), the situation, one intake (§10.4) with decide-then-wake awareness, the later pile and the Senses screen, and tasks that come up when they fit, starting with places. | The gym-to-store moment, and others like it. |
 | M5 | **People:** contacts, faces (email and chat; the phone later, §26), members and shared areas, and digests; the mail, messages, GitHub and Linear senses, with `extract` and open loops. | It deals with people for you. |
 | M6 | **Delegation:** coding jobs through ACP, Atlas as the middleman, and long research jobs. | It runs your projects while you're away. |
-| M7 | **Launch:** setup polish (steps 6 and 7), moving in, all themes, ambient mode, docs, the deploy button, and a public release. | Someone else can install it and love it. |
+| M7 | **Launch,** in stages ([docs/M7.md](docs/M7.md), decided 2026-10-24): the new places and settings, releases and updates, brains (Anthropic, named brains), abilities (the services catalog, extension tools, skills learned by review), jobs Atlas owns, reach (where messages go, the owner's permission rules, phone calls through Telnyx), then setup polish (steps 6 and 7), moving in, all themes, ambient mode, docs, the deploy button, and a public release. | Someone else can install it and love it. |
 
 ---
 
@@ -1303,6 +1303,7 @@ The owner's list of things Atlas should grow into. None of it is in M0 to M7, bu
 |---|---|---|
 | **Understanding beyond language** | The model is the front layer. Deeper layers hold real models of the world: spatial reconstruction of places (from phone or camera video), analysis of competing outcomes over time (forecasts, simulations of a plan), and people recognized as entities (faces tied to person records). | Keep roles open-ended (§18), so `forecast`, `spatial` or `vision` roles can be added beside `decide` and `extract`. Person records must be able to hold more identity signals later, in a separate, encrypted store. Face recognition is opt-in, processed on the owner's own devices where possible, and never applied to people who haven't been added (laws on biometric data vary by state). |
 | **Talks like a person** | Not strict turn-taking: short backchannels ("mm-hm"), interjections, a follow-up after a pause, two messages in a row, starting a conversation. | The voice layer stays event-based, never a fixed listen-then-reply loop, so full-duplex speech models can slot in. The text thread already allows several Atlas messages in a row. |
+| **A picture of your life** (put off on 2026-10-24) | Atlas knows your tastes and history from the services you use: films, shows, books, music, workouts, games. Exports you drop in (Google Takeout, Spotify's streaming history, Letterboxd and Goodreads files, Apple Health), live feeds where a service has an open one (Last.fm, Trakt, Letterboxd's RSS, Strava, Steam), and an "About you" view in Library with each thing's source and a way to remove it. Private by default; faces never share it. | A kind of extension that returns typed entries into collections, read by code like the calendar. The moving-in readers (§23.3) are the same machinery. |
 | **Saved lists from other apps** | What you save in Instagram collections, YouTube Watch Later, Pinterest, X bookmarks or a reading list becomes something Atlas knows and can use ("that ramen place I saved"). | A "Saved" collection in records (§5). Instagram has no official API for personal saved collections, so it means a data export, or reading through your signed-in browser on a node, with your OK. |
 | **Displays you control** | "Show me the route on the TV." Any screen can show any stage view. | Stage views render on their own, outside the app shell, from the public API. Displays are nodes (§16.3) that show views. |
 | **An animated avatar** | A humanoid presence that appears on a display when it helps, and points at or works with what's on screen. | The same: views render anywhere, and the voice stream carries timing (ElevenLabs returns alignment) so lip-sync is possible later. |
