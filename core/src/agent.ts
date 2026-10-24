@@ -7,7 +7,18 @@ import { DurableObjectOAuthClientProvider } from "agents/mcp/do-oauth-client-pro
 import { Agent, type Connection, type ConnectionContext, getAgentByName, type WSMessage } from "agents";
 import { type TextSource, type Transcriber, type VoiceTurnContext, withVoice } from "agents/voice";
 import { CalendarSense } from "./agent/calendar";
-import { correctAreas, discoveryPrompt, readyToDiscover, startDiscovered, tagPending, triedDiscovery, unfiled } from "./agent/areas";
+import {
+  correctAreas,
+  correctEventAreas,
+  discoveryPrompt,
+  eventAreas,
+  readyToDiscover,
+  startDiscovered,
+  tagEvents,
+  tagPending,
+  triedDiscovery,
+  unfiled,
+} from "./agent/areas";
 import { HelperDesk, helperBrain, RESEARCH_BUDGET } from "./agent/helpers";
 import { CodingDesk, getJob, type JobWorkspace, type PullRequest } from "./agent/coding";
 import { codingTools } from "./tools/coding";
@@ -1287,6 +1298,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         }
         this.#areasChanged();
         return;
+      case "atlas.event.areas": {
+        const row = correctEventAreas(this.#sql, msg.event, msg.areas);
+        this.#broadcast({ type: "atlas.rows", rows: [row] });
+        this.#broadcast({ type: "atlas.calendar.changed" });
+        return;
+      }
       case "atlas.area.create":
       case "atlas.area.update":
       case "atlas.area.merge":
@@ -1407,18 +1424,22 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             type: "atlas.calendar.events",
             ref: msg.ref,
             events: [],
-            error: source ? "Those dates don't read." : "The calendar isn't connected. Connect iCloud in Settings → Connections.",
+            error: source ? "Those dates don't read." : "The calendar isn't connected. Connect iCloud in Abilities → Services.",
           });
           return;
         }
         try {
           const { events, stale } = await source.read({ start, end });
+          const waitingBefore = (getState<unknown[]>(this.#sql, "events_untagged") ?? []).length;
+          const areas = eventAreas(this.#sql, events);
           this.#send(connection, {
             type: "atlas.calendar.events",
             ref: msg.ref,
-            events: events.map(({ notes: _n, ...e }) => e),
+            events: events.map(({ notes: _n, people: _p, ...e }, i) => ({ ...e, areas: areas[i]! })),
             ...(stale ? { stale } : {}),
           });
+          // New events to sort: Clef looks at them in the background.
+          if ((getState<unknown[]>(this.#sql, "events_untagged") ?? []).length > waitingBefore) void this.#tendMemory();
         } catch (err) {
           this.#send(connection, {
             type: "atlas.calendar.events",
@@ -3506,6 +3527,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
         if (pass.changed.length) this.#broadcast({ type: "atlas.rows", rows: pass.changed.map((id) => getRow(this.#sql, id)!) });
         if (pass.seen < 50) break;
       }
+      if (await tagEvents(this.#sql, decider, { between: yieldNow })) this.#broadcast({ type: "atlas.calendar.changed" });
       const waiting = unfiled(this.#sql);
       if (readyToDiscover(this.#sql, waiting)) {
         triedDiscovery(this.#sql, waiting);

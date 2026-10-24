@@ -1,13 +1,13 @@
 // Inbox and Agenda (§21.2). Automations has its own page.
 
 import { useEffect, useState } from "react";
-import type { AreaView, CalendarEventView, InboxItem } from "../../../core/src/protocol";
+import type { CalendarEventView, InboxItem } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { ApprovalCard } from "../Approval";
 import { Markdown } from "../Markdown";
 import { Composer, compose } from "../Shell";
-import { addDays, AreaChip, AreaTag, clock, dayName, Empty, pressable, Sheet, shortDay, Stage, startOfDay } from "../ui";
-import { CalendarNote, eventArea, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
+import { addDays, AreaChip, clock, dayName, Empty, pressable, Sheet, shortDay, Stage, startOfDay } from "../ui";
+import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
 // --- Inbox: everything waiting on you ------------------------------------------------------
 
@@ -223,8 +223,8 @@ interface AgendaEntry {
   kind: "Event" | "Reminder" | "Promise" | "Job" | "Automation" | "Waiting";
   title: string;
   source: string;
-  /** An event's area, from its calendar's name. */
-  area?: AreaView;
+  /** The calendar event, so its areas can be moved. */
+  event?: CalendarEventView;
   id: string;
   /** Where it was said: the owner's words, for reminders and promises (§13.4). */
   said?: { text: string; at: number };
@@ -252,7 +252,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
         kind: "Event" as const,
         title: e.title,
         source: e.calendar,
-        area: eventArea(e, s.areas),
+        event: e,
         id: e.id,
       })),
     ...s.agenda
@@ -415,9 +415,29 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                               </span>
                             )}
                           </span>
-                          {e.area ? (
-                            <span className="hide-phone">
-                              <AreaTag area={e.area} />
+                          {e.event ? (
+                            <span className="hide-phone" onClick={(x) => x.stopPropagation()}>
+                              <AreaChip
+                                ids={e.event.areas ?? []}
+                                areas={s.areas}
+                                onMove={
+                                  s.areas.length
+                                    ? (ids) => {
+                                        const ev = e.event!;
+                                        atlas.send({
+                                          type: "atlas.event.areas",
+                                          event: {
+                                            id: ev.id,
+                                            title: ev.title,
+                                            calendar: ev.calendar,
+                                            ...(ev.location ? { location: ev.location } : {}),
+                                          },
+                                          areas: ids,
+                                        });
+                                      }
+                                    : undefined
+                                }
+                              />
                             </span>
                           ) : (
                             <span className="faint small hide-phone">{e.source}</span>

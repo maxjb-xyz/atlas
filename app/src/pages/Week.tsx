@@ -23,7 +23,7 @@ export function useCalendar(atlas: Atlas, ref: string, start: Date, end: Date): 
   useEffect(() => {
     if (!atlas.voice.connected) return;
     atlas.send({ type: "atlas.calendar", ref, start: localDate(start), end: localDate(end) });
-  }, [key, connected, atlas.voice.connected]);
+  }, [key, connected, atlas.voice.connected, atlas.state.calendarVersion]);
   return atlas.state.calendar[ref];
 }
 
@@ -44,13 +44,9 @@ export function CalendarNote({ atlas, cal }: { atlas: Atlas; cal: CalendarState 
   );
 }
 
-/**
- * The area an event belongs to: the one named like its calendar ("School" for
- * the School calendar). An event on a calendar no area is named after has none.
- */
+/** The area an event belongs to, as Atlas sorted it (§6.3): its first area, if it has one. */
 export function eventArea(e: CalendarEventView, areas: AreaView[]): AreaView | undefined {
-  const cal = e.calendar.trim().toLowerCase();
-  return areas.find((a) => a.state !== "archived" && a.name.trim().toLowerCase() === cal);
+  return areas.find((a) => a.state !== "archived" && (e.areas ?? []).includes(a.id));
 }
 
 export const eventStart = (e: CalendarEventView) => (e.all_day ? new Date(`${e.start}T00:00`) : new Date(e.start));
@@ -71,23 +67,33 @@ export function WeekGrid({
   const today = localDate(new Date());
   const hours = Array.from({ length: LAST_HOUR - FIRST_HOUR }, (_, i) => FIRST_HOUR + i);
   const calendars = [...new Set(events.map((e) => e.calendar))];
-  // A calendar named after an area takes the area's color, so School is the same color here as everywhere else.
-  const color = (cal: string) => {
-    const area = eventArea({ calendar: cal } as CalendarEventView, areas);
-    return area ? areaColor(area) : `var(--a${(calendars.indexOf(cal) + 2) % 8})`;
+  // An event in an area takes the area's color, so School is the same color here as everywhere else; the rest, its calendar's.
+  const calColor = (cal: string) => `var(--a${(calendars.indexOf(cal) + 2) % 8})`;
+  const color = (e: CalendarEventView) => {
+    const area = eventArea(e, areas);
+    return area ? areaColor(area) : calColor(e.calendar);
   };
+  // What the colors mean: each area shown, then each calendar with events in no area.
+  const legend = [
+    ...new Map(
+      events.map((e) => {
+        const a = eventArea(e, areas);
+        return a ? ([a.name, areaColor(a)] as const) : ([e.calendar, calColor(e.calendar)] as const);
+      }),
+    ).entries(),
+  ];
   const now = new Date();
   const nowTop = (now.getHours() + now.getMinutes() / 60 - FIRST_HOUR) * HOUR_PX;
 
   return (
     <div style={{ overflowX: "auto" }}>
       <div style={{ minWidth: 640 }}>
-        {calendars.length > 0 && (
+        {legend.length > 0 && (
           <div className="row" style={{ justifyContent: "flex-end", gap: 14, marginBottom: 10 }}>
-            {calendars.map((c) => (
-              <span key={c} className="chip">
-                <span className="dot" style={{ background: color(c) }} />
-                {c}
+            {legend.map(([label, c]) => (
+              <span key={label} className="chip">
+                <span className="dot" style={{ background: c }} />
+                {label}
               </span>
             ))}
           </div>
@@ -119,7 +125,7 @@ export function WeekGrid({
                     className="small"
                     style={{
                       padding: "1px 6px",
-                      borderLeft: `2px solid ${color(e.calendar)}`,
+                      borderLeft: `2px solid ${color(e)}`,
                       background: "var(--bg)",
                       overflow: "hidden",
                       whiteSpace: "nowrap",
@@ -183,7 +189,7 @@ export function WeekGrid({
                         top: Math.max(0, top),
                         height,
                         border: "1px solid var(--sep2)",
-                        borderLeft: `2px solid ${color(e.calendar)}`,
+                        borderLeft: `2px solid ${color(e)}`,
                         background: "var(--win)",
                         borderRadius: 4,
                         padding: "2px 6px",

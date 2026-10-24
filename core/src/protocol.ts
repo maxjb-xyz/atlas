@@ -72,6 +72,8 @@ export interface CalendarEventView {
   end: string;
   all_day: boolean;
   location?: string;
+  /** Its areas (§6.3): set by the owner, sorted by Clef, or the area its calendar is named after. */
+  areas: string[];
 }
 
 /** One step of an approval card, as the owner sees it (§12.2). */
@@ -407,6 +409,17 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("atlas.areas.set"),
     ref: z.string().regex(/^(log|rec):[\w-]+$/),
+    areas: z.array(z.string().max(64)).max(10),
+  }),
+  /** Move a calendar event to other areas: every event in its series follows. */
+  z.object({
+    type: z.literal("atlas.event.areas"),
+    event: z.object({
+      id: z.string().min(1).max(300),
+      title: z.string().max(300),
+      calendar: z.string().max(120),
+      location: z.string().max(500).optional(),
+    }),
     areas: z.array(z.string().max(64)).max(10),
   }),
   /** Setup (§22): mark a step done, skipped, or open again. */
@@ -920,6 +933,8 @@ export type ServerMessage =
   | { type: "atlas.run.detail.result"; run_id: string; run: Record<string, unknown> | null; rows: LogRow[] }
   /** `stale` is set when iCloud couldn't be asked: the events are Atlas's copy from `as_of`, and `why` says why. */
   | { type: "atlas.calendar.events"; ref: string; events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } }
+  /** Events' areas changed (Clef sorted some, or the owner moved one): pages showing the calendar ask again. */
+  | { type: "atlas.calendar.changed" }
   | { type: "atlas.inbox.items"; items: InboxItem[] }
   | { type: "atlas.stage.page"; ref: string; page: StagePage | null }
   | { type: "atlas.automations"; automations: AutomationView[]; suggestions: SuggestionView[] }

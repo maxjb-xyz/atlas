@@ -1,7 +1,18 @@
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
-import { correctAreas, DISCOVER_AFTER, readyToDiscover, startDiscovered, tagPending, triedDiscovery, unfiled } from "../src/agent/areas";
+import {
+  correctAreas,
+  correctEventAreas,
+  DISCOVER_AFTER,
+  eventAreas,
+  readyToDiscover,
+  startDiscovered,
+  tagEvents,
+  tagPending,
+  triedDiscovery,
+  unfiled,
+} from "../src/agent/areas";
 import { hat, systemPrompt } from "../src/context";
 import {
   AreaLook,
@@ -85,6 +96,37 @@ describe("tagging", () => {
       expect(thread(sql, 50).some((r) => r.kind === "area.change" && r.body.name === "Gym")).toBe(true);
       // Nonsense from the brain changes nothing.
       expect(startDiscovered(sql, unfiled(sql), "no json here", "run_y")).toEqual([]);
+    }));
+});
+
+describe("calendar events' areas", () => {
+  it("follow a calendar named like an area, else Clef once per series, and the owner's move wins", () =>
+    withSql(async (sql) => {
+      const school = createArea(sql, { name: "School", by: "owner" });
+      const work = createArea(sql, { name: "Keyframes", by: "owner" });
+      const ev = (id: string, title: string, calendar: string) => ({ id, title, calendar });
+      const week = [
+        ev("A::1", "French homework due", "School"),
+        ev("B::1", "Client shoot", "Home"),
+        ev("B::2", "Client shoot", "Home"),
+        ev("C::1", "Dentist", "Home"),
+      ];
+      // Named like an area: right away. The rest wait for Clef, once per series.
+      expect(eventAreas(sql, week)).toEqual([[school.id], [], [], []]);
+      const d = fakeDecider({ Keyframes: ["shoot"] });
+      expect(await tagEvents(sql, d)).toBe(2);
+      expect(d.calls.map((c) => c.state)).toEqual([
+        'A calendar event, "Client shoot", on the owner\'s "Home" calendar.',
+        'A calendar event, "Dentist", on the owner\'s "Home" calendar.',
+      ]);
+      expect(eventAreas(sql, week)).toEqual([[school.id], [work.id], [work.id], []]);
+      expect(await tagEvents(sql, d)).toBe(0);
+      // The owner moves one: the series follows, and it teaches Clef.
+      correctEventAreas(sql, week[3]!, [school.id]);
+      expect(eventAreas(sql, [ev("C::2", "Dentist", "Home")])).toEqual([[school.id]]);
+      correctEventAreas(sql, week[0]!, []);
+      expect(eventAreas(sql, week)[0]).toEqual([]);
+      expect(examples(sql, school.id).map((e) => e.fits)).toEqual([false, true]);
     }));
 });
 

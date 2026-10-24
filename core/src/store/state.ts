@@ -6,6 +6,10 @@
 import { parse, type Sql } from "./db";
 
 export type StateName =
+  /** Calendar events' areas by series (§6.3): what Clef said or the owner set. */
+  | "event_areas"
+  /** Calendar events waiting for Clef to sort them into areas. */
+  | "events_untagged"
   /** The log's last row the skill review looked back over (§9.3). */
   | "skill_review_seq"
   /** Pairs of skills already offered to the review to merge, as "a|b", so each is offered once. */

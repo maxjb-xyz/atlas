@@ -76,6 +76,8 @@ export interface State {
   history: { filter: HistoryFilter; rows: LogRow[]; has_more: boolean; stats?: HistoryStats } | null;
   runDetail: Record<string, { run: Record<string, unknown> | null; rows: LogRow[] }>;
   calendar: Record<string, CalendarState>;
+  /** Bumped when events' areas change, so pages showing the calendar ask again. */
+  calendarVersion: number;
   inbox: InboxItem[] | null;
   /** The live pages behind area and person views, by the ref they asked with. */
   stage: Record<string, StagePage | null>;
@@ -140,6 +142,7 @@ const initial: State = {
   history: null,
   runDetail: {},
   calendar: {},
+  calendarVersion: 0,
   inbox: null,
   stage: {},
   automations: null,
@@ -301,6 +304,8 @@ function reduce(s: State, a: Action): State {
           [m.ref]: { events: m.events, ...(m.error ? { error: m.error } : {}), ...(m.stale ? { stale: m.stale } : {}) },
         },
       };
+    case "atlas.calendar.changed":
+      return { ...s, calendarVersion: s.calendarVersion + 1 };
     case "atlas.inbox.items":
       return { ...s, inbox: m.items };
     case "atlas.stage.page":
