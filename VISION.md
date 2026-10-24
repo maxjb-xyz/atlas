@@ -583,9 +583,9 @@ The Permissions page lets the owner change when Atlas asks (decided 2026-10-24, 
 | Websites the workspace reaches (§9.1) | Asks for each site | Any site |
 | Forms in the browser | Asks | Fills and submits on sites you've allowed |
 | After reading the web (§20) | Asks before anything leaves | Doesn't ask for people and places you already trust |
-| Email sent as you | Always asks | Asks until you trust each recipient |
+| Email sent as you | Asks until you trust each recipient | Always asks |
 | Faces replying to known contacts | Asks until trusted | Sends without asking |
-| Calendar changes that involve other people | Asks | Does it and tells you |
+| Calendar changes that involve other people | Does it, tells you, and offers Undo | Asks |
 | MCP tools | Trusted one tool at a time | All of one service's tools at once |
 | A paid brain when a plan runs out (§18) | Asks | Allowed within the spending cap |
 | Tools on your devices (§16.3) | Asks until trusted | Always asks |
