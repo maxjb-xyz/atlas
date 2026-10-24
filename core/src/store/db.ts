@@ -5,7 +5,15 @@ export type Sql = SqlStorage;
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 
 /** Each entry runs once, in order. Never edit an entry that has shipped; add a new one. */
-const MIGRATIONS: string[] = [
+/**
+ * From this migration on (M7's, the first a one-click update can bring), a
+ * change to storage only adds: tables, indexes and columns. Rolling the code
+ * back then never breaks the data, and the data is never rolled back (§23.2).
+ * test/db.test.ts holds every migration from here to it.
+ */
+export const ONLY_ADDS_FROM = 13;
+
+export const MIGRATIONS: string[] = [
   `
   CREATE TABLE log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
