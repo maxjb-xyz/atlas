@@ -69,6 +69,15 @@ const RULES: Array<{ key: keyof Rules; icon: IconName; title: string; options: A
     ],
   },
   {
+    key: "paid_brain",
+    icon: "money",
+    title: "A paid brain when a job's brain runs out",
+    options: [
+      ["ask", "Asks"],
+      ["within_cap", "Within the spending cap"],
+    ],
+  },
+  {
     key: "device_tools",
     icon: "phone",
     title: "Tools on your devices",

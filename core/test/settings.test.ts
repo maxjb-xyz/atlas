@@ -126,4 +126,32 @@ describe("settings by asking", () => {
       // Only a run the owner started has them at all.
       expect((await asking(sql, { owner: false }).change([{ setting: "units", value: "metric" }])).ok).toBe(false);
     }));
+
+  it("set the spending cap, the paid-brain rule and the AI Gateway by asking, but never raise or move them after the web", () =>
+    withSql(async (sql) => {
+      expect(readSettings(sql).spending.cap).toBe(20);
+      expect(readSettings(sql).ai_gateway.id).toBe("");
+      const read = asking(sql, { readWeb: true });
+      expect((await read.change([{ setting: "spending.cap", value: 500 }])).ok).toBe(false);
+      expect((await read.change([{ setting: "permissions.paid_brain", value: "within_cap" }])).ok).toBe(false);
+      expect((await read.change([{ setting: "ai_gateway.id", value: "elsewhere" }])).ok).toBe(false);
+      // Lowering the cap is always fine.
+      expect((await read.change([{ setting: "spending.cap", value: 5 }])).ok).toBe(true);
+      const s = asking(sql);
+      expect(
+        (
+          await s.change([
+            { setting: "spending.cap", value: 100 },
+            { setting: "permissions.paid_brain", value: "within_cap" },
+            { setting: "ai_gateway.id", value: "atlas-gw" },
+          ])
+        ).ok,
+      ).toBe(true);
+      expect(readSettings(sql)).toMatchObject({
+        spending: { cap: 100 },
+        ai_gateway: { id: "atlas-gw" },
+        permissions: { paid_brain: "within_cap" },
+      });
+      expect((await s.change([{ setting: "ai_gateway.id", value: "not a gateway!" }])).ok).toBe(false);
+    }));
 });

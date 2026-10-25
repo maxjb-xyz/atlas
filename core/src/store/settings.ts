@@ -72,6 +72,26 @@ export const Settings = z.object({
     })
     .prefault({}),
   /**
+   * What paid brains (billed by key: Anthropic) may cost a month, in US dollars (§18): set by default, so a
+   * paid brain first in a chain can't run up a bill. Past it, they refuse until the month ends (UTC) and the
+   * chain's next brain answers. 0 means paid brains aren't used at all.
+   */
+  spending: z.object({ cap: z.number().min(0).max(10_000).default(20) }).prefault({}),
+  /**
+   * The owner's AI Gateway (§18), by its id on their Cloudflare account: Anthropic and Workers AI go through it,
+   * for its logs, caching and limits. Empty goes straight to each provider. Free, and off until it's set.
+   */
+  ai_gateway: z
+    .object({
+      id: z
+        .string()
+        .trim()
+        .max(64)
+        .regex(/^[a-z0-9-]*$/i)
+        .default(""),
+    })
+    .prefault({}),
+  /**
    * The owner's own rules for when Atlas asks (§12.3). Each starts as Atlas
    * behaved before there were rules; the floors (money, what can't be undone,
    * a vault login's first time on a site) aren't here because they can't move.
@@ -96,6 +116,8 @@ export const Settings = z.object({
       device_tools: z.enum(["until_trusted", "always"]).default("until_trusted"),
       /** Phone calls (§16.1): Atlas never calls the owner, or calls about what can't wait, when a call is on their list. */
       calls: z.enum(["never", "urgent"]).default("never"),
+      /** A job whose brain runs out (§18): it asks before going on with another, or goes on while paid brains are within the cap. */
+      paid_brain: z.enum(["ask", "within_cap"]).default("ask"),
     })
     .prefault({}),
   /**
@@ -238,6 +260,8 @@ export const SettingsPatch = z.object({
   timezone: f.timezone.unwrap().optional(),
   brains: f.brains.unwrap().optional(),
   named_brains: f.named_brains.unwrap().optional(),
+  spending: f.spending.unwrap().optional(),
+  ai_gateway: f.ai_gateway.unwrap().optional(),
   permissions: f.permissions.unwrap().optional(),
   phone: f.phone.unwrap().optional(),
   voice: f.voice.unwrap().optional(),
@@ -291,6 +315,8 @@ export type SecretName =
   | "elevenlabs_api_key"
   /** An Anthropic API key, for Claude as a brain (§18). */
   | "anthropic_api_key"
+  /** A Cloudflare API token (AI Gateway Run), only for an authenticated AI Gateway (§18). */
+  | "ai_gateway_token"
   /** Keys for the web searches that need one (§9.1). */
   | "tavily_api_key"
   | "brave_api_key"
@@ -366,6 +392,7 @@ export function secretValues(sql: Sql): string[] {
   const wanted: Array<[SecretName, string[]]> = [
     ["elevenlabs_api_key", []],
     ["anthropic_api_key", []],
+    ["ai_gateway_token", []],
     ["tavily_api_key", []],
     ["brave_api_key", []],
     ["exa_api_key", []],

@@ -38,7 +38,7 @@ Each brain sees what Atlas sends it to think with: its character, what it knows 
 |---|---|
 | Workers AI | Cloudflare, as above. |
 | ChatGPT, on your plan | OpenAI, under your ChatGPT account's terms and settings. |
-| Anthropic, on your API key | Anthropic, under its API terms. |
+| Anthropic, on your API key | Anthropic, under its API terms. With an AI Gateway set in Settings → Brains, Cloudflare's gateway on your account too, which keeps logs of each request as you set it up. |
 | A coding agent (Codex, Claude Code) | Its model provider, and the agent sees the repo it works on. |
 
 You pick which brain does which kind of work in Settings → Brains, so a brain you don't want to see something can be kept off the work that would show it.

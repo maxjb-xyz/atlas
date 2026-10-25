@@ -2,7 +2,16 @@
 // streams, calls tools, sees their results, and goes again until it answers
 // or the budget runs out. Nothing here rewrites what the model says (rule 1).
 
-import { type Brain, BrainError, type BrainEvent, brainKey, type Message, type ToolCall, type Usage } from "./brains/types";
+import {
+  type Brain,
+  BrainError,
+  type BrainEvent,
+  brainKey,
+  type Message,
+  type PlanLimits,
+  type ToolCall,
+  type Usage,
+} from "./brains/types";
 import { type BrainRouter, SlowBrainError } from "./brains/router";
 import type { Append, LogRow, Surface } from "./store/log";
 import type { FinalState } from "./store/runs";
@@ -207,6 +216,9 @@ interface Attempt {
   abort: AbortController;
   it: AsyncIterator<BrainEvent>;
   first: Promise<Started>;
+  /** When it was asked, and when its first event came: the router keeps each brain's speed. */
+  at: number;
+  firstAt?: number;
 }
 
 type Started = { attempt: Attempt; ok: true; next: IteratorResult<BrainEvent> } | { attempt: Attempt; ok: false; err: unknown };
@@ -235,13 +247,16 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
     lastStart = Date.now();
     const abort = new AbortController();
     const signal = spec.signal ? AbortSignal.any([spec.signal, abort.signal]) : abort.signal;
-    const attempt = { index, brain, abort } as Attempt;
+    const attempt = { index, brain, abort, at: lastStart } as Attempt;
     try {
       attempt.it = brain
         .stream({ system: io.system, messages: io.messages, tools: specs, signal, effort: spec.effort })
         [Symbol.asyncIterator]();
       attempt.first = firstEvent(attempt.it, spec.firstEventMs, abort).then(
-        (next): Started => ({ attempt, ok: true, next }),
+        (next): Started => {
+          attempt.firstAt = Date.now();
+          return { attempt, ok: true, next };
+        },
         (err): Started => ({ attempt, ok: false, err }),
       );
     } catch (err) {
@@ -306,6 +321,7 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
     let statusSaid = false;
     const calls: ToolCall[] = [];
     let usage: Usage | undefined;
+    let limits: PlanLimits | undefined;
     try {
       for (let next = got.next; !next.done; next = await a.it.next()) {
         const ev = next.value;
@@ -327,9 +343,15 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
           if (ev.type === "tool_call") calls.push(ev.call);
         } else if (ev.type === "done") {
           usage = ev.usage;
+          limits = ev.limits;
         }
       }
-      deps.router.markOk(brain);
+      deps.router.markOk(brain, {
+        ...(usage ? { usage } : {}),
+        ...(limits ? { limits } : {}),
+        first_ms: a.firstAt != null ? a.firstAt - a.at : null,
+        total_ms: Date.now() - a.at,
+      });
       return { text: stepText, calls, brain: { provider: brain.provider, model: brain.model }, fellBack: a.index > 0, usage };
     } catch (err) {
       if (spec.signal?.aborted) throw err;

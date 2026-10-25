@@ -32,17 +32,24 @@ export interface BrainRequest {
 }
 
 export interface Usage {
+  /** Every input token, the cached ones included. */
   input: number;
   output: number;
+  /** Input read from the provider's cache, billed at its cache price. */
   cached?: number;
+  /** Input written to the cache this time, billed a little above the input price (Anthropic). */
+  written?: number;
 }
+
+export type { PlanLimits } from "./limits";
+import type { PlanLimits } from "./limits";
 
 export type BrainEvent =
   | { type: "text"; text: string }
   /** The model has started a tool call. Sent as early as the provider allows, for voice status lines. */
   | { type: "tool_start"; name: string }
   | { type: "tool_call"; call: ToolCall }
-  | { type: "done"; finish: "stop" | "tool_calls" | "length"; usage?: Usage };
+  | { type: "done"; finish: "stop" | "tool_calls" | "length"; usage?: Usage; limits?: PlanLimits };
 
 export interface Brain {
   provider: "chatgpt" | "workers-ai" | "anthropic";
@@ -57,6 +64,8 @@ export class BrainError extends Error {
     /** True when retrying on the same provider won't help (bad key, unknown model). */
     readonly permanent = false,
     readonly status?: number,
+    /** When the provider said it can be used again (a plan's window, a spending cap), in ms. */
+    readonly resetAt?: number,
   ) {
     super(message);
   }

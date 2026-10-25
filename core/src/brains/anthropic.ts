@@ -4,8 +4,33 @@
 // tools are marked for prompt caching, so a second turn reads them from the
 // cache. Errors keep Anthropic's own words and the HTTP status.
 // https://docs.anthropic.com/en/api/messages-streaming
+//
+// With an AI Gateway set (§18, off until the owner sets one), the same
+// request goes to the gateway's Anthropic endpoint instead: the body, the
+// stream, tool use and cache control are Anthropic's own, passed through.
+// Per Cloudflare's docs (read 2026-10-25): the address is
+// https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/anthropic/v1/messages,
+// which the AI binding's `gateway(id).getUrl("anthropic")` gives with the
+// account filled in, and an authenticated gateway takes a Cloudflare API
+// token (AI Gateway Run) as `cf-aig-authorization: Bearer <token>`.
+// https://developers.cloudflare.com/ai-gateway/usage/providers/anthropic/
+// https://developers.cloudflare.com/ai-gateway/configuration/authentication/
+//
+// Limits, per Anthropic's rate limits page (read 2026-10-25): a 429 may carry
+// `retry-after` in seconds; the monthly spend cap's 429 has none but says
+// "You will regain access on 2026-09-01 at 00:00 UTC", and a limit the owner
+// set in the Console answers 400 "You have reached your specified API usage
+// limits". Both are a brain running out, not a bad request.
+// https://platform.claude.com/docs/en/api/rate-limits
 
+import { type ModelInfo, priceOf } from "./catalog";
 import { type Brain, BrainError, type BrainEvent, type BrainRequest, type Message, parseArgs, sseData } from "./types";
+
+/** Where requests go through an AI Gateway: its Anthropic address, and its token when the gateway is authenticated. */
+export interface Via {
+  url: string;
+  token: string | null;
+}
 
 export const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 export const MODELS_URL = "https://api.anthropic.com/v1/models";
@@ -73,6 +98,7 @@ export async function* readMessagesStream(body: ReadableStream<Uint8Array>, sign
   const tools = new Map<number, { id: string; name: string; json: string }>();
   let input = 0;
   let cached = 0;
+  let written = 0;
   let output = 0;
   let stop = "end_turn";
   for await (const data of sseData(body, signal)) {
@@ -86,7 +112,8 @@ export async function* readMessagesStream(body: ReadableStream<Uint8Array>, sign
       case "message_start": {
         const u = e.message?.usage;
         cached = u?.cache_read_input_tokens ?? 0;
-        input = (u?.input_tokens ?? 0) + cached + (u?.cache_creation_input_tokens ?? 0);
+        written = u?.cache_creation_input_tokens ?? 0;
+        input = (u?.input_tokens ?? 0) + cached + written;
         break;
       }
       case "content_block_start":
@@ -118,7 +145,7 @@ export async function* readMessagesStream(body: ReadableStream<Uint8Array>, sign
         yield {
           type: "done",
           finish: stop === "tool_use" ? "tool_calls" : stop === "max_tokens" ? "length" : "stop",
-          usage: { input, output, cached },
+          usage: { input, output, cached, ...(written ? { written } : {}) },
         };
         return;
       case "error":
@@ -128,9 +155,28 @@ export async function* readMessagesStream(body: ReadableStream<Uint8Array>, sign
   throw new BrainError("Anthropic: the answer ended early.");
 }
 
+/** "You will regain access on 2026-09-01 at 00:00 UTC", or any date and time in UTC like it, in ms. */
+export function regainsAt(message: string): number | undefined {
+  const m = /(\d{4}-\d{2}-\d{2})(?:\s+at\s+|T)(\d{2}:\d{2})(?::\d{2})?\s*(?:UTC|Z)/i.exec(message);
+  if (!m) return undefined;
+  const t = Date.parse(`${m[1]}T${m[2]}:00Z`);
+  return Number.isFinite(t) ? t : undefined;
+}
+
 /** Anthropic's error in plain words, with whether retrying can help and how long to wait. */
-function failure(status: number | undefined, type: string | undefined, message: string): BrainError {
-  const where = `Anthropic${status ? ` (HTTP ${status})` : ""}`;
+function failure(
+  status: number | undefined,
+  type: string | undefined,
+  message: string,
+  o: { retryAfter?: number; via?: boolean } = {},
+): BrainError {
+  const where = o.via
+    ? `Anthropic through AI Gateway (gateway.ai.cloudflare.com${status ? `, HTTP ${status}` : ""})`
+    : `Anthropic${status ? ` (HTTP ${status})` : ""}`;
+  // A spend cap, Anthropic's or the owner's own in the Console: the brain has run out until the date it gives.
+  if (/reached your (?:specified )?(?:workspace )?API usage limits/i.test(message)) {
+    return new BrainError(`${where} says the API usage limit is reached: ${message}`, false, 429, regainsAt(message) ?? o.retryAfter);
+  }
   switch (type) {
     case "authentication_error":
       return new BrainError(`${where} refused the API key: ${message}. Check it in Settings → Brains.`, true, 401);
@@ -141,34 +187,62 @@ function failure(status: number | undefined, type: string | undefined, message: 
     case "invalid_request_error":
       return new BrainError(`${where} refused the request: ${message}`, true, status ?? 400);
     case "rate_limit_error":
-      return new BrainError(`${where} is rate limiting Atlas for now: ${message}`, false, 429);
+      return new BrainError(`${where} is rate limiting Atlas for now: ${message}`, false, 429, o.retryAfter);
     case "overloaded_error":
       return new BrainError(`${where} is overloaded right now: ${message}`, false, 529);
   }
+  if (status === 429) return new BrainError(`${where} is rate limiting Atlas for now: ${message}`, false, 429, o.retryAfter);
   return new BrainError(`${where}: ${message}`, status === 400 || status === 401 || status === 403 || status === 404, status);
 }
 
-/** A refused request in Anthropic's own words. Exported for tests. */
-export async function refusal(res: Response): Promise<BrainError> {
+/** A refused request in Anthropic's own words, or AI Gateway's when the gateway refused it. Exported for tests. */
+export async function refusal(res: Response, via = false): Promise<BrainError> {
   const raw = await res.text().catch(() => "");
+  const after = Number(res.headers.get("retry-after"));
+  const o = { via, ...(Number.isFinite(after) && after > 0 ? { retryAfter: Date.now() + after * 1000 } : {}) };
   try {
-    const body = JSON.parse(raw) as { error?: { type?: string; message?: string } };
-    if (body.error) return failure(res.status, body.error.type, body.error.message ?? raw.slice(0, 200));
+    const body = JSON.parse(raw) as { error?: { type?: string; message?: string } | Array<{ code?: number; message?: string }> };
+    // AI Gateway's own refusals (a wrong token on an authenticated gateway) come as a list of codes and messages.
+    if (Array.isArray(body.error)) {
+      const words = body.error.map((e) => `${e.message ?? "refused"}${e.code ? ` (code ${e.code})` : ""}`).join("; ");
+      const hint =
+        res.status === 401 || res.status === 403 ? ". If it's an authenticated gateway, check its token in Settings → Brains" : "";
+      return failure(res.status, undefined, `the gateway said: ${words}${hint}`, o);
+    }
+    if (body.error) return failure(res.status, body.error.type, body.error.message ?? raw.slice(0, 200), o);
   } catch {
     // Not JSON: keep the words.
   }
-  return failure(res.status, undefined, raw.replace(/\s+/g, " ").trim().slice(0, 200) || "no answer");
+  return failure(res.status, undefined, raw.replace(/\s+/g, " ").trim().slice(0, 200) || "no answer", o);
 }
 
 const headers = (key: string) => ({ "x-api-key": key, "anthropic-version": VERSION, "content-type": "application/json" });
 
-export function anthropicBrain(key: () => string | null, model: string, f: typeof fetch = fetch): Brain {
+/**
+ * Anthropic as a brain. `via` gives the AI Gateway to go through, when the
+ * owner set one; null goes straight to Anthropic.
+ */
+export function anthropicBrain(
+  key: () => string | null,
+  model: string,
+  f: typeof fetch = fetch,
+  via: () => Promise<Via | null> = async () => null,
+): Brain {
   return {
     provider: "anthropic",
     model,
     async *stream(req: BrainRequest): AsyncIterable<BrainEvent> {
       const k = key();
       if (!k) throw new BrainError("Anthropic has no API key. Add one in Settings → Brains.", true);
+      let gateway: Via | null;
+      try {
+        gateway = await via();
+      } catch (err) {
+        throw new BrainError(
+          `AI Gateway: Atlas couldn't find the gateway's address (${err instanceof Error ? err.message : String(err)}). Check its name in Settings → Brains.`,
+          true,
+        );
+      }
       const tools = req.tools.map((t, i) => ({
         name: t.name,
         description: t.description,
@@ -176,9 +250,14 @@ export function anthropicBrain(key: () => string | null, model: string, f: typeo
         // The tools don't change between turns: the last one marks them all for the cache.
         ...(i === req.tools.length - 1 ? { cache_control: { type: "ephemeral" } } : {}),
       }));
-      const res = await f(MESSAGES_URL, {
+      const url = gateway ? `${gateway.url.replace(/\/+$/, "")}/v1/messages` : MESSAGES_URL;
+      const res = await f(url, {
         method: "POST",
-        headers: { ...headers(k), accept: "text/event-stream" },
+        headers: {
+          ...headers(k),
+          accept: "text/event-stream",
+          ...(gateway?.token ? { "cf-aig-authorization": `Bearer ${gateway.token}` } : {}),
+        },
         signal: req.signal,
         body: JSON.stringify({
           model,
@@ -189,16 +268,24 @@ export function anthropicBrain(key: () => string | null, model: string, f: typeo
           stream: true,
         }),
       });
-      if (!res.ok || !res.body) throw await refusal(res);
+      if (!res.ok || !res.body) throw await refusal(res, gateway != null);
       yield* readMessagesStream(res.body, req.signal);
     },
   };
 }
 
 /** Anthropic's live catalog (§11.4: newest by default, from the provider, not from code), newest first. */
-export async function anthropicModels(key: string, f: typeof fetch = fetch): Promise<Array<{ id: string; name: string }>> {
+export async function anthropicModels(key: string, f: typeof fetch = fetch): Promise<ModelInfo[]> {
   const res = await f(`${MODELS_URL}?limit=100`, { headers: headers(key) });
   if (!res.ok) throw await refusal(res);
-  const body = (await res.json()) as { data?: Array<{ id?: string; display_name?: string }> };
-  return (body.data ?? []).filter((m) => m.id).map((m) => ({ id: m.id!, name: m.display_name ?? m.id! }));
+  const body = (await res.json()) as { data?: Array<{ id?: string; display_name?: string; max_input_tokens?: number }> };
+  // Anthropic's catalog has no prices: they're from the dated table in catalog.ts.
+  return (body.data ?? [])
+    .filter((m) => m.id)
+    .map((m) => ({
+      id: m.id!,
+      name: m.display_name ?? m.id!,
+      price: priceOf({ provider: "anthropic", model: m.id! }),
+      ...(m.max_input_tokens ? { context: m.max_input_tokens } : {}),
+    }));
 }
