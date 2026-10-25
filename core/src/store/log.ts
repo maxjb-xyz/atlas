@@ -223,6 +223,8 @@ export function quietTrigger(trigger: string): boolean {
     trigger === "areas" ||
     trigger === "movein" ||
     trigger.startsWith("helper:") ||
+    // A job's turn that stopped (Stop, a pause) is the job's to say, on its card and in its thread (§8.3).
+    trigger.startsWith("job:") ||
     trigger.startsWith("automation")
   );
 }

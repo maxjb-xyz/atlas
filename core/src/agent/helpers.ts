@@ -340,7 +340,7 @@ export class HelperDesk {
   list(): JobView[] {
     return this.host.sql
       .exec<{ id: string; title: string; state: string; created_at: number; source: string }>(
-        `SELECT id, title, state, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND json_extract(source, '$.detail.goal') IS NULL AND json_extract(source, '$.detail.step_of') IS NULL AND (state = 'running' OR updated_at > ?) ORDER BY created_at DESC LIMIT 20`,
+        `SELECT id, title, state, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND json_extract(source, '$.detail.goal') IS NULL AND json_extract(source, '$.detail.owned') IS NULL AND json_extract(source, '$.detail.step_of') IS NULL AND (state = 'running' OR updated_at > ?) ORDER BY created_at DESC LIMIT 20`,
         Date.now() - 60 * 60_000,
       )
       .toArray()
