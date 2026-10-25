@@ -122,7 +122,7 @@ export interface InboxItem {
   /** Atlas asking the owner something it can't decide alone, such as whether to stop asking for an action. */
   question?: { key: string; yes: string; no: string };
   /** A coding job's question for the owner (§8.2): the answer goes back to its agent. */
-  job?: { id: string; title: string; question: string; options: string[]; why?: string; content?: string };
+  job?: { id: string; title: string; question: string; options: string[]; why?: string; content?: string; files?: FileRef[] };
   /** What a face handed the owner (§7.2): who it's from, the conversation, and whether it can be answered from here. */
   face?: {
     name: string;
@@ -181,6 +181,41 @@ export interface JobView {
   coding?: CodingView;
   /** A job Atlas owns (§8.3): its plan, what it has done and said, what waits on the owner, and what it has used. */
   goal?: GoalView;
+  /** A job Atlas owns, as it runs since 2026-10-25 (§8.3, §21.4): Atlas working in turns on its own conversation. */
+  owned?: OwnedJobView;
+}
+
+/** A file a message carries, to play, look at or open (§21.7): audio, an image, a video, a document. */
+export interface FileRef {
+  id: string;
+  name: string;
+  /** Its media type, like audio/mpeg or image/png, which decides how it's shown. */
+  type: string;
+  /** Where the app reads it, with the owner's session: /api/files/<id>. */
+  url: string;
+  size?: number;
+}
+
+/** A job Atlas owns, for its card in the thread and its own thread (§21.4). */
+export interface OwnedJobView {
+  phase: "working" | "waiting" | "paused" | "done" | "failed" | "cancelled";
+  /** What Atlas is doing on it right now, in a sentence, only while something is ("Downloading three tracks to compare"). */
+  now: string | null;
+  /** The owner's message that asked for it, so its card sits under that message; null when it started some other way. */
+  asked_by: string | null;
+  /** The question row it waits on, while it does. */
+  question: string | null;
+  /** What it has made or kept so far. */
+  files: FileRef[];
+  /** Its latest words to the owner. */
+  latest: { at: number; text: string } | null;
+  /** When it must be done by, if the owner said. */
+  deadline?: number;
+  /** Turns taken and tokens used, and what that cost when a paid brain did it. */
+  spent: { turns: number; tokens: number; dollars?: number };
+  /** For Detailed and Developer levels: the notes it keeps (§8.3), and the coding agent working for it, if one is. */
+  notes?: string;
+  coding?: string | null;
 }
 
 export interface GoalView {
@@ -617,7 +652,15 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Stop a helper's job (Stop on the Jobs tab). */
   z.object({ type: z.literal("atlas.job.stop"), id: z.string().max(64) }),
   /** The owner's words for a coding job (§8.2): the answer to its question, or Steer while it works. */
-  z.object({ type: z.literal("atlas.job.say"), id: z.string().max(64), text: z.string().min(1).max(4_000) }),
+  z.object({
+    type: z.literal("atlas.job.say"),
+    id: z.string().max(64),
+    text: z.string().min(1).max(4_000),
+    /** The question row this answers, when it's an answer (a button, or words on the question). */
+    answers: z.string().max(64).optional(),
+  }),
+  /** A job's own thread (§21.4): what Atlas said on it and the owner said to it. */
+  z.object({ type: z.literal("atlas.job.thread"), id: z.string().max(64) }),
   /**
    * Phone calls (§16.1): the calls extension's numbers, using one, giving it back, numbers to buy and buying
    * one, and a test call to the owner. The answer is one atlas.calls.
@@ -1207,6 +1250,8 @@ export type ServerMessage =
     }
   /** Helpers' jobs: running ones, and ones that ended in the last hour (§21.4). */
   | { type: "atlas.jobs"; jobs: JobView[] }
+  /** A job's own thread, oldest first: its updates, questions and result, and the owner's words to it. */
+  | { type: "atlas.job.thread"; id: string; rows: LogRow[] }
   | { type: "atlas.view"; view: SettingsView }
   /** The situation changed (a sense event, a refresh): views showing it, and Now, ask again. */
   | { type: "atlas.situation" }

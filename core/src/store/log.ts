@@ -26,6 +26,8 @@ export type LogKind =
   | "job.result"
   /** A coding job's question for the owner (§8.2), which Inbox shows until it's answered. */
   | "job.question"
+  /** Atlas's words on a job it owns, in that job's thread and on its card (§8.3, §21.4); it doesn't notify. */
+  | "job.update"
   /** An area was created, changed, merged or archived, or the owner moved an item's areas (§6). */
   | "area.change"
   /** An automation was made, changed, turned on or paused, or deleted (§13). */
