@@ -3,7 +3,8 @@
 
 import { getAgentByName, routeAgentRequest } from "agents";
 import { SESSION_HEADER } from "./auth";
-import { NODE_HEADER, OWNER } from "./agent";
+import { CALL_HEADER, NODE_HEADER, OWNER } from "./agent";
+import { bridge } from "./voice/phone";
 import { NODE_KINDS } from "./nodes";
 import { type AuthStore, handleAuth, memberOf, owner, sameOrigin } from "./auth";
 import { agentNameOf } from "./members";
@@ -21,11 +22,24 @@ interface OwnerApi {
   apiRunsSince(seq: number): Promise<unknown[]>;
   apiLastSeq(): Promise<number>;
   apiCharacterCheck(): Promise<unknown>;
+  apiJudge(input: { yardstick: string; transcript: Array<{ who: "owner" | "atlas"; text: string; tools?: string[] }> }): Promise<unknown>;
   apiApprove(id: string): Promise<{ ok: boolean; text: string }>;
   apiFile(id: string): Promise<{ key: string; name: string; type: string } | null>;
+  apiPhoto(id: string): Promise<{ key: string; type: string } | null>;
+  apiSkillFolder(id: string): Promise<{ name: string; zip: Uint8Array } | null>;
   apiWorkspaceGate(): Promise<{ allow: string[]; inject: Record<string, string> }>;
   apiReaction(id: string, how: "opened" | "dismissed"): Promise<void>;
+  apiExport(): Promise<{ name: string; stream: ReadableStream<Uint8Array> }>;
+  apiMoveInRead(o: { reader: string; path: string; part: number; text: string }): Promise<{ ok: boolean; text: string }>;
+  apiMoveInSkill(o: {
+    reader: string;
+    folder: string;
+    files: Array<{ path: string; base64: string }>;
+  }): Promise<{ ok: boolean; text: string }>;
 }
+
+/** The most one request of moving in carries: a part of a big file, or a skill's folder as base64. */
+const MOVE_IN_BYTES = 12_000_000;
 
 interface SenseApi {
   apiOwnTracks(authorization: string | null, text: string): Promise<{ status: number; body: string; headers: Record<string, string> }>;
@@ -91,7 +105,7 @@ export default {
         url.searchParams.get("code"),
         url.searchParams.get("error"),
       );
-      const back = `${url.origin}/#/settings/extensions?signin=${out.ok ? "ok" : "failed"}&note=${encodeURIComponent(out.text)}`;
+      const back = `${url.origin}/#/abilities/services?signin=${out.ok ? "ok" : "failed"}&note=${encodeURIComponent(out.text)}`;
       return Response.redirect(back, 302);
     }
 
@@ -102,6 +116,31 @@ export default {
       if (body.length > 30_000_000) return json({ error: "That mail is too big: 30 MB at most." }, 413);
       const out = await agent.apiMailIn(request.headers.get("x-atlas-time"), request.headers.get("x-atlas-signature"), body);
       return new Response(out.text, { status: out.status });
+    }
+
+    // A phone call's audio (§16.1): the phone service streams to its extension's address. Checked by the address's
+    // key, then joined to Atlas's voice as a voice client of its own, through the bridge.
+    const stream = /^\/x\/([a-z][a-z0-9-]{1,39})\/([0-9a-f]{36})\/stream\/([0-9a-f]{32})$/.exec(path);
+    if (stream && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      const agent = await getAgentByName(env.PersonAgent, OWNER);
+      const ok = await (
+        agent as unknown as { apiCallStream(id: string, key: string, token: string): Promise<{ ok: boolean; rate: number }> }
+      ).apiCallStream(stream[1]!, stream[2]!, stream[3]!);
+      if (!ok.ok) return new Response("This isn't a phone stream's address.", { status: 401 });
+      const call = (url.searchParams.get("call") ?? "in").slice(0, 200);
+      const res = await agent.fetch(
+        new Request(new URL("/calls/connect", url), { headers: { upgrade: "websocket", [CALL_HEADER]: call } }),
+      );
+      const voice = res.webSocket;
+      if (!voice) return new Response(`Atlas didn't take the call (HTTP ${res.status}).`, { status: 502 });
+      const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+      server.accept();
+      voice.accept();
+      bridge(server as never, voice as never, {
+        rate: ok.rate,
+        onEnd: (why) => console.log(JSON.stringify({ at: "call.end", call, why })),
+      });
+      return new Response(null, { status: 101, webSocket: client });
     }
 
     // An extension's own address (§17): a service posts here, checked by the address's key and the service's signature.
@@ -180,7 +219,7 @@ export default {
       // A member's requests go to their own Atlas (§7.1); the workspace and the log API are the owner's.
       const member = memberOf(who);
       if (member && !(await (await authStore(env)).memberInfo(member))) return json({ error: "Sign in first." }, 401);
-      if (member && (path.startsWith("/api/workspace/") || path === "/api/log" || path === "/api/character-check"))
+      if (member && (path.startsWith("/api/workspace/") || path === "/api/log" || path === "/api/character-check" || path === "/api/judge"))
         return json({ error: "That's only for the owner." }, 403);
       const agent = (await getAgentByName(env.PersonAgent, agentNameOf(member))) as unknown as OwnerApi;
 
@@ -238,8 +277,121 @@ export default {
           },
         });
       }
+      // A person's photo from the address book (docs/ui §8), from R2. Its address changes with the photo, so it keeps.
+      const photo = /^\/api\/photos\/([\w-]{1,64})$/.exec(path);
+      if (photo && request.method === "GET") {
+        const meta = await agent.apiPhoto(photo[1]!);
+        const obj = meta ? await env.FILES.get(meta.key) : null;
+        if (!meta || !obj) return json({ error: "That photo isn't there any more." }, 404);
+        return new Response(obj.body, {
+          headers: {
+            "content-type": meta.type,
+            "content-security-policy": "sandbox",
+            "x-content-type-options": "nosniff",
+            "cache-control": "private, max-age=31536000, immutable",
+          },
+        });
+      }
+      // Take a copy of everything (§23.4): the archive, built by the person's own Atlas as it's downloaded.
+      // A sign-in cookie is SameSite=Strict, so only a link in the app itself starts it.
+      if (path === "/api/export" && request.method === "GET") {
+        try {
+          const { name, stream } = await agent.apiExport();
+          return new Response(stream, {
+            headers: {
+              "content-type": "application/gzip",
+              "content-disposition": `attachment; filename="${name}"`,
+              "x-content-type-options": "nosniff",
+              "cache-control": "private, no-store",
+            },
+          });
+        } catch (err) {
+          const error = `The copy couldn't start: ${err instanceof Error ? err.message : String(err)}`;
+          console.error(JSON.stringify({ at: "data.export", error }));
+          return json({ error }, 500);
+        }
+      }
+      // Moving in (§23.3): the app opens the owner's export or folder on their device and sends only the files its
+      // reader takes, one file or part of one at a time, and each skill folder as it was.
+      if ((path === "/api/movein/read" || path === "/api/movein/skill") && request.method === "POST") {
+        if (!sameOrigin(request)) return json({ error: "Wrong origin." }, 403);
+        if (Number(request.headers.get("content-length") ?? "0") > MOVE_IN_BYTES)
+          return json({ ok: false, text: `That's over ${MOVE_IN_BYTES / 1_000_000} MB in one go; the app sends big files in parts.` }, 413);
+        const reader = url.searchParams.get("reader") ?? "";
+        if (!/^[a-z][a-z0-9-]{1,39}$/.test(reader)) return json({ ok: false, text: "Which reader is this for? Send ?reader=." }, 400);
+        try {
+          if (path === "/api/movein/read") {
+            const text = await request.text();
+            if (text.length > MOVE_IN_BYTES) return json({ ok: false, text: "That part is too big." }, 413);
+            const out = await agent.apiMoveInRead({
+              reader,
+              path: (url.searchParams.get("path") ?? "").slice(0, 400),
+              part: Math.max(1, Number(url.searchParams.get("part") ?? "1") || 1),
+              text,
+            });
+            return json(out, out.ok ? 200 : 422);
+          }
+          const body = (await request.json().catch(() => null)) as { folder?: unknown; files?: unknown } | null;
+          const files = Array.isArray(body?.files)
+            ? (body!.files as Array<{ path?: unknown; base64?: unknown }>)
+                .filter((f) => typeof f?.path === "string" && typeof f.base64 === "string")
+                .map((f) => ({ path: String(f.path).slice(0, 300), base64: String(f.base64) }))
+            : [];
+          if (typeof body?.folder !== "string" || !files.length)
+            return json({ ok: false, text: 'Send {"folder": "...", "files": [...]}.' }, 400);
+          const out = await agent.apiMoveInSkill({ reader, folder: body.folder.slice(0, 300), files });
+          return json(out, out.ok ? 200 : 422);
+        } catch (err) {
+          const error = `Moving in stopped: ${err instanceof Error ? err.message : String(err)}`;
+          console.error(JSON.stringify({ at: "movein.http", reader, error }));
+          return json({ ok: false, text: error }, 500);
+        }
+      }
+      // A skill's folder as a zip (§9.3: Download gives the folder back), its SKILL.md and every file in it.
+      const skill = /^\/api\/skills\/([\w-]{1,64})\/folder$/.exec(path);
+      if (skill && request.method === "GET") {
+        try {
+          const got = await agent.apiSkillFolder(skill[1]!);
+          if (!got) return json({ error: "That skill isn't there any more." }, 404);
+          return new Response(got.zip, {
+            headers: {
+              "content-type": "application/zip",
+              "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`${got.name}.zip`)}`,
+              "x-content-type-options": "nosniff",
+              "cache-control": "private, no-store",
+            },
+          });
+        } catch (err) {
+          const error = `Couldn't put the skill's folder together: ${err instanceof Error ? err.message : String(err)}`;
+          console.error(JSON.stringify({ at: "skills.folder", id: skill[1], error }));
+          return json({ error }, 500);
+        }
+      }
       if (path === "/api/character-check" && request.method === "POST") {
         return json(await agent.apiCharacterCheck());
+      }
+      // The Jarvis bar's judge (§23.7), for `npm run eval:jarvis`: a conversation, and what a person who's good at this would do.
+      if (path === "/api/judge" && request.method === "POST") {
+        const body = (await request.json().catch(() => ({}))) as { yardstick?: unknown; transcript?: unknown };
+        const yardstick = typeof body.yardstick === "string" ? body.yardstick.trim() : "";
+        const lines = (Array.isArray(body.transcript) ? body.transcript : []) as Array<{ who?: unknown; text?: unknown; tools?: unknown }>;
+        const lineOk = (l: { who?: unknown; text?: unknown; tools?: unknown }) =>
+          (l?.who === "owner" || l?.who === "atlas") &&
+          typeof l.text === "string" &&
+          l.text.length <= 20_000 &&
+          (l.tools === undefined || (Array.isArray(l.tools) && l.tools.length <= 200 && l.tools.every((t) => typeof t === "string")));
+        if (!yardstick || yardstick.length > 4_000 || !lines.length || lines.length > 40 || !lines.every(lineOk)) {
+          return json(
+            {
+              error:
+                'Send {"yardstick": "...", "transcript": [{"who": "owner" or "atlas", "text": "...", "tools": ["..."]}]}: a yardstick of at most 4,000 characters and 1 to 40 lines.',
+            },
+            400,
+          );
+        }
+        return json(
+          await agent.apiJudge({ yardstick, transcript: lines as Array<{ who: "owner" | "atlas"; text: string; tools?: string[] }> }),
+        );
       }
       if (path === "/api/log" && request.method === "GET") {
         const since = Number(url.searchParams.get("since") ?? "0");
@@ -263,6 +415,7 @@ export default {
           headers.set(SESSION_HEADER, who.via === "session" ? who.id : "");
           // Only the Worker's own device route says a socket is a paired device.
           headers.delete(NODE_HEADER);
+          headers.delete(CALL_HEADER);
           return new Request(req, { headers });
         },
         // The agent is only reached over its socket; plain HTTP to it is refused.

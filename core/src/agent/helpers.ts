@@ -8,13 +8,17 @@ import { type Brain, type BrainEvent, type BrainRequest, brainKey } from "../bra
 import { HELPER_TOOLS, type HelperJob, type HelperOutcome } from "../helper";
 import type { Budget } from "../loop";
 import { type AgendaItem, createItem, finish, getItem } from "../store/agenda";
-import type { Sql } from "../store/db";
+import type { Json, Sql } from "../store/db";
 import { type Append, append, type LogKind, type LogRow } from "../store/log";
 import { getState, setState } from "../store/state";
 import { endRun, getRun, startRun } from "../store/runs";
 import type { JobView } from "../protocol";
 import type { BrainChoice } from "../store/settings";
+import { folderRun, READ_TOOLS } from "../tools/jobs";
 import { fail, type ToolContext, type ToolResult } from "../tools/types";
+
+/** Every tool a helper can be given: its lookups, and a shell in its folder for a job's step (§8.3). */
+const ALL_TOOLS = [...HELPER_TOOLS, ...READ_TOOLS, folderRun];
 
 /** A helper's budget: room for real work, still bounded (§4.1, §8.1). */
 export const HELPER_BUDGET: Budget = { steps: 40, ms: 10 * 60_000 };
@@ -55,6 +59,8 @@ export interface HelperDeskHost {
    * that started the job. The job stays in `unreported` until `reported`.
    */
   report(item: AgendaItem, result: { state: "done" | "failed"; text: string }): void;
+  /** A step of a job Atlas owns ended (§8.3): its result goes to the job, not to the owner. */
+  step(id: string, result: { state: "done" | "failed"; text: string; error?: string }): Promise<void>;
   rows(rows: LogRow[]): void;
   jobsChanged(jobs: JobView[]): void;
 }
@@ -79,16 +85,20 @@ export class HelperDesk {
     system: string;
     tools: string[];
     chain: BrainChoice[];
+    /** The named brain it runs on (§18), shown in Jobs: "Quick", or "Main". */
+    brain?: string;
     askedIn: string;
     /** Its own budget (§8.1); a quick lookup's by default. */
     budget?: Budget;
     /** A long research job: its result lands as a research view and a page. */
     research?: boolean;
+    /** A step of a job Atlas owns (§8.3): the job, and the folder the helper works in. */
+    step?: { of: string; folder: string };
   }): Promise<AgendaItem> {
     const { sql } = this.host;
     await this.#discardFinished();
     const run_id = startRun(sql, { actor: "atlas", trigger: "helper", surface: "none", role: "main" });
-    const tools = o.tools.filter((t) => HELPER_TOOLS.some((h) => h.name === t));
+    const tools = o.tools.filter((t) => (o.step ? ALL_TOOLS : HELPER_TOOLS).some((h) => h.name === t));
     const now = Date.now();
     const created = createItem(sql, {
       kind: "job",
@@ -98,7 +108,15 @@ export class HelperDesk {
       source: {
         run_id: o.askedIn,
         via: "chat",
-        detail: { brief: o.brief, helper_run: run_id, tools, chain: o.chain as never, ...(o.research ? { research: true } : {}) },
+        detail: {
+          brief: o.brief,
+          helper_run: run_id,
+          tools,
+          chain: o.chain as never,
+          ...(o.brain ? { brain: o.brain } : {}),
+          ...(o.research ? { research: true } : {}),
+          ...(o.step ? { step_of: o.step.of, folder: o.step.folder } : {}),
+        } as Record<string, Json>,
       },
     });
     // The helper holds the job's lease; if it runs out before the job ends, the clock counts the job as lost.
@@ -167,7 +185,7 @@ export class HelperDesk {
 
   async tool(jobId: string, name: string, input: unknown): Promise<ToolResult> {
     const job = this.#job(jobId);
-    const tool = HELPER_TOOLS.find((t) => t.name === name);
+    const tool = ALL_TOOLS.find((t) => t.name === name);
     if (!tool || !job.tools.includes(name)) return fail(`This helper can't use ${name}.`);
     const parsed = tool.input.safeParse(input);
     if (!parsed.success) return fail(`Those arguments don't fit: ${parsed.error.message}`);
@@ -181,7 +199,14 @@ export class HelperDesk {
   async log(jobId: string, row: Append): Promise<LogRow> {
     const job = this.#job(jobId);
     if (!HELPER_LOG_KINDS.includes(row.kind)) throw new Error(`A helper can't write ${row.kind} rows.`);
-    const written = append(this.host.sql, { ...row, actor: "atlas", run_id: job.run, surface: "none" });
+    // What a helper did is its job's, never the conversation's (§21.4): a helper reading for a job Atlas owns writes as
+    // that job's, so it shows in the job's thread; one Atlas sent from the conversation writes as its own card's.
+    const of =
+      typeof getItem(this.host.sql, jobId)?.source.detail?.step_of === "string"
+        ? String(getItem(this.host.sql, jobId)!.source.detail!.step_of)
+        : jobId;
+    const tagged = row.kind === "tool.call" || row.kind === "tool.result" ? { ...row, body: { ...row.body, job: of } } : row;
+    const written = append(this.host.sql, { ...tagged, actor: "atlas", run_id: job.run, surface: "none" });
     if (row.kind === "tool.result" && written.body.receipt != null) this.host.rows([written]);
     return written;
   }
@@ -190,6 +215,7 @@ export class HelperDesk {
     const item = getItem(this.host.sql, jobId);
     if (!item || item.state !== "running") return;
     const run = (item.source.detail as { helper_run?: string } | undefined)?.helper_run;
+    const stepOf = typeof item.source.detail?.step_of === "string" ? item.source.detail.step_of : null;
     const state = outcome.state === "replied" && outcome.text.trim() ? "done" : "failed";
     const error = state === "failed" ? (outcome.error ?? "The helper handed back nothing.") : undefined;
     if (run) endRun(this.host.sql, run, state === "done" ? "replied" : "failed", outcome.steps, error ? { error } : {});
@@ -197,7 +223,16 @@ export class HelperDesk {
       actor: "atlas",
       kind: "job.result",
       run_id: run ?? null,
-      body: { item_id: jobId, title: item.title, state, text: outcome.text, steps: outcome.steps, ...(error ? { error } : {}) },
+      body: {
+        item_id: jobId,
+        title: item.title,
+        state,
+        text: outcome.text,
+        steps: outcome.steps,
+        ...(error ? { error } : {}),
+        // A job's step isn't a result for the owner on its own: the job's own is (§8.3).
+        ...(stepOf ? { of: stepOf } : {}),
+      },
     });
     finish(this.host.sql, jobId, state, run ?? null, error ? { error } : {});
     this.#status.delete(jobId);
@@ -206,6 +241,7 @@ export class HelperDesk {
     const waiter = this.#waiting.get(jobId);
     this.#waiting.delete(jobId);
     if (waiter) waiter(result);
+    else if (stepOf) await this.host.step(jobId, { state, text: outcome.text, ...(error ? { error } : {}) });
     else if (!this.#answered.has(jobId)) {
       // Kept until the report is sent, so a restart in between doesn't lose it.
       this.#unreported("add", jobId);
@@ -311,12 +347,13 @@ export class HelperDesk {
   list(): JobView[] {
     return this.host.sql
       .exec<{ id: string; title: string; state: string; created_at: number; source: string }>(
-        `SELECT id, title, state, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND (state = 'running' OR updated_at > ?) ORDER BY created_at DESC LIMIT 20`,
+        `SELECT id, title, state, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND json_extract(source, '$.detail.goal') IS NULL AND json_extract(source, '$.detail.owned') IS NULL AND json_extract(source, '$.detail.step_of') IS NULL AND (state = 'running' OR updated_at > ?) ORDER BY created_at DESC LIMIT 20`,
         Date.now() - 60 * 60_000,
       )
       .toArray()
       .map((r) => {
-        const detail = (JSON.parse(r.source) as { detail?: { helper_run?: string; brief?: string; research?: boolean } }).detail;
+        const detail = (JSON.parse(r.source) as { detail?: { helper_run?: string; brief?: string; research?: boolean; brain?: string } })
+          .detail;
         const run = detail?.helper_run;
         const out = r.state === "running" ? null : this.#outcomeOf(r.id);
         return {
@@ -332,8 +369,42 @@ export class HelperDesk {
           brief: detail?.brief ?? "",
           result: out ? out.text || out.error || null : null,
           run_id: run ?? null,
+          ...(detail?.brain ? { brain: detail.brain } : {}),
         };
       });
+  }
+
+  /**
+   * The helpers each job Atlas owns has started (§8.3), by job: going, and ended within the hour. Its card in the
+   * thread shows them as parallel lines that fold back into one when they're done (§21.8).
+   */
+  workingFor(): Map<string, NonNullable<JobView["helpers"]>> {
+    const out = new Map<string, NonNullable<JobView["helpers"]>>();
+    const rows = this.host.sql
+      .exec<{ id: string; title: string; state: string; created_at: number; updated_at: number; source: string }>(
+        `SELECT id, title, state, created_at, updated_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.step_of') IS NOT NULL AND (state = 'running' OR updated_at > ?) ORDER BY created_at`,
+        Date.now() - 60 * 60_000,
+      )
+      .toArray();
+    for (const r of rows) {
+      const detail = (JSON.parse(r.source) as { detail?: { step_of?: string; helper_run?: string; research?: boolean } }).detail;
+      if (!detail?.step_of) continue;
+      const running = r.state === "running" || r.state === "scheduled";
+      const run = detail.helper_run;
+      const read = run ? lookedAt(this.host.sql, run) : null;
+      out.set(detail.step_of, [
+        ...(out.get(detail.step_of) ?? []),
+        {
+          id: r.id,
+          title: r.title,
+          state: running ? "running" : (r.state as JobView["state"]),
+          status: running ? ((detail.research ? read : null) ?? this.#status.get(r.id) ?? null) : read,
+          started_at: r.created_at,
+          ...(running ? {} : { ended_at: r.updated_at }),
+        },
+      ]);
+    }
+    return out;
   }
 
   #outcomeOf(id: string): JobOutcome | null {
@@ -377,12 +448,24 @@ export async function helperBrain(
   chain: BrainChoice[],
 ): Promise<BrainEvent[]> {
   if (!chain.some((c) => brainKey(c) === brainKey(choice))) throw new Error(`${brainKey(choice)} isn't in this job's chain.`);
-  const brain = host.makeBrain(choice);
+  // Through the router, so a paid brain past the month's cap refuses here too.
+  const brain = host.router.chain([choice])[0];
   if (!brain) throw new Error(`${brainKey(choice)} isn't set up.`);
   const events: BrainEvent[] = [];
+  const at = Date.now();
+  let first: number | null = null;
   try {
-    for await (const e of brain.stream({ ...req, signal: AbortSignal.timeout(140_000) })) events.push(e);
-    host.router.markOk(brain);
+    for await (const e of brain.stream({ ...req, signal: AbortSignal.timeout(140_000) })) {
+      first ??= Date.now() - at;
+      events.push(e);
+    }
+    const done = events.find((e) => e.type === "done");
+    host.router.markOk(brain, {
+      ...(done?.usage ? { usage: done.usage } : {}),
+      ...(done?.limits ? { limits: done.limits } : {}),
+      first_ms: first,
+      total_ms: Date.now() - at,
+    });
     return events;
   } catch (err) {
     host.router.markFailed(brain, err);

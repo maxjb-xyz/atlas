@@ -2,7 +2,8 @@ import { SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { seams, type WorkspaceStub } from "../src/agent";
 import { saveEntry } from "../src/vault";
-import { carrying, throughGate } from "../src/workspace";
+import { carrying, streamToR2, throughGate } from "../src/workspace";
+import { type BrowserDriver, downloadName } from "../src/browser";
 import { call, env, fakeCalendar, fakeEmbedder, say, SECRET } from "./helpers";
 import { brain, connect, inOwner, out, turn } from "./owner";
 
@@ -14,8 +15,20 @@ import { brain, connect, inOwner, out, turn } from "./owner";
 function fakeWorkspace() {
   const runs: Array<{ command: string; allow: string[]; inject: Record<string, string> }> = [];
   const files: Record<string, Uint8Array> = { "/workspace/plan.xlsx": new Uint8Array([80, 75, 3, 4, 1, 2, 3]) };
-  const stub: WorkspaceStub & { runs: typeof runs } = {
+  const writes: Array<{ path: string; bytes: number[]; as?: string }> = [];
+  const installs: string[][] = [];
+  const stub: WorkspaceStub & { runs: typeof runs; writes: typeof writes; installs: typeof installs } = {
     runs,
+    writes,
+    installs,
+    async write(path, body, as) {
+      writes.push({ path, bytes: [...new Uint8Array(await new Response(body).arrayBuffer())], ...(as ? { as } : {}) });
+      return { ok: true, path };
+    },
+    async install(packages) {
+      installs.push(packages);
+      return { ok: true, note: "" };
+    },
     async run(o) {
       runs.push({ command: o.command, allow: o.allow, inject: o.inject });
       const lines: object[] = [];
@@ -217,5 +230,71 @@ describe("the workspace's gate", () => {
     // Even with the nonce, the token reaches only this repo's git address: not another repo, not the API.
     expect(pass("https://github.com/mallory/loot.git/git-receive-pack", { "x-atlas-key": "n0nce" }).get("authorization")).toBeNull();
     expect(pass("https://api.github.com/user", { "x-atlas-key": "n0nce" }).get("authorization")).toBeNull();
+  });
+
+  it("keeps a job's folder in R2 in equal parts as it streams, and keeps nothing when the copy didn't end well", async () => {
+    const MiB = 1024 * 1024;
+    const bytes = new Uint8Array(11 * MiB + 123).map((_, i) => i % 251);
+    // In uneven pieces, as a command's output comes.
+    const stream = () =>
+      new ReadableStream<Uint8Array>({
+        start(c) {
+          for (let at = 0; at < bytes.length; at += 777_777) c.enqueue(bytes.subarray(at, Math.min(at + 777_777, bytes.length)));
+          c.close();
+        },
+      });
+    expect(await streamToR2(env.FILES, "jobs/test/ag_x/folder.tgz", stream(), async () => true, 5 * MiB)).toBe(true);
+    const kept = await env.FILES.get("jobs/test/ag_x/folder.tgz");
+    const digest = async (b: ArrayBuffer | Uint8Array) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", b))].join(",");
+    expect(kept!.size).toBe(bytes.length);
+    expect(await digest(await kept!.arrayBuffer())).toBe(await digest(bytes));
+    // A copy whose command failed leaves the last good one in place.
+    expect(await streamToR2(env.FILES, "jobs/test/ag_x/folder.tgz", new Response("half").body!, async () => false, 5 * MiB)).toBe(false);
+    expect((await env.FILES.get("jobs/test/ag_x/folder.tgz"))!.size).toBe(bytes.length);
+  });
+
+  it("saves a file the browser gets into the workspace, past the check the browser cleared, and installs system tools by name", async () => {
+    const page = { url: "https://pixabay.com/music/track-1/", title: "Track", text: "Download", length: 8, elements: [] };
+    let opened = false;
+    const driver: BrowserDriver = {
+      open: async () => ((opened = true), page),
+      look: async () => page,
+      act: async () => page,
+      fill: async () => page,
+      find: async () => null,
+      live: async () => "https://live.example/",
+      close: async () => {},
+      where: () => (opened ? { open: true, url: page.url, title: page.title } : { open: false, url: "", title: "" }),
+      download: async (url) => ({ url: url ?? page.url, name: "track.mp3", type: "audio/mpeg", bytes: new Uint8Array([73, 68, 51]) }),
+    };
+    seams.browser = driver;
+    try {
+      const s = await connect();
+      brain([
+        call("browser_open", { url: page.url }),
+        call("browser_save", { url: "https://cdn.pixabay.com/audio/track-1.mp3", path: "music/track.mp3" }),
+        call("packages_install", { packages: ["sox"] }),
+        say("Saved it, and sox is in."),
+      ]);
+      const { results } = await turn(s, "get that track into the workspace and install sox");
+      const saved = results.find((r) => r.body.name === "browser_save")!;
+      expect(JSON.parse(out(saved))).toMatchObject({ saved: "/workspace/music/track.mp3", name: "track.mp3", size: 3 });
+      expect(saved.body.receipt).toMatchObject({ text: "Saved · track.mp3" });
+      expect(ws.writes).toEqual([{ path: "/workspace/music/track.mp3", bytes: [73, 68, 51] }]);
+      expect(ws.installs).toEqual([["sox"]]);
+    } finally {
+      seams.browser = undefined;
+    }
+  });
+
+  it("names a download from its headers, else its address", () => {
+    expect(downloadName("https://cdn.example/a/b/track%201.mp3?x=1", {})).toBe("track 1.mp3");
+    expect(downloadName("https://cdn.example/get", { "Content-Disposition": 'attachment; filename="Neon Rush.mp3"' })).toBe(
+      "Neon Rush.mp3",
+    );
+    expect(downloadName("https://cdn.example/get", { "content-disposition": "attachment; filename*=UTF-8''Caf%C3%A9.mp3" })).toBe(
+      "Café.mp3",
+    );
+    expect(downloadName("https://cdn.example/", {})).toBe("download");
   });
 });

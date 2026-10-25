@@ -8,12 +8,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { seams } from "../src/agent";
 import type { Decider } from "../src/brains/decide";
 import { channelsOf, findPerson, ownerAddresses, ownerLearned, trustOf, upsertPerson } from "../src/contacts";
-import { getExt, install, setExtSecrets, uninstall } from "../src/extensions";
+import { getExt, install, saveData, setExtSecrets, uninstall } from "../src/extensions";
+import { createArea, threadAreas, updateArea } from "../src/store/areas";
 import { base64url, fromBase64url } from "../../extensions/lib/mail";
-import { call, extensionRequests, fakeCalendar, fakeEmbedder, runExtensionsHere, say } from "./helpers";
+import { call, extensionRequests, fakeCalendar, fakeEmbedder, runExt, runExtensionsHere, say } from "./helpers";
+import gmail from "../../extensions/gmail";
+import type { CalendarEvent } from "../src/calendar/types";
 import { brain, connect, inOwner, turn } from "./owner";
 import { getSecret, setSecret } from "../src/store/settings";
 import { setState } from "../src/store/state";
+import { TOKEN_PERMISSIONS, tokenLink } from "../src/atlasmail";
 
 const quiet: Decider = {
   model: "fake-decide",
@@ -35,7 +39,14 @@ interface Fake {
 
 /** A fake Gmail: a profile, a history that grows, and messages. */
 function fakeGmail() {
-  const state = { history: 100, added: [] as Array<{ at: number; m: Fake }>, messages: new Map<string, Fake>(), gone: false };
+  const state = {
+    history: 100,
+    added: [] as Array<{ at: number; m: Fake }>,
+    messages: new Map<string, Fake>(),
+    gone: false,
+    noCalendar: false,
+    patched: [] as string[],
+  };
   const add = (m: Fake) => {
     state.history += 1;
     state.added.push({ at: state.history, m });
@@ -79,6 +90,51 @@ function fakeGmail() {
     if (path === "/messages") {
       const newest = [...state.added].reverse().find((a) => a.m.labelIds.includes("INBOX"));
       return Response.json(newest ? { messages: [{ id: newest.m.id, threadId: newest.m.threadId }] } : {});
+    }
+    // Google Calendar, under the same sign-in.
+    if (u.hostname === "www.googleapis.com") {
+      if (state.noCalendar)
+        return Response.json({ error: { code: 403, message: "Request had insufficient authentication scopes." } }, { status: 403 });
+      const cal = u.pathname.replace("/calendar/v3", "");
+      if (cal === "/users/me/calendarList")
+        return Response.json({
+          items: [
+            { id: "owner@gmail.com", summary: "owner@gmail.com" },
+            { id: "work#cal", summary: "Work" },
+          ],
+        });
+      const evs = /^\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/.exec(cal);
+      if (evs) {
+        const calId = decodeURIComponent(evs[1]!);
+        const soon = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
+        const items =
+          calId === "work#cal"
+            ? [
+                {
+                  id: "standup_20261026",
+                  recurringEventId: "standup",
+                  summary: "Standup",
+                  start: { dateTime: soon(2) },
+                  end: { dateTime: soon(3) },
+                },
+              ]
+            : [{ id: "dentist", summary: "Dentist", location: "Main St", start: { dateTime: soon(1) }, end: { dateTime: soon(2) } }];
+        if (evs[2] && init?.method === "PATCH") {
+          state.patched.push(`${calId}/${decodeURIComponent(evs[2])} ${String(init.body)}`);
+          const b = JSON.parse(String(init.body)) as { start: unknown; end: unknown };
+          return Response.json({ ...items.find((e) => e.id === decodeURIComponent(evs[2]!))!, start: b.start, end: b.end });
+        }
+        if (!evs[2] && init?.method === "POST") {
+          state.patched.push(`add ${calId} ${u.search} ${String(init.body)}`);
+          return Response.json({ id: "new1", ...(JSON.parse(String(init.body)) as object) });
+        }
+        if (evs[2] && init?.method === "DELETE") {
+          state.patched.push(`delete ${calId}/${decodeURIComponent(evs[2])} ${u.search}`);
+          return new Response(null, { status: 204 });
+        }
+        if (evs[2]) return Response.json(items.find((e) => e.id === decodeURIComponent(evs[2]!)) ?? {});
+        return Response.json({ items });
+      }
     }
     return new Response("not faked", { status: 404 });
   }) as unknown as typeof fetch;
@@ -181,7 +237,7 @@ describe("Gmail", () => {
     const pat = await inOwner((_a, sql) => findPerson(sql, "email", "front@brightsmiles.example"));
     expect(pat).toMatchObject({ name: "Pat at Bright Smiles" });
     expect(trustOf(pat!)).toBe("unknown");
-    expect(channelsOf(pat!)[0]!.via).toBe("mail via Gmail");
+    expect(channelsOf(pat!)[0]!.via).toBe("mail via Google");
     expect(rows[0]!.person).toBe(pat!.id);
     expect(await inOwner((_a, sql) => findPerson(sql, "email", "deals@shop.example"))).toBeNull();
 
@@ -212,7 +268,9 @@ describe("Gmail", () => {
     s.send({ type: "atlas.ext.test", id: "gmail" });
     const t = await s.next("atlas.ext.test");
     expect(t).toMatchObject({ ok: true });
-    expect(t.message).toBe('Gmail connected as Owner@gmail.com. The newest message in the inbox is "Hello there".');
+    expect(t.message).toBe(
+      'Google connected as Owner@gmail.com. The newest message in the inbox is "Hello there". Calendars: owner@gmail.com, Work.',
+    );
     expect(await inOwner((_a, sql) => ownerAddresses(sql).has("owner@gmail.com"))).toBe(true);
     // Google's own words when it refuses.
     await inOwner((_a, sql) => setExtSecrets(sql, "gmail", { access_token: "wrong" }));
@@ -220,6 +278,57 @@ describe("Gmail", () => {
     const bad = await s.next("atlas.ext.test");
     expect(bad.ok).toBe(false);
     expect(bad.message).toContain("401");
+  });
+
+  it("reads the Google calendars under the same sign-in, keeps a copy, moves an event where it lives, and asks for a new sign-in from before", async () => {
+    const o = { fetch: gm.f, secrets: { access_token: "ya29.test" } };
+    const range = { start: new Date().toISOString(), end: new Date(Date.now() + 86_400_000).toISOString(), hidden: [] as string[] };
+    const read = await runExt<{ events: CalendarEvent[]; state: { cal: { events: unknown[] } } }>(gmail, "calendar", [range], o);
+    expect(read.events.map((e) => [e.title, e.calendar])).toEqual([
+      ["Dentist", "owner@gmail.com"],
+      ["Standup", "Work"],
+    ]);
+    // A repeat's occurrences share their series, so its area is asked once.
+    expect(read.events[1]!.id).toBe("standup::standup_20261026::work#cal");
+    expect(read.state.cal.events).toHaveLength(2);
+    const held = await runExt<{ events: unknown[]; as_of?: number }>(gmail, "calendar", [{ ...range, held: true }], {
+      ...o,
+      state: read.state,
+    });
+    expect(held.events).toHaveLength(2);
+    expect(held.as_of).toBeTruthy();
+    // Leaving the Work calendar out.
+    expect((await runExt<{ events: CalendarEvent[] }>(gmail, "calendar", [{ ...range, hidden: ["work"] }], o)).events).toHaveLength(1);
+
+    const to = { start: new Date(Date.now() + 5 * 3_600_000).toISOString(), end: new Date(Date.now() + 6 * 3_600_000).toISOString() };
+    const moved = await runExt<{ before: CalendarEvent; event: CalendarEvent }>(gmail, "move", [{ id: read.events[1]!.id, ...to }], o);
+    expect(gm.state.patched).toEqual([
+      `work#cal/standup_20261026 ${JSON.stringify({ start: { dateTime: to.start }, end: { dateTime: to.end } })}`,
+    ]);
+    expect(moved.event.start).toBe(to.start);
+
+    // Adding goes on the main calendar unless one is named, invites no one, and comes off again.
+    gm.state.patched.length = 0;
+    const added = await runExt<{ event: CalendarEvent }>(
+      gmail,
+      "add",
+      [{ title: "Edit", start: to.start, end: to.end, all_day: false, calendar: "Work" }],
+      o,
+    );
+    expect(added.event).toMatchObject({ id: "new1::new1::work#cal", title: "Edit", calendar: "Work" });
+    expect(gm.state.patched[0]).toBe(
+      `add work#cal ?sendUpdates=none ${JSON.stringify({ summary: "Edit", start: { dateTime: to.start }, end: { dateTime: to.end } })}`,
+    );
+    await expect(runExt(gmail, "add", [{ title: "x", start: to.start, end: to.end, all_day: false, calendar: "Nope" }], o)).rejects.toThrow(
+      /no calendar called "Nope"/,
+    );
+    const removed = await runExt<{ event: CalendarEvent }>(gmail, "remove", [{ id: "standup::standup_20261026::work#cal" }], o);
+    expect(removed.event.title).toBe("Standup");
+    expect(gm.state.patched.at(-1)).toBe("delete work#cal/standup_20261026 ?sendUpdates=none");
+
+    // A sign-in made before the calendar was asked for.
+    gm.state.noCalendar = true;
+    await expect(runExt(gmail, "calendar", [range], o)).rejects.toThrow(/sign in to Google again/);
   });
 });
 
@@ -483,6 +592,75 @@ describe("mail to Atlas's address", () => {
     expect(all).toContain("Order 1234");
   });
 
+  it("takes mail the owner wrote to someone else, with Atlas on copy, as theirs to that person, in the area of the account it came from", async () => {
+    const area = await inOwner((_a, sql) => {
+      install(sql, { id: "gmail", source: "bundled" });
+      saveData(sql, "gmail", { email: "owner@gmail.com" });
+      const a = createArea(sql, { name: "Keyframes", by: "owner" });
+      updateArea(sql, a.id, { settings: { ...a.settings, mail: "gmail" } }, "owner");
+      return a.id;
+    });
+    const b = brain([say("I'll watch for Doug's answer.")]);
+    const s = await connect();
+    const mime = [
+      "From: Owner <owner@gmail.com>",
+      "To: Doug <doug@acme.example>",
+      "Cc: atlas@example.com",
+      "Subject: Next week",
+      "Message-ID: <c1@gmail.com>",
+      "Authentication-Results: mx.cloudflare.net; dkim=pass header.d=gmail.com; spf=pass",
+      "Content-Type: text/plain",
+      "",
+      "Doug, can we meet next week? Atlas can find us a time.",
+    ].join("\r\n");
+    expect((await relay(mime)).status).toBe(202);
+    await s.next("atlas.run", (m) => m.state === "replied");
+    const all = JSON.stringify(b.requests[0]);
+    expect(all).toContain("with you on copy, and it went to doug@acme.example too");
+    const copied = await inOwner((_a, sql) =>
+      sql
+        .exec<{ id: string; body: string }>(
+          `SELECT id, body FROM log WHERE kind = 'sense' AND json_extract(body, '$.event') = 'copied' ORDER BY seq DESC LIMIT 1`,
+        )
+        .one(),
+    );
+    expect(all).toContain(`reply_to ${copied.id}`);
+    expect(JSON.parse(copied.body)).toMatchObject({ thread: "mail:<c1@gmail.com>", everyone: ["owner@gmail.com", "doug@acme.example"] });
+    // Sent from the Keyframes account, so it's Keyframes' as it comes in, and the run wears it.
+    const asked = await inOwner((_a, sql) =>
+      sql.exec<{ areas: string; body: string }>(`SELECT areas, body FROM log WHERE kind = 'message.in' ORDER BY seq DESC LIMIT 1`).one(),
+    );
+    expect(JSON.parse(asked.areas)).toEqual([area]);
+    expect(JSON.parse(asked.body).thread).toBe("mail:<c1@gmail.com>");
+    expect(all).toContain("You're acting in Keyframes");
+
+    // Doug answers everyone: it's the next mail in that conversation, not a stranger's, and stays Keyframes'.
+    const reply = [
+      "From: Doug <doug@acme.example>",
+      "To: Owner <owner@gmail.com>",
+      "Cc: atlas@example.com",
+      "Subject: Re: Next week",
+      "Message-ID: <d1@acme.example>",
+      "In-Reply-To: <c1@gmail.com>",
+      "References: <c1@gmail.com>",
+      "Content-Type: text/plain",
+      "",
+      "Tuesday or Wednesday works.",
+    ].join("\r\n");
+    expect((await relay(reply)).status).toBe(202);
+    const row = await inOwner((_a, sql) => {
+      const r = sql
+        .exec<{ body: string }>(
+          `SELECT body FROM log WHERE kind = 'sense' AND json_extract(body, '$.event') = 'reply' AND json_extract(body, '$.thread') = 'mail:<c1@gmail.com>'`,
+        )
+        .one();
+      return { body: JSON.parse(r.body), areas: threadAreas(sql, "mail:<c1@gmail.com>") };
+    });
+    expect(row.body).toMatchObject({ thread: "mail:<c1@gmail.com>" });
+    expect(row.body.what).toContain("on a conversation the owner copied Atlas on");
+    expect(row.areas).toEqual([area]);
+  });
+
   it("takes anyone else's mail as someone writing to Atlas, in the conversation it answers", async () => {
     await inOwner((_a, sql) =>
       sql.exec(
@@ -505,11 +683,27 @@ describe("mail to Atlas's address", () => {
     expect((await relay(mime)).status).toBe(202);
     const row = await inOwner((_a, sql) =>
       JSON.parse(
-        sql.exec<{ body: string }>(`SELECT body FROM log WHERE kind = 'sense' AND json_extract(body, '$.source') = 'email'`).one().body,
+        sql
+          .exec<{ body: string }>(
+            `SELECT body FROM log WHERE kind = 'sense' AND json_extract(body, '$.source') = 'email' ORDER BY seq DESC LIMIT 1`,
+          )
+          .one().body,
       ),
     );
     expect(row).toMatchObject({ event: "reply", thread: "mail:<sent1@example.com>", from: "Bright Smiles <front@brightsmiles.example>" });
     expect(row.person).toBeTruthy();
+  });
+});
+
+describe("the token for Atlas's address", () => {
+  it("opens Cloudflare's Create token page with what Atlas needs, and Email Sending only when Cloudflare sends", () => {
+    const keys = (u: string) => JSON.parse(new URL(u).searchParams.get("permissionGroupKeys")!) as Array<{ key: string; type: string }>;
+    const url = new URL(tokenLink(true));
+    expect(url.origin + url.pathname).toBe("https://dash.cloudflare.com/profile/api-tokens");
+    expect(url.searchParams.get("accountId")).toBe("*");
+    expect(url.searchParams.get("zoneId")).toBe("all");
+    expect(keys(tokenLink(true))).toEqual(TOKEN_PERMISSIONS.map((p) => ({ key: p.key, type: p.type })));
+    expect(keys(tokenLink(false)).map((k) => k.key)).not.toContain("email_sending");
   });
 });
 

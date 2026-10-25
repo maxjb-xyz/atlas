@@ -1,6 +1,6 @@
 // The stage's views (§21.6): area, person, list and table, each drawn from
 // the contract the agent saved (core/src/stage.ts). Expanded is the view on
-// a sheet; compact is the card an exchange or the transcript shows, which
+// a sheet; compact is the card the conversation or an exchange shows, which
 // opens it on Home's stage. Library's area and person pages are these same
 // views (§21.2).
 
@@ -10,11 +10,13 @@ import type { LogRow, RecordView } from "../../core/src/protocol";
 import type { AreaPage, PagePage, PersonPage, StageMessage, StageView } from "../../core/src/stage";
 import { Markdown } from "./Markdown";
 import type { Atlas } from "./connection";
-import { AreaChip, AreaDot, Diamond, Empty, Icon, pressable, Sheet, shortDay } from "./ui";
+import { AreaChip, AreaDot, Avatar, Diamond, Empty, Icon, morphOrigin, pressable, Sheet, shortDay } from "./ui";
 import { AutomationFlow } from "./pages/Automations";
 import { AppFrame, ChartBody, CompareBody, KitBody } from "./ChartViews";
 import { McpAppFrame } from "./McpApp";
 import { MapView, PlaceView, SensesView, SituationView, WeatherView } from "./SenseViews";
+import { AbilitiesMap } from "./abilities/Map";
+import type { Place } from "./ui";
 
 /** A view on the stage: the receipt it came from (or a local id), the view, and its title. */
 export interface Shown {
@@ -133,6 +135,7 @@ function ViewBody({
   return (
     <>
       {v.kind === "area" && <AreaView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
+      {v.kind === "abilities" && <AbilitiesView atlas={atlas} view={v} onClose={onClose} />}
       {v.kind === "person" && <PersonView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
       {v.kind === "list" && <ListView view={v} onClose={onClose} />}
       {v.kind === "table" && <TableView view={v} onClose={onClose} />}
@@ -212,6 +215,29 @@ function Keep({ atlas, shown }: { atlas: Atlas; shown: Shown }) {
     >
       <Diamond size={11} /> Keep
     </button>
+  );
+}
+
+/**
+ * What Atlas can do, on the stage (§21.2): the Abilities map, or the group
+ * Atlas pointed at, zoomed in. Going back or into another group stays here;
+ * a link to where something is set up goes there.
+ */
+function AbilitiesView({ atlas, view, onClose }: { atlas: Atlas; view: Extract<StageView, { kind: "abilities" }>; onClose?: () => void }) {
+  const [zoom, setZoom] = useState<string | null>(view.group ?? null);
+  useEffect(() => setZoom(view.group ?? null), [view.group]);
+  useEffect(() => {
+    if (atlas.voice.connected) atlas.send({ type: "atlas.services" });
+  }, [atlas.voice.connected]);
+  const go = (p: Place, d?: string) => {
+    location.hash = d ? `#/${p}/${encodeURIComponent(d)}` : `#/${p}`;
+  };
+  if (!atlas.state.view) return <Loading />;
+  return (
+    <div className="abilities-on-stage">
+      <Close onClose={onClose} />
+      <AbilitiesMap atlas={atlas} go={go} zoom={zoom} open={setZoom} />
+    </div>
   );
 }
 
@@ -324,7 +350,7 @@ function Group({
           {...(onPick ? pressable(() => onPick(r)) : {})}
           title={r.fact || r.name}
         >
-          <span className="dot sq" />
+          {r.photo ? <Avatar name={r.name} photo={r.photo} size={16} /> : <span className="dot sq" />}
           <span>
             {r.name}
             {r.fact && r.fact !== r.name && <span className="muted"> · {r.fact}</span>}
@@ -386,7 +412,7 @@ function PersonView({
   return (
     <>
       <div className="sheet-title">
-        <Icon name="people" />
+        {r.photo ? <Avatar name={r.name} photo={r.photo} size={32} /> : <Icon name="people" />}
         <h1 className="disp">{r.name}</h1>
         <AreaChip
           ids={r.areas}
@@ -1173,6 +1199,7 @@ function viewLabel(atlas: Atlas, v: StageView): string {
   if (v.kind === "weather") return "The weather";
   if (v.kind === "situation") return "The situation";
   if (v.kind === "senses") return "What Atlas noticed";
+  if (v.kind === "abilities") return "What Atlas can do";
   return v.title;
 }
 
@@ -1371,7 +1398,7 @@ function PageView({
   );
 }
 
-// --- compact: the card in an exchange or the transcript --------------------------------------
+// --- compact: the card in the conversation or an exchange --------------------------------------
 
 const KIND: Record<StageView["kind"], string> = {
   area: "Area",
@@ -1398,9 +1425,16 @@ const KIND: Record<StageView["kind"], string> = {
   weather: "Weather",
   situation: "Situation",
   senses: "Noticed",
+  abilities: "Abilities",
 };
 
-export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown; onOpen: () => void }) {
+/**
+ * A view Atlas showed, as a card in the thread: its kind in mono, its real
+ * title, and a glimpse of what's in it (the page and its address, a list's
+ * first items, a table's first rows, a chart's shape). Tapped, it grows into
+ * its full view on the stage. `row` is the receipt it came from.
+ */
+export function StageCard({ atlas, shown, onOpen, row }: { atlas: Atlas; shown: Shown; onOpen: () => void; row?: LogRow }) {
   const v = shown.view;
   const preview =
     v.kind === "list"
@@ -1461,20 +1495,106 @@ export function StageCard({ atlas, shown, onOpen }: { atlas: Atlas; shown: Shown
                                                 ? "Where you are, what's next, and when to leave."
                                                 : v.kind === "senses"
                                                   ? "Today's funnel, each source, and what's waiting."
-                                                  : "What Atlas knows about them, and where they came up.";
+                                                  : v.kind === "abilities"
+                                                    ? "What Atlas can do, and what does it."
+                                                    : "What Atlas knows about them, and where they came up.";
+  const receipt = row?.body.receipt as { text?: string; link?: string } | undefined;
+  // The browser goes by the page it has open: the receipt says which ("Browsing · Austin homes for sale").
+  const page = v.kind === "browser" ? String(receipt?.text ?? "").replace(/^[^·]*· /, "") : "";
+  const browser =
+    v.kind === "browser" ? (atlas.state.stage.browser as { url?: string; title?: string; open?: boolean } | null | undefined) : null;
+  const link = receipt?.link ?? (browser?.title && browser.title === page ? browser.url : undefined);
+  const where = link ? addressOf(link) : null;
+  const title = v.kind === "browser" ? page || browser?.title || "Atlas's browser" : titleOf(atlas, shown);
+  const count =
+    v.kind === "list"
+      ? `${v.items.length} ${v.items.length === 1 ? "item" : "items"}`
+      : v.kind === "table"
+        ? `${v.rows.length} ${v.rows.length === 1 ? "row" : "rows"}`
+        : v.kind === "research"
+          ? `${v.sources.length} ${v.sources.length === 1 ? "source" : "sources"}`
+          : v.kind === "plan"
+            ? `${v.steps.filter((s) => s.state === "done").length} of ${v.steps.length} done`
+            : null;
   return (
-    <div className="stage-card rise">
-      <span className="lab">
-        {KIND[v.kind]}
-        {v.kind === "list" ? ` · ${v.items.length}` : ""}
+    <button
+      className={`view-card k-${v.kind}`}
+      onClick={(e) => {
+        morphOrigin(e.currentTarget);
+        onOpen();
+      }}
+      title="Open on the stage"
+    >
+      <span className="vc-head">
+        <span className="lab">{KIND[v.kind]}</span>
+        {count && <span className="lab faint">· {count}</span>}
+        <span className="grow" />
+        {v.kind === "browser" && browser?.open && (
+          <span className="lab vc-live">
+            <i /> Live
+          </span>
+        )}
+        <span className="vc-open" aria-hidden>
+          <Icon name="right" size={13} />
+        </span>
       </span>
-      <p className="title">{titleOf(atlas, shown)}</p>
-      <p className="muted small clamp">{preview}</p>
-      <button className="link small" onClick={onOpen}>
-        Open on the stage
-      </button>
-    </div>
+      <span className="vc-title">{title}</span>
+      {v.kind === "browser" ? (
+        <span className="vc-address mono">
+          <Icon name="lock" size={11} />
+          <span className="clip">{where ? `${where.host}${where.path}` : "Open on the stage to watch it live"}</span>
+        </span>
+      ) : v.kind === "list" ? (
+        <span className="vc-list">
+          {v.items.slice(0, 3).map((it, i) => (
+            <span key={i} className="vc-li">
+              <i className={it.done ? "done" : ""} aria-hidden>
+                {v.numbered ? String(i + 1).padStart(2, "0") : ""}
+              </i>
+              <span className="clip">{it.text}</span>
+              {it.note && <span className="faint clip vc-note">{it.note}</span>}
+            </span>
+          ))}
+          {v.items.length > 3 && <span className="faint small">and {v.items.length - 3} more</span>}
+        </span>
+      ) : v.kind === "table" ? (
+        <span className="vc-table mono">
+          {[v.columns, ...v.rows.slice(0, 2).map((r) => r.map((c) => (c == null ? "" : String(c))))].map((r, i) => (
+            <span key={i} className={`vc-tr ${i === 0 ? "th" : ""}`}>
+              {r.slice(0, 4).map((c, j) => (
+                <span key={j} className="clip">
+                  {c}
+                </span>
+              ))}
+            </span>
+          ))}
+        </span>
+      ) : v.kind === "chart" && v.series[0] ? (
+        <span className="vc-chart" aria-hidden>
+          {(() => {
+            const vals = v.series[0].values.map((x) => x ?? 0);
+            const max = Math.max(...vals, 1);
+            return vals.slice(-28).map((x, i) => <i key={i} style={{ transform: `scaleY(${Math.max(0.04, x / max)})` }} />);
+          })()}
+        </span>
+      ) : v.kind === "code" ? (
+        <span className="vc-code mono">{v.code.split("\n").slice(0, 3).join("\n")}</span>
+      ) : (
+        <span className="vc-text clamp">{preview}</span>
+      )}
+    </button>
   );
+}
+
+/** An address as the card shows it: the host without www, and the start of the path. */
+function addressOf(url: string): { host: string; path: string } | null {
+  try {
+    const u = new URL(url);
+    const path = u.pathname === "/" ? "" : u.pathname.length > 28 ? `${u.pathname.slice(0, 27)}…` : u.pathname;
+    return { host: u.host.replace(/^www\./, ""), path };
+  } catch {
+    return null;
+  }
 }
 
 /** Opens a shown view on Home's stage, from anywhere. */

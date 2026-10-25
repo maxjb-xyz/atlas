@@ -48,6 +48,7 @@ export const fileSave = defineTool({
 export const fileRead = defineTool({
   name: "file_read",
   kind: "look",
+  status: "Reading the file.",
   description:
     "Read one of the files you've made, by name, when it's text. A long one comes in parts: pass `more_from` as `start` to read on.",
   input: z.object({

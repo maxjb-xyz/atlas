@@ -252,7 +252,7 @@ export function allowedPost(sql: Sql): void {
   if (h.refused) save(sql, { ...h, refused: null });
 }
 
-/** Notes a refused post, for Settings → Devices. */
+/** Notes a refused post, for Abilities → Devices. */
 export function refused(sql: Sql): void {
   const h = here(sql);
   save(sql, { ...h, refused: { at: Date.now(), n: (h.refused?.n ?? 0) + 1 } });

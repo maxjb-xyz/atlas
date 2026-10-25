@@ -16,7 +16,7 @@ import osm from "../../extensions/osm";
 import { placeKind, type Found } from "../src/maps";
 import { install } from "../src/extensions";
 import { setState } from "../src/store/state";
-import { call, fakeCalendar, fakeEmbedder, runExt, say, SECRET } from "./helpers";
+import { call, fakeCalendar, fakeEmbedder, runExt, say, SECRET, offered } from "./helpers";
 import { brain, connect, inOwner, turn, type Socket } from "./owner";
 
 const GYM = { lat: 28.6024, lon: -81.2001 };
@@ -295,7 +295,7 @@ describe("the gym-to-store moment", () => {
     const b = brain([call("speaking_up", { quiet_about_add: ["stores on the way home"] }), say("Got it, no more store tips.")]);
     const t = await turn(s, "stop telling me about stores");
     expect(b.requests[0]!.system).toContain("seems to be saying stop to the nudge you sent");
-    expect(b.requests[0]!.tools.map((x) => x.name)).toContain("speaking_up");
+    expect(offered(b.requests[0]!)).toContain("speaking_up");
     const receipt = t.results[0]!;
     expect(receipt.body.receipt).toMatchObject({ text: "Speaking up · won't bring up stores on the way home" });
     expect((await inOwner((_a, sql) => readSettings(sql))).speaking).toMatchObject({
@@ -388,8 +388,10 @@ describe("the gym-to-store moment", () => {
     await tick();
     const review = await waitFor("the review", async () => (await rowsSince(from, "awareness")).find((x) => x.step === "review"));
     expect(review).toMatchObject({ outcome: "silent", count: 1 });
-    expect(String(r.requests[0]!.messages.at(-1)!.content)).toContain("Since your last look, these came in");
-    expect(String(r.requests[0]!.messages.at(-1)!.content)).not.toContain("Lunch with Sam");
+    // The run's own note, after what's true now (§4.1).
+    const note = String(r.requests[0]!.messages.at(-1)!.content).split("</now>").at(-1)!;
+    expect(note).toContain("Since your last look, these came in");
+    expect(note).not.toContain("Lunch with Sam");
     const seen = await inOwner((_a, sql) =>
       sql.exec<{ seen_at: number | null }>(`SELECT seen_at FROM intake WHERE id = ?`, second.id).one(),
     );
@@ -958,6 +960,25 @@ describe("places, the way people say them", () => {
   });
 });
 
+describe("what Atlas can do, on the stage", () => {
+  it("shows the Abilities map zoomed to a group, and refuses a group that isn't one", async () => {
+    brain([
+      call("show", { view: { kind: "abilities", group: "others" } }),
+      call("show", { view: { kind: "abilities", group: "email" } }),
+      say("Here."),
+    ]);
+    const t = await turn(s, "how do you send email?");
+    const results = await inOwner((_a, sql) =>
+      sql
+        .exec<{ body: string }>(`SELECT body FROM log WHERE run_id = ? AND kind = 'tool.result' ORDER BY seq`, t.run)
+        .toArray()
+        .map((r) => JSON.parse(r.body) as { ok: boolean; receipt?: { view?: unknown } }),
+    );
+    expect(results[0]).toMatchObject({ ok: true, receipt: { view: { kind: "abilities", group: "others" } } });
+    expect(results[1]!.ok).toBe(false);
+  });
+});
+
 describe("runs that end without words", () => {
   it("a turn that shows a view and says nothing ends replied, and a look that nudges and says nothing too", async () => {
     const b = brain([call("show", { view: { kind: "situation" } }), say("")]);
@@ -1088,5 +1109,31 @@ describe("what extract asks Clairic", () => {
       expect(["text", "number", "date", "list"], name).toContain(f.type);
       if (f.type === "list") expect(["text", "number", "date"], name).toContain(f.items);
     }
+  });
+});
+
+describe("the weather with nowhere new to look", () => {
+  it("looks again near where it last looked when there's no fix and no Home pin", async () => {
+    const { runInDurableObject, env } = await import("cloudflare:test");
+    const { migrate } = await import("../src/store/db");
+    const { refresh, cache, WEATHER_MS } = await import("../src/situation");
+    const ns = (env as unknown as { PersonAgent: DurableObjectNamespace }).PersonAgent;
+    await runInDurableObject(ns.get(ns.idFromName(`wx-${crypto.randomUUID()}`)), async (_a, state) => {
+      const sql = state.storage.sql as unknown as Sql;
+      migrate(sql);
+      const area = { lat: 28.6, lon: -81.2 };
+      const old = { at: Date.now() - 2 * WEATHER_MS, area, now: { temp_c: 20, feels_c: 20, code: 0, wind_kmh: 0 }, hours: [], days: [] };
+      setState(sql, "situation", { ...cache(sql), weather: old });
+      const asked: Array<{ lat: number; lon: number }> = [];
+      const maps = {
+        weather: async (p: { lat: number; lon: number }) => {
+          asked.push(p);
+          return { ok: true, value: { ...old, at: Date.now(), now: { ...old.now, temp_c: 27 } } };
+        },
+      };
+      await refresh({ sql, settings: readSettings(sql), calendar: null, maps: maps as never, full: true });
+      expect(asked).toEqual([area]);
+      expect(cache(sql).weather?.now.temp_c).toBe(27);
+    });
   });
 });

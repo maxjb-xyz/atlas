@@ -2,12 +2,22 @@
 // streams, calls tools, sees their results, and goes again until it answers
 // or the budget runs out. Nothing here rewrites what the model says (rule 1).
 
-import { BrainError, type BrainEvent, brainKey, type Message, type ToolCall, type Usage } from "./brains/types";
-import type { BrainRouter } from "./brains/router";
+import {
+  type Brain,
+  BrainError,
+  type BrainEvent,
+  brainKey,
+  type Message,
+  type PlanLimits,
+  type ToolCall,
+  type Usage,
+} from "./brains/types";
+import { type BrainRouter, SlowBrainError } from "./brains/router";
 import type { Append, LogRow, Surface } from "./store/log";
 import type { FinalState } from "./store/runs";
 import type { BrainChoice } from "./store/settings";
-import { type Tool, type ToolContext, type ToolResult, fail, toSpec } from "./tools/types";
+import { z } from "zod";
+import { type Tool, type ToolContext, type ToolResult, defineTool, fail, toSpec } from "./tools/types";
 
 export interface Budget {
   /** Model calls with tools. One more call without tools always follows when it runs out. */
@@ -26,6 +36,36 @@ export const BUDGETS = {
 export const BUDGET_NOTE =
   "You've used this run's step budget. Answer now from what you've found, without tools: say what you found, and ask whether to keep going.";
 
+/** Tools a turn can load by name when it needs them (§4.1): one line each in the index, the tools only once loaded. */
+export interface ToolGroup {
+  name: string;
+  /** What the group does, in a line, as the index shows it. */
+  about: string;
+  tools: Tool[];
+}
+
+export const TOOLS_LOAD = "tools_load";
+
+/** The index of what a turn can load, as a tool: loading a group adds its tools for the rest of the turn. */
+function loader(groups: ToolGroup[], load: (names: string[]) => string[]): Tool {
+  return defineTool({
+    name: TOOLS_LOAD,
+    kind: "look",
+    status: "Getting that ready.",
+    description: [
+      "You can do more than the tools you have now. Load a group by name to get its tools for the rest of this turn; calling one of a group's tools by its name loads it too. Never tell the owner you can't do something one of these covers: load it and do it.",
+      ...groups.map((g) => `${g.name}: ${g.about} (${g.tools.map((t) => t.name).join(", ")})`),
+    ].join("\n"),
+    input: z.object({ groups: z.array(z.string().min(1).max(40)).min(1).max(groups.length) }),
+    async run({ groups: names }) {
+      const unknown = names.filter((n) => !groups.some((g) => g.name === n));
+      if (unknown.length)
+        return fail(`There's no group called ${unknown.join(", ")}. The groups are: ${groups.map((g) => g.name).join(", ")}.`);
+      return { ok: true, output: { loaded: load(names) } };
+    },
+  });
+}
+
 export interface RunSpec {
   runId: string;
   role: "main" | "voice";
@@ -33,13 +73,23 @@ export interface RunSpec {
   system: string;
   messages: Message[];
   tools: Tool[];
+  /** More tools, by group, that the turn loads when it needs them; `tools` is what it starts with. */
+  groups?: ToolGroup[];
   budget: Budget;
   signal?: AbortSignal;
   /** Put between text from separate steps: a space when spoken, a paragraph break in text. */
   joiner: string;
   effort?: "low" | "medium";
+  /** Sent with each call so the provider reuses its cache across this conversation's turns (§4.1). */
+  cacheKey?: string;
   /** How long a brain gets to start answering before the next one is tried. */
   firstEventMs: number;
+  /**
+   * When set, a brain that has said nothing by then doesn't hold the turn: the
+   * next one starts too, and whichever answers first is used. For voice, where
+   * every second of quiet is heard.
+   */
+  hedgeMs?: number;
   /** Where to pick up from, after a restart cut a durable run short. */
   resume?: Checkpoint;
   /** Called after each step that ran tools, so a durable run can save where it is. */
@@ -69,7 +119,9 @@ export type LoopEvent =
   | { type: "status"; text: string | null; speakable: boolean }
   | { type: "row"; row: LogRow }
   /** Tools finished running; whatever Atlas says next comes from their results. */
-  | { type: "tools"; names: string[] };
+  | { type: "tools"; names: string[] }
+  /** What Atlas said so far is finished: tools are about to run, so voice speaks it now. */
+  | { type: "pause" };
 
 export interface LoopResult {
   state: FinalState;
@@ -80,6 +132,10 @@ export interface LoopResult {
   interrupted: boolean;
   usage: Usage;
   error?: string;
+  /** The conversation as the run left it: what it was given, each step's tools and results, and its last words. */
+  messages?: Message[];
+  /** Each model call's tokens in and how many came from the provider's cache, to see whether caching works (§4.1). */
+  calls?: Array<{ input: number; cached: number; ms: number }>;
 }
 
 class NoBrainError extends Error {}
@@ -90,10 +146,36 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
   const started = Date.now();
   const messages: Message[] = [...(spec.resume?.messages ?? spec.messages)];
   const usage: Usage = { input: 0, output: 0, cached: 0 };
+  const calls: NonNullable<LoopResult["calls"]> = [];
   let text = spec.resume?.text ?? "";
   let steps = spec.resume?.steps ?? 0;
   let lastBrain: LoopResult["brain"] = null;
   let fellBack = false;
+  /** The last step's words, which end the conversation the run hands back. */
+  let last = "";
+  // What this turn can call now: what it started with, and each group it has loaded since.
+  const active: Tool[] = [...spec.tools];
+  const groups = spec.groups ?? [];
+  const load = (names: string[]): string[] => {
+    const added: string[] = [];
+    for (const g of groups.filter((x) => names.includes(x.name)))
+      for (const t of g.tools)
+        if (!active.some((a) => a.name === t.name)) {
+          active.push(t);
+          added.push(t.name);
+        }
+    return added;
+  };
+  if (groups.length) active.push(loader(groups, load));
+  /** A tool by name: one the turn has, or one from a group, which loads its group (a call by name is a load). */
+  const find = (name: string): Tool | undefined => {
+    const have = active.find((t) => t.name === name);
+    if (have) return have;
+    const g = groups.find((x) => x.tools.some((t) => t.name === name));
+    if (!g) return undefined;
+    load([g.name]);
+    return active.find((t) => t.name === name);
+  };
 
   /** Whether the last step's tools all worked, with something the owner sees. */
   let done = false;
@@ -111,6 +193,8 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
     fallback: fellBack,
     interrupted: false,
     usage,
+    messages: last ? [...messages, { role: "assistant", content: last }] : [...messages],
+    calls,
     ...extra,
   });
 
@@ -118,10 +202,12 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
     while (true) {
       const over = steps >= spec.budget.steps || Date.now() - started > spec.budget.ms;
       steps += 1;
+      const callAt = Date.now();
       const step = await runStep(deps, spec, {
         system: over ? `${spec.system}\n\n${BUDGET_NOTE}` : spec.system,
         messages,
-        tools: over ? [] : spec.tools,
+        tools: over ? [] : [...active],
+        find,
         say,
         emit,
         alreadySaid: () => text.length > 0,
@@ -132,8 +218,12 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
       usage.input += step.usage?.input ?? 0;
       usage.output += step.usage?.output ?? 0;
       usage.cached = (usage.cached ?? 0) + (step.usage?.cached ?? 0);
+      calls.push({ input: step.usage?.input ?? 0, cached: step.usage?.cached ?? 0, ms: Date.now() - callAt });
 
-      if (over || step.calls.length === 0) break;
+      if (over || step.calls.length === 0) {
+        last = step.text;
+        break;
+      }
 
       // Close what Atlas just said before the tools run, so voice speaks it now:
       // a sentence only counts as finished once the space after it arrives.
@@ -141,9 +231,10 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
         text += spec.joiner;
         emit({ type: "text", text: spec.joiner });
       }
+      emit({ type: "pause" });
       messages.push({ role: "assistant", content: step.text, toolCalls: step.calls });
       // A stop doesn't wait for a slow tool: the run ends now, and the tool's own result is still logged when it lands.
-      const tools = Promise.all(step.calls.map((call) => runTool(deps, spec, call, emit)));
+      const tools = Promise.all(step.calls.map((call) => runTool(deps, spec, call, emit, find)));
       const outputs = spec.signal ? await Promise.race([tools, stopped(spec.signal)]) : await tools;
       for (const [i, call] of step.calls.entries()) {
         messages.push({ role: "tool", callId: call.id, name: call.name, content: outputs[i]!.content });
@@ -178,6 +269,8 @@ interface StepIo {
   system: string;
   messages: Message[];
   tools: Tool[];
+  /** Finds a tool the step may call, loading its group when it's one the turn hasn't loaded yet. */
+  find: (name: string) => Tool | undefined;
   say: (t: string) => void;
   emit: (e: LoopEvent) => void;
   alreadySaid: () => boolean;
@@ -191,7 +284,26 @@ interface StepResult {
   usage?: Usage;
 }
 
-/** One model call, trying each brain in the chain until one starts answering. */
+/** One brain's try at a step, and what its first event turned out to be. */
+interface Attempt {
+  index: number;
+  brain: Brain;
+  abort: AbortController;
+  it: AsyncIterator<BrainEvent>;
+  first: Promise<Started>;
+  /** When it was asked, and when its first event came: the router keeps each brain's speed. */
+  at: number;
+  firstAt?: number;
+}
+
+type Started = { attempt: Attempt; ok: true; next: IteratorResult<BrainEvent> } | { attempt: Attempt; ok: false; err: unknown };
+
+/**
+ * One model call, trying each brain in the chain until one starts answering.
+ * With `hedgeMs` (voice), a brain that has said nothing by then doesn't hold
+ * the turn: the next one starts too, the first to answer is used and the rest
+ * are stopped. Nothing reaches the owner from a brain until it has won.
+ */
 async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepResult> {
   const brains = deps.router.chain(deps.chain);
   if (brains.length === 0) {
@@ -199,24 +311,101 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
   }
   const specs = io.tools.map(toSpec);
   const failures: string[] = [];
+  const why = new Map<number, string>();
+  const live: Attempt[] = [];
+  let started = 0;
+  let lastStart = 0;
 
-  for (const [i, brain] of brains.entries()) {
-    const attempt = new AbortController();
-    const signal = spec.signal ? AbortSignal.any([spec.signal, attempt.signal]) : attempt.signal;
+  const start = () => {
+    const index = started++;
+    const brain = brains[index]!;
+    lastStart = Date.now();
+    const abort = new AbortController();
+    const signal = spec.signal ? AbortSignal.any([spec.signal, abort.signal]) : abort.signal;
+    const attempt = { index, brain, abort, at: lastStart } as Attempt;
+    try {
+      attempt.it = brain
+        .stream({
+          system: io.system,
+          messages: io.messages,
+          tools: specs,
+          signal,
+          effort: spec.effort,
+          ...(spec.cacheKey ? { cacheKey: spec.cacheKey } : {}),
+        })
+        [Symbol.asyncIterator]();
+      attempt.first = firstEvent(attempt.it, spec.firstEventMs, abort).then(
+        (next): Started => {
+          attempt.firstAt = Date.now();
+          return { attempt, ok: true, next };
+        },
+        (err): Started => ({ attempt, ok: false, err }),
+      );
+    } catch (err) {
+      attempt.first = Promise.resolve({ attempt, ok: false, err });
+    }
+    live.push(attempt);
+  };
+
+  const failed = (a: Attempt, err: unknown) => {
+    deps.router.markFailed(a.brain, err);
+    const reason = err instanceof Error ? err.message : String(err);
+    why.set(a.index, reason);
+    failures.push(`${brainKey(a.brain)}: ${reason}`);
+  };
+
+  while (true) {
+    if (live.length === 0) {
+      if (started >= brains.length) throw new NoBrainError(`No brain could answer. ${failures.join(" · ")}`);
+      start();
+    }
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const hedge =
+      spec.hedgeMs != null && started < brains.length
+        ? new Promise<"hedge">((r) => (timer = setTimeout(() => r("hedge"), Math.max(0, lastStart + spec.hedgeMs! - Date.now()))))
+        : null;
+    const got = await Promise.race([...live.map((a) => a.first), ...(hedge ? [hedge] : [])]);
+    if (timer) clearTimeout(timer);
+    if (got === "hedge") {
+      start();
+      continue;
+    }
+    const a = got.attempt;
+    live.splice(live.indexOf(a), 1);
+    if (!got.ok) {
+      if (spec.signal?.aborted) throw got.err;
+      failed(a, got.err);
+      continue;
+    }
+
+    // This one answered first: the rest stop, and the ones ahead of it in the chain were the slow ones.
+    for (const o of live.splice(0)) {
+      o.abort.abort();
+      if (o.index < a.index) {
+        const err = new SlowBrainError(`was slower to start (nothing after ${seconds(spec.hedgeMs ?? spec.firstEventMs)})`);
+        failed(o, err);
+      }
+    }
+    const { brain } = a;
+    if (a.index > 0) {
+      const row = await deps.log({
+        actor: "system",
+        kind: "brain.fallback",
+        run_id: spec.runId,
+        surface: spec.surface,
+        body: { role: spec.role, from: brainKey(brains[0]!), to: brainKey(brain), reason: why.get(0) ?? "didn't answer" },
+      });
+      io.emit({ type: "row", row });
+    }
+
     let produced = false;
     let stepText = "";
     let statusSaid = false;
     const calls: ToolCall[] = [];
     let usage: Usage | undefined;
+    let limits: PlanLimits | undefined;
     try {
-      const it = brain
-        .stream({ system: io.system, messages: io.messages, tools: specs, signal, effort: spec.effort })
-        [Symbol.asyncIterator]();
-      let first = true;
-      while (true) {
-        const next: IteratorResult<BrainEvent> = first ? await firstEvent(it, spec.firstEventMs, attempt) : await it.next();
-        first = false;
-        if (next.done) break;
+      for (let next = got.next; !next.done; next = await a.it.next()) {
         const ev = next.value;
         if (ev.type === "text") {
           produced = true;
@@ -226,7 +415,7 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
           // The status line goes out at the first sign of a lookup: some
           // providers announce a tool call early, others only send it whole.
           const name = ev.type === "tool_start" ? ev.name : ev.call.name;
-          const status = io.tools.find((t) => t.name === name)?.status;
+          const status = (io.tools.find((t) => t.name === name) ?? io.find(name))?.status;
           if (status && !statusSaid) {
             statusSaid = true;
             const speakable = !stepText && !io.alreadySaid();
@@ -236,39 +425,36 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
           if (ev.type === "tool_call") calls.push(ev.call);
         } else if (ev.type === "done") {
           usage = ev.usage;
+          limits = ev.limits;
         }
       }
-      deps.router.markOk(brain);
-      return { text: stepText, calls, brain: { provider: brain.provider, model: brain.model }, fellBack: i > 0, usage };
+      deps.router.markOk(brain, {
+        ...(usage ? { usage } : {}),
+        ...(limits ? { limits } : {}),
+        first_ms: a.firstAt != null ? a.firstAt - a.at : null,
+        total_ms: Date.now() - a.at,
+      });
+      return { text: stepText, calls, brain: { provider: brain.provider, model: brain.model }, fellBack: a.index > 0, usage };
     } catch (err) {
       if (spec.signal?.aborted) throw err;
-      deps.router.markFailed(brain, err);
-      const reason = err instanceof Error ? err.message : String(err);
       // Words already reached the owner: switching brains mid-answer would garble it.
-      if (produced) throw new BrainError(`The answer broke off: ${reason}`);
-      failures.push(`${brainKey(brain)}: ${reason}`);
-      const nextBrain = brains[i + 1];
-      if (nextBrain) {
-        const row = await deps.log({
-          actor: "system",
-          kind: "brain.fallback",
-          run_id: spec.runId,
-          surface: spec.surface,
-          body: { role: spec.role, from: brainKey(brain), to: brainKey(nextBrain), reason },
-        });
-        io.emit({ type: "row", row });
+      if (produced) {
+        deps.router.markFailed(brain, err);
+        throw new BrainError(`The answer broke off: ${err instanceof Error ? err.message : String(err)}`);
       }
+      failed(a, err);
     }
   }
-  throw new NoBrainError(`No brain could answer. ${failures.join(" · ")}`);
 }
+
+const seconds = (ms: number) => `${Math.round(ms / 100) / 10} s`;
 
 async function firstEvent(it: AsyncIterator<BrainEvent>, ms: number, attempt: AbortController): Promise<IteratorResult<BrainEvent>> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       attempt.abort();
-      reject(new BrainError(`no answer within ${Math.round(ms / 1000)} s`));
+      reject(new SlowBrainError(`no answer within ${seconds(ms)}`));
     }, ms);
   });
   try {
@@ -283,8 +469,9 @@ async function runTool(
   spec: RunSpec,
   call: ToolCall,
   emit: (e: LoopEvent) => void,
+  find: (name: string) => Tool | undefined,
 ): Promise<{ content: string; ok: boolean; receipt: boolean }> {
-  const tool = spec.tools.find((t) => t.name === call.name);
+  const tool = find(call.name);
   await deps.log({
     actor: "atlas",
     kind: "tool.call",

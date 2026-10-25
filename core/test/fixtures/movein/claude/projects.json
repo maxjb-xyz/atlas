@@ -1,0 +1,26 @@
+[
+  {
+    "uuid": "p-0000-4000-8000-000000000001",
+    "name": "How to use Claude",
+    "description": "An example project that also doubles as a how-to guide for using Claude.",
+    "is_private": true,
+    "is_starter_project": true,
+    "prompt_template": "",
+    "created_at": "2025-01-01T00:00:00Z",
+    "updated_at": "2025-01-01T00:00:00Z",
+    "creator": { "uuid": "acc-0000-4000-8000-000000000009", "full_name": "Max Barbare" },
+    "docs": []
+  },
+  {
+    "uuid": "p-0000-4000-8000-000000000002",
+    "name": "Keyframes client work",
+    "description": "Scripts and edit notes for the studio's clients.",
+    "is_private": true,
+    "is_starter_project": false,
+    "prompt_template": "I run Keyframes, a two-person video studio in Orlando. Write like a calm producer: short, concrete, no hype.",
+    "created_at": "2025-03-01T12:00:00Z",
+    "updated_at": "2025-09-01T12:00:00Z",
+    "creator": { "uuid": "acc-0000-4000-8000-000000000009", "full_name": "Max Barbare" },
+    "docs": [{ "uuid": "d-1", "filename": "rates.md", "content": "Day rate: $900", "created_at": "2025-03-01T12:00:00Z" }]
+  }
+]

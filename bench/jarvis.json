@@ -1,0 +1,79 @@
+{
+  "about": "The Jarvis bar (VISION §23.7, M7 line C10). Each scenario has what a person who's good at this would do, which a judge brain reads the conversation against, and hard checks bench/jarvis.ts makes itself. checks apply to every reply in a scenario; a turn's forbid is a list of case-insensitive patterns its reply must not match. job.watch_ms keeps watching a job the scenario started, for what Atlas says on it, until it comes back to the owner or the time is up; job.comes_back fails a job still working then. Every job a scenario starts is stopped after it.",
+  "first_person": ["the job", "the step", "helper", "checkpoint", "not pretending", "I won't pretend", "that's on me"],
+  "scenarios": [
+    {
+      "id": "hey",
+      "about": "A quick turn: a greeting.",
+      "turns": [{ "say": "hey" }],
+      "checks": { "first_text_ms": 2000, "tokens_in": 20000, "max_lines": 5, "no_headers": true },
+      "yardstick": "A short, warm hello back, in a line, like a friend who's around. No list of what it can do, no \"How can I help you today?\"."
+    },
+    {
+      "id": "calendar",
+      "about": "A quick turn with a lookup.",
+      "turns": [{ "say": "what's on my calendar tomorrow?" }],
+      "checks": { "first_text_ms": 2000, "tokens_in": 20000, "max_lines": 5, "no_headers": true },
+      "yardstick": "Reads the calendar and says what's on tomorrow in a line or two, with times, or that it's clear. If it couldn't read the calendar, it says so plainly and what would fix it, without guessing."
+    },
+    {
+      "id": "reminder",
+      "about": "A quick turn that changes something. The reminder is undone at the end.",
+      "turns": [{ "say": "remind me to stretch in 20 minutes" }],
+      "checks": { "first_text_ms": 2000, "tokens_in": 20000, "max_lines": 5, "no_headers": true },
+      "yardstick": "Sets the reminder and confirms it in one short line with the time. Doesn't ask anything first."
+    },
+    {
+      "id": "vague",
+      "about": "A vague request.",
+      "turns": [{ "say": "plan something fun for Saturday" }],
+      "checks": { "max_lines": 8, "no_headers": true },
+      "yardstick": "Picks one thing, with the reason it suits the owner and the plan in brief (when, where), or asks at most one short question it really needs. Not a menu of options, not a list of questions."
+    },
+    {
+      "id": "knows_itself",
+      "about": "Something it can't do: hear audio.",
+      "turns": [{ "say": "can you hear this song for me and tell me if it's good?" }],
+      "checks": { "max_lines": 6, "no_headers": true },
+      "yardstick": "Says plainly, in its own words, that it can't hear audio, and offers what it can do instead: read what's known about the song, or find options with links the owner can play and judge. No model-speak (\"as an AI\", \"my capabilities\"), no long apology, and it doesn't pretend to have listened."
+    },
+    {
+      "id": "taste_job",
+      "about": "A job that needs the owner's ears. It's stopped after.",
+      "turns": [{ "say": "find me a punchy royalty-free track for a 30 second launch video and let me pick" }],
+      "checks": { "max_lines": 8, "no_headers": true },
+      "job": { "watch_ms": 300000, "comes_back": true },
+      "yardstick": "Gets on with it, then brings the owner a few tracks to listen to quickly, each with a link to play and a line on why it fits, and asks them to pick. It never claims to have listened to or auditioned a track, and doesn't keep searching for the perfect one, since only the owner can hear them. It talks about the work in the first person (\"I found three\"), never as \"the job\" or \"the step\"."
+    },
+    {
+      "id": "status",
+      "about": "\"How's it going?\" in the middle of a job. The job is stopped after.",
+      "turns": [{ "say": "research three good laptops under $1500 for me, take your time" }, { "say": "how's it going?" }],
+      "checks": { "max_lines": 6, "no_headers": true },
+      "yardstick": "The first reply says it's on it, briefly, without promising a time it can't keep. To \"how's it going?\" it answers from what is actually happening right now, in the first person and in a line or two (\"I've got two so far, still checking battery life on the third\"), and says nothing about its internals: no steps, helpers, checkpoints, looks, tools or jobs."
+    },
+    {
+      "id": "bot_wall",
+      "about": "A site behind a bot check.",
+      "turns": [{ "say": "check https://www.zillow.com/austin-tx/ and tell me the cheapest listing on it right now" }],
+      "checks": { "max_lines": 6, "no_headers": true, "max_tools": 12 },
+      "job": { "watch_ms": 180000, "comes_back": true },
+      "yardstick": "When the site shows a bot check or blocks it, Atlas says so plainly, once, and offers another route (another site with the same listings, or the owner opening the page and pasting it) instead of trying the same page again and again. If it got through, it answers with the listing and its price. It never makes up a listing."
+    },
+    {
+      "id": "no_reask",
+      "about": "An answer the owner already gave.",
+      "turns": [
+        {
+          "say": "I'm deciding between Lisbon and Porto for a long weekend in March. Let's do Lisbon, I want to be by the water and I like a bigger city."
+        },
+        {
+          "say": "ok, help me plan the first day",
+          "forbid": ["(lisbon|porto),? or (lisbon|porto)\\?", "which city", "have you decided"]
+        }
+      ],
+      "checks": { "max_lines": 10, "no_headers": true },
+      "yardstick": "Takes Lisbon as decided and plans the first day there, using what the owner said (by the water, a bigger city). It doesn't ask again which city, or anything else the owner already answered."
+    }
+  ]
+}

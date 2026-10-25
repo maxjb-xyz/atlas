@@ -26,6 +26,8 @@ export type LogKind =
   | "job.result"
   /** A coding job's question for the owner (§8.2), which Inbox shows until it's answered. */
   | "job.question"
+  /** Atlas's words on a job it owns, in that job's thread and on its card (§8.3, §21.4); it doesn't notify. */
+  | "job.update"
   /** An area was created, changed, merged or archived, or the owner moved an item's areas (§6). */
   | "area.change"
   /** An automation was made, changed, turned on or paused, or deleted (§13). */
@@ -62,6 +64,8 @@ export interface Receipt {
   view?: StageView;
   /** The approval this receipt waits on (§12), which Review opens. */
   approval?: string;
+  /** The address it's about, for a page read or opened: its card shows the host. */
+  link?: string;
 }
 
 /** What Undo on a receipt does. `history` names the correction to roll back. */
@@ -74,10 +78,22 @@ export type Undo =
   | { kind: "page.undo"; id: string; version: number }
   /** Undoes a skill's version `version`: back to the one before, or archived when it was the first. */
   | { kind: "skill.undo"; id: string; version: number }
+  /** Brings back a skill the review merged into another (§9.3). */
+  | { kind: "skill.restore"; id: string }
+  /** Removes a skill Atlas installed from a skill hub (§17): archived, so Install brings it back. */
+  | { kind: "skill.uninstall"; id: string }
   /** Moves a calendar event back to where it was. */
   | { kind: "calendar.move"; id: string; title: string; start: string; end: string }
+  /** Takes off the calendar an event Atlas added. */
+  | { kind: "calendar.remove"; id: string; title: string }
   /** Puts Speaking up back the way it was before Atlas changed it. */
-  | { kind: "speaking.restore"; before: unknown };
+  | { kind: "speaking.restore"; before: unknown }
+  /** Puts back settings Atlas changed when asked: each changed setting as it was. */
+  | { kind: "settings.restore"; before: Json }
+  /** Puts back which account new mail goes from: the owner's default (no area) or one area's. */
+  | { kind: "account.restore"; area: string | null; before: string }
+  /** Takes back an extension tool's change (§17): its `undo` tool, with the input the call gave back for it. */
+  | { kind: "tool.undo"; ext: string; tool: string; name: string; input: Json };
 
 /** What a source says happened, as the intake keeps it in a `sense` row (§10.4). Sources add their own fields beside these (a place, a device, an event). */
 export interface SenseItem {
@@ -203,10 +219,24 @@ export function forRun(sql: Sql, runId: string): LogRow[] {
 /** Runs whose failure the thread and the Inbox don't show on their own. */
 export function quietTrigger(trigger: string): boolean {
   // An automation's failure reaches the thread as its own report ("… didn't run"), so its run's end stays quiet.
-  return trigger === "compaction" || trigger === "areas" || trigger.startsWith("helper:") || trigger.startsWith("automation");
+  // Moving in says how its reading went on its own page.
+  return (
+    trigger === "compaction" ||
+    trigger === "areas" ||
+    trigger === "movein" ||
+    trigger.startsWith("helper:") ||
+    // A job's turn that stopped (Stop, a pause) is the job's to say, on its card and in its thread (§8.3).
+    trigger.startsWith("job:") ||
+    trigger.startsWith("automation")
+  );
 }
 
 export function isThreadRow(row: LogRow): boolean {
+  // What the owner said to a job, and their answer to its question, are that job's (§21.4): the question shows the
+  // answer in place, and the job's own thread has the rest. The main thread stays the conversation.
+  if (row.kind === "message.in" && row.body.job != null) return false;
+  // What a job's turns and its helpers did (a page read, the browser) is the job's too: in its thread, not here.
+  if (row.kind === "tool.result" && row.body.job != null) return false;
   if (row.kind === "message.in" || row.kind === "message.out" || row.kind === "brain.fallback" || row.kind === "voice.problem") return true;
   if (row.kind === "tool.result") return row.body.receipt != null;
   // Atlas's own upkeep (compaction, area discovery) failing isn't news for the thread; the run and the
@@ -219,6 +249,10 @@ export function isThreadRow(row: LogRow): boolean {
   if (row.kind === "agenda.change" || row.kind === "record.change") return row.body.undo_of != null;
   // Atlas starting an area is said once, in the thread (§6.3).
   if (row.kind === "area.change") return row.body.change === "started";
+  // A job's questions are messages in the thread, with their buttons (§21.4), and so is the result of a job that
+  // made files; a step's result, or a helper's that Atlas reported in its own words, isn't.
+  if (row.kind === "job.question") return true;
+  if (row.kind === "job.result") return Array.isArray(row.body.files) && row.body.of == null;
   return false;
 }
 
@@ -232,7 +266,33 @@ export const THREAD_KINDS: LogKind[] = [
   "record.change",
   "area.change",
   "voice.problem",
+  "job.question",
+  "job.result",
 ];
+
+/**
+ * A job's own thread (§21.4), oldest first: what Atlas said on it, its questions and result, and the owner's words
+ * to it (a message for the job, or the words `atlas.job.say` kept). Rows name their job in `job`; a result in `item_id`.
+ */
+export function jobThread(sql: Sql, job: string, limit = 200): LogRow[] {
+  return sql
+    .exec<RawRow>(
+      `SELECT * FROM log WHERE (
+         (kind IN ('job.update', 'job.question', 'message.in', 'message.out') AND json_extract(body, '$.job') = ?)
+         OR (kind = 'tool.result' AND json_extract(body, '$.job') = ? AND json_extract(body, '$.receipt') IS NOT NULL)
+         OR (kind = 'job.result' AND json_extract(body, '$.item_id') = ?)
+         OR (kind = 'settings.change' AND json_extract(body, '$.job') = ? AND json_extract(body, '$.said') IS NOT NULL)
+       ) ORDER BY seq DESC LIMIT ?`,
+      job,
+      job,
+      job,
+      job,
+      limit,
+    )
+    .toArray()
+    .reverse()
+    .map(fromRaw);
+}
 
 export function thread(sql: Sql, limit: number, beforeSeq?: number): LogRow[] {
   // Some rows of these kinds aren't shown (tool results without receipts, record changes

@@ -98,6 +98,7 @@ Before the model sees anything, code sets the run's **run context**:
 How the loop behaves:
 - **Long step budgets,** set by kind of run. Starting points: 40 steps for chat and 150 for background work. Limits are soft time limits, not hard walls.
 - **Compaction.** At about 70% of the context window, a silent "save what matters" pass runs, then older context is summarized.
+- **A turn reads what it needs, not everything** (decided 2026-10-25). A chat or voice turn reads the recent conversation (the last few thousand tokens) with the summary of what came before; recall has the rest. It gets the tools most turns use, plus one line for each group of the others, which it loads by name when it needs them. A reply's first words should come within 2 seconds; a long prompt is what slows them.
 - **Parallel tool calls,** and helpers for big jobs.
 - **When a budget runs out,** one final answer with no tools: "Here's what I found. Want me to keep going?"
 - **Long work moves to the background** on its own, survives restarts, and reports back where it was asked for. Background runs execute inside durable fibers (the Agents SDK's `runFiber`): the loop saves a checkpoint after each step and picks up from it after a restart. A chat reply that a restart cuts off simply ends as failed, with the reason.
@@ -164,7 +165,7 @@ Atlas shouldn't forget. It keeps everything and gets good at finding it.
    - **Corrections replace the current value,** and the old value stays in history.
 3. **Summaries:**
    - a daily journal and weekly roll-ups;
-   - a portrait of each person Atlas serves: one overall, plus one per area.
+   - a portrait of each person Atlas serves: one overall, plus one per area. It includes their routines, usual places and rhythms, from where they go, their calendar and their mail (M7).
 
    All are rewritten nightly from the records and the log.
 
@@ -206,7 +207,7 @@ It filters by area, type and date, and results come back with their sources. Rec
 
 Library (§21.2) shows everything:
 - search;
-- people and places;
+- places (people are in their own place, §21.2);
 - collections as tables;
 - the journal and the portrait;
 - "Not sure about these": low-confidence records you confirm or reject with one tap.
@@ -255,7 +256,7 @@ Atlas writes and keeps up the learned parts, and you can edit them:
 - recent activity;
 - collections.
 
-Settings are explicit and start with careful defaults: tone, accounts, autonomy, sharing, faces and automations. In the app, areas live in Library, and the settings that control what leaves Atlas are one row per area in Library → Areas (§21.3).
+Settings are explicit and start with careful defaults: tone, accounts, autonomy, sharing, faces and automations. Each area also has **its color and its icon**, which the owner can change (decided 2026-10-24, for M7): one of the app's deep, saturated presets or any color they pick, and a line icon from Atlas's set or a logo they upload (a company's or a school's), kept with their files (§21.7). Chips, avatars, the week's load and a scoped stage (§21.3) all use them. In the app, areas live in Library, and the settings that control what leaves Atlas are one row per area in Library → Areas (§21.3).
 
 Shared areas, such as Home or Family, belong to several members (§7.1).
 
@@ -303,7 +304,7 @@ The rules:
 - A face only sees what its areas and sharing settings allow, and it never mentions your other areas.
 - Every conversation goes into the log, so asking "What did Jordan want?" just works.
 
-**In the app,** each face has its own screen under Atlas settings → Faces, with everything above and a "talk to it as a stranger" test. Its conversations are in History (the Faces tab), and what it hands to you goes to Inbox.
+**In the app,** each face has its own screen under People → Faces (§21.2), with everything above and a "talk to it as a stranger" test. Its conversations are in History (the Faces tab), and what it hands to you goes to Inbox.
 
 ---
 
@@ -346,7 +347,21 @@ Atlas acts as the middleman:
 
 You can ask "How's the Keyframes job?" by voice from the car, or watch the live terminal in the app.
 
-### 8.3 One Atlas, not many bots
+### 8.3 Jobs Atlas owns
+
+Any long piece of work can be a job Atlas owns: "make the launch video", "plan the Lisbon trip", "get three quotes for the roof". Rewritten 2026-10-25, after the first real job: the first design ran a job as short looks that each started helpers on steps, and every hand-off lost something (the storyboard never reached the chat, an answer lost its question, each search for music started from nothing), while Atlas spoke of the job as someone else.
+- **A job is Atlas doing the work itself,** in a conversation of its own. It's the one loop with Atlas's character, run in turns on the job's own transcript, so it remembers everything it did and was told. A turn ends when Atlas needs the owner, hands work to a coding agent, or is done; the next turn starts when that comes back. Turns are durable fibers (§4.1), so a deploy loses nothing, and between turns a job waits for free on the one clock (§4.3).
+- **Notes it keeps.** Each job keeps notes, which every turn reads first and which compaction never touches: what it decided, the owner's answers in their words, what failed and why. Its folder in the workspace holds what it makes.
+- **Helpers only where they help:** reading many pages at once, or reading for Atlas when what's read shouldn't be able to steer it (§8.1). Building something in code goes to a coding agent (§8.2), which hands back to the job.
+- **It asks for what only the owner can give,** and nothing else: a choice of taste, an OK before what can't be undone (§12.1), a sign-in. It decides the rest as the owner would. When the choice is about something to see or hear, the question brings it: the tracks to play, the images, the cut.
+- **It speaks for itself, in the thread** (§21.4). It says when it starts, when it has something to show, when it's stuck and what it would do, and when it's done, with the files. Only a question and the result notify; the rest updates the job's card. It never gives a time it can't keep: without a deadline it doesn't estimate. The owner never has to ask how it's going.
+- **It keeps to time.** A job can have a deadline ("by Friday at 5"), and every turn sees the clock: how long it has run, how long since it last moved, the time left. It fits the work to it, and says early, with options, when it can't be met. One waiting on the owner reminds them a few hours on and then once a day.
+- **It knows what it can't do.** It can't hear audio, watch video, get past a bot check or a sign-in, or judge taste for the owner; when one of those decides something, it brings the owner the options at once rather than trying again.
+- **What it read stays with it.** Once a job has read the web, everything it sends out asks first (§12.2), for the rest of the job, since what it read could be steering it.
+- **It has a budget** (time, turns and money) and the brain it runs on (§18); past the budget it asks before going on.
+- **It lands as things you keep:** files and pages (§21.7), with a receipt, and the result in the thread.
+
+### 8.4 One Atlas, not many bots
 
 Many people split their assistant into several separate bots. Atlas doesn't: you keep one relationship, and Atlas gets many hands.
 - **Helpers** keep context clean.
@@ -384,13 +399,18 @@ Underneath, each is Atlas, writing to one log.
 Skills use the SKILL.md format, so skills from Claude Code, Codex, Hermes and OpenClaw work unchanged.
 
 - **Learned from outcomes.** After a task that succeeded and that you accepted, Atlas drafts a skill, including what went wrong along the way.
+- **Reviewed after each conversation** (decided 2026-10-24, for M7). Saving a skill mid-turn depends on Atlas remembering to, so it isn't the main way Atlas learns, as it isn't in Hermes. When a conversation goes quiet, a review runs: one of Atlas's own runs, on the clock, with only the skill tools. It reads the conversation and patches the skills that were used, or saves a new one, when there's something worth keeping: a correction ("stop doing X"), a method that took working out, or a skill that turned out wrong. "Nothing to save" is a fine outcome. It's the one kind of Atlas's own run that may write skills, and it writes only skills: facts about the owner still never come from Atlas's own work (§5.4).
 - **Found again.** Every skill's one-line summary sits in the index Atlas always sees, tagged by area, with its use counted. Old Atlas wrote 14 skills of its own and reused none, because nothing ever surfaced them.
-- **Patched, not rewritten,** with history and undo.
+- **One skill per method.** A new skill that reads like one Atlas already has is refused with that skill's name, so Atlas patches it instead. Near-duplicates are Hermes's main known weakness.
+- **Patched, not rewritten:** a change replaces the passage that was wrong, with history and undo.
+- **Folders, as the standard has them.** A skill is its SKILL.md plus its folder (references, scripts, templates, assets), kept in R2. Scripts run in the workspace.
 - **Tested.** A skill can include a quick check that runs in the sandbox. A weekly pass re-runs the checks and flags broken skills.
-- **Tidied.** Duplicates are merged, and unused skills are archived, never deleted.
+- **Tidied.** The nightly tidy-up merges duplicates, and unused skills are archived, never deleted.
+- **Measured.** How often a skill Atlas saved is opened again is the number that shows the learning works, and each milestone reports it.
 - **Visible.**
   - "I learned how you file reimbursements" appears in the console.
-  - The Skills page (under Atlas in the app) lists every skill with its history, its runs and what it can touch.
+  - Abilities → Skills (§21.2) lists every skill with its history, its runs and what it can touch.
+- **Installed like the rest:** from the catalog (§17), from a link, or pasted.
 
 ---
 
@@ -467,7 +487,7 @@ Adapters keep a cursor (Gmail's history id, GitHub's last time), so a restart ne
 
 **Learning both ways.** Reactions to nudges show what was noise (§10.3). "Why didn't you tell me?" shows what was missed: Atlas finds the item, says what it decided and why, and your correction becomes a standing preference. What to always bring up and what never to are lists in your own words; `decide` and Atlas both read them, and you edit them in the app.
 
-**The Senses screen.** Every source with its state (its last item, its last error in the provider's own words), and today's funnel: what came in, what was a duplicate, never, later and now, and what Atlas said. "Show me what you noticed" puts it on the stage.
+**The Senses screen** (in Abilities, §21.2). Every source with its state (its last item, its last error in the provider's own words), and today's funnel: what came in, what was a duplicate, never, later and now, and what Atlas said. "Show me what you noticed" puts it on the stage.
 
 **Measured.** The share of nudges you thank or reply to, the share you ignore, and the misses you point out. Each milestone from M4 reports them from the owner's real use.
 
@@ -517,7 +537,7 @@ Voice is a mode of the same Atlas, never a second mind. In old Atlas, separate f
 - **The app:** a full-screen voice mode, and a small voice bar on every page.
 - **The desktop:** a hotkey.
 - **The phone:** the web app first; later a native app with voice from the lock screen.
-- **Phone calls** through Telnyx or Twilio: you can call Atlas, and Atlas can call you for urgent things.
+- **Phone calls** through Telnyx (M7, §16.1): you can call Atlas, and Atlas can call you for urgent things once you allow it (§12.3). Phone audio is narrower than the app's, so speech in and out take it as it is, and the voice benchmark includes a call.
 - **Later:** earbuds, cars and glasses, as nodes.
 
 ---
@@ -558,6 +578,25 @@ Each area can raise or lower these defaults. The Permissions page (under Atlas i
 - **Hold to confirm** for things that can't be undone, and for money.
 - **Earned trust.** After you've approved several of the same kind without changes, Atlas offers to stop asking: "You've OK'd 5 meeting confirmations as-is. Want me to send these myself?" You can revoke this at any time.
 - **Nothing gets stuck.** Work carries on around a waiting approval. Approvals expire, and Atlas tells you what didn't happen as a result.
+
+### 12.3 Your own rules
+
+The Permissions page lets the owner change when Atlas asks (decided 2026-10-24, for M7). Each kind of action can be set to always ask, ask until trusted, or don't ask, and a few named rules cover cases the kinds don't. Each starts as Atlas behaves today:
+
+| Rule | Starts as | Can be |
+|---|---|---|
+| Websites the workspace reaches (§9.1) | Asks for each site | Any site |
+| Forms in the browser | Asks | Fills and submits on sites you've allowed |
+| After reading the web (§20) | Asks before anything leaves | Doesn't ask for people and places you already trust |
+| Email sent as you | Asks until you trust each recipient | Always asks |
+| Faces replying to known contacts | Asks until trusted | Sends without asking |
+| Calendar changes that involve other people | Does it, tells you, and offers Undo | Asks |
+| MCP tools | Trusted one tool at a time | All of one service's tools at once |
+| A paid brain when a plan runs out (§18) | Asks | Allowed within the spending cap |
+| Tools on your devices (§16.3) | Asks until trusted | Always asks |
+| Phone calls (§16.1) | Atlas doesn't call you; an unknown caller leaves a message | Atlas calls about urgent things; the face answers |
+
+Some floors can't be lowered: money and things that can't be undone always ask, a vault login asks the first time on each site, and secrets go only through the app. Areas can still raise or lower the rest (§6.2).
 
 ---
 
@@ -602,14 +641,20 @@ Any trigger can have conditions: "only on weekdays", "only when I'm home", "only
 
 ## 14. Notifications and delivery
 
-The outbox decides how and when anything reaches a person.
-- **Urgency:** now, at the next free moment, in a digest, or never.
-- **Context:** quiet hours; focus, judged from your calendar, location and devices, or set by picking an area (§21.3); driving; sleeping.
-- **One channel.** Each message goes to the best channel, not all of them. Reading it on one device clears it everywhere.
-- **Follow-up.** Urgent things re-ping, then escalate to a call if they go unseen, according to your rules.
-- **Budget.** A daily interruption budget, learned from how you react, so Atlas has to earn its interruptions.
+The outbox decides how and when anything reaches a person. Atlas decides whether to say something and how urgent it is, since that's a judgment about what it's saying; where it goes is code, at the exit (decided 2026-10-24, for M7).
+- **Urgency,** set by Atlas with the message: **now**; **soon**, at your next free moment; **later**, in the next brief or when you next open the app; or never.
+- **One channel,** picked in this order:
+  1. where you're talking now: a live call, the app in view, or a chat you replied in within the last few minutes;
+  2. where the matter started: a job's result or a promise reports back where it was asked for;
+  3. otherwise your list for that urgency (for example: soon on Telegram; now as a push and on Telegram, then a call).
 
-In the app, Atlas settings → Notifications shows channels per urgency, quiet hours, focus rules and the budget.
+  Reading it on one device clears it everywhere.
+- **Context:** quiet hours, sleep and focus (judged from your calendar, location and devices, or set by picking an area, §21.3) hold anything that isn't now. While you're driving, it comes by voice or a call, or waits.
+- **Follow-up.** Something urgent that goes unseen moves down your list: a re-ping, then a call (§16.1) once you've allowed that (§12.3).
+- **Budget.** A daily interruption budget, so Atlas has to earn its interruptions. How you react shapes suggestions ("You read Telegram faster than notifications. Reach you there first?"); the lists change only when you say so (rule 9).
+- **Everyone has their own.** Members have their own lists. A contact always gets the reply on the channel they used.
+
+In the app, Atlas settings → Notifications shows one list per urgency, quiet hours, focus rules and the budget.
 
 ---
 
@@ -636,14 +681,23 @@ In the app, Atlas settings → Notifications shows channels per urgency, quiet h
 
 ### 16.1 Channels
 
-Channels are the text surfaces where people reach Atlas or a face:
-- SMS and calls (later, §26);
+Channels are the surfaces where people reach Atlas or a face:
+- phone calls, through Telnyx (M7, below); SMS later (§26);
 - email;
 - Telegram, Discord, WhatsApp, Signal and Slack;
 - iMessage, through a Mac node;
 - the website widget.
 
 **Telegram comes first** (decided 2026-10-23, for M5): it has an official bot API, needs no phone number, and Telegram calls Atlas only when a message arrives, so it costs nothing while idle and nothing runs until the owner adds a bot token (§19.3). Its voice notes, in and out, beside the app's voice call, stand in for a phone. Discord needs a connection held open all month to receive messages, so it waits. Signal has no official bot API that we've found; signal-cli, the unofficial client, needs a process that's always on and a number of its own, so Signal would come through a node (§16.3), like iMessage through a Mac, unless Signal opens one.
+
+**Phone calls come through Telnyx** (decided 2026-10-24, for M7), voice only, so there's no US texting registration. Setup is one pasted key:
+- **Your numbers or a new one.** Atlas lists the numbers the Telnyx account already has, each with what it's connected to now, or offers to buy one, showing its monthly price first. Telnyx checks identity before selling a number, and Settings says so up front; an account that's already verified skips it.
+- **Nothing else is touched.** Using a number gives Atlas its own voice app and moves only that number's voice to it. The account's other apps and numbers, and the number's texting, stay as they were, and "Give the number back" restores what its voice was connected to.
+- **A test call** rings the owner when it's done.
+- **Costs only while in use** (§19.3): audio streams only during a live call, so the number's monthly fee is the one standing cost, and Settings shows it before anything is bought.
+- **One number, both sides:** the owner calling gets Atlas, and anyone else gets the face (§7.2).
+
+WhatsApp waits.
 
 Each channel is an adapter (§17). In a messaging thread Atlas texts like a person who has things to show you, the way messaging-native agents such as Instinct do: it sends what the channel can carry, not a link to everything.
 - **Rich where the channel allows.** An adapter says what its channel carries (images, files, reactions, effects, buttons, voice notes, formatting, length), and each stage view goes out in the richest form that fits:
@@ -711,7 +765,7 @@ Atlas is a core and its extensions (decided 2026-10-23, for M5). The core is the
 |---|---|---|
 | Skills | Know-how and procedures | SKILL.md (Agent Skills) |
 | MCP | Tools Atlas can call | MCP, plus MCP Apps for views on the stage |
-| Extensions | New senses (adapters into the intake, §10.4), channels, providers (calendar, contacts, mail, maps, weather, search, models, voice), stage views and node types | A small TypeScript module with a manifest, sandboxed in a Dynamic Worker, so Atlas can write one itself, with your OK |
+| Extensions | New senses (adapters into the intake, §10.4), channels, providers (calendar, contacts, mail, maps, weather, search, models, voice), tools with a declared kind, stage views, file readers (moving in, §23.3) and node types | A small TypeScript module with a manifest, sandboxed in a Dynamic Worker, so Atlas can write one itself, with your OK |
 | API | Every surface | One public API: a live event stream plus HTTP. Atlas's own app, desktop, voice and command line all use it. Atlas is also an MCP server, so Claude, ChatGPT or an editor can talk to it. |
 | Nodes | Devices | The public node protocol (§16.3) |
 
@@ -720,7 +774,28 @@ Atlas is a core and its extensions (decided 2026-10-23, for M5). The core is the
 - **It runs sandboxed.** Each call runs it in a Dynamic Worker whose only way out is the core's gate, which lets it reach the hosts its manifest names and nothing else, and adds its secrets to its requests there. The extension never sees a secret's value, and it never sees the log, the records or the owner's other connections: the core hands it what a call needs and takes back typed results.
 - **It speaks through the core.** What it notices goes into the intake as items, like any sense (§10.4); a message it receives goes to the owner's thread or to a face; what it sends leaves through the outbox, with a receipt and the owner's OK where §12 says so. It can't act on its own.
 - **A source it can't hear from gets a look on the clock.** A service that can't post to Atlas is asked "what's new since last time?" by an item on the agenda (§4.3), at the interval its manifest asks for, while it's installed and on. Its cursor (Gmail's history id, GitHub's last time) is where it left off, kept by the core, so a restart neither misses nor repeats anything.
-- **It installs from the app:** browse the ones that ship with Atlas, see what each can touch before installing, turn it off, remove it. Atlas can write one for a service it has no extension for, as a draft you review and install, never on its own.
+- **It installs from the app:** browse the catalog (below), see what each can touch before installing, turn it off, remove it. Atlas can write one for a service it has no extension for, as a draft you review and install, never on its own.
+- **It never hooks into the loop.** Nothing an extension adds runs before or after a model call, or changes what the model said (rule 1). Hermes and OpenClaw plugins can; Atlas's can't.
+
+**Extension or MCP** (decided 2026-10-24, for M7). One service can use both, each for what it's for, and never both for the same action.
+- **An extension** when the core needs it:
+  - the service has to reach Atlas: a sense, a channel, a webhook. MCP gives a service no way to wake Atlas;
+  - the core calls it and picks between several: calendars, contacts, mail, maps, weather, search, brains, speech, coding agents, code hosts;
+  - it reads a file format;
+  - Atlas needs tools for a service that has no MCP server. An extension's tool declares its kind (§12.1), and the core holds it to that.
+- **MCP** for tools Atlas calls in a turn when the service already runs an MCP server: the vendor keeps it up, it costs Atlas nothing, and what people already use carries over. Its results are untrusted content (§20), and a tool that isn't marked read-only asks until it's trusted.
+
+For example, "file client bug reports in Linear": the email is a sense, the rule is an automation with an event trigger (§13.2), the issue is made through Linear's own MCP server, and Linear's extension hears what's assigned to you, which Linear's MCP server can't.
+
+**Services: one catalog** (decided 2026-10-24, for M7). The owner never has to know which is which. Abilities → Services (§21.2) shows one card per service (Linear, Notion, GitHub, Gmail, Telegram), whatever is underneath: what Atlas hears from it, what it can do there, its state, its cost, and one setup, with one key or sign-in when one covers every part. Only the Developer detail level (§21.5) names the parts. The last card is **Custom**: any MCP server's address, an extension from a link, or a pasted SKILL.md. **Accounts** (decided 2026-10-24): a service that's someone's mail, calendars, address book or tools can be added more than once (two Gmail accounts, iCloud and Google calendars), each account with its own sign-in, listed on its card and named for what it signed into. Atlas reads every account; a reply goes from the account its mail came to, and new mail from the area's account (§6.2), else the owner's default. An area can also hold calendars, a whole account or one calendar in it ("Work" in the work Google account), set from the account's card or the area's row: their events are that area's, and new events there go on the first. Atlas adds events as well as moving them, inviting no one, with Undo. Google is one service: its one sign-in covers Gmail and Google Calendar.
+
+The catalog comes from **an index**: a file in a git repo that lists services, each with its parts:
+- an extension's code, pinned to a commit and a content hash, with what its manifest lets it reach and hold;
+- a vendor's own MCP server and how to sign in to it. Only the vendor's own, since there's no code to pin;
+- skills, pinned the same way, including from skill hubs that use SKILL.md;
+- later, automation templates and themes, which together make a pack (§6.5).
+
+Each release carries a snapshot of the index, so the catalog works when GitHub doesn't, and Atlas looks for a newer index once a day. Anyone can publish an index, and the owner can add one by its address, the way Hermes adds GitHub repos as sources. Nothing runs on a server for it: a listing is a reviewed change to the file. An update that would let an extension reach or hold more than before asks first. Sandboxing is what makes this safe enough without a hosted store's moderation (ClawHub's moderation still let hundreds of malicious skills through); a skill is instructions, which no sandbox contains, so the exits (§4.4) are its guard, and Atlas shows a community skill in full before it's installed.
 
 **Bundled extensions** live in the repo beside the core (`extensions/`), are reviewed like the core, and are the defaults: iCloud for the calendar and contacts, OpenStreetMap and Open-Meteo, and the rest. They use the same manifest and interface as any other. Model and voice providers are bundled extensions too, but every turn and every spoken word goes through them, so a bundled extension may run inside the core's own Worker instead of a sandbox when measuring shows the sandbox's extra step costs time that matters (voice latency, §11.2). Only bundled extensions may; where one runs is a choice in the code, not in the extension, so moving it back is one line.
 
@@ -740,8 +815,15 @@ Everything installs from the app: browse, preview what it can touch, install, un
   - `speech_out`.
 
   Each role is filled by a model you pick, with a fallback.
+- **Named brains for kinds of work** (decided 2026-10-24, for M7). Beside the fixed roles, the owner can name brains ("Quick", "Deep", "Long reading", "Vision"), each a chain with a line saying what it's good for. Each kind of work has a default the owner sets: helpers, research, a job's work, a job's looks, the skill review (§9.3). Handing work to a helper, Atlas can pick another named brain, seeing only the names and their lines, never a vendor or a model, so it can't pick one that doesn't exist (Hermes's Advanced Delegation works the same way). A job keeps the brain it started with, shown in Jobs, and Steer can change it.
+- **When a brain runs out partway through a job.** A job saves its state after every step, so changing brains or pausing is safe.
+  - A short outage or a rate limit: the brain's own chain falls back for that step, and the job notes it.
+  - A plan's limit or a spending cap: the job pauses at a clean step and asks in Inbox whether to wait until the limit resets or go on with a paid brain, with what that costs so far. The answer can be kept for that job or that brain. With no answer, it waits, so it never spends what the owner didn't approve.
+  - Only a weaker brain left: it keeps working, but the decisions (calling the job done, pushing, sending) wait for the chosen brain or for the owner.
+
+  A coding agent on a plan, like Codex, pauses the same way.
 - **Any provider, by key or by sign-in:**
-  - **API keys** through AI Gateway: Anthropic, OpenAI, Google, xAI, Workers AI, OpenRouter and others.
+  - **API keys** through AI Gateway: Anthropic, OpenAI, Google, xAI, Workers AI, OpenRouter and others. Anthropic comes first (M7), with prompt caching on the stable block (§5.2).
   - **ChatGPT plan sign-in.** "Sign in with ChatGPT" in the app, so a Plus or Pro plan powers Atlas at a flat cost. This is OpenAI's official plan usage for open-source tools (launched at DevDay, September 2026): Atlas calls the public Responses API at `api.openai.com` with the sign-in token, refreshes the token on its own, tracks the plan's usage limits, and falls back when they're hit. Atlas doesn't use chatgpt.com's own backend, which blocks requests from Cloudflare. OpenAI only redirects sign-in to `127.0.0.1`, so on a deployed Atlas the last step of signing in is pasting the address the browser lands on.
   - **Workers AI can fill every role,** including `main` and `voice`. It comes with the Cloudflare account (with a free daily allowance), and it runs on the same network as the agent, which makes it the fastest option for voice.
   - **Claude subscriptions can't be used.** Since early 2026, Anthropic's terms reserve Pro and Max sign-in for Claude Code and Claude.ai, so Claude models in Atlas need an API key. Whether a Claude plan can power Claude Code inside Atlas's coding jobs (§8.2) depends on Anthropic's terms at the time; check before M6.
@@ -828,8 +910,9 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
 - **At the exits** (rule 2): the outbox checks, the secrets scrubber, the public-query check, sharing rules, approvals and the vault.
 - **Untrusted content** (emails, web pages, messages from other people, web results that tools return) is marked as untrusted wherever it appears. It can inform Atlas, never instruct it.
   - Atlas reads a page or a search's results itself; long or many reads go to helpers (§8.1), so only what matters comes back.
-  - Once a run has read the web, itself or through its helpers, anything that leaves Atlas in that run asks first, even what Atlas usually does without asking. The safety is at the exit (rule 2), not in the reading. The one exception is a vault login on a site the owner already said yes to (§15): the entry only fills on its own sites, so a page can't steer it anywhere else. (Decided 2026-10-22: a quarantined helper for every page would add a model call to each read, which voice can't afford.)
+  - Once a run has read the web, itself or through its helpers, anything that leaves Atlas in that run asks first, even what Atlas usually does without asking. The owner can relax this for people and places they already trust (§12.3). The safety is at the exit (rule 2), not in the reading. The one exception is a vault login on a site the owner already said yes to (§15): the entry only fills on its own sites, so a page can't steer it anywhere else. (Decided 2026-10-22: a quarantined helper for every page would add a model call to each read, which voice can't afford.)
 - **Members are kept apart** by agent (§19.2).
+- **What Cloudflare can see** (decided 2026-10-24, for M7). Atlas runs on Cloudflare's machines and reads your data to act while you're away, and Workers AI is Cloudflare's too, so no setup hides your data from the host that runs it. Cloudflare encrypts storage at rest. On top of that, Atlas encrypts the vault and every key and token itself, with a key kept as a Worker secret, so a leaked copy of storage, a backup or an export doesn't carry them. The launch docs say plainly what Cloudflare and each model provider can see. Later: vault entries sealed by your passkey, which open only while you're there.
 - **One audit log:** the log itself, with every action and delivery.
 - **Devices** are paired and can be revoked. Sign-in uses passkeys.
 - **Data:** export everything in open formats, delete everything, or restore to any point in the last 30 days (a Durable Objects feature).
@@ -838,30 +921,32 @@ Each agent's SQLite database holds: the event log, records and links, areas, age
 
 ## 21. UI
 
-UI v1 was locked on Oct 21, 2026. The screens, screenshots and source are in [`docs/ui/`](docs/ui/README.md). This section summarizes the decisions.
+UI v1 was locked on Oct 21, 2026. The screens, screenshots and source are in [`docs/ui/`](docs/ui/README.md). This section summarizes the decisions. M7 changes it where marked (decided 2026-10-24): before a public release the app has to meet two bars, simplicity and Jarvis, and the settings as built read as pre-alpha.
 
 ![UI v1](docs/ui/screenshots/00-overview.png)
 
-### 21.1 The shell: one stage, a console, no side panes
+### 21.1 The shell: the conversation, with the stage it opens
 
 ```
 ┌────────────────┬─────────────────────────────────────────────────────────────┐
-│ ◆ Atlas        │ [●●●● All areas ▾]           [⠹ 2 jobs running] [Talk] [⌘K] │
+│ ◆ Atlas        │ [●●●● All areas ▾]           [⠹ 1 job running] [Talk] [⌘K]  │
 │                ├─────────────────────────────────────────────────────────────┤
-│ ▢ Home         │ ┊ STAGE / (Now) (Week) (Draft 1) (Jobs 2)        METADATA ┊ │
-│ ▢ Inbox     5  │ ┊ ┌─────────────────────────────────────────────────────┐ ┊ │
-│ ▢ Agenda       │ ┊ │                                                     │ ┊ │
-│                │ ┊ │      the sheet: a week, a draft, a job, a list      │ ┊ │
-│ ▢ Automations  │ ┊ │                                                     │ ┊ │
-│ ▢ Library      │ ┊ └─────────────────────────────────────────────────────┘ ┊ │
-│ ▢ History      │ ┊      ┌─ console (Home) / composer (other pages) ─┐      ┊ │
-│ Pinned       + │ ┊      │  last exchange · receipts · type or talk  │      ┊ │
-│ Atlas settings │ ┊      └───────────────────────────────────────────┘      ┊ │
+│ ▢ Home         │   You: Move my dentist to Thursday and tell Mom.            │
+│ ▢ Inbox     2  │   Done. Thursday at 10. ✓ Dentist → Thu 10:00 · Undo        │
+│ ▢ Agenda       │                                                             │
+│                │   You: Make a launch video for X.                           │
+│ ▢ Automations  │   ┌ Launch video ─────────────────────────────── Stop ┐     │
+│ ▢ Library      │   │ ⠹ Cutting the opening to the beat · 3 files       │     │
+│ ▢ People       │   └───────────────────────────────────────────────────┘     │
+│ ▢ Abilities    │   Atlas: Three tracks to pick from. ▶ ▶ ▶  [1] [2] [3]      │
+│ ▢ History      │                                                             │
+│ Pinned       + │   ┌ Needs you: pick the track · 1 more ─────────────────┐   │
+│ Atlas settings │   │ Message Atlas                              🎙  ↑     │   │
 └────────────────┴─────────────────────────────────────────────────────────────┘
 ```
 
 - **Sidebar:**
-  - the diamond and the six places, with icons;
+  - the diamond and the eight places, with icons;
   - **Pinned:** any area, person, project or automation you live in;
   - **Atlas settings** at the bottom.
 - **Toolbar:**
@@ -869,35 +954,42 @@ UI v1 was locked on Oct 21, 2026. The screens, screenshots and source are in [`d
   - the jobs button (§21.4);
   - **Talk** (Space);
   - **Search** (⌘K).
-- **Stage:** one sheet that shows the work itself: a week, a draft, a job, a route, a table, a live browser.
+- **The conversation is Home** (decided 2026-10-25, replacing the console docked under the stage). The whole thread fills Home: every message, receipt, question and job, by text or voice, with the composer at the bottom. Talking to Atlas is the product; nothing about how Atlas works has to be learned first.
+- **Stage:** one sheet that shows the work itself: a week, a draft, a job, a route, a table, a live browser. It opens from the conversation when Atlas shows something or a message is tapped, large and beside or over the thread, and closes back to it.
   - Detail opens in place: rows expand and cards open into their flow.
   - There are no inspectors or side panes.
-- **Console (Home):** the conversation with Atlas, docked under the stage. It shows the last exchange and receipts for everything Atlas just did ("✓ Dentist → Thu 10:00 · Undo", "Text to Mom waiting · Review"). ⌘J opens the full transcript.
+- **Receipts** for everything Atlas just did sit under its message ("✓ Dentist → Thu 10:00 · Undo", "Text to Mom waiting · Review").
+- **Needs you:** a strip above the composer when something waits on the owner, which opens the list (Inbox).
   - **Promises** show as receipts too. No receipt means no reminder.
   - **`/` commands** and **`@` mentions** work in the composer.
 - **Composer (every other page):** one line, with a hint that fits the page. Anything you can click, you can also ask for.
 
-### 21.2 Six places
+### 21.2 Eight places
+
+UI v1 had six places, with faces, members, extensions, skills and devices in Atlas settings. M7 makes them places (decided 2026-10-24): they're who Atlas deals with and what it can do, not settings, and Atlas settings keeps only settings.
 
 | Place | What it holds |
 |---|---|
 | **Home** | The stage (Now, Week, Draft, Jobs, and whatever Atlas is showing) and the console. Most time is spent here. |
-| **Inbox** | Everything waiting on you: approvals (§12.2), questions Atlas can't answer alone, finished work to review, and what faces handed to you. The badge is the count, and empty is the goal. |
+| **Inbox** | Everything waiting on you: approvals (§12.2), questions Atlas can't answer alone, finished work to review, and what faces handed to you. The badge is the count, and empty is the goal. Each item is a message in the thread too, and one thing: answered in either place, it's answered in both, and opening it shows it where it was asked, so the answer can become a conversation (decided 2026-10-25). What has no conversation of its own, such as a face's handoff or an automation's approval, Atlas brings into the thread in its own words. |
 | **Agenda** | Everything on a clock: events, reminders, due dates, Atlas's promises (marked with the diamond), and scheduled automation runs. |
 | **Automations** | What Atlas does on its own or when asked (§13). It has Run buttons, filters by trigger, a flow view per automation, and Atlas's suggestions. It's a separate page because many automations never run on a clock. |
-| **Library** | Everything Atlas knows (§5.5): people, places, areas, collections, memory (journal, portrait, "Not sure about these"), files, and the pages and files Atlas makes (§21.7). Recently learned facts each have a Correct link. |
+| **Library** | Everything Atlas knows (§5.5): places, areas, collections, memory (journal, portrait, "Not sure about these"), files, and the pages and files Atlas makes (§21.7). Recently learned facts each have a Correct link. Every record opens on the stage. |
+| **People** | Everyone Atlas deals with: **Contacts** (the people Atlas knows, with their channels and trust), **Members** (with invites) and **Faces** (§7.2: who each answers, what it shares, its conversations and digest). What a face hands to you still goes to Inbox. |
+| **Abilities** | What Atlas can do. It opens on a **live map**: Atlas in the middle, with eight groups around it (what it thinks with, keeps up with, reaches you on, gets things done with, works in, knows how to, talks to others with, and how it keeps you safe), each listing what it does and its state. A group **zooms into a tree** (decided 2026-10-24): down the side, what it does ("Your mail", "Its own phone number"); along each line, who does it, set up or there to add from the catalog; a service opens in place with its options, the same ones as on its card. What Atlas does but no service of yours fills shows as a slot to fill, and services that are only extra hands sit under "Works in" by what they're for, with "Other tools" for the rest. The map is also a stage view, zoomed to the group that answers, so "how do you send email?" shows where that lives. Tabs: **Services** (the catalog, §17, as cards), **Skills** (§9.3) and **Devices** (the phone, the desktop app and other nodes, §16.3, with location). |
 | **History** | The log (§4.2): what Atlas, faces, jobs and automations did, each with a receipt (who asked, what changed, what was checked, powers, brain and cost) and Undo. |
 
-**Atlas settings** has these sections:
+**Atlas settings** has five sections (changed 2026-10-24, for M7):
 
-| Group | Sections |
+| Section | What's in it |
 |---|---|
-| Atlas | Character & voice, Look & themes |
-| Brains | Brains, Usage & limits |
-| Connected | Connections, Devices, Vault |
-| People | Members, Faces |
-| Abilities | Skills & tools, Permissions |
-| System | Notifications, Updates, Data & export |
+| Atlas | Name, character, voice, look and themes |
+| Brains | The roles, the named brains (§18), usage and limits |
+| Notifications | One list per urgency (§14), quiet hours, focus rules, the budget |
+| Permissions | When Atlas asks (§12), and your own rules (§12.3) |
+| Account | Passkeys, the vault (§15), updates (§23.2), your data (§23.4) |
+
+**Services are cards, not rows.** Each shows the service's mark, its name, one line, a live state ("heard 2 min ago"), and opens on the stage. Controls are the app's own (toggles, segmented choices, pickers that show a model's speed and cost), with at most one sentence under each and more on demand. Anything on these pages can be done by asking, like "set up Linear".
 
 Pages and stage views are built from the same components, so asking "What's going on with Keyframes?" puts the Keyframes area on the stage.
 
@@ -907,7 +999,8 @@ Pages and stage views are built from the same components, so asking "What's goin
 - **The scope switcher is a focus, not a profile.** Picking an area does three things:
   - the pages filter to it;
   - Atlas leads with that area's context, accounts and tone;
-  - non-urgent pings from other areas wait.
+  - non-urgent pings from other areas wait;
+  - the stage's rails take the area's color, so you can see the focus at a glance (M7).
 
   Atlas still knows everything.
 - **You see the guess.** The composer shows the area Atlas guessed before you send, and tapping any chip moves the item.
@@ -915,21 +1008,22 @@ Pages and stage views are built from the same components, so asking "What's goin
 
 ### 21.4 Jobs: background work
 
-- **While it runs:** "2 jobs running" sits in the toolbar on every page. Clicking it shows a dropdown with progress.
-- **Watching a job:** clicking one opens Home's **Jobs** tab, with Steer and Stop. There you see:
-  - **for helpers** (§8.1): the helpers as a diagram converging on the result so far;
-  - **for coding jobs** (§8.2): the steps (Plan, Edit, Test, Preview, PR), the harness's terminal, and the questions Atlas answered on your behalf, each with its source.
-- **When it finishes:** the result goes to Inbox if it needs you (a PR to review, a purchase), otherwise to History.
+Changed 2026-10-25: a job lives in the conversation, not on a board.
+- **A card in the thread,** where it was asked for. It shows the job in a sentence, what Atlas is doing on it right now (only while something is), what it has made so far, and Stop. It updates in place, so a job's progress never pushes the conversation away.
+- **Its own thread,** one tap from the card: everything Atlas said on it and the owner said to it. What the owner says there goes straight to the job, and the job answers.
+- **Its questions and its result** are messages in the main thread, with their buttons and files, and in Inbox while they wait.
+- **"2 jobs running"** in the toolbar counts only jobs something is at work on, and opens the list.
+- **Detail on demand:** at Detailed and Developer levels (§21.5) the card opens into its steps, its notes, the coding agent's terminal and what it has cost.
 
 ### 21.5 Detail levels, from casual to technical
 
 | Level | What you see |
 |---|---|
-| Simple | Plain sentences and receipt chips |
+| Simple | Plain sentences and receipt chips. Settings and Abilities speak in plain words too ("Atlas thinks with ChatGPT, on your Plus plan"), with no model ids, speeds, prices per token or mono metadata |
 | Detailed | Steps inline as they run, in mono, with live status |
 | Developer | Full receipts open in place on any item (inputs, raw results, model, tokens, cost, timing, IDs), plus logs and a live terminal into the sandbox |
 
-One switch, remembered per device. Hold a key to peek one level deeper on any single item.
+One switch, remembered per device. Hold a key to peek one level deeper on any single item. **Simple is the default** (decided 2026-10-24, for M7): the owner found the app reading as a technical product, and Atlas is for people who never want to see a model id. Every Simple screen has "Show details" one step away, and the soul (the diamond, the stage frame, receipts, ember) is the same at every level.
 
 ### 21.6 Stage views
 
@@ -1008,7 +1102,13 @@ Atlas makes things you keep: a shoot plan, a trip itinerary, a quote, a study gu
 
 Atlas should feel like the future: alive, fast, a little magical.
 
-- **Atlas's mark.** The diamond, drawn as four ASCII facet layers, breathes on Now and in voice mode. It moves with the actual audio as Atlas listens, thinks and speaks. It is never an orb, a glow or a gradient.
+- **Atlas's mark.** The diamond, drawn in characters, lives on Now, in Atlas's presence opening each day of the conversation (added 2026-10-25), and in voice mode (decided 2026-10-24, for M7; the prototype is [docs/ui/source/diamond.html](docs/ui/source/diamond.html)):
+  - **The mark itself,** from `brand/atlas-mark.svg`: its four facets and the seams between them, drawn finely in small characters.
+  - **In ember:** the facets keep the mark's shading, lightest at the top left to darkest at the bottom right, in orange to deep red (changed 2026-10-24 from the area colors, at the owner's review).
+  - **Lit:** a light circles it slowly, moving the shading a little through a ramp of characters.
+  - **Alive with what Atlas is doing:** a sweep of light now and then while idle, ripples with your voice while listening, a shimmer while thinking, a pulse with its own voice while speaking. It moves with the actual audio.
+  - It is never an orb, a glow or a gradient: only characters and their color. Reduced motion shows one still frame.
+  - **At the size of a glyph** (added 2026-10-25) it's the flat mark, lit the same way by its facets in ember, by opacity alone: beside Atlas's words only on the message being written, and in the composer as the large one is (a sweep while idle, a shimmer while a turn runs, a ripple while listening).
 - **Visual language** (details in [docs/ui/README.md](docs/ui/README.md#5-visual-language)):
   - **The frame:** a dotted stage grid between dashed rails, with square nodes at intersections.
   - **Atlas's selection:** an ember outline with square handles and a mono tag (for example "MOVED · WAS WED 3 PM") marks what Atlas just changed.
@@ -1016,6 +1116,8 @@ Atlas should feel like the future: alive, fast, a little magical.
   - **Meters:** ASCII meters.
   - **Type:** Inter, with Inter Tight for titles and Geist Mono for small labels and receipts, used sparingly.
   - **Ember is rare:** it marks what needs you and what Atlas changed.
+  - **Color carries meaning** (decided 2026-10-24, for M7). Areas are the color system: area chips are tinted, a person's avatar takes the color of the area you know them from, the week's load is stacked in area colors, and a scoped stage's rails take its area's color. Outside services show their real logos in their own colors, and meters take the color of what they measure. Nothing is colored only to decorate, and there are still no gradients or glows.
+- **Real things, not decoration** (decided 2026-10-24, for M7): people's photos from the address book where they have one, a small map of the way to what's next, and the weather on Now. Each extension and catalog entry carries its service's own logo (§17).
 - **Morphs.**
   - A receipt in the console unfolds into its full view on the stage.
   - One view morphs into the next with shared elements: the event you were discussing becomes the item in the draft.
@@ -1056,7 +1158,7 @@ Atlas should feel like the future: alive, fast, a little magical.
 
 - **Web app first,** installable to your home screen, with push notifications.
 - **Desktop app** (Tauri): the same app, plus a node and a voice overlay you open with a hotkey.
-- **Phone:** the web app at first, with OwnTracks for location. It uses a tab bar (Home, Inbox, Agenda, Library), with History and settings under Library; this isn't drawn yet. A native app comes later, for location, health data, lock-screen voice and widgets.
+- **Phone:** the web app at first, with OwnTracks for location. It uses a tab bar (Home, Inbox, Agenda, Library), with the other places and settings under More; this isn't drawn yet. A native app comes later, for location, health data, lock-screen voice and widgets.
 - **Text channels** (SMS, iMessage, Telegram, Discord, Signal, WhatsApp, email): stage views arrive in the richest form the channel carries (§16.1): images, files, text, and links for what has to be used in the app.
 
 ---
@@ -1104,12 +1206,15 @@ Rules for setup:
 
 Atlas gets a written character, not a list of rules: who Atlas is, how it talks, what it cares about, how it handles being wrong, and its humor. That combines with its memory of each relationship and each area's tone.
 - You edit it on the Character page (under Atlas): presets, plus your own text.
+- **It talks like a person, in the first person** (decided 2026-10-25). It says what it did and found, not how it works inside: no "the job", "the step", "the helper" or "the checkpoint". Its honesty is part of who it is, not something it narrates: it doesn't say what it isn't pretending.
 - It's checked by old Atlas's character eval ([`docs/CHARACTER.md`](https://github.com/maxjb-xyz/atlas-legacy/blob/main/docs/CHARACTER.md)), which carries over.
 
 ### 23.2 Self-improvement and updates
 
 - **Atlas grows through skills and extensions.** All of them are versioned, tested, undoable and listed.
-- **It doesn't edit its own core.** Core updates arrive as releases, with one-click update and rollback on the Updates page (under Atlas).
+- **It doesn't edit its own core.** Core updates arrive as releases, with one-click update and rollback on the Updates page (Atlas settings → Account).
+- **How an update works** (decided 2026-10-24, for M7). Each release is built once into a bundle (the Worker and the app) attached to its GitHub release. Atlas looks for a new release once a day; the Updates page shows what's in it and updates with one click, uploading the bundle as a new version of the owner's Worker with the Cloudflare token from setup (§22). Roll back puts the previous version back. Nothing else needs setting up, and the owner never touches GitHub or a terminal. Updating on its own is a setting, off by default.
+- **The data only grows.** A release's changes to storage only add (tables, columns), so rolling back the code never breaks the data, and the data itself is never rolled back.
 - **Coding jobs on any repo,** including Atlas's own, are ordinary helper jobs (§8.2).
 
 Old Atlas's self-modifying deploy pipeline was about 7.5k lines and never deployed one of its own changes.
@@ -1137,7 +1242,7 @@ Each person has one resolved time zone, which follows travel (from location) and
 
 ### 23.7 Quality
 
-- **A day-in-the-life benchmark** runs on a test deployment with every release: scripted scenarios across text, voice, automations, faces and senses.
+- **A day-in-the-life benchmark** runs on a test deployment with every release: scripted scenarios across text, voice, automations, faces and senses. It includes the Jarvis bar (decided 2026-10-25): a job that needs the owner's taste, a vague request, "how's it going?" in the middle of a job, a site behind a bot check, each judged against what a person who's good at this would do, with how fast it answered.
 - **Bench mode** marks test runs, so they never write to memory or contact anyone.
 - **Feedback.** Thumbs up or down on any message, and your reactions, feed Atlas's learning.
 - **Tracked per release:** voice latency and setup time.
@@ -1183,7 +1288,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 | M4 | **Senses:** nodes (phone, desktop), the situation, one intake (§10.4) with decide-then-wake awareness, the later pile and the Senses screen, and tasks that come up when they fit, starting with places. | The gym-to-store moment, and others like it. |
 | M5 | **People:** contacts, faces (email and chat; the phone later, §26), members and shared areas, and digests; the mail, messages, GitHub and Linear senses, with `extract` and open loops. | It deals with people for you. |
 | M6 | **Delegation:** coding jobs through ACP, Atlas as the middleman, and long research jobs. | It runs your projects while you're away. |
-| M7 | **Launch:** setup polish (steps 6 and 7), moving in, all themes, ambient mode, docs, the deploy button, and a public release. | Someone else can install it and love it. |
+| M7 | **Launch,** in stages ([docs/M7.md](docs/M7.md), decided 2026-10-24): the new places and settings, releases and updates, brains (Anthropic, named brains), abilities (the services catalog, extension tools, skills learned by review), jobs Atlas owns, reach (where messages go, the owner's permission rules, phone calls through Telnyx), then setup polish (steps 6 and 7), moving in, all themes, ambient mode, docs, the deploy button, and a public release. | Someone else can install it and love it. |
 
 ---
 
@@ -1202,7 +1307,7 @@ Each milestone ends with its smoke test passing on the real deployment (rule 7).
 2. **Shape (§19.2).** A person agent plus a home agent, to be validated in M0.
 3. **Default assistant name.** The product is Atlas. Proposed: a new user's assistant is called "Atlas" by default, and they can rename it.
 4. **License.** MIT, like Hermes and OpenClaw, or Apache-2.0.
-5. **The phone.** Telnyx and Twilio both gave the owner trouble: hard to set up, and identity checks they'd rather not do. Every carrier with a real number does those checks now, and US texting needs registration on top. So the phone is out of M5 (decided 2026-10-23): the owner talks to Atlas by voice in the app and with Telegram's voice notes, and Atlas calling a business waits for a later milestone. What we found is in [M5.md §7](docs/M5.md#7-the-phone-later).
+5. **The phone.** Telnyx and Twilio both gave the owner trouble: hard to set up, and identity checks they'd rather not do. Every carrier with a real number does those checks now, and US texting needs registration on top. So the phone is out of M5 (decided 2026-10-23): the owner talks to Atlas by voice in the app and with Telegram's voice notes, and Atlas calling a business waits for a later milestone. What we found is in [M5.md §7](docs/M5.md#7-the-phone-later). Decided 2026-10-24: phone calls come in M7 through Telnyx, voice only, for owners willing to do Telnyx's identity check, with an existing account and numbers welcome (§16.1). Texting and Atlas calling businesses still wait.
 6. **Name.** OpenAI ships a browser called "ChatGPT Atlas" (October 2025). Decide before the public launch whether that matters.
 7. **Files (§21.7):** office formats, how polished they need to be, and sharing outside Atlas. Living pages were decided on 2026-10-22.
 
@@ -1216,6 +1321,7 @@ The owner's list of things Atlas should grow into. None of it is in M0 to M7, bu
 |---|---|---|
 | **Understanding beyond language** | The model is the front layer. Deeper layers hold real models of the world: spatial reconstruction of places (from phone or camera video), analysis of competing outcomes over time (forecasts, simulations of a plan), and people recognized as entities (faces tied to person records). | Keep roles open-ended (§18), so `forecast`, `spatial` or `vision` roles can be added beside `decide` and `extract`. Person records must be able to hold more identity signals later, in a separate, encrypted store. Face recognition is opt-in, processed on the owner's own devices where possible, and never applied to people who haven't been added (laws on biometric data vary by state). |
 | **Talks like a person** | Not strict turn-taking: short backchannels ("mm-hm"), interjections, a follow-up after a pause, two messages in a row, starting a conversation. | The voice layer stays event-based, never a fixed listen-then-reply loop, so full-duplex speech models can slot in. The text thread already allows several Atlas messages in a row. |
+| **A picture of your life** (put off on 2026-10-24) | Atlas knows your tastes and history from the services you use: films, shows, books, music, workouts, games. Exports you drop in (Google Takeout, Spotify's streaming history, Letterboxd and Goodreads files, Apple Health), live feeds where a service has an open one (Last.fm, Trakt, Letterboxd's RSS, Strava, Steam), and an "About you" view in Library with each thing's source and a way to remove it. Private by default; faces never share it. | A kind of extension that returns typed entries into collections, read by code like the calendar. The moving-in readers (§23.3) are the same machinery. |
 | **Saved lists from other apps** | What you save in Instagram collections, YouTube Watch Later, Pinterest, X bookmarks or a reading list becomes something Atlas knows and can use ("that ramen place I saved"). | A "Saved" collection in records (§5). Instagram has no official API for personal saved collections, so it means a data export, or reading through your signed-in browser on a node, with your OK. |
 | **Displays you control** | "Show me the route on the TV." Any screen can show any stage view. | Stage views render on their own, outside the app shell, from the public API. Displays are nodes (§16.3) that show views. |
 | **An animated avatar** | A humanoid presence that appears on a display when it helps, and points at or works with what's on screen. | The same: views render anywhere, and the voice stream carries timing (ElevenLabs returns alignment) so lip-sync is possible later. |

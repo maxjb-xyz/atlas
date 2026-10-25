@@ -3,6 +3,7 @@
 // for its page; nothing here changes anything except marking Inbox items done.
 
 import { codingJobs } from "./coding";
+import { ownedJobs } from "./jobs";
 import { getPage, pageVersion, pageVersions, segments } from "../pages";
 import type { ApprovalView, HistoryFilter, HistoryStats, InboxItem, RecordView } from "../protocol";
 import { FIELDS, findEntry } from "../vault";
@@ -24,6 +25,7 @@ import { indexNewMessages, keywordSearch } from "../store/memory";
 import { type AtlasRecord, getRecord, linked, RECORD_TYPES, type RecordType, recordHistory } from "../store/records";
 import { getState, setState } from "../store/state";
 import { channelsOf, lastTouch, trustOf } from "../contacts";
+import { photoUrl } from "../photos";
 import { personInfo } from "../tools/people";
 import { openTasks } from "../tasks";
 import { openLoops } from "../loops";
@@ -36,6 +38,7 @@ export function recordView(sql: Sql, r: AtlasRecord): RecordView {
   const from = r.source.log_id ? getRow(sql, r.source.log_id) : null;
   const history = recordHistory(sql, r.id);
   const last = history[history.length - 1];
+  const photo = r.type === "person" ? photoUrl(sql, r.id) : undefined;
   return {
     id: r.id,
     type: r.type,
@@ -44,16 +47,23 @@ export function recordView(sql: Sql, r: AtlasRecord): RecordView {
     details: details as Record<string, unknown>,
     areas: r.areas,
     learned_at: r.learned_at,
+    // Written down by Atlas from something said or done (a run, a message, setup), or kept by the owner when moving in
+    // (§23.3); not brought in by an address book or seen on mail.
+    learned: Boolean(r.source.run_id || r.source.log_id || r.source.via === "setup" || r.source.via === "moving in"),
     updated_at: r.updated_at,
     confidence: r.confidence,
     source: from
       ? { via: r.source.via, text: String(from.body.text ?? "").slice(0, 200), at: from.at, surface: from.surface }
-      : { via: r.source.via },
+      : { via: r.source.via, ...(r.source.from ? { from: r.source.from } : {}) },
     corrections: history.length,
     was: last ? { name: last.name ?? r.name, fact: typeof last.fields.fact === "string" ? last.fields.fact : "", at: last.at } : null,
     shared: r.visibility === "shared",
     ...(r.type === "person"
-      ? { channels: channelsOf(r).map((c) => ({ kind: c.kind, value: c.value, via: c.via })), trust: trustOf(r) }
+      ? {
+          channels: channelsOf(r).map((c) => ({ kind: c.kind, value: c.value, via: c.via })),
+          trust: trustOf(r),
+          ...(photo ? { photo } : {}),
+        }
       : {}),
   };
 }
@@ -63,7 +73,7 @@ export const TAGGED = `EXISTS (SELECT 1 FROM json_each(areas) WHERE value = ?)`;
 
 export function listRecords(
   sql: Sql,
-  q: { type?: RecordType | "all"; area?: string | null; text?: string; limit?: number },
+  q: { type?: RecordType | "all"; area?: string | null; text?: string; limit?: number; learned?: boolean },
 ): { records: RecordView[]; counts: Record<string, number> } {
   const where = [`state = 'active'`, `NOT (type = 'person' AND coalesce(json_extract(fields, '$.is_owner'), 0) = 1)`];
   const args: unknown[] = [];
@@ -79,8 +89,17 @@ export function listRecords(
     where.push(`(instr(lower(name), lower(?)) > 0 OR instr(lower(fields), lower(?)) > 0)`);
     args.push(q.text.trim(), q.text.trim());
   }
+  // Learned, as recordView says: from a run, a message or setup, newest first.
+  if (q.learned)
+    where.push(
+      `(json_extract(source, '$.run_id') IS NOT NULL OR json_extract(source, '$.log_id') IS NOT NULL OR json_extract(source, '$.via') IN ('setup', 'moving in'))`,
+    );
   const rows = sql
-    .exec<{ id: string }>(`SELECT id FROM records WHERE ${where.join(" AND ")} ORDER BY updated_at DESC LIMIT ?`, ...args, q.limit ?? 100)
+    .exec<{ id: string }>(
+      `SELECT id FROM records WHERE ${where.join(" AND ")} ORDER BY ${q.learned ? "learned_at" : "updated_at"} DESC LIMIT ?`,
+      ...args,
+      q.limit ?? 100,
+    )
     .toArray();
   const counts: Record<string, number> = { all: 0 };
   for (const t of RECORD_TYPES) counts[t] = 0;
@@ -211,6 +230,7 @@ export function automationView(sql: Sql, a: Automation): AutomationView {
     when_text: whenText(a.when, (id) => getAutomation(sql, id)?.name ?? null),
     steps: a.do.map((step) => ({ step, text: stepText(step) })),
     report: a.report,
+    to: a.to,
     can_turn_on: !needsTest(a),
     tested_at: a.tested_at,
     fails: a.fails,
@@ -467,16 +487,26 @@ export function inbox(sql: Sql): InboxItem[] {
       question: { key, yes: "Yes, stop asking", no: "Keep asking" },
     }));
   // A coding job's question (§8.2), while the job still waits on it.
+  // A job Atlas owns asks the same way, at a checkpoint or a pause (§8.3).
   const waiting = new Set(
-    codingJobs(sql)
-      .map((j) => (j.phase === "waiting" && !j.question?.site ? j.question?.log : null))
-      .filter((x): x is string => !!x),
+    [
+      ...codingJobs(sql).map((j) => (j.phase === "waiting" && !j.question?.site ? j.question?.log : null)),
+      ...ownedJobs(sql).map((j) => (j.phase === "waiting" || j.phase === "paused" ? j.question?.log : null)),
+    ].filter((x): x is string => !!x),
   );
   const jobQuestions = [...waiting]
     .map((id) => getRow(sql, id))
     .filter((r): r is LogRow => r != null)
     .map((r): InboxItem => {
-      const b = r.body as { job: string; title: string; text: string; options?: string[]; why?: string };
+      const b = r.body as unknown as {
+        job: string;
+        title: string;
+        text: string;
+        options?: string[];
+        why?: string;
+        content?: string;
+        files?: import("../protocol").FileRef[];
+      };
       return {
         id: r.id,
         kind: "question",
@@ -485,7 +515,15 @@ export function inbox(sql: Sql): InboxItem[] {
         at: r.at,
         areas: r.areas,
         run_id: r.run_id,
-        job: { id: b.job, title: b.title, question: b.text, options: b.options ?? [], ...(b.why ? { why: b.why } : {}) },
+        job: {
+          id: b.job,
+          title: b.title,
+          question: b.text,
+          options: b.options ?? [],
+          ...(b.why ? { why: b.why } : {}),
+          ...(b.content ? { content: b.content } : {}),
+          ...(b.files?.length ? { files: b.files } : {}),
+        },
       };
     });
   return [...approvals, ...jobQuestions, ...questions, ...pastItems(sql)];
@@ -502,13 +540,15 @@ export function approvalView(sql: Sql, item: AgendaItem): ApprovalView {
       ? !a.message || clean(a.message)
       : a.kind === "mcp"
         ? clean(JSON.stringify(a.arguments))
-        : a.kind === "node"
+        : a.kind === "tool"
           ? clean(JSON.stringify(a.input))
-          : a.kind === "email"
-            ? clean(`${a.subject}\n${a.text}`)
-            : a.kind === "face_reply"
-              ? clean(a.text)
-              : true,
+          : a.kind === "node"
+            ? clean(JSON.stringify(a.input))
+            : a.kind === "email"
+              ? clean(`${a.subject}\n${a.text}`)
+              : a.kind === "face_reply"
+                ? clean(a.text)
+                : true,
   );
   const hold = needsHold(actions);
   return {
@@ -574,6 +614,30 @@ function stepView(sql: Sql, a: Action): ApprovalView["steps"][number] {
         ? "Its server says this can't be undone."
         : "It reaches one of your connected services, and only that service can undo it.",
       message: JSON.stringify(a.arguments, null, 2).slice(0, 4_000),
+    };
+  }
+  if (a.kind === "tool") {
+    return {
+      kind: "tool",
+      title: a.name,
+      detail:
+        a.acts === "money"
+          ? `${a.what} Amount: ${
+              a.amount && a.input[a.amount.field] != null
+                ? `${String(a.input[a.amount.field])}${a.amount.currency && a.input[a.amount.currency] != null ? ` ${String(a.input[a.amount.currency])}` : ""}`
+                : "as its input below says"
+            }.`
+          : a.what,
+      where: a.where,
+      undo:
+        a.acts === "irreversible"
+          ? "Its extension says this can't be undone."
+          : a.acts === "money"
+            ? "It moves money, which only the service can take back."
+            : a.acts === "change_own"
+              ? "Undo on its receipt takes it back."
+              : "It reaches other people through one of your services, and only that service can undo it.",
+      message: JSON.stringify(a.input, null, 2).slice(0, 4_000),
     };
   }
   if (a.kind === "mcp_add") {
@@ -651,7 +715,7 @@ function pastItems(sql: Sql): InboxItem[] {
   const since = Date.now() - 14 * 86_400_000;
   const rows = sql
     .exec<{ id: string }>(
-      `SELECT id FROM log WHERE at > ? AND (kind = 'job.result'
+      `SELECT id FROM log WHERE at > ? AND ((kind = 'job.result' AND json_extract(body, '$.of') IS NULL)
          OR kind = 'face.handoff' OR kind = 'face.digest'
          OR (kind = 'automation.run' AND json_extract(body, '$.report') = 'inbox' AND json_extract(body, '$.test') = 0 AND json_extract(body, '$.quiet') IS NULL)
          OR (kind = 'run.end' AND json_extract(body, '$.state') = 'failed' AND json_extract(body, '$.interrupted') IS NULL AND json_extract(body, '$.trigger') NOT IN ('compaction', 'areas') AND json_extract(body, '$.trigger') NOT LIKE 'helper:%' AND json_extract(body, '$.trigger') NOT LIKE 'automation%'))

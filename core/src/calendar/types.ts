@@ -2,8 +2,8 @@
 // calendar answers is an extension (VISION §17): iCloud over CalDAV by
 // default, Google or others behind this same interface.
 
-export type { CalendarEvent, EventPerson } from "../../../extensions/sdk";
-import type { CalendarEvent, EventPerson } from "../../../extensions/sdk";
+export type { CalendarEvent, EventPerson, NewEvent } from "../../../extensions/sdk";
+import type { CalendarEvent, EventPerson, NewEvent } from "../../../extensions/sdk";
 
 /** A person on an event as one line: "Doug Henderson <doug@acme.com>", or whichever of the two the invite has. */
 export const personText = (p: EventPerson): string => (p.name && p.email ? `${p.name} <${p.email}>` : (p.name ?? p.email ?? ""));
@@ -30,12 +30,18 @@ export interface CalendarSource {
   check(): Promise<CalendarCheck>;
   /** Moves an event to a new start and end; what it was before, and after. Absent when the provider can't change events. */
   move?(id: string, to: { start: string; end: string }): Promise<{ before: CalendarEvent; event: CalendarEvent }>;
+  /** Adds an event; absent when the provider can't. */
+  add?(e: NewEvent): Promise<CalendarEvent>;
+  /** Removes an event, and says what it was; absent when the provider can't. */
+  remove?(id: string): Promise<CalendarEvent>;
 }
 
 /** What a read gives the tools and the app: the events, and, when the provider couldn't be asked, how old they are and why. */
 export interface CalendarRead {
   events: CalendarEvent[];
   stale?: { as_of: number; why: string };
+  /** Calendars that couldn't be read at all, each with why, while the others could. */
+  missing?: string[];
 }
 
 /** The calendar as runs and the app see it: reads that fall back to what's held when the provider can't be asked. */
@@ -43,6 +49,9 @@ export interface Calendar {
   read(range: CalendarRange): Promise<CalendarRead>;
   check(): Promise<CalendarCheck>;
   move?(id: string, to: { start: string; end: string }): Promise<{ before: CalendarEvent; event: CalendarEvent }>;
+  /** Adds an event on the account `on` (an extension id), else the first that can. */
+  add?(e: NewEvent, on?: string): Promise<CalendarEvent & { account?: string }>;
+  remove?(id: string): Promise<CalendarEvent>;
 }
 
 /** Thrown with a plain reason the owner can act on (§22: no dead ends). */

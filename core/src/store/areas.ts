@@ -13,6 +13,13 @@ export const AreaSettings = z.object({
   tone: z.string().max(300).default(""),
   /** Members it's shared with (§7.1): its records live here, and both see and write them. */
   shared_with: z.array(z.string().max(40)).max(20).default([]),
+  /** Accounts (§6.2): which of the owner's mail accounts new mail here goes from, by extension id. Empty is the default. */
+  mail: z.string().max(40).default(""),
+  /**
+   * The calendars that are this area's (§6.2): a whole account ("gmail--2") or one calendar in it ("gmail--2::Work").
+   * Their events are this area's, and new events here go on the first.
+   */
+  calendars: z.array(z.string().max(160)).max(20).default([]),
 });
 export type AreaSettings = z.infer<typeof AreaSettings>;
 
@@ -25,6 +32,10 @@ export interface Area {
   state: AreaState;
   /** An index into the app's area palette. */
   color: number;
+  /** A color the owner picked instead of the palette's, as #rrggbb (§6.4). */
+  custom_color: string | null;
+  /** A line icon's name from AREA_ICONS, or "file:<id>" for a logo the owner uploaded. Null shows the color's dot. */
+  icon: string | null;
   settings: AreaSettings;
   created_at: number;
   updated_at: number;
@@ -41,6 +52,79 @@ const fromRaw = (r: RawArea): Area => ({
 
 /** How many colors the app has for areas; new areas take the next one. */
 export const AREA_COLORS = 8;
+
+/** The line icons an area can take (§6.4). The app draws each; an uploaded logo is a file instead. */
+export const AREA_ICONS = [
+  "home",
+  "work",
+  "school",
+  "heart",
+  "health",
+  "camera",
+  "film",
+  "music",
+  "code",
+  "money",
+  "plane",
+  "leaf",
+  "dumbbell",
+  "people",
+  "star",
+  "paw",
+] as const;
+
+/** An area's look as the owner sets it: a palette color, a color of their own, and an icon. */
+export const AreaLook = z.object({
+  color: z
+    .number()
+    .int()
+    .min(0)
+    .max(AREA_COLORS - 1)
+    .optional(),
+  custom_color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .nullable()
+    .optional(),
+  icon: z
+    .union([z.enum(AREA_ICONS), z.string().regex(/^file:[\w-]{1,64}$/)])
+    .nullable()
+    .optional(),
+});
+export type AreaLook = z.infer<typeof AreaLook>;
+
+/**
+ * Sets an area's color and icon. Picking a palette color drops a color of
+ * the owner's own; a color of their own keeps the palette index beside it,
+ * so clearing it goes back to where it was.
+ */
+export function setAreaLook(sql: Sql, id: string, look: AreaLook, by: "owner" | "atlas"): Area {
+  const before = getArea(sql, id);
+  if (!before) throw new Error(`There's no area ${id}.`);
+  const color = look.color ?? before.color;
+  const custom = look.custom_color !== undefined ? look.custom_color : look.color != null ? null : before.custom_color;
+  const icon = look.icon === undefined ? before.icon : look.icon;
+  sql.exec(
+    `UPDATE areas SET color = ?, custom_color = ?, icon = ?, updated_at = ? WHERE id = ?`,
+    color,
+    custom?.toLowerCase() ?? null,
+    icon,
+    Date.now(),
+    id,
+  );
+  append(sql, {
+    actor: by,
+    kind: "area.change",
+    body: {
+      area_id: id,
+      name: before.name,
+      change: "look",
+      before: { color: before.color, custom_color: before.custom_color, icon: before.icon },
+      after: { color, custom_color: custom?.toLowerCase() ?? null, icon },
+    },
+  });
+  return getArea(sql, id)!;
+}
 
 export function listAreas(sql: Sql, opts: { all?: boolean } = {}): Area[] {
   return sql
@@ -150,6 +234,17 @@ export function tagsOf(sql: Sql, ref: Tagged): string[] {
   const [table, id] = ref.startsWith("log:") ? ["log", ref.slice(4)] : ["records", ref.slice(4)];
   const r = sql.exec<{ areas: string }>(`SELECT areas FROM ${table} WHERE id = ?`, id).toArray()[0];
   return r ? parse<string[]>(r.areas, []) : [];
+}
+
+/** The areas a mail conversation already has: the latest of its messages that has any. */
+export function threadAreas(sql: Sql, thread: string): string[] {
+  const r = sql
+    .exec<{ areas: string }>(
+      `SELECT areas FROM log WHERE json_extract(body, '$.thread') = ? AND areas != '[]' ORDER BY seq DESC LIMIT 1`,
+      thread,
+    )
+    .toArray()[0];
+  return r ? (JSON.parse(r.areas) as string[]) : [];
 }
 
 export function setTags(sql: Sql, ref: Tagged, areas: string[]): void {

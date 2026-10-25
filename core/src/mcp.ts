@@ -50,6 +50,8 @@ export interface McpClient {
   /** Connects a server. An OAuth server answers `authenticating` with where the owner signs in. */
   add(o: { name: string; url: string; token?: string }): Promise<{ id: string; state: string; auth_url?: string }>;
   remove(id: string): Promise<void>;
+  /** Connects a server that's added again, with what it was added with (its token too): never removes it. Throws with why it failed. */
+  retry(id: string): Promise<{ state: string }>;
   call(server: string, tool: string, args: Record<string, unknown>): Promise<McpResult>;
   read(server: string, uri: string): Promise<McpResource>;
   /** Waits, at most `ms`, for connections still starting (after a sleep). */

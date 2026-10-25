@@ -475,4 +475,44 @@ describe("icloudCalendar", () => {
     );
     expect(r.message).toContain("repeats");
   });
+
+  it("adds an event without overwriting anything, inviting no one, on the calendar named", async () => {
+    const { fetchFn } = fakeICloud();
+    const writes: Array<{ method: string; url: string; ifNoneMatch: string | null; ifMatch: string | null; body: string }> = [];
+    const f = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const h = new Headers(init?.headers);
+      if (init?.method === "PUT" || init?.method === "DELETE") {
+        writes.push({
+          method: init.method,
+          url: String(input),
+          ifNoneMatch: h.get("If-None-Match"),
+          ifMatch: h.get("If-Match"),
+          body: String(init.body ?? ""),
+        });
+        return new Response(null, { status: 201 });
+      }
+      return fetchFn(input, init);
+    }) as typeof fetch;
+    const cal = icloudCalendar(CREDS, { fetch: f });
+    await cal.list(WEEK);
+    const made = await cal.add!({
+      title: "Edit, Keyframes; reel",
+      start: "2026-10-23T14:00:00.000Z",
+      end: "2026-10-23T16:00:00.000Z",
+      all_day: false,
+      location: "Studio",
+    });
+    expect(made).toMatchObject({ title: "Edit, Keyframes; reel", calendar: "Home", start: "2026-10-23T14:00:00.000Z", location: "Studio" });
+    expect(writes[0]).toMatchObject({ method: "PUT", ifNoneMatch: "*", ifMatch: null });
+    expect(writes[0]!.url).toMatch(/^https:\/\/p42-caldav\.icloud\.com\/123456789\/calendars\/home\/.+%40atlas\.ics$/);
+    expect(writes[0]!.body).toContain("SUMMARY:Edit\\, Keyframes\\; reel");
+    expect(writes[0]!.body).not.toContain("ATTENDEE");
+    // It's in the copy at once.
+    expect(cal.held!(WEEK)!.events.some((e) => e.id === made.id)).toBe(true);
+    // A calendar it doesn't have says which it does.
+    const none = await failure(
+      cal.add!({ title: "x", start: "2026-10-23T14:00:00.000Z", end: "2026-10-23T15:00:00.000Z", all_day: false, calendar: "Nope" }),
+    );
+    expect(none.message).toMatch(/no calendar called "Nope"/);
+  });
 });

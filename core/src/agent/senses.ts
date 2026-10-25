@@ -37,6 +37,7 @@ import {
   type SituationEvent,
   situationLines,
   TRAVEL_AHEAD_MS,
+  WEATHER_MS,
   withText,
 } from "../situation";
 import { clockLocal, shortLocal, startOfLocalDay, zoneOf } from "../time";
@@ -122,6 +123,8 @@ export interface SenseDeps {
 export class SenseDesk {
   #refreshing: Promise<void> | null = null;
   #again = false;
+  #looking = false;
+  #lookedAt = 0;
 
   constructor(private readonly d: SenseDeps) {}
 
@@ -153,12 +156,14 @@ export class SenseDesk {
         this.#again = false;
         const settings = readSettings(this.d.sql);
         const before = cache(this.d.sql);
+        const looking = this.#looking;
+        this.#looking = false;
         const after = await refreshCache({
           sql: this.d.sql,
           settings,
           calendar: this.d.calendar(),
           maps: this.d.maps(),
-          full: full && this.#needed(settings),
+          full: full && (looking || this.#needed(settings)),
         });
         await this.#armSoon(settings);
         // What changed is news for the senses, like a move: the trip to the next event, the weather.
@@ -174,6 +179,20 @@ export class SenseDesk {
         this.#refreshing = null;
       });
     return this.#refreshing;
+  }
+
+  /**
+   * The owner opened a view of the weather or the situation: when what's
+   * kept is more than an hour old, it's looked at again now, in the
+   * background (the view follows when it changes). At most once in ten
+   * minutes, so a look that can't get the weather doesn't repeat.
+   */
+  look(now = Date.now()): void {
+    const w = cache(this.d.sql).weather;
+    if ((w && now - w.at < WEATHER_MS) || now - this.#lookedAt < 10 * 60_000) return;
+    this.#lookedAt = now;
+    this.#looking = true;
+    this.d.background(() => this.refresh(true));
   }
 
   /** The weather and travel are worth looking at while the owner uses Atlas, or an event with a place is coming. */
@@ -948,18 +967,26 @@ export function speakingLine(s: Settings): string {
  * owner, through the outbox like every message, as something that can wait
  * (quiet hours, focus and the day's budget apply). No nudge is silence.
  */
-export function nudgeTool(send: (text: string, about: string) => Promise<{ ok: boolean; text: string }>): Tool {
+export function nudgeTool(
+  send: (text: string, about: string, urgency: "now" | "soon" | "later") => Promise<{ ok: boolean; text: string }>,
+): Tool {
   return defineTool({
     name: "nudge",
     kind: "look",
+    status: "Letting you know.",
     description: [
       "Tell the owner something now, on your own: in the app if it's open, else a notification on their phone, or out loud in a call.",
       "Use it at most once, only when hearing it now would help them, in a sentence or two, the way you'd text a friend. Not using it is silence, which is often right.",
       "`about` names what it's about in a few words ('oat milk on the way home', 'traffic to the dentist'), so you can see later how this kind of thing landed.",
+      "`urgency` is how soon they need it: now when waiting would cost them (leave in ten minutes, the flight moved), and it keeps trying until they've seen it; soon for their next free moment, after quiet hours and focus; later when it can wait until they next open Atlas.",
     ].join(" "),
-    input: z.object({ text: z.string().min(1).max(600), about: z.string().min(1).max(80) }),
+    input: z.object({
+      text: z.string().min(1).max(600),
+      about: z.string().min(1).max(80),
+      urgency: z.enum(["now", "soon", "later"]).default("soon"),
+    }),
     async run(input) {
-      const out = await send(input.text, input.about);
+      const out = await send(input.text, input.about, input.urgency);
       return out.ok ? { ok: true, output: { sent: true, how: out.text } } : fail(out.text);
     },
   });
@@ -973,6 +1000,7 @@ export function nudgeTool(send: (text: string, about: string) => Promise<{ ok: b
 export const speakingUp = defineTool({
   name: "speaking_up",
   kind: "change_own",
+  status: "Changing what I tell you about.",
   description: [
     "Change what you bring up on your own, when the owner asks: add or remove subjects they don't want to hear about (in their words, as narrow or broad as they meant: 'the weather unless it's severe', 'errands'), subjects they always want to hear about ('anything from my landlord', 'reviews requested on my PRs'), or switch what you notice and the look before leaving for events.",
     "The morning brief and the evening wrap-up are automations: change their time or turn them off with automation_save or automation_set.",

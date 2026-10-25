@@ -136,7 +136,7 @@ describe("pairing and the device's socket", () => {
     const b = brain([say("ok")]);
     await turn(s, "is my Mac there?");
     expect(b.requests[0]!.system).toMatch(
-      /Max's MacBook \(desktop, macOS 26 \(arm64\)\): online; idle: away for 12 min\. Tools: notify\(text\?\), run_command\(command\?\) \(off; the owner turns it on in Settings → Devices\)/,
+      /Max's MacBook \(desktop, macOS 26 \(arm64\)\): online; idle: away for 12 min\. Tools: notify\(text\?\), run_command\(command\?\) \(off; the owner turns it on in Abilities → Devices\)/,
     );
     node.ws.close();
   });

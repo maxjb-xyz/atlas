@@ -1,12 +1,12 @@
 # Atlas
 
-Read [VISION.md](VISION.md) first: it's the founding brief, and every change must agree with it or change it in its own commit. M0 to M6 are closed ([docs/M0.md](docs/M0.md), [docs/M1.md](docs/M1.md), [docs/M2.md](docs/M2.md), [docs/M3.md](docs/M3.md), [docs/M4.md](docs/M4.md), [docs/M5.md](docs/M5.md), [docs/M6.md](docs/M6.md)); the current milestone is M7, launch, and [docs/HANDOFF-M7.md](docs/HANDOFF-M7.md) has where M6 left things, what's still open and the plan. M7's own doc, `docs/M7.md`, starts with its smoke test.
+Read [VISION.md](VISION.md) first: it's the founding brief, and every change must agree with it or change it in its own commit. M0 to M6 are closed ([docs/M0.md](docs/M0.md), [docs/M1.md](docs/M1.md), [docs/M2.md](docs/M2.md), [docs/M3.md](docs/M3.md), [docs/M4.md](docs/M4.md), [docs/M5.md](docs/M5.md), [docs/M6.md](docs/M6.md)); the current milestone is M7, launch, and [docs/HANDOFF-M7.md](docs/HANDOFF-M7.md) has where M6 left things, what's still open and the plan. M7's own doc, [docs/M7.md](docs/M7.md), has its stages and smoke test.
 
 A milestone is done when its smoke test passes on the owner's real deployment (VISION rule 7), not after a week of use. Write the smoke test before building, and keep earlier milestones' smoke tests as regression lists.
 
 ## Layout
 
-- `core/`: the Worker and the person agent (TypeScript, Cloudflare Agents SDK). Its size is reported at each milestone's close (VISION rule 4).
+- `core/`: the Worker and the person agent (TypeScript, Cloudflare Agents SDK). Its size is reported at each milestone's close (VISION rule 4). The Worker's config, `wrangler.jsonc`, is at the repo root, where the "Deploy to Cloudflare" button needs it; the secrets it asks for are in `.dev.vars.example`.
 - `extensions/`: everything tied to one service (VISION §17), each `extensions/<id>/index.ts` against `extensions/sdk.ts`, sandboxed in a Dynamic Worker whose only way out is the core's gate. `npm run extensions` bundles them into `core/src/extensions.gen.ts` (`check`, `dev` and `deploy` run it). Nothing service-specific goes in `core/`.
 - `app/`: the web app (React, Vite), served by the Worker. UI v1 is locked in [docs/ui/](docs/ui/README.md).
 - `desktop/`: the desktop app (Tauri, Rust): Atlas in a window, and the first node (VISION §16.3). Built for the Mac by `.github/workflows/desktop.yml`, only on a published release.

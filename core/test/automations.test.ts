@@ -9,7 +9,11 @@ import { append, type LogRow } from "../src/store/log";
 import { indexNewMessages } from "../src/store/memory";
 import { seedRoutines } from "../src/routines";
 import { noticeAsk, openSuggestions, settleSuggestion } from "../src/suggestions";
-import { call, env, fakeCalendar, fakeEmbedder, say, scripted, SECRET, type Step } from "./helpers";
+import { systemPrompt } from "../src/context";
+import { install, setExtSecrets } from "../src/extensions";
+import { readSettings } from "../src/store/settings";
+import { setState } from "../src/store/state";
+import { call, env, fakeCalendar, fakeEmbedder, say, scripted, SECRET, type Step, offered } from "./helpers";
 
 const ORIGIN = "http://atlas.test";
 const HOOK = "https://hooks.example.com/api/webhook/lights-1f2e";
@@ -212,6 +216,34 @@ describe("when automations run", () => {
       const changed = saveAutomation(sql, { ...brief, do: [{ kind: "atlas", instructions: "Look at the week." }] }, "atlas", a.id);
       expect(changed.state).toBe("paused");
     }));
+
+  it("go wherever the owner is unless told one place, keep that place through other edits, and Atlas knows the linked chats", () =>
+    runInDurableObject(env.PersonAgent.get(env.PersonAgent.idFromName(`a-${crypto.randomUUID()}`)), (_a, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      const brief: AutomationInput = {
+        name: "Brief",
+        about: "",
+        when: { kind: "schedule", at: "08:00", days: [] },
+        do: [{ kind: "atlas", instructions: "Look at the day." }],
+        report: "thread",
+      };
+      const a = saveAutomation(sql, brief, "owner");
+      expect(a.to).toBe("you");
+      const there = saveAutomation(sql, { ...brief, to: "telegram" }, "owner", a.id);
+      expect(there.to).toBe("telegram");
+      // Moving it to 7:30 without saying where keeps Telegram, and only the place changing doesn't pause it.
+      const moved = saveAutomation(sql, { ...brief, when: { kind: "schedule", at: "07:30", days: [] } }, "atlas", a.id);
+      expect(moved).toMatchObject({ to: "telegram", state: "on" });
+
+      install(sql, { id: "telegram", source: "bundled" });
+      setExtSecrets(sql, "telegram", { bot_token: "123:abc" });
+      setState(sql, "channel_links", { telegram: { user: "1", chat: "1", name: "Max", at: Date.now() } });
+      const system = systemPrompt({ settings: readSettings(sql), tz: "America/New_York", now: new Date(), surface: "app", sql });
+      expect(system).toContain("Telegram (linked to them)");
+      expect(system).toContain("Connected services: Telegram: chat with you");
+      expect(system).toContain("The owner has no webhooks.");
+    }));
 });
 
 describe("automations", () => {
@@ -266,9 +298,7 @@ describe("automations", () => {
       text: "Made automation · Weekday brief · paused until you've seen a test run",
       view: { kind: "automation" },
     });
-    expect(b.requests[0]!.tools.map((x) => x.name)).toEqual(
-      expect.arrayContaining(["automation_save", "automation_test", "automation_set"]),
-    );
+    expect(offered(b.requests[0]!)).toEqual(expect.arrayContaining(["automation_save", "automation_test", "automation_set"]));
     let v = await view(s, "Weekday brief");
     expect(v).toMatchObject({ state: "paused", made_by: "atlas", can_turn_on: false, next_at: null, when_text: "At 08:00, weekdays" });
 
@@ -708,6 +738,9 @@ describe("automations", () => {
         "owner",
       );
       for (const h of [80, 60, 0]) ask("weather forecast today", h);
+      expect(openSuggestions(sql)).toEqual([]);
+      // Asking about something gone wrong isn't a routine, however often it's asked.
+      for (const h of [90, 70, 0]) expect(ask("Why didn't you tell me about the review request from Doug?", h)).toBe(false);
       expect(openSuggestions(sql)).toEqual([]);
     }));
 });

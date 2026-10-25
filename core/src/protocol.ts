@@ -24,6 +24,7 @@ import { BrainChoice, Settings, SettingsPatch } from "./store/settings";
 import { RECORD_TYPES } from "./store/records";
 import { StageView, type AutomationView, type StagePage } from "./stage";
 import { AutomationInput } from "./automations";
+import { AreaLook } from "./store/areas";
 
 export type { LogRow, AgendaItem };
 export type { StagePage, AutomationView };
@@ -36,16 +37,20 @@ export interface RecordView {
   details: Record<string, unknown>;
   areas: string[];
   learned_at: number;
+  /** Whether Atlas learned it (from a conversation, a message or setup), not an import of contacts or an address seen on mail. */
+  learned: boolean;
   updated_at: number;
   confidence: number;
   /** Where it came from: the message it was learned from, when there is one. */
-  source: { via: string; text?: string; at?: number; surface?: string | null };
+  source: { via: string; text?: string; at?: number; surface?: string | null; from?: string };
   corrections: number;
   /** The value before the latest correction. */
   was: { name: string; fact: string; at: number } | null;
   /** For a person (§7.1): how to reach them, each with where it came from, and how much the owner trusts them. */
   channels?: Array<{ kind: string; value: string; via: string }>;
   trust?: string;
+  /** For a person with a photo in the address book (docs/ui §8): where the app loads it, with the owner's session. */
+  photo?: string;
   /** Whether faces may share it, from its areas (§7.2). */
   shared: boolean;
 }
@@ -69,11 +74,15 @@ export interface CalendarEventView {
   end: string;
   all_day: boolean;
   location?: string;
+  /** Which account it's on (its extension's id). */
+  account?: string;
+  /** Its areas (§6.3): set by the owner, sorted by Clef, or the area its calendar is named after. */
+  areas: string[];
 }
 
 /** One step of an approval card, as the owner sees it (§12.2). */
 export interface ApprovalStep {
-  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "node" | "email" | "face_reply" | "pull_request";
+  kind: "webhook" | "delete" | "browser" | "vault" | "site" | "mcp" | "mcp_add" | "tool" | "node" | "email" | "face_reply" | "pull_request";
   title: string;
   /** What it does, in a sentence. */
   detail: string;
@@ -113,7 +122,7 @@ export interface InboxItem {
   /** Atlas asking the owner something it can't decide alone, such as whether to stop asking for an action. */
   question?: { key: string; yes: string; no: string };
   /** A coding job's question for the owner (§8.2): the answer goes back to its agent. */
-  job?: { id: string; title: string; question: string; options: string[]; why?: string };
+  job?: { id: string; title: string; question: string; options: string[]; why?: string; content?: string; files?: FileRef[] };
   /** What a face handed the owner (§7.2): who it's from, the conversation, and whether it can be answered from here. */
   face?: {
     name: string;
@@ -133,7 +142,11 @@ export interface AreaView {
   about: string;
   state: "active" | "dormant" | "archived";
   color: number;
-  settings: { tone: string; shared_with: string[] };
+  /** A color the owner picked instead of the palette's (#rrggbb), and the area's icon: a line icon's name or "file:<id>" (§6.4). */
+  custom_color: string | null;
+  icon: string | null;
+  /** `mail`: which mail account new mail here goes from, by extension id; empty is the default. */
+  settings: { tone: string; shared_with: string[]; mail: string; calendars: string[] };
   messages: number;
   records: number;
   last_seen: number | null;
@@ -144,6 +157,18 @@ export interface JobView {
   id: string;
   title: string;
   state: "running" | "done" | "failed" | "cancelled";
+  /**
+   * While it hasn't ended, whether anything is at work on it right now: a look or a step's helper or coding agent
+   * (working), or nothing, because it waits on the owner, is paused, or has stopped moving (stalled). Only working
+   * shows as running.
+   */
+  activity?: "working" | "waiting" | "paused" | "stalled";
+  /** When it last moved: a step, a look, the owner's words. */
+  moved_at?: number;
+  /** Work done for a job Atlas owns (its coding agent): part of that job's card, not a card of its own (§21.4). */
+  part_of?: string;
+  /** Working only until then, unless news comes: it's between one move and its next look, with nothing at work yet. */
+  quiet_until?: number;
   /** What the helper is doing right now, such as "Thinking back." */
   status: string | null;
   steps: number;
@@ -152,8 +177,73 @@ export interface JobView {
   brief: string;
   result: string | null;
   run_id: string | null;
+  /** The named brain it runs on (§18), when it isn't the main one. */
+  brain?: string;
   /** A coding job (§8.2, §21.4): its steps, the agent's stream, what Atlas answered for the owner, and what waits on them. */
   coding?: CodingView;
+  /** A job Atlas owns (§8.3): its plan, what it has done and said, what waits on the owner, and what it has used. */
+  goal?: GoalView;
+  /** A job Atlas owns, as it runs since 2026-10-25 (§8.3, §21.4): Atlas working in turns on its own conversation. */
+  owned?: OwnedJobView;
+  /**
+   * The helpers a job Atlas owns has started, going or ended within the hour, for the parallel lines on its card
+   * (§21.8). A title starts with the job's own ("Laptop shortlist: Reviews"); status is what it's doing, or what it read.
+   */
+  helpers?: Array<{ id: string; title: string; state: JobView["state"]; status: string | null; started_at: number; ended_at?: number }>;
+}
+
+/** A file a message carries, to play, look at or open (§21.7): audio, an image, a video, a document. */
+export interface FileRef {
+  id: string;
+  name: string;
+  /** Its media type, like audio/mpeg or image/png, which decides how it's shown. */
+  type: string;
+  /** Where the app reads it, with the owner's session: /api/files/<id>. */
+  url: string;
+  size?: number;
+}
+
+/** A job Atlas owns, for its card in the thread and its own thread (§21.4). */
+export interface OwnedJobView {
+  phase: "working" | "waiting" | "paused" | "done" | "failed" | "cancelled";
+  /** What Atlas is doing on it right now, in a sentence, only while something is ("Downloading three tracks to compare"). */
+  now: string | null;
+  /** The owner's message that asked for it, so its card sits under that message; null when it started some other way. */
+  asked_by: string | null;
+  /** The question row it waits on, while it does. */
+  question: string | null;
+  /** What it has made or kept so far. */
+  files: FileRef[];
+  /** Its latest words to the owner. */
+  latest: { at: number; text: string } | null;
+  /** When it must be done by, if the owner said. */
+  deadline?: number;
+  /** Turns taken and tokens used, and what that cost when a paid brain did it. */
+  spent: { turns: number; tokens: number; dollars?: number };
+  /** For Detailed and Developer levels: the notes it keeps (§8.3), and the coding agent working for it, if one is. */
+  notes?: string;
+  coding?: string | null;
+}
+
+export interface GoalView {
+  phase: "working" | "waiting" | "paused" | "done" | "failed" | "cancelled";
+  folder: string;
+  plan: Array<{
+    id: string;
+    title: string;
+    kind: "work" | "research" | "checkpoint";
+    state: "todo" | "doing" | "done" | "failed" | "skipped";
+    brain?: string;
+  }>;
+  log: Array<{ at: number; who: "atlas" | "owner" | "step"; text: string }>;
+  question: { text: string; options: string[]; content?: string } | null;
+  /** Looks and steps used, and steps by named brain (§18). */
+  spent: { looks: number; steps: number; by: Record<string, number> };
+  budget: { looks: number; steps: number };
+  /** Files it kept in Library. */
+  files: string[];
+  /** When it must be done by, if the owner said. */
+  deadline?: number;
 }
 
 export interface CodingView {
@@ -188,11 +278,15 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Older thread rows, for scrolling back. */
   z.object({ type: z.literal("atlas.more"), before_seq: z.number().int() }),
   z.object({ type: z.literal("atlas.settings.update"), patch: SettingsPatch }),
+  /** A provider's live list of models, for the model picker (§11.4: from the provider's catalog, not from code). */
+  z.object({ type: z.literal("atlas.brain.models"), provider: z.enum(["chatgpt", "workers-ai", "anthropic"]) }),
   /** Set or clear (null) a secret. */
   z.object({
     type: z.literal("atlas.secret.set"),
     secret: z.discriminatedUnion("name", [
       z.object({ name: z.literal("elevenlabs_api_key"), value: z.string().min(8).max(200).nullable() }),
+      z.object({ name: z.literal("anthropic_api_key"), value: z.string().min(20).max(300).nullable() }),
+      z.object({ name: z.literal("ai_gateway_token"), value: z.string().min(20).max(300).nullable() }),
     ]),
   }),
   /** Whether this device has Atlas in view, sent on connect and whenever it changes, so a message goes to one channel (§14). */
@@ -255,7 +349,12 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** The Automations page: every automation. */
   z.object({ type: z.literal("atlas.automations") }),
   /** Make or change an automation in the form. The owner's own start on (§13.4). */
-  z.object({ type: z.literal("atlas.automation.save"), id: z.string().max(64).optional(), automation: AutomationInput }),
+  z.object({
+    type: z.literal("atlas.automation.save"),
+    id: z.string().max(64).optional(),
+    // Where it reports, left out, stays as it was.
+    automation: AutomationInput.extend({ to: z.string().max(40).optional() }),
+  }),
   z.object({ type: z.literal("atlas.automation.set"), id: z.string().max(64), on: z.boolean() }),
   /** A suggestion at the top of Automations: made into one, or set aside. Neither is suggested again. */
   z.object({ type: z.literal("atlas.suggestion.set"), id: z.string().max(64), state: z.enum(["dismissed", "made"]) }),
@@ -289,6 +388,19 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.ext.install"), id: z.string().max(40) }),
   z.object({ type: z.literal("atlas.ext.remove"), id: z.string().max(40) }),
   z.object({ type: z.literal("atlas.ext.state"), id: z.string().max(40), on: z.boolean() }),
+  /** Accounts (§17): another account of a service that's set up, and a name for one ("Work"). */
+  z.object({ type: z.literal("atlas.ext.account.add"), id: z.string().max(40) }),
+  z.object({ type: z.literal("atlas.ext.account.name"), id: z.string().max(40), name: z.string().max(60) }),
+  /**
+   * Which areas an account, or one calendar in it, is for (§6.2): new mail there goes from it, new events there go on
+   * it, and its events are theirs. `calendar` names one of the account's calendars; without it, the whole account.
+   */
+  z.object({
+    type: z.literal("atlas.ext.account.areas"),
+    id: z.string().max(40),
+    calendar: z.string().max(120).optional(),
+    areas: z.array(z.string().max(64)).max(30),
+  }),
   /** An extension's secrets (an empty or null value removes one) and settings, as its manifest names them. */
   z.object({
     type: z.literal("atlas.ext.secrets"),
@@ -308,6 +420,19 @@ export const ClientMessage = z.discriminatedUnion("type", [
     sending: z.string().max(40),
   }),
   z.object({ type: z.literal("atlas.mail.remove") }),
+  /** Updates (§23.2): the token they use (null forgets it), a look at the releases now, Update, and Roll back. */
+  z.object({ type: z.literal("atlas.updates.token"), token: z.string().trim().min(8).max(200).nullable() }),
+  z.object({ type: z.literal("atlas.updates.look") }),
+  z.object({ type: z.literal("atlas.updates.install"), tag: z.string().min(1).max(100) }),
+  z.object({ type: z.literal("atlas.updates.rollback"), force: z.boolean().optional() }),
+  /**
+   * Your data (§23.4), the owner's own acts from Account, never a tool's: what going back to a time means, going back
+   * (or undoing the last time, with a hold), and deleting everything (with the typed phrase and a hold). The copy is
+   * a download, GET /api/export.
+   */
+  z.object({ type: z.literal("atlas.data.preview"), at: z.number().int() }),
+  z.object({ type: z.literal("atlas.data.restore"), at: z.number().int().optional(), undo: z.boolean().optional(), hold: z.boolean() }),
+  z.object({ type: z.literal("atlas.data.delete"), phrase: z.string().max(100), hold: z.boolean() }),
   /** Faces (§7.2): make or change one, remove it, talk to it as a stranger, or answer what one handed you. */
   z.object({ type: z.literal("atlas.face.save"), face: FaceInput }),
   z.object({ type: z.literal("atlas.face.remove"), id: z.string().max(40) }),
@@ -334,6 +459,19 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.mail.test") }),
   /** Library → People → Import: from an extension that provides contacts, or a vCard file's text. */
   z.object({ type: z.literal("atlas.contacts.import"), from: z.string().max(40).optional(), vcards: z.string().max(5_000_000).optional() }),
+  /** Moving in (§23.3): what's been read and the review list; files themselves come over HTTP (/api/movein). */
+  z.object({ type: z.literal("atlas.movein") }),
+  /** Read what was sent: the extraction runs over it, and the review list fills as it goes. */
+  z.object({ type: z.literal("atlas.movein.learn") }),
+  /** Keep or drop items on the review list (`all` is every item not yet decided). Nothing is saved until it's kept. */
+  z.object({
+    type: z.literal("atlas.movein.keep"),
+    ids: z.array(z.string().max(40)).max(1000).default([]),
+    all: z.boolean().optional(),
+    keep: z.boolean(),
+  }),
+  /** Done with this move-in: what was kept stays, the rest is let go. */
+  z.object({ type: z.literal("atlas.movein.done") }),
   /** Settings → Connections → Senses: a webhook source with its own address and key, or removing one. */
   z.object({ type: z.literal("atlas.sense.hook.add"), name: z.string().min(1).max(60) }),
   z.object({ type: z.literal("atlas.sense.hook.remove"), id: z.string().max(64) }),
@@ -351,19 +489,53 @@ export const ClientMessage = z.discriminatedUnion("type", [
     name: z.string().min(1).max(60).optional(),
     about: z.string().max(500).optional(),
     state: z.enum(["active", "dormant", "archived"]).optional(),
-    settings: z.object({ tone: z.string().max(300).optional() }).optional(),
+    settings: z
+      .object({
+        tone: z.string().max(300).optional(),
+        mail: z.string().max(40).optional(),
+        calendars: z.array(z.string().max(160)).max(20).optional(),
+      })
+      .optional(),
   }),
   z.object({ type: z.literal("atlas.area.merge"), from: z.string().max(64), into: z.string().max(64) }),
+  /**
+   * An area's color and icon (Library → Areas, §6.4): a palette color or one of the owner's own, and a line icon,
+   * or a logo they upload (`image`, base64, kept in the files store and used as the icon).
+   */
+  z.object({
+    type: z.literal("atlas.area.look"),
+    id: z.string().max(64),
+    ...AreaLook.shape,
+    image: z
+      .object({
+        name: z.string().trim().min(1).max(120),
+        type: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"]),
+        /** At most about 300 KB once decoded. */
+        data: z.string().max(400_000),
+      })
+      .optional(),
+  }),
   /** Move an item to other areas by tapping its chip (§6.3): a message (`log:<id>`) or a record (`rec:<id>`). */
   z.object({
     type: z.literal("atlas.areas.set"),
     ref: z.string().regex(/^(log|rec):[\w-]+$/),
     areas: z.array(z.string().max(64)).max(10),
   }),
+  /** Move a calendar event to other areas: every event in its series follows. */
+  z.object({
+    type: z.literal("atlas.event.areas"),
+    event: z.object({
+      id: z.string().min(1).max(300),
+      title: z.string().max(300),
+      calendar: z.string().max(120),
+      location: z.string().max(500).optional(),
+    }),
+    areas: z.array(z.string().max(64)).max(10),
+  }),
   /** Setup (§22): mark a step done, skipped, or open again. */
   z.object({
     type: z.literal("atlas.setup.step"),
-    step: z.enum(["passkey", "meet", "brain", "connect", "look", "routines"]),
+    step: z.enum(["passkey", "meet", "brain", "connect", "look", "routines", "movein"]),
     state: z.enum(["done", "skipped", "open"]),
   }),
   /** Setup step 5: Atlas reads the calendar and proposes areas, people and things worth knowing. */
@@ -375,7 +547,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   }),
   /** The voices the owner can pick from, with samples. */
   z.object({ type: z.literal("atlas.voices.list") }),
-  /** Remove a passkey (Settings → Devices). It also ends the sessions it opened. */
+  /** Remove a passkey (Abilities → Devices). It also ends the sessions it opened. */
   z.object({ type: z.literal("atlas.passkey.remove"), id: z.string().max(512) }),
   /** Sign out everywhere. */
   z.object({ type: z.literal("atlas.sessions.end") }),
@@ -387,6 +559,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
     area: z.string().max(64).nullable().optional(),
     text: z.string().max(200).optional(),
     limit: z.number().int().min(1).max(500).optional(),
+    /** Only what Atlas learned itself, newest first: not imported contacts. */
+    learned: z.boolean().optional(),
   }),
   /** Correct a record by hand (Library's Correct link): the old value stays in history. */
   z.object({
@@ -439,6 +613,34 @@ export const ClientMessage = z.discriminatedUnion("type", [
     token: z.string().max(4_000).optional(),
   }),
   z.object({ type: z.literal("atlas.mcp.remove"), id: z.string().max(64) }),
+  /** Connect an MCP server again, as it was added: Try again on its card. */
+  z.object({ type: z.literal("atlas.mcp.retry"), id: z.string().max(64) }),
+  /**
+   * Abilities → Services (§17): the cards; what installing one would add (fetched and checked first); installing
+   * every part; the one key that covers its parts; removing it; saying yes to an update that reaches or holds
+   * more. `id` is a card's id.
+   */
+  z.object({ type: z.literal("atlas.services") }),
+  z.object({ type: z.literal("atlas.service.preview"), id: z.string().max(80) }),
+  z.object({ type: z.literal("atlas.service.install"), id: z.string().max(80) }),
+  z.object({ type: z.literal("atlas.service.key"), id: z.string().max(80), key: z.string().trim().min(1).max(4_000) }),
+  z.object({ type: z.literal("atlas.service.remove"), id: z.string().max(80) }),
+  z.object({ type: z.literal("atlas.service.update"), id: z.string().max(80) }),
+  /** Another index by its address, removing one, or looking at every index now. */
+  z.object({ type: z.literal("atlas.index.add"), url: z.string().url().max(500) }),
+  z.object({ type: z.literal("atlas.index.remove"), url: z.string().max(500) }),
+  z.object({ type: z.literal("atlas.index.refresh") }),
+  /** Custom: an extension from a link, read in a sandbox with no way out and kept as a draft to read before Install. */
+  z.object({ type: z.literal("atlas.ext.link"), url: z.string().url().max(500) }),
+  /**
+   * Abilities → Skills → Get skills (§9.3, §17): what the catalog's skill hubs hold (`again` reads a hub that
+   * failed now, rather than in ten minutes); one skill in full before it's installed; installing it (or its
+   * update); removing it (archived, so it can come back).
+   */
+  z.object({ type: z.literal("atlas.hubs"), again: z.boolean().optional() }),
+  z.object({ type: z.literal("atlas.hub.preview"), hub: z.string().max(40), name: z.string().max(80) }),
+  z.object({ type: z.literal("atlas.hub.install"), hub: z.string().max(40), name: z.string().max(80) }),
+  z.object({ type: z.literal("atlas.hub.remove"), hub: z.string().max(40), name: z.string().max(80) }),
   /** An MCP App on the stage (§21.6): its page, and what the page asks of its server. `req` is echoed back. */
   z.object({ type: z.literal("atlas.mcp.app"), req: z.string().max(64), call: z.string().max(64) }),
   z.object({
@@ -470,7 +672,25 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Stop a helper's job (Stop on the Jobs tab). */
   z.object({ type: z.literal("atlas.job.stop"), id: z.string().max(64) }),
   /** The owner's words for a coding job (§8.2): the answer to its question, or Steer while it works. */
-  z.object({ type: z.literal("atlas.job.say"), id: z.string().max(64), text: z.string().min(1).max(4_000) }),
+  z.object({
+    type: z.literal("atlas.job.say"),
+    id: z.string().max(64),
+    text: z.string().min(1).max(4_000),
+    /** The question row this answers, when it's an answer (a button, or words on the question). */
+    answers: z.string().max(64).optional(),
+  }),
+  /** A job's own thread (§21.4): what Atlas said on it and the owner said to it. */
+  z.object({ type: z.literal("atlas.job.thread"), id: z.string().max(64) }),
+  /**
+   * Phone calls (§16.1): the calls extension's numbers, using one, giving it back, numbers to buy and buying
+   * one, and a test call to the owner. The answer is one atlas.calls.
+   */
+  z.object({ type: z.literal("atlas.calls.numbers") }),
+  z.object({ type: z.literal("atlas.calls.use"), id: z.string().min(1).max(100) }),
+  z.object({ type: z.literal("atlas.calls.release") }),
+  z.object({ type: z.literal("atlas.calls.available"), area: z.string().max(10).optional() }),
+  z.object({ type: z.literal("atlas.calls.order"), number: z.string().min(4).max(20) }),
+  z.object({ type: z.literal("atlas.calls.test") }),
   /** Live checks for Settings (§22: every check is a live test). */
   z.object({
     type: z.literal("atlas.test"),
@@ -510,6 +730,58 @@ export interface SkillView {
   versions: Array<{ n: number; at: number; by: "owner" | "atlas"; note: string }>;
   /** The whole thing as a SKILL.md, to edit or take elsewhere. */
   md: string;
+  /** The files in its folder beside the SKILL.md. */
+  files: Array<{ path: string; size: number }>;
+  /**
+   * Where it came from, for one installed from a skill hub (§17): the hub, its repo and the commit it was
+   * installed at, the folder there, and whether the hub's newer pin changed it (Update, with `atlas.hub.install`).
+   */
+  from: { hub: string; name: string; repo: string; commit: string; folder: string; url: string; update: boolean } | null;
+}
+
+/** A skill hub in Get skills (§17): a repo of skill folders pinned to a commit, what it holds, and how the last read went. */
+export interface HubView {
+  id: string;
+  name: string;
+  about: string | null;
+  repo: string;
+  commit: string;
+  /** Its folder of skills on GitHub, at that commit. */
+  url: string;
+  /** The index that lists it. */
+  index: string;
+  /** When Atlas last read it, and why it couldn't, in GitHub's words. */
+  at: number | null;
+  error: string | null;
+  /** Its skills, or null until it's been read. */
+  skills: HubSkillView[] | null;
+}
+
+export interface HubSkillView {
+  /** Its name, as its SKILL.md has it. */
+  name: string;
+  description: string;
+  license: string | null;
+  /** The folder in the repo, its files (with the SKILL.md) and their size in bytes. */
+  folder: string;
+  files: number;
+  bytes: number;
+  /** Why it can't be installed, when it can't (a link in its folder, too big). */
+  problem: string | null;
+  /** Installed from this hub, and whether the hub's pin changed it since (`update`). */
+  installed: { id: string; commit: string; update: boolean } | null;
+  /** A skill of the same name that didn't come from here is already there. */
+  taken: boolean;
+}
+
+/** One hub skill in full, fetched and checked, to read before installing it (§17: a community skill is shown in full first). */
+export interface HubPreview {
+  hub: string;
+  name: string;
+  md: string;
+  files: Array<{ path: string; size: number }>;
+  license: string | null;
+  url: string;
 }
 
 /** A connected MCP server as Settings shows it (§9.2): never its token. */
@@ -536,11 +808,33 @@ export interface McpAppPage {
   result: Record<string, unknown>;
 }
 
+/** Brains' cost and limits (§18), for Settings → Brains. */
+export interface BrainsView {
+  /** Paid brains this month (UTC): what they've cost, by brain, against the owner's cap. */
+  spend: { month: string; paid: number; cap: number; by: Record<string, number>; resets_at: number };
+  /**
+   * Workers AI's free daily allowance: neurons used today (UTC) by Atlas's thinking, an estimate from the
+   * tokens its runs counted (sorting, remembering and speech use some too, and aren't counted).
+   */
+  free: { day: string; neurons: number; allowance: number; resets_at: number };
+  /** ChatGPT's plan, from the headers of its last answer, when it sent any. */
+  plan: import("./brains/limits").PlanLimits | null;
+  /** The price of every brain in a chain, by "provider:model", from the dated table or the catalog. */
+  prices: Record<string, import("./brains/catalog").Price>;
+  /** When the table of prices was read from the providers' pages. */
+  prices_as_of: string;
+}
+
 /** Settings as the app sees them: values, plus whether each secret is set (never the secret). */
 export interface SettingsView {
   settings: import("./store/settings").Settings;
   secrets: {
     elevenlabs_api_key: boolean;
+    anthropic_api_key: boolean;
+    /** A token for an authenticated AI Gateway (§18). */
+    ai_gateway_token: boolean;
+    /** Atlas's own sealing of secrets (§20): on, or why not; and a value that couldn't be opened, with the fix. */
+    sealed: { state: "on" | "missing" | "short"; unreadable: string | null };
   };
   /**
    * The calendar (§10.1): which extension provides it, and `refused` when it last refused the sign-in, how many
@@ -550,6 +844,15 @@ export interface SettingsView {
   calendar: {
     provider: { id: string; name: string } | null;
     refused: { at: number; message: string; tries: number; next_try: number; note: string } | null;
+    /** Every calendar account that's on, oldest first, each with its own refusal. */
+    providers: Array<{
+      id: string;
+      name: string;
+      account: string | null;
+      /** Its calendars, by name, as read so far. */
+      calendars: string[];
+      refused: { at: number; message: string; tries: number; next_try: number; note: string } | null;
+    }>;
   };
   /** Extensions (§17): the installed ones, drafts, and the bundled ones not installed. */
   extensions: ExtensionView[];
@@ -571,9 +874,14 @@ export interface SettingsView {
   /** Chat channels (§16.1), and who the owner is on each. */
   channels: Array<{ ext: string; name: string; linked: { name: string; at: number } | null }>;
   chatgpt: ChatGPTView;
-  /** Provider health, by "provider:model". */
-  health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
-  /** The owner's passkeys, without their keys (Settings → Devices). */
+  /**
+   * Provider health, by "provider:model": whether it's answering, when one that ran out can be used again, its
+   * speed as measured from Atlas's own runs, and a plan's own limits from its last answer.
+   */
+  health: Record<string, Omit<import("./brains/limits").Health, "strikes">>;
+  /** What the brains cost and what's left (§18): live limits, as far as Atlas can know them. */
+  brains: BrainsView;
+  /** The owner's passkeys, without their keys (Abilities → Devices). */
   passkeys: Array<{ id: string; name: string; created_at: number; last_used: number | null }>;
   /** The vault's entries, without their values (Settings → Vault). */
   vault: import("./vault-fields").VaultView[];
@@ -594,14 +902,78 @@ export interface SettingsView {
   /** Focus in force, if any (§14). */
   focus: { until: number; about: string } | null;
   setup: { done: string[]; skipped: string[]; finished: boolean };
-  /** Location (Settings → Devices, §10.1): whether OwnTracks is set up, the last fix and place, and the last refused post. */
+  /** Location (Abilities → Devices, §10.1): whether OwnTracks is set up, the last fix and place, and the last refused post. */
   location: LocationView;
-  /** Paired devices (Settings → Devices, §16.3). */
+  /** Paired devices (Abilities → Devices, §16.3). */
   nodes: import("./nodes").NodeView[];
   /** The intake's sources (Settings → Connections → Senses, §10.4): webhook sources, and each source's state. */
   senses: SensesView;
   /** Open tasks (§5.1), for Agenda's To do. */
   tasks: import("./tasks").TaskView[];
+  /** Atlas settings → Account → Updates (§23.2). */
+  updates: UpdatesView;
+  /** Atlas settings → Account → Your data (§23.4). */
+  data: DataView;
+}
+
+/** Your data (§23.4): the last copy taken, the times Atlas can go back to, and what deleting everything leaves. */
+export interface DataView {
+  last_export: { at: number; bytes: number; files: number; problems: string[] } | null;
+  export_error: { at: number; text: string } | null;
+  /** Null in a member's Atlas: going back and deleting are the owner's. */
+  restore: { earliest: number; latest: number; restored: { to: number; at: number; undo: boolean } | null } | null;
+  delete: { phrase: string; members: string[]; left: string[] } | null;
+}
+
+/** One step of an update or rollback, and how it went, in Cloudflare's or GitHub's words when it didn't. */
+export interface UpdateStep {
+  what: "check" | "bundle" | "assets" | "version" | "deploy" | "confirm";
+  ok: boolean;
+  text: string;
+  at: number;
+}
+
+/** The last update or rollback, step by step. */
+export interface UpdateRun {
+  kind: "update" | "rollback";
+  /** The release's tag, or the version rolled back to. */
+  label: string;
+  from_version: string | null;
+  to_version: string | null;
+  state: "running" | "deploying" | "done" | "failed";
+  started_at: number;
+  ended_at: number | null;
+  steps: UpdateStep[];
+  /** A rollback Cloudflare refused because a secret changed since: Roll back anyway sends `force`. */
+  needs_force?: boolean;
+  /** Installed by Atlas on its own (§23.2, the setting), not with Update now. */
+  auto?: boolean;
+}
+
+/** The Updates card (§23.2): which Atlas runs, the newest release, and the last update or rollback step by step. */
+export interface UpdatesView {
+  /** The app's build (its tag, or `git describe` of its commit) and Cloudflare's id for the running version. */
+  running: { version: string; commit: string | null; version_id: string | null };
+  /** Whether there's a Cloudflare token for updates, and the Worker it found. */
+  token: boolean;
+  /** Cloudflare's "Create token" page with Workers Scripts · Edit filled in. */
+  token_link: string;
+  script: string | null;
+  looked_at: number | null;
+  /** The last look's failure, in GitHub's words. */
+  look_error: string | null;
+  /** The newest release, and why it can't be installed from here when it can't (a Durable Object change, no release.json). */
+  newest: { tag: string; name: string; notes: string; published_at: number; url: string; problem: string | null } | null;
+  /** The newest release is newer than what runs. */
+  ready: boolean;
+  run: UpdateRun | null;
+  /** The version from before the last update, to go back to. */
+  rollback: { label: string } | null;
+  /** A version Atlas didn't install replaced one it did (Workers Builds after a push), and what to do. */
+  foreign: { at: number; text: string } | null;
+  busy: boolean;
+  /** With updating on its own: the release Atlas will install, and when. */
+  planned: { tag: string; at: number } | null;
 }
 
 export interface SensesView {
@@ -638,22 +1010,32 @@ export interface MailView {
   sending: string | null;
   sending_ok: boolean;
   sending_note: string | null;
-  /** What the domain's account token needs. */
-  permissions: string[];
+  /** What the domain's account token needs, in Cloudflare's words. */
+  permissions: Array<{ text: string; why: string; cloudflare?: boolean }>;
+  /** Cloudflare's "Create token" page with those filled in: with Email Sending, and without it for another sender. */
+  token_links: { cloudflare: string; other: string };
   /** Extensions that can send from Atlas's address. */
   senders: Array<{ id: string; name: string }>;
 }
 
 export interface ExtensionView {
+  /** Its id: the service's ("gmail"), or another account of it ("gmail--2"). */
   id: string;
   name: string;
+  /** Which account it is: the name the owner gave it, or what it signed into. */
+  account: string | null;
+  /** Whether the service can be had more than once (mail, calendars, address books, tools). */
+  many: boolean;
   version: string;
   about: string;
   provides: string[];
   hosts: string[];
+  /** Its tools (§17), each with the kind the core holds it to and when it asks. */
+  tools: Array<{ name: string; description: string; kind: ExtToolKind; asks: Asks }>;
   credit: string | null;
   costs: string | null;
-  source: "bundled" | "atlas" | "owner";
+  /** Who wrote it: it ships with Atlas, Atlas or the owner wrote it, or it came from an index. */
+  source: "bundled" | "atlas" | "owner" | "index";
   /** "available" is a bundled one that isn't installed. */
   state: "on" | "off" | "draft" | "available";
   secrets: Array<{ name: string; label: string; help: string; optional: boolean; set: boolean }>;
@@ -670,6 +1052,122 @@ export interface ExtensionView {
   methods: string[];
   /** The code, for one Atlas or the owner wrote, so it can be read before it's installed. */
   code: string | null;
+}
+
+/** When something Atlas can do asks first (§12.1): never; does it, tells you and offers Undo; until you trust it; always. */
+export type Asks = "never" | "tells" | "until_trusted" | "always";
+
+/** The kind of action an extension's tool declares (§17), which the core holds it to. */
+export type ExtToolKind = "look" | "change_own" | "speak" | "irreversible" | "money";
+
+/**
+ * One card in Abilities → Services (VISION §17: services, one catalog). One
+ * per service, whatever is underneath: an extension, its vendor's own MCP
+ * server, skills. Simple shows the name, icon, about, `hears.summary`,
+ * `does.summary`, the state, the error and the one setup; Developer also
+ * shows `parts`, `touches` and each tool. Sent as `atlas.services`, in the
+ * order the app shows them: what's on first, then by name.
+ */
+export interface ServiceView {
+  /** The catalog's id ("linear"); for something added by hand, "ext:<extension id>" or "mcp:<server id>". */
+  id: string;
+  name: string;
+  about: string;
+  /** The service's own logo, as a data URI to show in an <img> (never as markup); `icon_invert` when it's black, for the dark theme. */
+  icon: string | null;
+  icon_invert: boolean;
+  /** "work", "notes", "mail", "chat", "calendar", "location", "maps", "weather", "search", "coding", "money", "home"; "custom" for something added by hand. */
+  category: string;
+  /**
+   * on: what's installed works. setup: installed, waiting for its key or sign-in (see `setup`). off: turned off.
+   * error: its last call failed (see `error`). draft: code waiting for the owner's Install. available: in the
+   * catalog, nothing installed.
+   */
+  state: "on" | "setup" | "off" | "error" | "draft" | "available";
+  /** Where the listing came from: an index (its address; `snapshot` when it's this release's copy), or added by hand (Custom). */
+  from: { kind: "index"; index: string; snapshot: boolean } | { kind: "custom" };
+  /** What Atlas hears from it: the listing's line, what its extension provides in words, and the last few things it heard. */
+  hears: { summary: string | null; what: string[]; recent: Array<{ what: string; at: number }> };
+  /** What Atlas can do there: the listing's line, and each tool (its MCP server's, its extension's), with when it asks. */
+  does: {
+    summary: string | null;
+    tools: Array<{ name: string; title: string; about: string; via: "mcp" | "extension"; asks: Asks; kind: ExtToolKind | null }>;
+  };
+  /** What it can touch: the hosts its extension may reach, the secrets it may hold (names only), and its MCP server's host. */
+  touches: { hosts: string[]; secrets: string[]; mcp: string | null };
+  /** When Atlas last heard something from it. */
+  last_heard: number | null;
+  /** Its last failure, in the service's own words, and which part it came from. */
+  error: { text: string; at: number | null; part: "extension" | "mcp" } | null;
+  /** What it costs while it's on, when that isn't nothing. */
+  cost: string | null;
+  /**
+   * The one setup, when one covers every part: a key (pasted once, with `atlas.service.key`; `covers` says
+   * which parts it fills), a sign-in (the MCP server's, at `url`, or the extension's, in its own fields),
+   * nothing, or each part on its own (the extension's fields, in `parts`).
+   */
+  setup:
+    | { kind: "key"; label: string; help: string; set: boolean; covers: Array<"extension" | "mcp"> }
+    | { kind: "signin"; via: "mcp" | "extension"; signed_in: boolean; url: string | null }
+    | { kind: "none" }
+    | { kind: "each" };
+  /** The parts underneath, for Developer: the extension (with its settings in Settings' ExtensionView by `id`), the MCP server, skills. */
+  parts: {
+    extension: {
+      id: string;
+      version: string | null;
+      source: ExtensionView["source"] | null;
+      state: ExtensionView["state"];
+      /** Code from an index: the address it was pinned at and its sha256. */
+      pinned: { code: string; sha256: string } | null;
+    } | null;
+    mcp: { id: string | null; url: string; state: string; signin: "oauth" | "token" | "either" | null } | null;
+    skills: Array<{ name: string; installed: boolean }>;
+  };
+  /** An update from the index that would reach or hold more than before, waiting for the owner's OK (`atlas.service.update`). */
+  update: { version: string; widens: { hosts: string[]; secrets: string[]; tools?: string[] } } | null;
+  /** Its accounts (§17), oldest first: the extension behind each, and its name (what it signed into, or the owner's). */
+  accounts: Array<{ ext: string; name: string | null }>;
+  /** Whether another account can be added. */
+  more: boolean;
+}
+
+/** An index the catalog reads (§17): Atlas's own first, then the ones the owner added. */
+export interface IndexView {
+  url: string;
+  own: boolean;
+  name: string | null;
+  /** The listing's own date, and when Atlas last fetched it (worked or not) and last fetched it fine. */
+  updated: string | null;
+  at: number | null;
+  ok_at: number | null;
+  /** Its last failure in the host's words, and listings that didn't fit the format (left out). */
+  error: string | null;
+  problems: string[];
+  services: number;
+  /** Skill hubs it lists. */
+  hubs: number;
+}
+
+/** What installing a service would add, fetched and checked against its pins, shown before Install (§17). */
+export interface ServicePreview {
+  id: string;
+  name: string;
+  extension: {
+    id: string;
+    name: string;
+    version: string;
+    about: string;
+    provides: string[];
+    hosts: string[];
+    secrets: string[];
+    tools: ServiceView["does"]["tools"];
+    /** The code, for one from an index, to read before installing; null for one that ships with Atlas. */
+    code: string | null;
+  } | null;
+  mcp: { url: string; signin: "oauth" | "token" | "either" } | null;
+  /** Each skill in full (§17: a community skill is shown in full before it's installed), with its folder's files. */
+  skills: Array<{ name: string; md: string; files: string[] }>;
 }
 
 export interface LocationView {
@@ -709,10 +1207,11 @@ export type ServerMessage =
   /** A new or older thread row. The saved truth: it replaces any streamed text for its run. */
   | { type: "atlas.rows"; rows: LogRow[]; older?: boolean; has_more?: boolean }
   /** Streamed reply text for a run in progress. A progress hint only (§4.1). */
-  | { type: "atlas.delta"; run_id: string; text: string }
+  /** `job`: the run is a turn of work Atlas owns, which streams in that job's own thread, not the main one (§21.4). */
+  | { type: "atlas.delta"; run_id: string; text: string; job?: string }
   /** What Atlas is doing right now in a run, such as "Checking your calendar". */
-  | { type: "atlas.status"; run_id: string; text: string | null }
-  | { type: "atlas.run"; run_id: string; state: RunState; surface: string; client_id?: string }
+  | { type: "atlas.status"; run_id: string; text: string | null; job?: string }
+  | { type: "atlas.run"; run_id: string; state: RunState; surface: string; client_id?: string; job?: string }
   | { type: "atlas.agenda"; agenda: AgendaItem[] }
   | { type: "atlas.areas"; areas: AreaView[]; scope: string | null }
   | { type: "atlas.records"; ref: string; records: RecordView[]; counts: Record<string, number> }
@@ -721,14 +1220,38 @@ export type ServerMessage =
   | { type: "atlas.history.rows"; filter: HistoryFilter; rows: LogRow[]; has_more: boolean; older: boolean; stats?: HistoryStats }
   | { type: "atlas.run.detail.result"; run_id: string; run: Record<string, unknown> | null; rows: LogRow[] }
   /** `stale` is set when iCloud couldn't be asked: the events are Atlas's copy from `as_of`, and `why` says why. */
-  | { type: "atlas.calendar.events"; ref: string; events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } }
+  | {
+      type: "atlas.calendar.events";
+      ref: string;
+      events: CalendarEventView[];
+      error?: string;
+      stale?: { as_of: number; why: string };
+      /** Calendars that couldn't be read at all, each with why, while the others could. */
+      missing?: string[];
+    }
+  /** Events' areas changed (Clef sorted some, or the owner moved one): pages showing the calendar ask again. */
+  | { type: "atlas.calendar.changed" }
   | { type: "atlas.inbox.items"; items: InboxItem[] }
   | { type: "atlas.stage.page"; ref: string; page: StagePage | null }
   | { type: "atlas.automations"; automations: AutomationView[]; suggestions: SuggestionView[] }
   | { type: "atlas.pages"; pages: PageSummary[] }
   | { type: "atlas.files"; files: import("./stage").FileRow[] }
   | { type: "atlas.skills"; skills: SkillView[] }
+  /** Get skills (§17): the catalog's skill hubs and what each holds. Sent when asked and after a read or an install. */
+  | { type: "atlas.hubs"; hubs: HubView[] }
+  /** One hub skill in full, or why it couldn't be fetched (a hash that doesn't match, GitHub's own words). */
+  | { type: "atlas.hub.preview"; hub: string; name: string; preview?: HubPreview; error?: string }
+  /** How installing or removing one went. */
+  | { type: "atlas.hub.done"; hub: string; name: string; ok: boolean; text: string }
+  /** A provider's models for the picker, or why they couldn't be listed. */
+  | { type: "atlas.brain.models"; provider: string; models: import("./brains/catalog").ModelInfo[]; error?: string }
   | { type: "atlas.mcp.servers"; servers: McpServerView[] }
+  /** Abilities → Services (§17): a card per service, and the indexes the catalog reads. Sent when asked and after any change. */
+  | { type: "atlas.services"; services: ServiceView[]; indexes: IndexView[] }
+  /** What installing a service would add, fetched and checked, or why it can't be (a hash that doesn't match, in words). */
+  | { type: "atlas.service.preview"; id: string; preview?: ServicePreview; error?: string }
+  /** How a service action went (install, key, remove, update, an index, an extension from a link), in the service's words when it didn't. */
+  | { type: "atlas.service.done"; id: string; ok: boolean; text: string }
   | { type: "atlas.mcp.app.result"; req: string; page?: McpAppPage; error?: string }
   /** What the page's own tool call or read answered: MCP's result as-is, or why it didn't happen. */
   | { type: "atlas.mcp.app.answer"; req: string; result?: Record<string, unknown>; error?: string }
@@ -748,6 +1271,8 @@ export type ServerMessage =
     }
   /** Helpers' jobs: running ones, and ones that ended in the last hour (§21.4). */
   | { type: "atlas.jobs"; jobs: JobView[] }
+  /** A job's own thread, oldest first: its updates, questions and result, and the owner's words to it. */
+  | { type: "atlas.job.thread"; id: string; rows: LogRow[] }
   | { type: "atlas.view"; view: SettingsView }
   /** The situation changed (a sense event, a refresh): views showing it, and Now, ask again. */
   | { type: "atlas.situation" }
@@ -766,6 +1291,11 @@ export type ServerMessage =
   | { type: "atlas.ext.signin"; id: string; url?: string; error?: string }
   /** How setting up, taking down or testing Atlas's address went, in the provider's words when it didn't. */
   | { type: "atlas.mail"; ok: boolean; text: string }
+  /** How a token, an update or a rollback went, in Cloudflare's words when it didn't. The steps are on the view. */
+  | { type: "atlas.updates"; ok: boolean; text: string }
+  /** Your data (§23.4): what going back to a time means, and how going back or deleting everything went, with what's left. */
+  | { type: "atlas.data.preview"; at: number; ok: boolean; text: string; lost: string[]; kept: string[] }
+  | { type: "atlas.data"; what: "restore" | "delete"; ok: boolean; text: string; left?: string[] }
   /** A face's answer in a test conversation. */
   | { type: "atlas.face.said"; id: string; conv: string; ok: boolean; text: string }
   | { type: "atlas.channel.code"; ext: string; code: string; expires: number }
@@ -774,9 +1304,51 @@ export type ServerMessage =
   /** The areas shared with this person (§6), with their records. */
   | { type: "atlas.shared"; areas: SharedArea[] }
   | { type: "atlas.contacts.imported"; ok: boolean; text: string }
+  /** Moving in (§23.3): the readers, what's been read, and the review list. */
+  | { type: "atlas.movein"; movein: MoveInView }
   /** A new webhook source's address, with its key in it, shown once. */
   | { type: "atlas.sense.hook"; id: string; name: string; url: string }
   | { type: "atlas.test.result"; what: string; ref?: string; ok: boolean; message: string; detail?: unknown }
+  /** Phone calls (§16.1): what an atlas.calls.* asked for, or why it couldn't. */
+  | {
+      type: "atlas.calls";
+      ok: boolean;
+      text?: string;
+      numbers?: import("../../extensions/sdk").PhoneNumber[];
+      offers?: import("../../extensions/sdk").NumberOffer[];
+      /** The number Atlas answers now. */
+      number: string | null;
+    }
   | { type: "atlas.error"; message: string }
   /** This socket's sign-in was ended; the app goes back to signing in. */
   | { type: "atlas.signed_out" };
+
+/** Moving in (§23.3), as the app shows it. */
+export interface MoveInView {
+  /** What Atlas can move in from: each reader with where to get its file, and the files it takes. */
+  readers: Array<{
+    id: string;
+    name: string;
+    icon: string | null;
+    icon_invert: boolean;
+    reads: import("../../extensions/sdk").ReaderSpec;
+  }>;
+  /** "reading" while files come in, "learning" while Atlas reads them, "paused" when a restart stopped it. */
+  phase: "idle" | "reading" | "learning" | "paused" | "review" | "failed";
+  sources: import("./movein").Source[];
+  /** What's waiting to be read: conversations (the newest within the budget) and notes. */
+  gathered: { talks: number; notes: number };
+  /** Chunks read of all, while learning or after, and how many couldn't be read. */
+  progress: { done: number; of: number; failed: number } | null;
+  /** What the reading covered. */
+  read: { talks: number; seen: number; notes: number } | null;
+  items: MoveInItem[];
+  /** Items Atlas already knew in the same words, so not offered. */
+  known: number;
+  error: string | null;
+  started_at: number | null;
+}
+
+export type MoveInItem = Omit<import("./movein").MoveItem, "skill" | "was"> & {
+  skill?: { folder: string; files: number; left_out: string[] };
+};

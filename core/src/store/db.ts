@@ -4,8 +4,16 @@
 export type Sql = SqlStorage;
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 
+/**
+ * From this migration on (M7's, the first a one-click update can bring), a
+ * change to storage only adds: tables, indexes and columns. Rolling the code
+ * back then never breaks the data, and the data is never rolled back (§23.2).
+ * test/db.test.ts holds every migration from here to it.
+ */
+export const ONLY_ADDS_FROM = 13;
+
 /** Each entry runs once, in order. Never edit an entry that has shipped; add a new one. */
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: string[] = [
   `
   CREATE TABLE log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -301,6 +309,28 @@ const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL
   );
   CREATE INDEX coding_phase ON coding(phase, updated_at);
+  `,
+  // 14. M7: skills (§9.3). Each one's meaning as a vector (to refuse a near-duplicate and to find ones to merge),
+  // the model that made it, and the files in its folder (references, scripts, templates, assets), kept in R2.
+  `
+  ALTER TABLE skills ADD COLUMN vec BLOB;
+  ALTER TABLE skills ADD COLUMN vec_model TEXT;
+  ALTER TABLE skills ADD COLUMN files TEXT NOT NULL DEFAULT '[]';
+  `,
+  // 15. M7: each area's look, picked by the owner (§6.4): a color of their own beside the palette index, and an
+  // icon (a line icon's name, or "file:<id>" for a logo they uploaded to the files store).
+  `
+  ALTER TABLE areas ADD COLUMN custom_color TEXT;
+  ALTER TABLE areas ADD COLUMN icon TEXT;
+  `,
+  // 16. M7: accounts (§17): a service added more than once, each its own extension row ("gmail--2"), and the name
+  // the owner gives it, when what it signed into doesn't say.
+  `
+  ALTER TABLE extensions ADD COLUMN label TEXT;
+  `,
+  // 17. M7: where an automation's report goes (§13.3): "you", wherever the owner is, or one place ("telegram", "push").
+  `
+  ALTER TABLE automations ADD COLUMN goes_to TEXT NOT NULL DEFAULT 'you';
   `,
 ];
 

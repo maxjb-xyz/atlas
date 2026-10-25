@@ -11,6 +11,7 @@ import { defineTool, fail } from "./types";
 export const pageSave = defineTool({
   name: "page_save",
   kind: "change_own",
+  status: "Saving the page.",
   description: [
     "Make a page the owner keeps (a shoot plan, a trip itinerary, a weekly report, a study guide), or give one of their pages a new version (pass `page`).",
     "Use it when the owner asks you to write something up to keep, or to change or refresh a page they have. A new version keeps the old ones, and the owner can undo it.",
@@ -67,6 +68,7 @@ export const pageSave = defineTool({
 export const pageRead = defineTool({
   name: "page_read",
   kind: "look",
+  status: "Reading the page.",
   description:
     "Read one of the owner's pages: its newest body (Markdown, with its views as fenced `view` blocks) and its last versions. Read it before changing it with page_save.",
   input: z.object({ page: z.string().min(1).max(80).describe("The page's name or id.") }),

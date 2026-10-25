@@ -146,6 +146,19 @@ export async function saveFile(
   return { file, replaced: Boolean(old) };
 }
 
+/** Deletes every object under a prefix in R2 ("skills/sk1/", "jobs/owner/"), a page of a thousand at a time. */
+export async function deletePrefix(bucket: R2Bucket, prefix: string): Promise<number> {
+  let n = 0;
+  let cursor: string | undefined;
+  do {
+    const page = await bucket.list({ prefix, limit: 1000, ...(cursor ? { cursor } : {}) });
+    if (page.objects.length) await bucket.delete(page.objects.map((o) => o.key));
+    n += page.objects.length;
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return n;
+}
+
 export async function deleteFile(sql: Sql, bucket: R2Bucket, id: string, by: "owner" | "atlas"): Promise<FileRow | null> {
   const f = getFile(sql, id);
   if (!f) return null;

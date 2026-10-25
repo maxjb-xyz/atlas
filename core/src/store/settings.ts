@@ -2,6 +2,7 @@
 // see and change in the app. Secrets are kept apart and never sent to the
 // app or the model; the app only learns whether each one is set.
 
+import { dataKeyView, isSealed, open, seal } from "./sealed";
 import { z } from "zod";
 import { parse, type Sql } from "./db";
 import { getState } from "./state";
@@ -10,10 +11,33 @@ import { getState } from "./state";
 export const DEFAULT_CHATGPT_MODEL = "gpt-5.6-terra";
 
 export const BrainChoice = z.object({
-  provider: z.enum(["chatgpt", "workers-ai"]),
+  provider: z.enum(["chatgpt", "workers-ai", "anthropic"]),
   model: z.string().min(1).max(200),
 });
 export type BrainChoice = z.infer<typeof BrainChoice>;
+
+/** A named brain for a kind of work (§18): "Quick", "Deep", with a line on what it's good for. */
+export const NamedBrain = z.object({
+  name: z.string().trim().min(1).max(24),
+  line: z.string().trim().max(120).default(""),
+  chain: z.array(BrainChoice).min(1).max(5),
+});
+export type NamedBrain = z.infer<typeof NamedBrain>;
+
+/** The kinds of work that each use a named brain when the owner picks one, and the main chain otherwise. */
+export const WORK_KINDS = ["helpers", "research", "job_work", "job_looks", "skill_review"] as const;
+export type WorkKind = (typeof WORK_KINDS)[number];
+
+/** A place Atlas reaches the owner (§14): "push", or the id of a chat channel's extension they've linked. */
+const Reach = z.string().min(1).max(40);
+
+/** Settings saved before the lists (M7) had one place, `reach`: it leads both lists, with a push behind a chat, as before. */
+function fromReach(v: unknown): unknown {
+  if (!v || typeof v !== "object" || "lists" in v || !("reach" in v)) return v;
+  const { reach, ...rest } = v as { reach: unknown };
+  const first = typeof reach === "string" && reach !== "push" ? [reach, "push"] : ["push"];
+  return { ...rest, lists: { now: first, soon: first } };
+}
 
 export const Settings = z.object({
   /** What the assistant is called (§26 open question 3: "Atlas" by default). */
@@ -37,18 +61,91 @@ export const Settings = z.object({
         { provider: "chatgpt", model: DEFAULT_CHATGPT_MODEL },
       ],
     }),
+  /**
+   * Named brains for kinds of work (§18), and which one each kind uses (none means the main chain). Kept apart
+   * from `brains`, which the role chains replace whole when they're saved.
+   */
+  named_brains: z
+    .object({
+      brains: z.array(NamedBrain).max(8).default([]),
+      uses: z.object(Object.fromEntries(WORK_KINDS.map((k) => [k, z.string().max(24).nullable().default(null)]))).prefault({}),
+    })
+    .prefault({}),
+  /**
+   * What paid brains (billed by key: Anthropic) may cost a month, in US dollars (§18): set by default, so a
+   * paid brain first in a chain can't run up a bill. Past it, they refuse until the month ends (UTC) and the
+   * chain's next brain answers. 0 means paid brains aren't used at all.
+   */
+  spending: z.object({ cap: z.number().min(0).max(10_000).default(20) }).prefault({}),
+  /**
+   * The owner's AI Gateway (§18), by its id on their Cloudflare account: Anthropic and Workers AI go through it,
+   * for its logs, caching and limits. Empty goes straight to each provider. Free, and off until it's set.
+   */
+  ai_gateway: z
+    .object({
+      id: z
+        .string()
+        .trim()
+        .max(64)
+        .regex(/^[a-z0-9-]*$/i)
+        .default(""),
+    })
+    .prefault({}),
+  /**
+   * The owner's own rules for when Atlas asks (§12.3). Each starts as Atlas
+   * behaved before there were rules; the floors (money, what can't be undone,
+   * a vault login's first time on a site) aren't here because they can't move.
+   */
+  permissions: z
+    .object({
+      /** Outside actions without a rule of their own: always ask, ask until trusted, or don't ask. */
+      outside: z.enum(["always", "until_trusted", "never"]).default("until_trusted"),
+      /** Websites the workspace reaches (§9.1): asked for each site, or any site. */
+      sites: z.enum(["each", "any"]).default("each"),
+      /** Sending forms in the browser: asks, or sends on the sites the owner allowed. */
+      forms: z.enum(["ask", "allowed_sites"]).default("ask"),
+      /** Once a run has read the web (§20): everything that leaves asks, or what's trusted goes as usual. */
+      after_web: z.enum(["ask", "trusted"]).default("ask"),
+      /** Mail in the owner's name: asks until each set of recipients is trusted, or always asks. */
+      email_as_you: z.enum(["per_recipient", "always"]).default("per_recipient"),
+      /** A face speaking as the owner to someone Atlas knows: asks until trusted, or sends. */
+      faces_known: z.enum(["until_trusted", "send"]).default("until_trusted"),
+      /** MCP tools: trusted one tool at a time, or trusting one trusts the whole service. */
+      mcp: z.enum(["per_tool", "per_service"]).default("per_tool"),
+      /** Tools on the owner's devices (§16.3): ask until trusted, or always ask. */
+      device_tools: z.enum(["until_trusted", "always"]).default("until_trusted"),
+      /** Phone calls (§16.1): Atlas never calls the owner, or calls about what can't wait, when a call is on their list. */
+      calls: z.enum(["never", "urgent"]).default("never"),
+      /** A job whose brain runs out (§18): it asks before going on with another, or goes on while paid brains are within the cap. */
+      paid_brain: z.enum(["ask", "within_cap"]).default("ask"),
+    })
+    .prefault({}),
+  /**
+   * Phone calls (§16.1): the owner's own numbers, set by them in Abilities → Services. A call from one, with
+   * caller ID the network vouches for, is the owner; Atlas calls the first. Never learned from what Atlas reads.
+   */
+  phone: z.object({ mine: z.array(z.string().trim().min(7).max(30)).max(4).default([]) }).prefault({}),
   voice: z
     .object({
       speech_in: z.enum(["workers-ai-flux", "elevenlabs-scribe"]).default("workers-ai-flux"),
       speech_out: z.enum(["elevenlabs", "workers-ai-aura"]).default("elevenlabs"),
       elevenlabs_voice_id: z.string().max(64).default("JBFqnCBsd6RMkjVDRZzb"),
       elevenlabs_model: z.string().max(64).default("eleven_v4_turbo"),
+      /** How fast Atlas speaks, as ElevenLabs' speed (it takes 0.7 to 1.2). Workers AI's Aura has no speed. */
+      speed: z.number().min(0.7).max(1.2).default(1),
+      /** Small talk in a voice conversation (docs/ui §8, "Talks like a person"): what the voice run is told. */
+      small_talk: z.enum(["never", "sometimes", "often"]).default("sometimes"),
+      /** Fillers like "um" in a voice conversation: what the voice run is told, never added to what it says. */
+      fillers: z.enum(["off", "light"]).default("off"),
     })
     .default({
       speech_in: "workers-ai-flux",
       speech_out: "elevenlabs",
       elevenlabs_voice_id: "JBFqnCBsd6RMkjVDRZzb",
       elevenlabs_model: "eleven_v4_turbo",
+      speed: 1,
+      small_talk: "sometimes",
+      fillers: "off",
     }),
   /** The character (§23.1): a preset, four scales, and the owner's own words. */
   character: z
@@ -74,33 +171,55 @@ export const Settings = z.object({
   web: z.object({ search: z.string().min(1).max(40).default("cloudflare") }).default({ search: "cloudflare" }),
   /** How messages reach the owner when the app isn't in view (§14). */
   notifications: z
-    .object({
-      /** Push notifications to the device used last, when no app is in view. */
-      push: z.boolean().default(true),
-      /** Non-urgent pushes wait until these hours end. Local times, HH:mm. */
-      quiet: z
-        .object({
-          on: z.boolean().default(false),
-          from: z
-            .string()
-            .regex(/^\d{2}:\d{2}$/)
-            .default("22:00"),
-          to: z
-            .string()
-            .regex(/^\d{2}:\d{2}$/)
-            .default("07:00"),
-        })
-        .default({ on: false, from: "22:00", to: "07:00" }),
-      /** The daily interruption budget (§14): pushes a day for things that can wait. 0 means no limit. */
-      budget: z.number().int().min(0).max(100).default(10),
-      /** Where Atlas reaches the owner when the app isn't in view: a push, or a chat channel they've linked (§16.1). */
-      reach: z.string().min(1).max(40).default("push"),
-    })
-    .default({ push: true, quiet: { on: false, from: "22:00", to: "07:00" }, budget: 10, reach: "push" }),
+    .preprocess(
+      fromReach,
+      z.object({
+        /** Push notifications to the device used last, when no app is in view. */
+        push: z.boolean().default(true),
+        /** Non-urgent pushes wait until these hours end. Local times, HH:mm. */
+        quiet: z
+          .object({
+            on: z.boolean().default(false),
+            from: z
+              .string()
+              .regex(/^\d{2}:\d{2}$/)
+              .default("22:00"),
+            to: z
+              .string()
+              .regex(/^\d{2}:\d{2}$/)
+              .default("07:00"),
+          })
+          .default({ on: false, from: "22:00", to: "07:00" }),
+        /** The daily interruption budget (§14): pushes a day for things that can wait. 0 means no limit. */
+        budget: z.number().int().min(0).max(100).default(10),
+        /**
+         * Where Atlas reaches the owner when they aren't talking to it (§14),
+         * one list per urgency, in order: "push", or a chat channel they've
+         * linked (§16.1). Something soon goes to the first that takes it;
+         * something now that goes unseen moves down its list.
+         */
+        lists: z
+          .object({
+            now: z.array(Reach).min(1).max(4).default(["push"]),
+            soon: z.array(Reach).min(1).max(4).default(["push"]),
+          })
+          .prefault({}),
+      }),
+    )
+    .default({ push: true, quiet: { on: false, from: "22:00", to: "07:00" }, budget: 10, lists: { now: ["push"], soon: ["push"] } }),
   /** Location (§10.1): whether Atlas takes in what the phone sends. Off drops it, and Atlas says it doesn't know where you are. */
   location: z.object({ on: z.boolean().default(true) }).default({ on: true }),
   /** Maps (§19.1): which maps extension answers (§17): OpenStreetMap's by default, Mapbox's by key, or another. */
   maps: z.object({ provider: z.string().min(1).max(40).default("osm") }).default({ provider: "osm" }),
+  /**
+   * Accounts (§6.2, §17): with more than one, which one new mail goes from,
+   * by extension id ("gmail--2"), and which calendar new events go on: an
+   * account, or one calendar in it ("gmail--2::Work"). Empty is the first.
+   * An area can name its own (Library → Areas, or the account's card).
+   */
+  accounts: z
+    .object({ mail: z.string().max(40).default(""), calendar: z.string().max(160).default("") })
+    .default({ mail: "", calendar: "" }),
   /**
    * Speaking up (§10.3): whether Atlas may tell the owner things on its own.
    * `noticing` covers whatever its senses notice (a move, a change on the
@@ -121,6 +240,11 @@ export const Settings = z.object({
     .default({ noticing: true, leave: true, quiet_about: [], tell_about: [] }),
   /** How Atlas says temperatures, speeds and distances. "auto" follows the time zone: US zones get °F and miles. */
   units: z.enum(["auto", "us", "metric"]).default("auto"),
+  /**
+   * Updates (§23.2): whether Atlas installs a new release on its own, at a quiet time, when it can go in as a
+   * version of the Worker, and then says what it installed. Off by default; Update now works either way.
+   */
+  updates: z.object({ auto: z.boolean().default(false) }).default({ auto: false }),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -135,6 +259,11 @@ export const SettingsPatch = z.object({
   owner_name: f.owner_name.unwrap().optional(),
   timezone: f.timezone.unwrap().optional(),
   brains: f.brains.unwrap().optional(),
+  named_brains: f.named_brains.unwrap().optional(),
+  spending: f.spending.unwrap().optional(),
+  ai_gateway: f.ai_gateway.unwrap().optional(),
+  permissions: f.permissions.unwrap().optional(),
+  phone: f.phone.unwrap().optional(),
   voice: f.voice.unwrap().optional(),
   character: f.character.unwrap().optional(),
   pins: f.pins.unwrap().optional(),
@@ -143,8 +272,10 @@ export const SettingsPatch = z.object({
   web: f.web.unwrap().optional(),
   location: f.location.unwrap().optional(),
   maps: f.maps.unwrap().optional(),
+  accounts: f.accounts.unwrap().optional(),
   units: f.units.unwrap().optional(),
   speaking: f.speaking.unwrap().optional(),
+  updates: f.updates.unwrap().optional(),
 } satisfies { [K in keyof typeof f]: z.ZodType });
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
@@ -176,11 +307,16 @@ export function writeSettings(sql: Sql, patch: SettingsPatch): string[] {
 }
 
 // --- secrets -------------------------------------------------------------
-// M0 keeps a handful of keys in the agent's own storage (encrypted at rest by
-// Cloudflare). The vault (§15) replaces this in M3.
+// Keys, tokens and the vault (§15), in the agent's own storage: encrypted at
+// rest by Cloudflare, and sealed by Atlas with this deployment's own key
+// (store/sealed.ts, §20), so a copy of storage doesn't carry them.
 
 export type SecretName =
   | "elevenlabs_api_key"
+  /** An Anthropic API key, for Claude as a brain (§18). */
+  | "anthropic_api_key"
+  /** A Cloudflare API token (AI Gateway Run), only for an authenticated AI Gateway (§18). */
+  | "ai_gateway_token"
   /** Keys for the web searches that need one (§9.1). */
   | "tavily_api_key"
   | "brave_api_key"
@@ -200,6 +336,8 @@ export type SecretName =
   | "mapbox_token"
   /** A Cloudflare API token for the account Atlas's own address is in (§16.2). */
   | "cf_mail_token"
+  /** A Cloudflare API token for this Atlas's own Worker (Workers Scripts · Edit), for updates and rollback (§23.2). */
+  | "cf_update_token"
   /** The key Atlas's mail relay signs each mail with. */
   | "mail_relay"
   /** Each webhook source's key (§10.4), by its id. */
@@ -209,7 +347,8 @@ export type SecretName =
 
 export function getSecret<T = string>(sql: Sql, name: SecretName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0];
-  return row ? parse<T | null>(row.value, null) : null;
+  const value = row ? open(name, row.value) : null;
+  return value === null ? null : parse<T | null>(value, null);
 }
 
 export function setSecret(sql: Sql, name: SecretName, value: unknown): void {
@@ -217,7 +356,33 @@ export function setSecret(sql: Sql, name: SecretName, value: unknown): void {
     sql.exec(`DELETE FROM secrets WHERE name = ?`, name);
     return;
   }
-  sql.exec(`INSERT OR REPLACE INTO secrets (name, value, updated_at) VALUES (?, ?, ?)`, name, JSON.stringify(value), Date.now());
+  // A value that can't be opened (the key was changed) is never written over: reading it gave null, so a write
+  // would replace what's there (a whole vault) with a fresh value. Putting the old key back brings it all back.
+  const was = sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name = ?`, name).toArray()[0]?.value;
+  if (was !== undefined && isSealed(was) && open(name, was) === null)
+    throw new Error(`Not saved, so nothing is lost: ${dataKeyView().unreadable ?? `${name} can't be opened with this deployment's key.`}`);
+  sql.exec(
+    `INSERT OR REPLACE INTO secrets (name, value, updated_at) VALUES (?, ?, ?)`,
+    name,
+    seal(name, JSON.stringify(value)),
+    Date.now(),
+  );
+}
+
+/**
+ * Seals every secret still kept as it was before sealing (§20), once this
+ * deployment has its key: on the first start after the update that added
+ * sealing, and after the owner sets ATLAS_DATA_KEY. Returns how many it sealed.
+ */
+export function sealSecrets(sql: Sql): number {
+  if (dataKeyView().state !== "on") return 0;
+  let n = 0;
+  for (const r of sql.exec<{ name: string; value: string }>(`SELECT name, value FROM secrets`).toArray()) {
+    if (isSealed(r.value)) continue;
+    sql.exec(`UPDATE secrets SET value = ? WHERE name = ?`, seal(r.name, r.value), r.name);
+    n++;
+  }
+  return n;
 }
 
 /** Every stored secret string, for the scrubber at the exits (§4.4). */
@@ -226,6 +391,8 @@ export function secretValues(sql: Sql): string[] {
     path.reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), v);
   const wanted: Array<[SecretName, string[]]> = [
     ["elevenlabs_api_key", []],
+    ["anthropic_api_key", []],
+    ["ai_gateway_token", []],
     ["tavily_api_key", []],
     ["brave_api_key", []],
     ["exa_api_key", []],
@@ -237,6 +404,7 @@ export function secretValues(sql: Sql): string[] {
     ["owntracks", ["password"]],
     ["mapbox_token", []],
     ["cf_mail_token", []],
+    ["cf_update_token", []],
     ["mail_relay", []],
   ];
   const hooks = getSecret<Array<{ url?: unknown }>>(sql, "webhooks") ?? [];
@@ -247,8 +415,10 @@ export function secretValues(sql: Sql): string[] {
   }
   for (const h of hooks) if (typeof h.url === "string" && h.url.length >= 8) out.push(h.url);
   // Extensions' secrets (§17): keys, passwords and sign-in tokens never leave either.
-  for (const r of sql.exec<{ value: string }>(`SELECT value FROM secrets WHERE name LIKE 'ext:%'`).toArray()) {
-    for (const v of Object.values(parse<Record<string, unknown>>(r.value, {}))) if (typeof v === "string" && v.length >= 8) out.push(v);
+  for (const r of sql.exec<{ name: string; value: string }>(`SELECT name, value FROM secrets WHERE name LIKE 'ext:%'`).toArray()) {
+    const value = open(r.name, r.value);
+    for (const v of Object.values(parse<Record<string, unknown>>(value ?? "{}", {})))
+      if (typeof v === "string" && v.length >= 8) out.push(v);
   }
   // The vault's secret values (§15): passwords, card numbers and codes, keys and seeds never leave.
   for (const e of getSecret<Array<{ values?: Record<string, unknown>; totp?: unknown }>>(sql, "vault") ?? []) {
@@ -262,4 +432,28 @@ export function secretValues(sql: Sql): string[] {
   const hint = getState<{ id_token?: unknown }>(sql, "chatgpt_client")?.id_token;
   if (typeof hint === "string" && hint.length >= 8 && !out.includes(hint)) out.push(hint);
   return out;
+}
+
+/**
+ * The chain for a kind of work (§18): the named brain asked for when it
+ * exists, else the one the owner set for this kind, else the main chain.
+ * An unknown name is refused with the names there are, so a model can't
+ * pick a brain that doesn't exist.
+ */
+export function chainFor(settings: Settings, kind: WorkKind, asked?: string | null): { name: string; chain: BrainChoice[] } {
+  const named = settings.named_brains.brains;
+  const find = (n: string | null | undefined) => (n ? named.find((b) => b.name.toLowerCase() === n.trim().toLowerCase()) : undefined);
+  if (asked) {
+    const b = find(asked);
+    if (!b) {
+      throw new Error(
+        named.length
+          ? `There's no brain called "${asked}". The brains are: ${named.map((x) => x.name).join(", ")}.`
+          : `There are no named brains yet, so helpers use the main one. Leave out brain.`,
+      );
+    }
+    return { name: b.name, chain: b.chain };
+  }
+  const b = find((settings.named_brains.uses as Record<string, string | null>)[kind]);
+  return b ? { name: b.name, chain: b.chain } : { name: "Main", chain: settings.brains.main };
 }

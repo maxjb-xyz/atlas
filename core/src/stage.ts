@@ -271,6 +271,17 @@ export const SituationStage = z.object({ kind: z.literal("situation") });
 /** What Atlas noticed (§10.4): today's funnel, each source's state, what's waiting for a look, and the latest decisions. */
 export const SensesStage = z.object({ kind: z.literal("senses") });
 
+/** What Atlas can do (§21.2): the Abilities map, or one of its groups zoomed in to what it does and who does it. */
+export const AbilitiesStage = z.object({
+  kind: z.literal("abilities"),
+  group: z
+    .enum(["brains", "senses", "channels", "others", "hands", "services", "skills", "exits"])
+    .optional()
+    .describe(
+      "One group, zoomed in: brains (what thinks), senses (what it keeps up with: mail, calendar, contacts, location, the owner's tools), channels (how it reaches the owner: the app, chats, a call), others (how it talks to other people: its own email address, its phone number, faces), hands (its own computer, a browser, web search, coding agents, the owner's devices), services (code, tasks, notes, money, maps), skills, exits (approvals, passwords, the owner's rules). Leave out for the whole map.",
+    ),
+});
+
 export const PageStage = z.object({
   kind: z.literal("page"),
   page: z.string().min(1).max(80).describe("The page's name or id."),
@@ -302,6 +313,7 @@ export const StageView = z.discriminatedUnion("kind", [
   WeatherStage,
   SituationStage,
   SensesStage,
+  AbilitiesStage,
 ]);
 export type StageView = z.infer<typeof StageView>;
 export type StageKind = StageView["kind"];
@@ -353,6 +365,8 @@ export interface AutomationView {
   when_text: string;
   steps: Array<{ step: import("./automations").Step; text: string }>;
   report: "thread" | "worth" | "inbox" | "silent";
+  /** Where it tells the owner: "you", wherever they are, or one place ("push", "telegram"). */
+  to: string;
   /** Whether it can be turned on now: Atlas's need a test run since their last change. */
   can_turn_on: boolean;
   tested_at: number | null;
@@ -580,6 +594,8 @@ export function stageTitle(
       return "Situation";
     case "senses":
       return "Noticed";
+    case "abilities":
+      return "What Atlas can do";
     case "workspace":
       return "Workspace";
     case "area":

@@ -65,6 +65,7 @@ export function personInfo(sql: Sql, r: AtlasRecord, tz: string) {
 export const person = defineTool({
   name: "person",
   kind: "look",
+  status: "Looking them up.",
   description: [
     "Who someone is, from what you know: how to reach them (addresses, numbers, handles, and where you learned each), how much the owner trusts them, what's open with them (tasks for them, loops waiting on them), and the last time the owner was in touch.",
     "Use it for 'who's Doug?', 'how do I reach Sam?', 'what's open with the landlord?', and before writing to someone, to find their address.",
@@ -82,6 +83,7 @@ export const person = defineTool({
 export const contactSave = defineTool({
   name: "contact_save",
   kind: "change_own",
+  status: "Saving their details.",
   description: [
     "Keep how to reach someone, and how much the owner trusts them: when the owner says 'Doug's email is doug@acme.com', 'that's my landlord's number', 'Sam is a client', or when it's clear an address you've seen is someone you know.",
     "Pass the person's id (from person or recall) to change someone you know, or a name to make or find them. Channels are added, never replaced; trust is one of family, friend, colleague, client or unknown.",
@@ -146,6 +148,7 @@ const latestHistory = (sql: Sql, id: string) =>
 export const loopOpen = defineTool({
   name: "loop_open",
   kind: "change_own",
+  status: "Keeping an eye on that.",
   description: [
     "Keep an open loop: something to hear by a time, so silence becomes news. Use it when the owner asks ('tell me if the landlord hasn't replied by Friday'), after you send something that asks a question, so you notice if no answer comes, and when someone is waiting on the owner (a review requested of them, a question they were asked), so it comes back if it's still open.",
     "waiting_on is who it waits on (their name or address), or 'owner' for something someone is waiting on the owner for. Mail or a message from them (or in `thread`) closes it by itself; if nothing comes by `by`, it comes back to you then, once.",
@@ -185,6 +188,7 @@ export const loopOpen = defineTool({
 export const loopClose = defineTool({
   name: "loop_close",
   kind: "change_own",
+  status: "Closing that out.",
   description:
     "Close an open loop that's settled another way (the owner heard by phone, or doesn't need it now). Its id is in the open loops in your context.",
   input: z.object({ id: z.string().max(64), why: z.string().max(200).default("Settled.") }),

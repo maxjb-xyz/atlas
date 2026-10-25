@@ -41,7 +41,135 @@ export type Provides =
   /** A coding agent for jobs (§8.2): `agent` in its manifest says how the workspace runs it. */
   | "coding"
   /** Where the owner's code lives (§8.2): `git` in its manifest, and `repos`, `repo` and `pull_request`. */
-  | "code";
+  | "code"
+  /**
+   * Phone calls (§16.1): `call` in its manifest says how a call's audio streams; `numbers`, `use`, `release`,
+   * `available` and `order` pick the number; `receive` takes the service's call events and answers them;
+   * `dial` calls the owner.
+   */
+  | "calls"
+  /** Tools Atlas can use in a turn, for a service with no MCP server of its own (§17): `tools` in its manifest, and `tool`. */
+  | "tools"
+  /** A file format Atlas moves in from (§23.3): `reads` in its manifest says what, and `read` turns a file into what's in it. */
+  | "reader";
+
+/**
+ * What a reader reads (§23.3, moving in): an export or another assistant's
+ * memory files. The app opens the owner's file on their own device (a zip, a
+ * tar.gz, a folder or a single file) and sends only the files named here, so
+ * nothing else in it (another assistant's keys, its sign-ins) ever leaves
+ * the device. A big JSON file whose top level is a list arrives in parts,
+ * each a list of some of its items.
+ */
+export interface ReaderSpec {
+  /** What it reads, as the owner would call it: "A ChatGPT export". */
+  what: string;
+  /** Where to get it, in one or two plain sentences with the exact path. */
+  how: string;
+  /** Where they start getting it, when there's a page for that. */
+  link?: string;
+  /** What to pick in the app: an archive or file, or a folder. */
+  pick: "file" | "folder";
+  /**
+   * The files it reads, matched against the end of each path in what was picked: "conversations.json",
+   * "conversations-*.json", "memories/MEMORY.md". A "*" stands for any name inside one folder.
+   */
+  files: string[];
+  /** Files only this format has, so a file dropped anywhere finds its reader: "chat.html", "projects.json". */
+  marks?: string[];
+  /** Folders of skills, as a folder name ("skills"): each folder under one with a SKILL.md in it carries over unchanged. */
+  skills?: string[];
+}
+
+/** A file, or one part of it, for a reader. */
+export interface ReadFile {
+  /** Its path inside what was picked: "conversations.json", "memories/USER.md". */
+  path: string;
+  text: string;
+  /** Which part this is, from 1, for a big list sent in parts. */
+  part: number;
+}
+
+/**
+ * Something another assistant kept about the owner, as it wrote it: a
+ * memory, a profile line, custom instructions, a daily note. The core's
+ * extraction reads it (§5.4), so a reader passes it on as it is.
+ */
+export interface Note {
+  text: string;
+  /** Where it came from, in a few words the owner reads: "ChatGPT's memory", "Hermes's profile of you". */
+  from: string;
+  /** When it was written, ISO, when the file says. */
+  at?: string;
+}
+
+/** One past conversation, as only the owner's own words in it: what they said is what's theirs to move in. */
+export interface Talk {
+  /** The conversation's own id, so the same one in two exports counts once. */
+  id: string;
+  title: string;
+  /** When it last changed, ISO. */
+  at: string;
+  /** Their messages, oldest first, each cut short, together at most about 1,500 characters. */
+  said: string;
+  /** Where it came from: "ChatGPT", "Claude". */
+  from: string;
+}
+
+/** What a reader found in a file. */
+export interface ReadOut {
+  notes?: Note[];
+  talks?: Talk[];
+  /** Skill folders that came with the other assistant itself, by name, so they aren't offered as the owner's. */
+  builtin_skills?: string[];
+  /** Conversations in this file or part, including ones with nothing of the owner's in them. */
+  seen?: number;
+}
+
+/**
+ * How a call's audio reaches Atlas (§16.1): the service connects to the
+ * address the core gives (`data.stream`, plus `?call=`) and streams in the
+ * media-stream protocol: JSON frames, `start`, then `media` with a base64
+ * `payload` of G.711 μ-law at 8 kHz, then `stop`; Atlas answers with
+ * `media` frames of the same and `clear` to drop what's queued.
+ */
+export interface CallSpec {
+  protocol: "media-stream";
+  codec: "pcmu";
+  rate: 8000;
+}
+
+/** One of the account's phone numbers, and what its calls go to now. */
+export interface PhoneNumber {
+  id: string;
+  /** E.164: "+15551234567". */
+  number: string;
+  /** What its voice is connected to now, by name, or null. */
+  connected: string | null;
+  /** It's the one Atlas uses. */
+  ours: boolean;
+  status: string;
+}
+
+/** A number the service would sell, with what it costs. */
+export interface NumberOffer {
+  number: string;
+  where: string;
+  monthly: string;
+  upfront: string;
+  currency: string;
+}
+
+/**
+ * What the core shares with a calls extension: the owner's own numbers (a
+ * call from one, with its caller ID verified by the network, is the owner),
+ * the address to stream to, and what to say to anyone else.
+ */
+export interface CallData {
+  owner_numbers: string[];
+  stream: string;
+  greeting: string;
+}
 
 /**
  * A coding agent (§8.2): an npm package with an ACP server, which the core
@@ -75,6 +203,8 @@ export interface CodingAgent {
   mode?: string;
   /** It reports what it spends (ACP's usage with a cost), so a job can stop at a cap. */
   costs_money?: boolean;
+  /** The environment variables that pick its model and how hard it thinks, when the owner picks them for a job. */
+  choose?: { model?: string; effort?: string };
 }
 
 /** Where code lives (§8.2): how the workspace clones and pushes, with a token only the gate holds. */
@@ -151,6 +281,50 @@ export interface Signature {
   secret: string;
 }
 
+/**
+ * What a tool does, which decides when Atlas asks first (VISION §12.1). The
+ * core holds a tool to the kind it declares, whatever the tool does:
+ * - "look" reads and changes nothing, so it runs at once;
+ * - "change_own" changes the owner's own things in a way its `undo` tool
+ *   takes back, so it runs at once and the receipt offers Undo (one that
+ *   names no `undo` asks first, as one that speaks does);
+ * - "speak" reaches other people or the public, so it asks until the owner
+ *   trusts it;
+ * - "irreversible" can't be undone (delete, cancel, submit), so it always
+ *   asks, with a hold;
+ * - "money" moves money, so it always asks, with a hold, showing the amount.
+ */
+export type ToolKind = "look" | "change_own" | "speak" | "irreversible" | "money";
+
+/** A tool the extension offers Atlas (§17), run through its `tool` call. */
+export interface ToolSpec {
+  /** Lowercase letters, digits and underscores: "create_issue". Atlas sees it as `ext_<extension id>_<name>`. */
+  name: string;
+  /** What it does and when to use it, for the model: a tool's description is part of how Atlas behaves. */
+  description: string;
+  kind: ToolKind;
+  /** Its input, as a JSON Schema object: { type: "object", properties: {...}, required: [...] }. */
+  input: { type: "object"; properties?: Record<string, Json>; required?: string[]; [k: string]: Json | undefined };
+  /**
+   * For "change_own": the tool that takes it back, given the `undo` the call returned as its input. It runs on
+   * the owner's Undo with no card, so it must be a "change_own" tool too (it can be this one).
+   */
+  undo?: string;
+  /** For "money": the input fields that hold the amount and its currency, shown on the card. */
+  amount?: string;
+  currency?: string;
+}
+
+/** What a tool call gives back. The text is the service's words: Atlas reads it as information, never as instructions. */
+export interface ToolOutput {
+  text: string;
+  /** What it made or changed, for the receipt. */
+  link?: string;
+  /** For a "change_own" tool: the input for its `undo` tool that takes this call back. */
+  undo?: Json;
+  state?: Json;
+}
+
 export interface Manifest {
   /** Lowercase, stable: "github", "icloud". */
   id: string;
@@ -158,6 +332,13 @@ export interface Manifest {
   version: string;
   /** What it does, in a sentence the owner reads before installing it. */
   about: string;
+  /**
+   * The service's own logo for its card, used under the service's terms: a small SVG or PNG as a data URI
+   * ("data:image/svg+xml;base64,…"). A bundled extension's comes from icon.svg or icon.png in its folder.
+   */
+  icon?: string;
+  /** The logo is black, so the app inverts it in the dark theme. */
+  icon_invert?: boolean;
   provides: Provides[];
   /** The only hosts it may reach. "example.com" also covers its subdomains. */
   hosts: string[];
@@ -190,8 +371,14 @@ export interface Manifest {
   credit?: string;
   /** A coding agent's spec, when it provides "coding". */
   agent?: CodingAgent;
+  /** How a call's audio streams, when it provides "calls". */
+  call?: CallSpec;
   /** How git reaches it, when it provides "code". */
   git?: GitHost;
+  /** The tools it offers Atlas, when it provides "tools". */
+  tools?: ToolSpec[];
+  /** What it reads, when it provides "reader". */
+  reads?: ReaderSpec;
 }
 
 /** What every call gets. */
@@ -312,6 +499,22 @@ export interface CalendarEvent {
   notes?: string;
   /** Who it's with: the organizer and those invited, as the invite names them (not rooms or other resources). */
   people?: EventPerson[];
+  /** Which account it's on (its extension's id), as Atlas reads it; an extension leaves it out. */
+  account?: string;
+}
+
+/** A new event, as Atlas adds it (§10.1): no attendees, so adding one invites no one. */
+export interface NewEvent {
+  title: string;
+  /** UTC ISO time, or a plain date when all_day. */
+  start: string;
+  /** Exclusive end, in the same form as `start`. */
+  end: string;
+  all_day: boolean;
+  location?: string;
+  notes?: string;
+  /** Which of the account's calendars, by name; its first (or main) one when left out. */
+  calendar?: string;
 }
 
 /** A contact from an address book. */
@@ -321,6 +524,11 @@ export interface Card {
   phones: string[];
   handles: Array<{ kind: "telegram" | "github" | "linear" | "handle"; value: string }>;
   details: Record<string, string>;
+  /**
+   * The address book's photo of them: a data: URL with the image in it, or an https address on one of the
+   * extension's hosts, which the core asks its `photo` call for (only when the address is new to it).
+   */
+  photo?: string;
 }
 
 /** A position from a location app. */
@@ -463,8 +671,14 @@ export interface Extension {
   ): Promise<{ events: CalendarEvent[]; as_of?: number; state?: Json; calendars?: string[] }>;
   /** Moves an event on the calendar to a new start and end (same forms as the event's), and says what it was before. */
   move?(ctx: Ctx, m: { id: string; start: string; end: string }): Promise<{ before: CalendarEvent; event: CalendarEvent; state?: Json }>;
+  /** Adds an event to one of the account's calendars, and says what it is now. */
+  add?(ctx: Ctx, e: NewEvent): Promise<{ event: CalendarEvent; state?: Json }>;
+  /** Removes an event (all of it, for a repeat), and says what it was. */
+  remove?(ctx: Ctx, m: { id: string }): Promise<{ event: CalendarEvent; state?: Json }>;
   /** The address book: cards, or vCard text (RFC 6350), which the core reads. */
   contacts?(ctx: Ctx): Promise<{ cards?: Card[]; vcards?: string }>;
+  /** A contact's photo from an https address its card gave, fetched with the account's sign-in: the image, base64. */
+  photo?(ctx: Ctx, url: string): Promise<{ base64: string; type: string }>;
   geocode?(ctx: Ctx, q: { q: string; near?: Point }): Promise<Found[]>;
   reverse?(ctx: Ctx, p: Point): Promise<Found>;
   route?(ctx: Ctx, r: { via: Point[]; travel: Travel }): Promise<Route>;
@@ -483,6 +697,22 @@ export interface Extension {
     ctx: Ctx,
     pr: { repo: string; head: string; base: string; title: string; body: string },
   ): Promise<{ number: number; link: string }>;
+  /** The account's phone numbers, and what each is connected to. */
+  numbers?(ctx: Ctx): Promise<{ numbers: PhoneNumber[]; state?: Json }>;
+  /** Moves one number's calls to Atlas, keeping what it was connected to for `release`. Says what it did. */
+  use?(ctx: Ctx, q: { id: string }): Promise<{ text: string; number: string; state?: Json }>;
+  /** Gives the number back: its calls go where they went before. */
+  release?(ctx: Ctx): Promise<{ text: string; state?: Json }>;
+  /** Numbers it would sell, with their prices. */
+  available?(ctx: Ctx, q: { area?: string; country?: string }): Promise<NumberOffer[]>;
+  /** Buys a number for Atlas. Says what happened, including checks the service still needs. */
+  order?(ctx: Ctx, q: { number: string }): Promise<{ text: string; number?: string; state?: Json }>;
+  /** Calls the owner. `call` goes on the stream's address, so Atlas knows which call it is. */
+  dial?(ctx: Ctx, q: { to: string; call: string }): Promise<{ id: string; state?: Json }>;
+  /** Runs one of the tools its manifest declares, with input that fits that tool's schema. */
+  tool?(ctx: Ctx, call: { name: string; input: Record<string, Json> }): Promise<ToolOutput>;
+  /** Reads one file (or part of one) of what it moves in from: what another assistant kept, and the owner's own words. */
+  read?(ctx: Ctx, file: ReadFile): Promise<ReadOut>;
 }
 
 /** A failure in the service's own words. `code` "auth" means the owner's sign-in or key was refused. */
@@ -517,6 +747,19 @@ export async function json<T>(res: Response, who: string): Promise<T> {
   } catch {
     throw new Failure(`${who} (${host}) answered with something that isn't JSON: ${text.slice(0, 120)}`, "protocol", res.status);
   }
+}
+
+/** Reads an image answer (a contact's photo), or throws a Failure with the status, the host and what the service said. */
+export async function image(res: Response, who: string): Promise<{ base64: string; type: string }> {
+  const type = (res.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  if (!res.ok || !type.startsWith("image/")) {
+    if (res.ok) {
+      const host = asked.get(res) ?? (res.url ? new URL(res.url).host : "unknown host");
+      throw new Failure(`${who} (${host}) answered with ${type || "something"} rather than an image.`, "protocol", res.status);
+    }
+    await json(res, who);
+  }
+  return { base64: base64(await res.arrayBuffer()), type };
 }
 
 /** The host each answer came from, so a failure can name it even when the answer doesn't carry its address. */

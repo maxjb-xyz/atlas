@@ -40,16 +40,29 @@ export const delegate = defineTool({
     tools: z.array(z.enum(HELPER_TOOL_NAMES)).min(1).optional().describe("The lookups it may use. Default: all of them."),
     wait: z.boolean().optional().describe("Wait up to 45 seconds for the result in this turn. Default false."),
     research: z.boolean().optional().describe("A long research job, with hours to read and compare. Default false."),
+    brain: z
+      .string()
+      .max(24)
+      .optional()
+      .describe(
+        "A named brain from the list in your context, by name, when this work suits it better than the default. Usually leave it out.",
+      ),
   }),
   async run(input, ctx) {
     if (!ctx.helpers) return fail("Helpers can't start helpers of their own.");
-    const job = await ctx.helpers.start({
-      title: input.title,
-      brief: input.task,
-      tools: input.tools ?? HELPER_TOOL_NAMES,
-      asked_in: ctx.run_id,
-      ...(input.research ? { research: true } : {}),
-    });
+    let job: { id: string };
+    try {
+      job = await ctx.helpers.start({
+        title: input.title,
+        brief: input.task,
+        tools: input.tools ?? HELPER_TOOL_NAMES,
+        asked_in: ctx.run_id,
+        ...(input.research ? { research: true } : {}),
+        ...(input.brain ? { brain: input.brain } : {}),
+      });
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
     // The turn ends and the line moves on, so the owner can keep talking while it works.
     if (!input.wait || input.research) {
       return {

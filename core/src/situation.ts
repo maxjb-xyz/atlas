@@ -169,7 +169,8 @@ export async function refresh(d: RefreshDeps): Promise<SituationCache> {
 
   const h = d.settings.location.on ? here(d.sql) : null;
   const home = homePin(d.sql);
-  const at: Point | null = h?.fix ? { lat: h.fix.lat, lon: h.fix.lon } : home;
+  // With no fix and no Home pin, the rough area of the last look still says where to look again (cleared when location is turned off).
+  const at: Point | null = h?.fix ? { lat: h.fix.lat, lon: h.fix.lon } : (home ?? c.weather?.area ?? null);
   if (at && (!c.weather || now - c.weather.at >= WEATHER_MS || metres(roughArea(at), c.weather.area) > 15_000)) {
     const out = await d.maps.weather(at, { run_id: d.run_id ?? null, label: "the weather near you" });
     if (out.ok) {
@@ -393,7 +394,7 @@ export function situationPage(sql: Sql, settings: Settings, now = Date.now(), de
   const h = here(sql);
   let where: SituationPage["where"];
   if (!settings.location.on) where = { known: false, why: "Location is off." };
-  else if (!h.fix) where = { known: false, why: "No location yet. Set up OwnTracks in Settings → Devices." };
+  else if (!h.fix) where = { known: false, why: "No location yet. Set up OwnTracks in Abilities → Devices." };
   else {
     const home = homePin(sql);
     const n = nearest(pins(sql), h.fix);

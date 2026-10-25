@@ -4,7 +4,9 @@
 // surface), then every message since that summary. Compaction (§4.1) keeps
 // that last part in bounds; recall finds the rest, on demand.
 
+import { accountsLine } from "./accounts";
 import { codingLines } from "./agent/coding";
+import { ownedLines } from "./agent/jobs";
 import { lookedAt } from "./agent/helpers";
 import { type McpServer, serversLine } from "./mcp";
 import { listPages } from "./pages";
@@ -12,17 +14,22 @@ import { listFiles } from "./files";
 import { listSkills } from "./skills";
 import { focusNow } from "./outbox";
 import type { Message } from "./brains/types";
-import { character, TEXT_PROFILE, VOICE_PROFILE } from "./character";
+import { character, TEXT_PROFILE, voiceProfile } from "./character";
 import { getItem, upcoming } from "./store/agenda";
 import { actionsOf, needsHold, waitingApprovals } from "./approvals";
 import { webhooks } from "./webhooks";
+import { accountName, installed, providing, ready } from "./extensions";
+import { links } from "./agent/channels";
 import { vault } from "./vault";
 import { type Area, getArea, getScope, listAreas } from "./store/areas";
 import { parse, type Sql } from "./store/db";
 import { type AtlasRecord, standingFacts } from "./store/records";
 import { get as getRow, type LogRow, type Surface } from "./store/log";
 import type { Settings } from "./store/settings";
-import { isoLocal, longLocal, shortLocal } from "./time";
+import { clockLocal, isoLocal, localDate, longLocal, shortLocal } from "./time";
+import type { Health } from "./brains/router";
+import { current, dollars, FREE_NEURONS, paidThisMonth, type Spend } from "./brains/catalog";
+import { getState } from "./store/state";
 import { situationLines } from "./situation";
 import { openTasks, taskView } from "./tasks";
 import { loopsLine } from "./loops";
@@ -63,7 +70,23 @@ export function latestSummary(sql: Sql, beforeSeq?: number): Summary | null {
   return { seq: r.seq, at: r.at, text: body.text, through_seq: body.through_seq };
 }
 
-export function systemPrompt(opts: {
+/** The whole prompt in one piece: what stays put, then what's true now. For checks and runs that don't cache. */
+export function systemPrompt(opts: Parameters<typeof promptParts>[0]): string {
+  const { stable, now } = promptParts(opts);
+  return `${stable}\n\n---\n\n${now}`;
+}
+
+/** The note a turn's message carries with what's true right now (§4.1), so the prompt before it stays the same and caches. */
+export function withNow(now: string, content: string): string {
+  return `<now>\nWhat's true right now, from Atlas's own context, not from the owner:\n\n${now}\n</now>\n\n${content}`;
+}
+
+/**
+ * The prompt in two parts (§4.1): what stays put from turn to turn (the character, what Atlas knows for good, the
+ * summary, how to talk on this surface), which brains cache, and what's true now (the time, the situation, the
+ * agenda, jobs), which changes every turn and so goes with the turn's message instead.
+ */
+export function promptParts(opts: {
   settings: Settings;
   tz: string;
   now: Date;
@@ -74,11 +97,12 @@ export function systemPrompt(opts: {
   extra?: string;
   /** Connected MCP servers, for runs that can use them (§9.2). */
   mcp?: McpServer[];
-}): string {
+}): { stable: string; now: string } {
   const { settings, tz, now, surface, sql } = opts;
   const summary = latestSummary(sql, opts.beforeSeq);
   const stable = [
     character(settings.assistant_name, settings.owner_name, settings.character),
+    surface === "voice" ? voiceProfile(settings.voice) : surface === "none" ? "" : TEXT_PROFILE,
     facts(sql, settings.owner_name),
     summary
       ? `Earlier in this conversation (your own summary, written ${shortLocal(new Date(summary.at), tz)}; recall has the full messages):\n${summary.text}`
@@ -99,6 +123,8 @@ export function systemPrompt(opts: {
     focusLine(sql, tz),
     pagesLine(sql),
     skillsLine(sql),
+    brainsLine(settings),
+    limitsLine(sql, settings, now.getTime(), tz),
     serversLine(opts.mcp ?? []),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     tasksLine(sql, tz),
@@ -107,15 +133,16 @@ export function systemPrompt(opts: {
     // What could wait, for the owner's own turns; Atlas's own runs get it in their notes.
     surface === "none" ? "" : pileLine(sql, settings),
     areaContext(sql, opts.beforeSeq),
+    reachContext(sql, settings),
     exitsContext(sql, tz, now),
     jobsLine(sql, now),
-    surface === "voice" ? VOICE_PROFILE : surface === "none" ? "" : TEXT_PROFILE,
-    opts.extra ?? "",
   ]
     .filter(Boolean)
     .join("\n\n");
 
-  return `${stable}\n\n---\n\n${fresh}`;
+  // A run's own note (someone else's words to treat as information, a reaction to a nudge) stays in the prompt, apart
+  // from anything the owner says; only that run pays for it not being cached.
+  return { stable: opts.extra ? `${stable}\n\n---\n\n${opts.extra}` : stable, now: fresh };
 }
 
 /**
@@ -201,14 +228,15 @@ export function withMessage(messages: Message[], content: string): Message[] {
 
 /**
  * The "hat" a run wears (§6.2): the area the owner is focused on, or else
- * the areas of the latest tagged message in the last half hour.
+ * the areas of the latest tagged message in the last half hour, this one
+ * included when its area was sure as it came in (mail from an area's account).
  */
 export function hat(sql: Sql, beforeSeq?: number): Area[] {
   const scope = getScope(sql);
   if (scope) return [getArea(sql, scope)!];
   const r = sql
     .exec<{ areas: string }>(
-      `SELECT areas FROM log WHERE kind = 'message.in' AND areas != '[]' AND seq < ? AND at > ? ORDER BY seq DESC LIMIT 1`,
+      `SELECT areas FROM log WHERE kind = 'message.in' AND areas != '[]' AND seq <= ? AND at > ? ORDER BY seq DESC LIMIT 1`,
       beforeSeq ?? Number.MAX_SAFE_INTEGER,
       Date.now() - 30 * 60_000,
     )
@@ -223,11 +251,74 @@ export function hat(sql: Sql, beforeSeq?: number): Area[] {
  * waiting for their OK, and what was settled in the last two hours, so
  * Atlas never says something is done that's still waiting, or the reverse.
  */
+/**
+ * The named brains (§18), by name and what each is good for, never a vendor
+ * or a model: delegate's `brain` takes one, when the work suits it.
+ */
+function brainsLine(settings: Settings): string {
+  const named = settings.named_brains.brains;
+  if (!named.length) return "";
+  return `Brains you can hand work to (delegate's brain, by name; leave it out for the usual one):\n${named
+    .map((b) => `- ${b.name}${b.line ? `: ${b.line}` : ""}`)
+    .join("\n")}`;
+}
+
+const PROVIDER_NAMES: Record<string, string> = { chatgpt: "ChatGPT", anthropic: "Anthropic", "workers-ai": "Workers AI" };
+
+/**
+ * What the brains have left (§18), from their last answers: one that ran out
+ * and when it's back, the ChatGPT plan's windows, paid brains' spending
+ * against the cap, and Workers AI's free allowance today. Only what's known.
+ */
+export function limitsLine(sql: Sql, settings: Settings, now: number, tz: string): string {
+  const health = getState<Record<string, Health>>(sql, "brain_health") ?? {};
+  const spend = getState<Spend>(sql, "brain_spend");
+  const at = (t: number) =>
+    localDate(new Date(t), tz) === localDate(new Date(now), tz) ? clockLocal(new Date(t), tz) : shortLocal(new Date(t), tz);
+  const used = new Set(
+    [...settings.brains.main, ...settings.brains.voice, ...settings.named_brains.brains.flatMap((b) => b.chain)].map(
+      (c) => `${c.provider}:${c.model}`,
+    ),
+  );
+  const lines: string[] = [];
+  for (const [key, h] of Object.entries(health)) {
+    if (!used.has(key) || h.ok || !h.resets_at || h.resets_at <= now) continue;
+    const [p, ...m] = key.split(":");
+    lines.push(`- ${PROVIDER_NAMES[p!] ?? p} ${m.join(":")} ran out; it's back ${at(h.resets_at)}.`);
+  }
+  const plan = Object.entries(health)
+    .filter(([k, h]) => k.startsWith("chatgpt:") && h.limits)
+    .map(([, h]) => h.limits!)
+    .sort((a, b) => b.seen_at - a.seen_at)[0];
+  if (plan && now - plan.seen_at < 6 * 3600_000) {
+    const windows = plan.windows.map((w) => {
+      const span = w.window_minutes
+        ? w.window_minutes >= 1440
+          ? `${Math.round(w.window_minutes / 1440)}-day`
+          : `${Math.round(w.window_minutes / 60)}-hour`
+        : w.name;
+      return `${Math.round(w.used_percent)}% of its ${span} window used${w.resets_at && w.resets_at > now ? `, resets ${at(w.resets_at)}` : ""}`;
+    });
+    lines.push(`- The ChatGPT plan, as of ${at(plan.seen_at)}: ${windows.join("; ")}.`);
+  }
+  const paid = paidThisMonth(spend, now);
+  if (paid > 0 || [...used].some((k) => k.startsWith("anthropic:"))) {
+    lines.push(`- Paid brains (Anthropic, by key) this month: ${dollars(paid)} of the owner's ${dollars(settings.spending.cap)} cap.`);
+  }
+  const neurons = current(spend, now).neurons;
+  if (neurons > 0) {
+    lines.push(
+      `- Workers AI's free allowance today: about ${Math.round((neurons / FREE_NEURONS) * 100)}% used by your thinking (an estimate from tokens; it starts again at 00:00 UTC).`,
+    );
+  }
+  return lines.length ? `What your brains have left, from their last answers:\n${lines.join("\n")}` : "";
+}
+
 /** The skills index (§9.3): every active skill's one line, most used first, so Atlas finds them again. */
 function skillsLine(sql: Sql): string {
   const skills = listSkills(sql).slice(0, 60);
   return skills.length
-    ? `Your skills (open one with skill_read before a task it covers; improve it with skill_save when it was wrong):\n${skills
+    ? `Your skills (when a task is the kind one of these is for, open that one with skill_read first; a chat, a question or a quick task needs none; when one was wrong, patch it with skill_save):\n${skills
         .map((s) => `- ${s.name}: ${s.description}${s.checked && !s.checked.ok ? " (its last check failed)" : ""}`)
         .join("\n")}`
     : "";
@@ -270,7 +361,7 @@ function exitsContext(sql: Sql, tz: string, now: Date): string {
     lines.push(
       `The owner's webhooks (call them with webhook_call):\n${hooks.map((w) => `- ${w.name}${w.about ? `: ${w.about}` : ""}`).join("\n")}`,
     );
-  }
+  } else lines.push("The owner has no webhooks.");
   const entries = vault(sql);
   if (entries.length) {
     lines.push(
@@ -317,25 +408,81 @@ function exitsContext(sql: Sql, tz: string, now: Date): string {
 function jobsLine(sql: Sql, now: Date): string {
   const running = sql
     .exec<{ id: string; title: string; created_at: number; source: string }>(
-      `SELECT id, title, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND state IN ('scheduled', 'running') ORDER BY created_at LIMIT 10`,
+      `SELECT id, title, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND json_extract(source, '$.detail.goal') IS NULL AND json_extract(source, '$.detail.owned') IS NULL AND json_extract(source, '$.detail.step_of') IS NULL AND state IN ('scheduled', 'running') ORDER BY created_at LIMIT 10`,
     )
     .toArray();
   const coding = codingLines(sql, now);
   const codingText = coding.length
     ? `Coding jobs (answer "how's the job?" from these; jobs_look has more, job_answer passes the owner's words on):\n${coding.join("\n")}`
     : "";
-  if (!running.length) return codingText;
+  // Something is at work on one while a turn runs (it says what) or work it handed off is running.
+  const owned = ownedLines(sql, (j) => j.now != null || j.work.some((w) => getItem(sql, w.id)?.state === "running"));
+  const ownedText = owned.length
+    ? `Long work you're doing in the background (the owner sees each on its card in the thread, and you tell them when one has something, so you don't bring them up otherwise; when they ask how one's going, answer about that one alone, as yourself, in the first person; jobs_look has more, and what they say about one goes to it with job_answer, in their words):\n${owned.join("\n")}`
+    : "";
+  if (!running.length) return [codingText, ownedText].filter(Boolean).join("\n\n");
   const lines = running.map((j) => {
     const detail = parse<{ detail?: { helper_run?: string; research?: boolean } }>(j.source, {}).detail;
     const run = detail?.helper_run;
     const steps = run ? sql.exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE run_id = ? AND kind = 'tool.call'`, run).one().n : 0;
     const mins = Math.max(0, Math.round((now.getTime() - j.created_at) / 60_000));
     const read = detail?.research && run ? lookedAt(sql, run) : null;
-    return `- ${j.title} (id ${j.id}${detail?.research ? ", a long research job" : ""}): started ${mins ? `${mins} min` : "under a minute"} ago, ${steps} lookup${steps === 1 ? "" : "s"} so far${read ? ` (${read.toLowerCase()})` : ""}`;
+    return `- ${j.title} (id ${j.id}${detail?.research ? ", a long research job" : ""}): started ${mins ? `${mins} min` : "under a minute"} ago${steps ? "" : ", just starting"}${read ? ` (${read.toLowerCase()})` : ""}`;
   });
-  return [`Helpers working now (you get each one's result when it's done, and finish the task then):\n${lines.join("\n")}`, codingText]
+  return [
+    `Helpers working now (you get each one's result when it's done, and finish the task then):\n${lines.join("\n")}`,
+    codingText,
+    ownedText,
+  ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/** What each thing a service gives is, in a word or two, for the run's list of what's connected. */
+const GIVES_WORDS: Record<string, string> = {
+  mail: "their mail",
+  calendar: "their calendar",
+  contacts: "their contacts",
+  sense: "what happens there",
+  channel: "chat with you",
+  calls: "phone calls",
+  sending: "sends your own mail",
+  location: "where they are",
+  search: "web search",
+  maps: "maps and routes",
+  weather: "weather",
+  coding: "a coding agent",
+  code: "code",
+  tools: "its tools",
+};
+
+/**
+ * What's connected (§17) and how the owner is reached (§14), so a run never
+ * says something isn't set up when it is, or offers a way round what it can
+ * already do. Services not set up are in Abilities → Services.
+ */
+function reachContext(sql: Sql, settings: Settings): string {
+  const on = installed(sql).filter((e) => e.state === "on" && e.source !== "atlas");
+  const services = on
+    .map((e) => {
+      const what = e.manifest.provides.map((p) => GIVES_WORDS[p]).filter(Boolean);
+      const who = accountName(e);
+      return `${e.name}${who ? ` (${who})` : ""}${what.length ? `: ${what.join(", ")}` : ""}${ready(sql, e) ? "" : ", not signed in yet"}`;
+    })
+    .slice(0, 30);
+  const chats = providing(sql, "channel").map((e) => ({ id: e.id, name: e.name, linked: Boolean(links(sql)[e.id]) }));
+  const place = (p: string) =>
+    p === "push" ? "a notification" : p === "call" ? "a phone call" : (chats.find((c) => c.id === p)?.name ?? p);
+  const lists = settings.notifications.lists;
+  const out = [
+    services.length ? `Connected services: ${services.join("; ")}.` : "No services are connected yet.",
+    `How the owner is reached when they aren't in the app: what can't wait goes to ${lists.now.map(place).join(", then ")}; what can wait, to ${lists.soon.map(place).join(", then ")}. ${
+      chats.length
+        ? `Chats: ${chats.map((c) => `${c.name} (${c.linked ? "linked to them" : "not linked to them yet"})`).join(", ")}.`
+        : "No chat app is set up."
+    } An automation tells them wherever they are by these, or always in one place it names (automation_save's to: push, or a linked chat).`,
+  ];
+  return out.join(" ");
 }
 
 /** What a run is told about areas: the hat, its tone, and the owner's other areas. */
@@ -350,5 +497,7 @@ function areaContext(sql: Sql, beforeSeq?: number): string {
     }
   }
   lines.push(`The owner's areas: ${all.map((a) => a.name).join(", ")}. You can talk about any of them at any time.`);
+  const accounts = accountsLine(sql, worn);
+  if (accounts) lines.push(accounts);
   return lines.join(" ");
 }

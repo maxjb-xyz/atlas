@@ -24,7 +24,13 @@ import type {
 } from "../../core/src/protocol";
 
 /** One calendar read for a page: the events, why it failed, or how old Atlas's copy is when iCloud couldn't be asked. */
-export type CalendarState = { events: CalendarEventView[]; error?: string; stale?: { as_of: number; why: string } };
+export type CalendarState = {
+  events: CalendarEventView[];
+  error?: string;
+  stale?: { as_of: number; why: string };
+  /** Calendars that couldn't be read at all, each with why. */
+  missing?: string[];
+};
 
 export type Look = Extract<ServerMessage, { type: "atlas.setup.look.result" }>["look"];
 
@@ -41,6 +47,10 @@ export interface Live {
   text: string;
   status: string | null;
   surface: string;
+  /** A turn of work Atlas owns: it shows in that job's own thread, not the main one. */
+  job?: string;
+  /** Where in its words each thing it did landed (a tool result's row id at a length of `text`), so they read in order. */
+  marks?: Array<{ at: number; id: string }>;
 }
 
 export interface TestResult {
@@ -63,6 +73,10 @@ export interface State {
   jobs: JobView[];
   areas: AreaView[];
   scope: string | null;
+  /** Each provider's live list of models (§18), once asked for. */
+  models: Record<string, { models: import("../../core/src/brains/catalog").ModelInfo[]; error?: string }>;
+  /** The phone's last answer (§16.1): numbers, numbers to buy, and what happened. */
+  calls: Extract<ServerMessage, { type: "atlas.calls" }> | null;
   voices: { voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>; error?: string } | null;
   look: { look: Look; error?: string } | "pending" | null;
   /** Library's answers, by the ref they asked with. */
@@ -72,6 +86,8 @@ export interface State {
   history: { filter: HistoryFilter; rows: LogRow[]; has_more: boolean; stats?: HistoryStats } | null;
   runDetail: Record<string, { run: Record<string, unknown> | null; rows: LogRow[] }>;
   calendar: Record<string, CalendarState>;
+  /** Bumped when events' areas change, so pages showing the calendar ask again. */
+  calendarVersion: number;
   inbox: InboxItem[] | null;
   /** The live pages behind area and person views, by the ref they asked with. */
   stage: Record<string, StagePage | null>;
@@ -87,11 +103,21 @@ export interface State {
   skills: import("../../core/src/protocol").SkillView[] | null;
   /** Connected MCP servers (§9.2), once asked for. */
   mcpServers: import("../../core/src/protocol").McpServerView[] | null;
+  /** The services catalog (§17): one card per service, whatever is underneath, and the indexes it reads. */
+  services: import("../../core/src/protocol").ServiceView[] | null;
+  /** The last thing a service's install, key, removal or update said. */
+  serviceNote: { id: string; ok: boolean; text: string } | null;
+  /** Get skills (§17): the catalog's skill hubs and what each holds, once asked for. */
+  hubs: import("../../core/src/protocol").HubView[] | null;
+  /** The hub skill opened in full before it's installed, or why it couldn't be fetched. */
+  hubPreview: { hub: string; name: string; preview?: import("../../core/src/protocol").HubPreview; error?: string } | null;
+  /** The last thing installing or removing a hub's skill said. */
+  hubNote: { hub: string; name: string; ok: boolean; text: string } | null;
   /** The page Keep just made, so the view can say where it went. */
   kept: { id: string; name: string } | null;
   /** Bumped when the situation changes, so Now and the situation, weather and place views ask again. */
   situationVersion: number;
-  /** OwnTracks' setup, shown once in Settings → Devices. */
+  /** OwnTracks' setup, shown once in Abilities → Devices. */
   /** An extension's setup, shown once (a link and its QR code, a password), by the extension's id. */
   extSetup: Record<string, { ok: boolean; text: string; link?: string; fields?: Array<{ label: string; value: string }> }>;
   /** A face's answers in "talk to it as a stranger", by test conversation (§7.2). */
@@ -107,6 +133,12 @@ export interface State {
   /** Pairing codes looked up (null: not waiting), and the answer to Pair (the device's name, or null), by code. */
   pairing: Record<string, { name: string; kind: string; platform?: string; expires: number } | null>;
   paired: Record<string, string | null>;
+  /** A job's own thread (§21.4), once asked for: its updates, questions, result and the owner's words to it, oldest first. */
+  jobThreads: Record<string, LogRow[]>;
+  /** The owner's answers sent from this app, by the question row they answer, so the question shows its answer at once. */
+  answered: Record<string, string>;
+  /** Moving in (§23.3): the readers, what's been read and the review list. */
+  movein: import("../../core/src/protocol").MoveInView | null;
 }
 
 const initial: State = {
@@ -124,12 +156,15 @@ const initial: State = {
   areas: [],
   scope: null,
   voices: null,
+  models: {},
+  calls: null,
   look: null,
   records: {},
   recordsVersion: 0,
   history: null,
   runDetail: {},
   calendar: {},
+  calendarVersion: 0,
   inbox: null,
   stage: {},
   automations: null,
@@ -139,6 +174,11 @@ const initial: State = {
   workspaceOut: null,
   skills: null,
   mcpServers: null,
+  services: null,
+  serviceNote: null,
+  hubs: null,
+  hubPreview: null,
+  hubNote: null,
   kept: null,
   situationVersion: 0,
   extSetup: {},
@@ -149,6 +189,9 @@ const initial: State = {
   senseHook: null,
   pairing: {},
   paired: {},
+  jobThreads: {},
+  answered: {},
+  movein: null,
 };
 
 type Action =
@@ -156,6 +199,7 @@ type Action =
   | { type: "look" }
   | { type: "say"; pending: Pending }
   | { type: "test"; what: string; key: string }
+  | { type: "answered"; question: string; text: string }
   | { type: "dismiss" };
 
 const TERMINAL = new Set(["replied", "deferred", "failed"]);
@@ -165,6 +209,14 @@ function mergeRows(a: LogRow[], b: LogRow[]): LogRow[] {
   for (const r of a) byId.set(r.id, r);
   for (const r of b) byId.set(r.id, r);
   return [...byId.values()].sort((x, y) => x.seq - y.seq);
+}
+
+/** The job a log row belongs to, when it's one of a job's own rows (§21.4). */
+export function jobOf(r: LogRow): string | null {
+  if (r.kind === "job.result") return typeof r.body.item_id === "string" ? r.body.item_id : null;
+  if (["job.update", "job.question", "message.in", "message.out", "settings.change", "tool.result"].includes(r.kind))
+    return typeof r.body.job === "string" ? r.body.job : null;
+  return null;
 }
 
 function without<T>(rec: Record<string, T>, key: string): Record<string, T> {
@@ -182,6 +234,8 @@ function reduce(s: State, a: Action): State {
       return { ...s, testKeys: { ...s.testKeys, [a.what]: a.key }, tests: without(s.tests, a.key) };
     case "dismiss":
       return { ...s, error: null };
+    case "answered":
+      return { ...s, answered: { ...s.answered, [a.question]: a.text } };
     case "look":
       return { ...s, look: "pending" };
     case "server":
@@ -224,18 +278,27 @@ function reduce(s: State, a: Action): State {
       }
       for (const r of m.rows) {
         if (!r.run_id) continue;
+        const l = live[r.run_id];
+        if (r.kind === "tool.result" && l && !l.marks?.some((x) => x.id === r.id))
+          live = { ...live, [r.run_id]: { ...l, marks: [...(l.marks ?? []), { at: l.text.length, id: r.id }] } };
         if (r.kind === "message.out") live = without(live, r.run_id);
         if (r.kind === "message.in") pending = pending.filter((p) => p.run_id !== r.run_id);
       }
       const noOlder = m.older && (m.has_more === false || m.rows.length === 0) ? true : s.noOlder;
-      return { ...s, rows: mergeRows(s.rows, m.rows), live, pending, noOlder, recordsVersion };
+      // A job's own thread, once open, keeps up with what's said on it.
+      let { jobThreads } = s;
+      for (const r of m.rows) {
+        const job = jobOf(r);
+        if (job && jobThreads[job]) jobThreads = { ...jobThreads, [job]: mergeRows(jobThreads[job], [r]) };
+      }
+      return { ...s, rows: mergeRows(s.rows, m.rows), live, pending, noOlder, recordsVersion, jobThreads };
     }
     case "atlas.delta": {
-      const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app" };
+      const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app", ...(m.job ? { job: m.job } : {}) };
       return { ...s, live: { ...s.live, [m.run_id]: { ...cur, text: cur.text + m.text, status: null } } };
     }
     case "atlas.status": {
-      const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app" };
+      const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app", ...(m.job ? { job: m.job } : {}) };
       return { ...s, live: { ...s.live, [m.run_id]: { ...cur, status: m.text } } };
     }
     case "atlas.run": {
@@ -245,10 +308,12 @@ function reduce(s: State, a: Action): State {
         live = without(live, m.run_id);
         pending = pending.filter((p) => p.run_id !== m.run_id);
       } else if (!live[m.run_id]) {
-        live = { ...live, [m.run_id]: { text: "", status: null, surface: m.surface } };
+        live = { ...live, [m.run_id]: { text: "", status: null, surface: m.surface, ...(m.job ? { job: m.job } : {}) } };
       }
       return { ...s, pending, live };
     }
+    case "atlas.job.thread":
+      return { ...s, jobThreads: { ...s.jobThreads, [m.id]: mergeRows([], m.rows) } };
     case "atlas.agenda":
       return { ...s, agenda: m.agenda };
     case "atlas.view":
@@ -263,6 +328,10 @@ function reduce(s: State, a: Action): State {
       return { ...s, jobs: m.jobs };
     case "atlas.areas":
       return { ...s, areas: m.areas, scope: m.scope };
+    case "atlas.brain.models":
+      return { ...s, models: { ...s.models, [m.provider]: { models: m.models, ...(m.error ? { error: m.error } : {}) } } };
+    case "atlas.calls":
+      return { ...s, calls: m };
     case "atlas.voices":
       return { ...s, voices: { voices: m.voices, ...(m.error ? { error: m.error } : {}) } };
     case "atlas.setup.look.result":
@@ -282,9 +351,16 @@ function reduce(s: State, a: Action): State {
         ...s,
         calendar: {
           ...s.calendar,
-          [m.ref]: { events: m.events, ...(m.error ? { error: m.error } : {}), ...(m.stale ? { stale: m.stale } : {}) },
+          [m.ref]: {
+            events: m.events,
+            ...(m.error ? { error: m.error } : {}),
+            ...(m.stale ? { stale: m.stale } : {}),
+            ...(m.missing ? { missing: m.missing } : {}),
+          },
         },
       };
+    case "atlas.calendar.changed":
+      return { ...s, calendarVersion: s.calendarVersion + 1 };
     case "atlas.inbox.items":
       return { ...s, inbox: m.items };
     case "atlas.stage.page":
@@ -299,6 +375,19 @@ function reduce(s: State, a: Action): State {
       return { ...s, skills: m.skills };
     case "atlas.mcp.servers":
       return { ...s, mcpServers: m.servers };
+    case "atlas.services":
+      return { ...s, services: m.services };
+    case "atlas.service.done":
+      return { ...s, serviceNote: { id: m.id, ok: m.ok, text: m.text } };
+    case "atlas.hubs":
+      return { ...s, hubs: m.hubs };
+    case "atlas.hub.preview":
+      return {
+        ...s,
+        hubPreview: { hub: m.hub, name: m.name, ...(m.preview ? { preview: m.preview } : {}), ...(m.error ? { error: m.error } : {}) },
+      };
+    case "atlas.hub.done":
+      return { ...s, hubNote: { hub: m.hub, name: m.name, ok: m.ok, text: m.text } };
     case "atlas.workspace.out": {
       const prev = s.workspaceOut?.run_id === m.run_id ? s.workspaceOut.text : "";
       return { ...s, workspaceOut: { run_id: m.run_id, text: (prev + m.text).slice(-40_000) } };
@@ -335,8 +424,19 @@ function reduce(s: State, a: Action): State {
       return { ...s, channelCode: { ext: m.ext, code: m.code, expires: m.expires } };
     case "atlas.mail":
       return { ...s, tests: { ...s.tests, mail: { ok: m.ok, message: m.text } } };
+    case "atlas.updates":
+      return { ...s, tests: { ...s.tests, updates: { ok: m.ok, message: m.text } } };
+    case "atlas.data.preview":
+      return {
+        ...s,
+        tests: { ...s.tests, "data.preview": { ok: m.ok, message: m.text, detail: { at: m.at, lost: m.lost, kept: m.kept } } },
+      };
+    case "atlas.data":
+      return { ...s, tests: { ...s.tests, data: { ok: m.ok, message: m.text, detail: { what: m.what, left: m.left ?? [] } } } };
     case "atlas.contacts.imported":
       return { ...s, tests: { ...s.tests, contacts: { ok: m.ok, message: m.text } } };
+    case "atlas.movein":
+      return { ...s, movein: m.movein };
     case "atlas.sense.hook":
       return { ...s, senseHook: { id: m.id, name: m.name, url: m.url } };
   }
@@ -382,6 +482,8 @@ export function useAtlas(agent = "owner") {
     document.addEventListener("visibilitychange", presence);
     c.addEventListener("custommessage", (msg) => {
       const m = msg as ServerMessage;
+      // Everything was deleted (§23.4): the page says what's left; there's no Atlas to reconnect to until it's set up again.
+      if (m?.type === "atlas.data" && m.what === "delete" && m.ok) c.disconnect();
       if (m?.type === "atlas.signed_out") {
         // This sign-in was ended (a removed passkey, or sign out everywhere): back to the sign-in page.
         c.disconnect();
@@ -461,12 +563,21 @@ export function useAtlas(agent = "owner") {
     setVoice((v) => ({ ...v, error: null }));
   }, []);
 
+  /** The owner's words for a job (§21.4): an answer to one of its questions when `answers` names it, or words on its card. */
+  const jobSay = useCallback(
+    (id: string, text: string, answers?: string) => {
+      if (answers) dispatch({ type: "answered", question: answers, text });
+      send({ type: "atlas.job.say", id, text, ...(answers ? { answers } : {}) });
+    },
+    [send],
+  );
+
   const firstLook = useCallback(() => {
     dispatch({ type: "look" });
     send({ type: "atlas.setup.look" });
   }, [send]);
 
-  return { state, voice, inCall, send, say, test, toggleCall, dismiss, firstLook };
+  return { state, voice, inCall, send, say, test, toggleCall, dismiss, firstLook, jobSay };
 }
 
 export type Atlas = ReturnType<typeof useAtlas>;

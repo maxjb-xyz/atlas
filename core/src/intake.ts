@@ -588,6 +588,7 @@ const WORDS: Record<Outcome, string> = {
 export const noticedTool = defineTool({
   name: "noticed",
   kind: "look",
+  status: "Checking what came in.",
   description: [
     "What your senses took in lately (location, the calendar, devices, the weather and trip, webhooks from services), and what you decided about each: now, later, never, or a repeat, with why and decide's scores.",
     "Use it when the owner asks what you've noticed, or why you didn't tell them about something: find it, say plainly what you decided and why, and if they want that kind of thing brought up from now on (or never), change it with speaking_up.",

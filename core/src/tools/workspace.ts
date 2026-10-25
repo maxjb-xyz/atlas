@@ -126,6 +126,7 @@ export const workspaceKeep = defineTool({
 export const workspacePreview = defineTool({
   name: "workspace_preview",
   kind: "change_own",
+  status: "Opening a preview.",
   description: [
     "Give the owner a link to a web server you started in the workspace (listening on 0.0.0.0, in the background), to see what you built: a small site, a dashboard, a report.",
     "The link works for a day, for anyone who has it; it shows nothing once the workspace sleeps. Start the server with nohup or & in workspace_run first.",
@@ -146,4 +147,25 @@ export const workspacePreview = defineTool({
   },
 });
 
-export const workspaceTools = [workspaceRun, workspaceAllow, workspaceKeep, workspacePreview];
+export const packagesInstall = defineTool({
+  name: "packages_install",
+  kind: "change_own",
+  status: "Installing that.",
+  timeoutMs: 16 * 60_000,
+  description: [
+    'Install system tools in the workspace from Debian, by package name ("sox", "imagemagick", "yt-dlp", "libreoffice-writer"): what your shell can\'t install for itself without root.',
+    "Atlas installs them as root and puts them back whenever the workspace starts again, so install once. For Python or Node libraries, pip install --user or npm in your folder instead.",
+  ].join(" "),
+  input: z.object({
+    packages: z.array(z.string().min(1).max(63)).min(1).max(20).describe("Debian package names."),
+  }),
+  async run(input, ctx) {
+    if (!ctx.workspace) return fail("There's no workspace here.");
+    const r = await ctx.workspace.install(input.packages);
+    return r.ok
+      ? { ok: true, output: { installed: input.packages }, receipt: { text: `Installed · ${input.packages.join(", ")}` } }
+      : fail(r.note);
+  },
+});
+
+export const workspaceTools = [workspaceRun, workspaceAllow, workspaceKeep, workspacePreview, packagesInstall];

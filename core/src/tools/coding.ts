@@ -10,6 +10,10 @@
 import { z } from "zod";
 import { defineTool, fail, type Tool } from "./types";
 
+/** How hard a coding agent thinks, for agents that take it (Claude Code's effort levels). */
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
+
 // --- the owner's runs ------------------------------------------------------------------
 
 export const codeRepos = defineTool({
@@ -53,6 +57,8 @@ export const codeJob = defineTool({
       .optional()
       .describe("Which coding agent, when the owner asked for one: 'codex' or 'claude-code'. Default: the one set up first."),
     base: z.string().max(120).optional().describe("The branch to start from. Default: the repo's default branch."),
+    model: z.string().max(80).optional().describe("The agent's model, when the owner named one: 'claude-opus-5-5'."),
+    effort: z.enum(EFFORTS).optional().describe("How hard the agent thinks, when the owner said: low, medium, high, xhigh or max."),
   }),
   async run(input, ctx) {
     if (!ctx.coding) return fail("Coding jobs can't be started from here.");
@@ -77,9 +83,12 @@ export const codeJob = defineTool({
 export const jobAnswer = defineTool({
   name: "job_answer",
   kind: "change_own",
-  status: "Passing that on to the job.",
-  description:
-    "Pass the owner's words to a coding job: the answer to a question it's waiting on, or a change of direction while it works ('use the existing date helper instead'). Use the job's id from the jobs in context or jobs_look. Pass their words as they meant them, in a sentence or two.",
+  status: "Got it.",
+  description: [
+    "What the owner says about work you're doing in the background (something you're making for them, or a coding job) goes to that work, in their words: the answer to what you asked them, or a change of direction ('make it faster', 'use the existing date helper instead'). Use its id from your context or jobs_look. Pass what they said as they meant it, adding nothing of your own, and only when they're talking about that work: a greeting or something about anything else isn't for it.",
+    "Waiting on a card (a website the work needs) goes on only when the card is settled: when the owner says yes or no to it, settle it with approve.",
+    "Then answer them as yourself in a few words ('Got it, faster cut.'). The work hears them at once and you'll tell them how it goes, so don't promise what comes next or when.",
+  ].join(" "),
   input: z.object({
     id: z.string().min(3).max(64).describe("The coding job's id."),
     text: z.string().min(1).max(4_000).describe("What the owner said, for the job."),
@@ -94,9 +103,9 @@ export const jobAnswer = defineTool({
 export const jobsLook = defineTool({
   name: "jobs_look",
   kind: "look",
-  status: "Checking on the job.",
+  status: "Checking where that's at.",
   description:
-    "How coding jobs are doing, from their state: the step each is on, the last thing its agent did, what it's waiting on, how long it's run and what it's cost, and its pull request once there is one. Use it for 'how's the budget app job?'; answer in a sentence or two.",
+    "How the work you're doing in the background is going, from its state, newest first (what you're making, and reading you sent off from the conversation): what's at work on it now, what it's waiting on (with what the owner was shown, in full), your notes on it and what you last said, how long it's run, and a coding job's pull request once there is one. Use it for 'how's the video going?' and answer about that one alone (when they don't say which, the one they last asked for), as yourself in a sentence or two, about the thing and not how you work ('I'm cutting it to the track you picked.'); when they ask to see what you asked them, show it as it is.",
   input: z.object({ id: z.string().max(64).optional().describe("One job's id; default all of them from the last day.") }),
   async run(input, ctx) {
     if (!ctx.coding) return fail("Coding jobs can't be reached from here.");
@@ -114,6 +123,7 @@ const inParent = async () => fail("This runs in Atlas, not here.");
 export const agentReply = defineTool({
   name: "agent_reply",
   kind: "change_own",
+  status: "Answering the coding agent.",
   description: [
     "Send the coding agent your answer or next instruction, and let it carry on. Use it to answer a routine question yourself (which test runner, where a file is, a naming choice the project already shows), to send it back when its work isn't right yet (say exactly what's wrong), or to tell it to carry on.",
     "When you answer one of its questions, fill `answered` with the question, your answer and where the answer came from (a file in the repo, the owner's notes, the project's conventions), so the owner sees it in Jobs.",
@@ -132,6 +142,7 @@ export const agentReply = defineTool({
 export const ownerAsk = defineTool({
   name: "owner_ask",
   kind: "change_own",
+  status: "Asking the owner.",
   description: [
     "Bring the owner one real decision: something only they can choose (dropping or keeping an API, a trade-off with no right answer, anything that changes what they asked for, or costs money). Ask in one plain question, with the choices when there are a few. Never for something the repo, their notes or good practice answers.",
     "The job waits for their answer, which comes back to the agent. This ends your turn on the job.",
@@ -147,6 +158,7 @@ export const ownerAsk = defineTool({
 export const siteAsk = defineTool({
   name: "site_ask",
   kind: "change_own",
+  status: "Asking about that site.",
   description:
     "Ask the owner to let the workspace reach a website the job needs (the agent said a site was blocked, such as registry.npmjs.org to install packages). The owner is asked once per site and it's remembered. The job waits for their answer. This ends your turn on the job.",
   input: z.object({
@@ -159,6 +171,7 @@ export const siteAsk = defineTool({
 export const jobRun = defineTool({
   name: "job_run",
   kind: "change_own",
+  status: "Running it in the job.",
   description:
     "Run a shell command in the job's repo, in the workspace: read a file (cat package.json), see the changes (git diff, git log), or run the tests yourself before you trust the agent's word. It changes only the job's own branch. It reaches only the sites the owner allowed.",
   input: z.object({
@@ -171,8 +184,9 @@ export const jobRun = defineTool({
 export const jobReady = defineTool({
   name: "job_ready",
   kind: "change_own",
+  status: "Wrapping up the job.",
   description: [
-    "The work is done and you've reviewed it: the diff does what was asked and no more, and the tests pass when you ran them yourself. Atlas then commits what's left, pushes the branch and opens a pull request with your title and description. Nothing is merged; the owner reviews it.",
+    "The work is done and you've reviewed it: the diff does what was asked and no more, and the tests pass when you ran them yourself. Atlas then commits what's left, pushes the branch and opens a pull request with your title and description. Nothing is merged; the owner reviews it. For a step of a job you own, nothing is pushed: your title and description go back to that job.",
     "Write `body` for the owner and their reviewers: what changed and why, how it was tested, and anything they should look at. This ends the job.",
   ].join(" "),
   input: z.object({
@@ -185,6 +199,7 @@ export const jobReady = defineTool({
 export const jobGiveUp = defineTool({
   name: "job_give_up",
   kind: "change_own",
+  status: "Stopping the job.",
   description:
     "End the job without a pull request, when it can't be done this way (the agent went in circles, the task needs something the workspace can't reach). Say why, and what would help. The branch is kept. This ends the job.",
   input: z.object({ reason: z.string().min(1).max(1_000) }),

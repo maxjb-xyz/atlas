@@ -18,8 +18,5 @@
       "model": ""
     }
   ],
-  "speech_in": [
-    "workers-ai-flux",
-    "elevenlabs-scribe"
-  ]
+  "speech_in": ["workers-ai-flux", "elevenlabs-scribe"]
 }

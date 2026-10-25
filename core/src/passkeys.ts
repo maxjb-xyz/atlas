@@ -145,7 +145,7 @@ export async function verifyLogin(store: AuthStore, request: Request, response: 
     return {
       ok: false,
       status: 401,
-      message: "This passkey isn't one this Atlas knows. Sign in with your setup code, then add it in Settings → Devices.",
+      message: "This passkey isn't one this Atlas knows. Sign in with your setup code, then add it in Atlas settings → Account.",
     };
   }
   const { rpID, origin } = relyingParty(request);

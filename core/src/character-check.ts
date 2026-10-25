@@ -279,3 +279,56 @@ export function summary(checks: BrainCheck[]): string {
     })
     .join(". ");
 }
+
+/** One line of a conversation for the Jarvis bar's judge: who said it, what, and the tools Atlas used on its way there. */
+export interface JudgeLine {
+  who: "owner" | "atlas";
+  text: string;
+  tools?: string[];
+}
+
+export function transcriptJudgePrompt(yardstick: string, transcript: JudgeLine[]): string {
+  const lines = transcript
+    .map((l) => (l.who === "owner" ? `Owner: ${l.text}` : `Atlas${l.tools?.length ? ` (used ${l.tools.join(", ")})` : ""}: ${l.text}`))
+    .join("\n\n");
+  return `You are judging how an AI companion named Atlas handled a moment with its owner. Who Atlas is:\n\n${YARDSTICK}\n\nFor this moment, what a person who's good at this would do:\n${yardstick}\n\nThe conversation, with the tools Atlas used before each reply:\n\n${lines}\n\nDid Atlas do what that person would do, and stay in character? Judge what it said and did against the yardstick; timing is measured elsewhere. Answer with only a JSON object: {"passed": true or false, "failed_checks": [...], "notes": "..."}. failed_checks names each miss in a few words of snake_case, such as "asked_again" or "menu_not_pick", and is empty when it passed. notes says in a sentence or two what it did well or missed.`;
+}
+
+/**
+ * The Jarvis bar's judge (§23.7): the first of `judges` that answers says
+ * whether a conversation met its yardstick, what a person who's good at this
+ * would do. A judge that fails is replaced by the next, and when none
+ * answers the verdict says why. It measures; it never touches what Atlas
+ * says (rule 1). Nothing is written to the log.
+ */
+export async function judgeTranscript(
+  judges: Brain[],
+  yardstick: string,
+  transcript: JudgeLine[],
+  ms = 60_000,
+): Promise<Verdict & { judge: string | null }> {
+  if (!judges.length) {
+    return {
+      passed: false,
+      failed: ["no_judge"],
+      notes: "No brain could judge: sign in with ChatGPT, add an Anthropic key, or add a Workers AI model in Settings → Brains.",
+      judge: null,
+    };
+  }
+  const errors: string[] = [];
+  for (const judge of judges) {
+    try {
+      const text = await ask(
+        judge,
+        "You judge conversations carefully and answer with JSON only.",
+        transcriptJudgePrompt(yardstick, transcript),
+        ms,
+      );
+      return { ...parseVerdict(text), judge: brainKey(judge) };
+    } catch (err) {
+      // This judge failed, not Atlas: try the next one, keeping its words for the verdict.
+      errors.push(`${brainKey(judge)}: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
+    }
+  }
+  return { passed: false, failed: ["judge_unreachable"], notes: `No judge answered. ${errors.join("; ")}`.slice(0, 600), judge: null };
+}

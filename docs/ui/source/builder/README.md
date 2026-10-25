@@ -8,8 +8,8 @@ These scripts generate the `.dc.html` screens in [`..`](..) (the design canvas f
 | `p_inbox.py`, `p_agenda.py`, `p_automations.py`, `p_library.py`, `p_history.py`, `p_settings.py` | One builder per page. Each one writes `../<Page>.dc.html`. |
 | `p_home.py`, `p_voice.py` | Home and Voice started as hand-built files (`StageHome.src.html`, `StageVoice.src.html`). These builders lift their stage content onto the shared shell and add the Jobs tab. |
 | `ascii_diamond.py` | Generates the four facet layers of the ASCII diamond from the logo's geometry. |
-| `preview.js` | A small stand-in renderer for quick screenshots without the canvas runtime: `node preview.js out.png ../Inbox.dc.html '{"open":"gear"}' '{"theme":"Light"}'`. |
-| `shoot_real.js` | Takes the screenshots in `../../screenshots` with the canvas's real runtime. Copy the runtime next to the screens as `../support.js` first (it's `artifact-type/dc-runtime.js` in the design artifact; it isn't committed here), then run `node shoot_real.js ../../screenshots`. |
+| `preview.cjs` | A small stand-in renderer for quick screenshots without the canvas runtime: `node preview.cjs out.png ../Inbox.dc.html '{"open":"gear"}' '{"theme":"Light"}'`. |
+| `shoot_real.cjs` | Takes the screenshots in `../../screenshots` with the canvas's real runtime. Copy the runtime next to the screens as `../support.js` first (it's `artifact-type/dc-runtime.js` in the design artifact; it isn't committed here), then run `node shoot_real.cjs ../../screenshots`. |
 
 To regenerate every screen, run this from this folder:
 

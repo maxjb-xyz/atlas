@@ -6,8 +6,42 @@
 import { parse, type Sql } from "./db";
 
 export type StateName =
+  /** Each brain's health (§18): when it last failed, why, and until when it waits at the back of its chain. */
+  | "brain_health"
+  /** What brains have cost this month and Workers AI's neurons today (§18), from the tokens each call counted. */
+  | "brain_spend"
+  /** Each calendar account's calendars, by name, as Atlas has read them: for the account's card to put each in an area. */
+  | "calendar_names"
+  /** Each calendar's refusal of its sign-in, by its extension (the first calendar's was "icloud_refused"). */
+  | "calendar_refusals"
+  /** Calendar events' areas by series (§6.3): what Clef said or the owner set. */
+  | "event_areas"
+  /** Calendar events waiting for Clef to sort them into areas. */
+  | "events_untagged"
+  /** The log's last row the skill review looked back over (§9.3). */
+  | "skill_review_seq"
+  /** Pairs of skills already offered to the review to merge, as "a|b", so each is offered once. */
+  | "skill_pairs_offered"
+  /** Where each skill installed from a skill hub came from (§17): the hub, the folder, the commit and each file's hash. */
+  | "skill_sources"
+  /** What each skill hub holds at its pinned commit (§17), as Atlas last read it, or why it couldn't. */
+  | "skill_hub_lists"
+  /** When the owner last opened Atlas or a push from it (§14: something urgent seen since needs no follow-up). */
+  | "owner_seen_at"
+  /** The last reason each MCP server gave for not connecting, by address: the SDK forgets it on a reconnect. */
+  | "mcp_errors"
+  /** Phone calls (§16.1): the one-time keys a call's stream must carry, each until it's used or runs out. */
+  | "call_tokens"
+  /** Phone calls Atlas placed lately, for its cap. */
+  | "calls_placed"
   /** What waits for a coding job's next wake (§8.2): the owner's words, a settled approval, Stop. */
   | `coding_mail:${string}`
+  /** A job Atlas owns (§8.3): its plan, what it has done and said, what waits on the owner, and what it has used. */
+  | `goal:${string}`
+  /** A job Atlas owns (§8.3): its transcript, notes and what it waits on. */
+  | `owned:${string}`
+  /** A person's photo from the address book, by their record's id: its type, version and where it came from (photos.ts). */
+  | `photo:${string}`
   /** The last twenty MCP tool calls whose pages (MCP Apps) were shown: their input and result, to show them again. */
   | "mcp_apps"
   /** The workspace's last twelve commands, for its view: what ran, its exit code and the end of its output. */
@@ -108,7 +142,25 @@ export type StateName =
   /** In a member's own agent: who they are, and whose Atlas they share. */
   | "member_of"
   /** Message-IDs of the owner's mail to Atlas's address already taken, so a mail relayed twice is said once. */
-  | "mail_seen";
+  | "mail_seen"
+  /** Indexes of services the owner added by address (§17), beside Atlas's own. */
+  | "service_indexes"
+  /** Each index's last daily look (§17): the index as fetched, when, and its last error in the host's words. */
+  | "service_index_cache"
+  /** Extensions installed from an index (§17): the service, the index, and the pinned code and hash they came from. */
+  | "service_pins"
+  /** Updates to extensions from an index that would reach or hold more than before, waiting for the owner's OK (§17). */
+  | "service_updates"
+  /** Updates (§23.2): the releases from the daily look, this Atlas's Worker, the last update or rollback, and what ran before it. */
+  | "updates"
+  /** Your data (§23.4): the last copy taken or why it stopped, and the last time Atlas went back in time, with its Undo. */
+  | "data"
+  /** Moving in (§23.3): what the move-in under way has read, its review list and what was kept. */
+  | "movein"
+  /** Moving in: the owner's own words from past conversations, waiting to be read, newest first within the budget. */
+  | "movein_talks"
+  /** Moving in: notes another assistant kept, waiting to be read. */
+  | "movein_notes";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

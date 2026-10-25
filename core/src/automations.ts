@@ -85,16 +85,26 @@ export const AutomationInput = z.object({
   when: Trigger,
   do: z.array(Step).min(1).max(12),
   report: Report.default("thread").describe(
-    "Where what it says goes: the thread; worth, the thread only when there's something worth saying (for looks at the day that may stay quiet); Inbox; or nowhere but History.",
+    "What it does with what it says: thread tells the owner; worth tells them only when there's something worth saying (for looks at the day that may stay quiet); inbox leaves it in Inbox; silent keeps it in History only.",
   ),
+  to: z
+    .string()
+    .max(40)
+    .default("you")
+    .describe(
+      "Where it tells the owner: 'you', wherever they are (the app if it's open, else their Notifications lists: a notification, Telegram, a call); or always one place: 'push' (a notification on their phone) or a chat they've linked ('telegram').",
+    ),
 });
-export type AutomationInput = z.infer<typeof AutomationInput>;
+/** What's given to make or change one; `to` left out keeps where it reports (a new one tells the owner wherever they are). */
+export type AutomationInput = Omit<z.infer<typeof AutomationInput>, "to"> & { to?: string };
 
 /** Who made an automation: the owner in the form, Atlas from what the owner said, or Atlas's defaults (the routines). */
 export type Maker = "owner" | "atlas" | "default";
 
 export interface Automation extends AutomationInput {
   id: string;
+  /** Where it tells the owner: "you", wherever they are, or one place ("push", "telegram"). */
+  to: string;
   /** "on" runs on its trigger; "paused" runs only by hand or as a test. */
   state: "on" | "paused";
   made_by: Maker;
@@ -121,6 +131,7 @@ type Raw = {
   trigger: string;
   steps: string;
   report: string;
+  goes_to: string | null;
   state: string;
   made_by: string;
   changed_by: string;
@@ -140,6 +151,7 @@ const fromRaw = (r: Raw): Automation => ({
   when: parse(r.trigger, { kind: "request" }) as Trigger,
   do: parse(r.steps, []) as Step[],
   report: (Report.safeParse(r.report).data ?? "thread") as Report,
+  to: r.goes_to || "you",
   state: r.state === "on" ? "on" : "paused",
   made_by: r.made_by === "owner" || r.made_by === "default" ? r.made_by : "atlas",
   changed_by: r.changed_by === "atlas" ? "atlas" : "owner",
@@ -175,8 +187,10 @@ export const needsTest = (a: Pick<Automation, "changed_by" | "tested_at">) => a.
  * pauses one until there's a test run, so nothing Atlas wrote runs
  * unattended before the owner has seen it.
  */
-export function saveAutomation(sql: Sql, input: AutomationInput, by: Maker, id?: string): Automation {
+export function saveAutomation(sql: Sql, given: AutomationInput, by: Maker, id?: string): Automation {
   const old = id ? getAutomation(sql, id) : null;
+  // Where it reports stays as it was unless it's said again; a new one tells the owner wherever they are.
+  const input = { ...given, to: given.to ?? old?.to ?? "you" };
   if (id && !old) throw new Error("That automation isn't there any more.");
   const clash = listAutomations(sql).find((a) => a.id !== old?.id && a.name.toLowerCase() === input.name.toLowerCase());
   if (clash) throw new Error(`There's already an automation called ${input.name}.`);
@@ -195,10 +209,10 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: Maker, id?:
   const atlas = by === "atlas";
   // The default routines start off: setup offers them, and the owner turns on the ones they want (§13.4, §22).
   // Moving a schedule (its time or days) doesn't change what it does, so it keeps its state, test and grants.
+  // So does sending it somewhere else, or a new name: what it does is the same.
   const moved =
     !!old &&
-    old.when.kind === "schedule" &&
-    input.when.kind === "schedule" &&
+    ((old.when.kind === "schedule" && input.when.kind === "schedule") || JSON.stringify(old.when) === JSON.stringify(input.when)) &&
     JSON.stringify(old.do) === JSON.stringify(input.do) &&
     old.report === input.report;
   const state = moved ? old.state : atlas ? "paused" : (old?.state ?? (by === "default" ? "paused" : "on"));
@@ -206,12 +220,13 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: Maker, id?:
   const allowed = moved ? old.allowed : !atlas && state === "on" ? webhookNames(input) : [];
   if (old) {
     sql.exec(
-      `UPDATE automations SET name = ?, about = ?, trigger = ?, steps = ?, report = ?, state = ?, allowed = ?, changed_by = ?, updated_at = ?, tested_at = ?, fails = 0, paused_why = ?, memo = ? WHERE id = ?`,
+      `UPDATE automations SET name = ?, about = ?, trigger = ?, steps = ?, report = ?, goes_to = ?, state = ?, allowed = ?, changed_by = ?, updated_at = ?, tested_at = ?, fails = 0, paused_why = ?, memo = ? WHERE id = ?`,
       input.name,
       input.about,
       JSON.stringify(input.when),
       JSON.stringify(input.do),
       input.report,
+      input.to,
       state,
       JSON.stringify(allowed),
       // A move isn't a change to what it does, so who last changed that stays as it was.
@@ -226,13 +241,14 @@ export function saveAutomation(sql: Sql, input: AutomationInput, by: Maker, id?:
   } else {
     id = newId("au");
     sql.exec(
-      `INSERT INTO automations (id, name, about, trigger, steps, report, state, made_by, changed_by, allowed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO automations (id, name, about, trigger, steps, report, goes_to, state, made_by, changed_by, allowed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       input.name,
       input.about,
       JSON.stringify(input.when),
       JSON.stringify(input.do),
       input.report,
+      input.to,
       state,
       by,
       atlas ? "atlas" : "owner",

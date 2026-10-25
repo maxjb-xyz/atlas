@@ -184,13 +184,20 @@ const ext: Extension = {
           new Blob([bytesOf(out.voice.base64)], { type: out.voice.type }),
           out.voice.type.includes("mpeg") ? "atlas.mp3" : "atlas.ogg",
         );
-      else
-        form.set(
-          out.file!.type.startsWith("image/") ? "photo" : "document",
-          new Blob([bytesOf(out.file!.base64)], { type: out.file!.type }),
-          out.file!.name,
-        );
-      const method = out.voice ? "sendVoice" : out.file!.type.startsWith("image/") ? "sendPhoto" : "sendDocument";
+      // Each kind as Telegram shows it best: photos, videos that play in the chat, audio with a player, the rest as files.
+      const kind = out.voice
+        ? null
+        : out.file!.type.startsWith("image/") && out.file!.type !== "image/svg+xml"
+          ? "photo"
+          : out.file!.type.startsWith("video/")
+            ? "video"
+            : out.file!.type.startsWith("audio/")
+              ? "audio"
+              : "document";
+      if (!out.voice) form.set(kind!, new Blob([bytesOf(out.file!.base64)], { type: out.file!.type }), out.file!.name);
+      const method = out.voice
+        ? "sendVoice"
+        : { photo: "sendPhoto", video: "sendVideo", audio: "sendAudio", document: "sendDocument" }[kind!];
       const sent = await call<{ message_id: number }>(ctx, method, form);
       return { id: `${chat_id}:${sent.message_id}` };
     }

@@ -115,6 +115,9 @@ function fakeShop() {
       at = null;
     },
     where: () => (at ? { open: true, url: at, title: page().title } : { open: false, url: "", title: "" }),
+    async download() {
+      throw new Error("No downloads here.");
+    },
   };
   return driver;
 }

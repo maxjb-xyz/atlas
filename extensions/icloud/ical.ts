@@ -302,3 +302,36 @@ export function moveIn(
   }
   return found ? `${out.map(fold).join("\r\n")}\r\n` : null;
 }
+
+/** Text as an iCalendar value: backslashes, commas, semicolons and line breaks escaped. */
+const escapeText = (v: string) => v.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+
+/**
+ * A calendar object holding one new event, as a calendar app writes it: its
+ * UID, when it was made, its start and end (a date for an all-day event, else
+ * UTC), and its title, place and notes. No attendees: adding it invites no one.
+ */
+export function newEvent(
+  uid: string,
+  e: { title: string; start: string; end: string; all_day: boolean; location?: string; notes?: string },
+  now = Date.now(),
+): string {
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Atlas//Atlas//EN",
+    "CALSCALE:GREGORIAN",
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${token({ kind: "time", ms: now })}`,
+    whenLine("DTSTART", e.start, e.all_day),
+    whenLine("DTEND", e.end, e.all_day),
+    `SUMMARY:${escapeText(e.title)}`,
+    ...(e.location ? [`LOCATION:${escapeText(e.location)}`] : []),
+    ...(e.notes ? [`DESCRIPTION:${escapeText(e.notes)}`] : []),
+    "SEQUENCE:0",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ];
+  return `${lines.map(fold).join("\r\n")}\r\n`;
+}

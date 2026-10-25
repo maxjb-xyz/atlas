@@ -1,31 +1,39 @@
-// The shell (§21.1): sidebar with the six places, the toolbar (scope switcher,
-// jobs, Talk, search), one stage, and the console on Home or the composer on
-// every other page. No side panes.
+// The shell (§21.1): the sidebar with the eight places (§21.2), the toolbar
+// (scope switcher, jobs, Talk, search), and the composer. Home is the
+// conversation; every other page has the composer at its foot. No side panes.
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { LogRow, RecordView } from "../../core/src/protocol";
 import type { Atlas } from "./connection";
+import { jobNow, liveJobs } from "./jobs";
 import { Markdown } from "./Markdown";
 import { openOnStage, type Shown, shownFrom, StageCard } from "./StageViews";
-import { Thread } from "./Thread";
-import { AreaChip, AreaDot, Diamond, Icon, type Place, shortDay, useDismiss } from "./ui";
+import {
+  AreaChip,
+  AreaDot,
+  areaColor,
+  AsciiDiamond,
+  Diamond,
+  Icon,
+  LiveMark,
+  type IconName,
+  initials,
+  type Place,
+  shortDay,
+  useDismiss,
+} from "./ui";
 
-const NAV: Array<{ id: Place; label: string; icon: "home" | "inbox" | "agenda" | "automations" | "library" | "history"; gap?: boolean }> = [
+/** The eight places, in three groups: what's yours today, what Atlas knows and can do, and what it did. */
+export const PLACES: Array<{ id: Place; label: string; icon: IconName; gap?: boolean }> = [
   { id: "home", label: "Home", icon: "home" },
   { id: "inbox", label: "Inbox", icon: "inbox" },
   { id: "agenda", label: "Agenda", icon: "agenda" },
   { id: "automations", label: "Automations", icon: "automations", gap: true },
   { id: "library", label: "Library", icon: "library" },
-  { id: "history", label: "History", icon: "history" },
+  { id: "people", label: "People", icon: "people" },
+  { id: "abilities", label: "Abilities", icon: "abilities" },
+  { id: "history", label: "History", icon: "history", gap: true },
 ];
-
-const initials = (name: string) =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
-    .join("") || "Me";
 
 export function Sidebar({ atlas, place, go }: { atlas: Atlas; place: Place; go: (p: Place, d?: string) => void }) {
   const s = atlas.state;
@@ -44,7 +52,7 @@ export function Sidebar({ atlas, place, go }: { atlas: Atlas; place: Place; go: 
         <span className="disp">{settings?.assistant_name ?? "Atlas"}</span>
       </div>
       <div className="nav">
-        {NAV.map((n) => (
+        {PLACES.map((n) => (
           <a
             key={n.id}
             href={`#/${n.id}`}
@@ -115,7 +123,7 @@ export function Sidebar({ atlas, place, go }: { atlas: Atlas; place: Place; go: 
           <span>Atlas settings</span>
         </a>
         <div className="me">
-          <span className="avatar">{initials(owner)}</span>
+          <span className="avatar">{owner === "You" ? "Me" : initials(owner)}</span>
           <span>{owner}</span>
         </div>
       </div>
@@ -134,6 +142,11 @@ export function TabBar({ atlas, place }: { atlas: Atlas; place: Place }) {
     { id: "agenda", label: "Agenda", icon: "agenda" },
     { id: "library", label: "Library", icon: "library" },
   ];
+  // The rest of the places, under More, in the sidebar's order.
+  const rest: Array<{ id: Place; label: string; icon: IconName }> = [
+    ...PLACES.filter((p) => !tabs.some((t) => t.id === p.id)),
+    { id: "settings", label: "Atlas settings", icon: "settings" },
+  ];
   return (
     <nav className="tabbar" aria-label="Places" ref={moreRef}>
       {tabs.map((t) => (
@@ -145,7 +158,7 @@ export function TabBar({ atlas, place }: { atlas: Atlas; place: Place }) {
       ))}
       <button
         type="button"
-        className={`tab ${["automations", "history", "settings"].includes(place) ? "on" : ""}`}
+        className={`tab ${rest.some((r) => r.id === place) ? "on" : ""}`}
         aria-expanded={more}
         onClick={() => setMore(!more)}
       >
@@ -154,15 +167,18 @@ export function TabBar({ atlas, place }: { atlas: Atlas; place: Place }) {
       </button>
       {more && (
         <div className="pop rise" role="menu" style={{ bottom: 60, top: "auto", right: 6, position: "fixed" }}>
-          <a className="item" role="menuitem" href="#/automations" onClick={() => setMore(false)}>
-            Automations
-          </a>
-          <a className="item" role="menuitem" href="#/history" onClick={() => setMore(false)}>
-            History
-          </a>
-          <a className="item" role="menuitem" href="#/settings" onClick={() => setMore(false)}>
-            Atlas settings
-          </a>
+          {rest.map((r) => (
+            <a
+              key={r.id}
+              className={`item ${place === r.id ? "on" : ""}`}
+              role="menuitem"
+              href={`#/${r.id}`}
+              onClick={() => setMore(false)}
+            >
+              <Icon name={r.icon} size={15} />
+              {r.label}
+            </a>
+          ))}
         </div>
       )}
     </nav>
@@ -175,7 +191,7 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
   const [jobsOpen, setJobsOpen] = useState(false);
   const scoped = s.areas.find((a) => a.id === s.scope);
   const live = s.areas.filter((a) => a.state !== "archived");
-  const running = s.jobs.filter((j) => j.state === "running");
+  const running = liveJobs(s.jobs);
   const scopeRef = useDismiss<HTMLDivElement>(scopeOpen, () => setScopeOpen(false));
   const jobsRef = useDismiss<HTMLDivElement>(jobsOpen, () => setJobsOpen(false));
 
@@ -188,7 +204,7 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
               <AreaDot area={scoped} />
             ) : (
               (live.length ? live.slice(0, 4) : [undefined, undefined, undefined, undefined]).map((a, i) => (
-                <AreaDot key={a?.id ?? i} area={a} />
+                <AreaDot key={a?.id ?? i} area={a} plain />
               ))
             )}
           </span>
@@ -209,7 +225,7 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
             >
               <span className="dots">
                 {live.slice(0, 4).map((a) => (
-                  <AreaDot key={a.id} area={a} />
+                  <AreaDot key={a.id} area={a} plain />
                 ))}
               </span>
               <span className="grow">All areas</span>
@@ -254,21 +270,25 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
                   className="item"
                   style={{ flexDirection: "column", alignItems: "stretch", gap: 3 }}
                   onClick={() => {
-                    go("home", `jobs:${j.id}`);
+                    go("home", `job:${j.id}`);
                     setJobsOpen(false);
                   }}
                 >
                   <span style={{ fontWeight: 500 }}>{j.title}</span>
                   <span className="row small" style={{ gap: 10 }}>
-                    <span className={j.state === "running" ? "ac mono" : j.state === "done" ? "ok mono" : "err mono"}>
-                      {j.state === "running" ? "Running" : j.state === "done" ? "Done" : j.state === "failed" ? "Failed" : "Stopped"}
+                    <span className={`${jobNow(j).tone} mono`}>{jobNow(j).label}</span>
+                    <span className="muted grow clip">
+                      {j.owned && j.activity === "working" && j.owned.now
+                        ? j.owned.now
+                        : j.state === "running"
+                          ? jobNow(j).status
+                          : (j.status ?? `${j.steps} lookups`)}
                     </span>
-                    <span className="muted grow">{j.status ?? `${j.steps} lookups`}</span>
                     <span className="mono faint">{shortDay(j.started_at)}</span>
                   </span>
                 </button>
               ))}
-              <div className="foot">Click one to watch it on the stage. Finished work lands in Inbox.</div>
+              <div className="foot">Open one for everything I've said and done on it.</div>
             </div>
           )}
         </div>
@@ -288,12 +308,15 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
 
 // --- talking to Atlas -----------------------------------------------------------------
 
-/** Opens the full transcript from anywhere (⌘J does the same). */
-export const openTranscript = () => window.dispatchEvent(new CustomEvent("atlas:transcript"));
+/** Goes to the conversation on Home, from anywhere (⌘J does the same). */
+export const openConversation = () => {
+  location.hash = "/home";
+  setTimeout(() => document.getElementById("say")?.focus(), 50);
+};
 
 /**
- * The composer. Off Home, where the console shows the latest exchange, it
- * shows the one sent from it (`reply`), so what you asked and Atlas's
+ * The composer. Off Home, where the conversation isn't in view, it shows
+ * the exchange sent from it (`reply`), so what you asked and Atlas's
  * answer stay in view on the page you asked from.
  */
 export function Composer({
@@ -353,10 +376,21 @@ export function Composer({
         submit();
       }}
     >
-      {/* On its own, the field is the box; inside a console, the console's edge shows it. */}
-      {busy && reply && !sent && <BusyEdge />}
-      <span className="lead">
-        <Diamond size={16} />
+      {/* On its own, the field is the box; with an exchange above it, the console's edge shows it. */}
+      {busy && !sent && <BusyEdge />}
+      <span className="lead mark-lead">
+        <LiveMark
+          size={18}
+          state={
+            atlas.inCall
+              ? atlas.voice.status === "listening" || atlas.voice.status === "thinking" || atlas.voice.status === "speaking"
+                ? atlas.voice.status
+                : "idle"
+              : busy
+                ? "thinking"
+                : "idle"
+          }
+        />
       </span>
       <label className="sr" htmlFor="say">
         Message {s.view?.settings.assistant_name ?? "Atlas"}
@@ -404,7 +438,7 @@ export function Composer({
   return (
     <div className="console">
       {busy && <BusyEdge />}
-      <Exchange atlas={atlas} runId={sent.run_id} asked={sent.text} onTranscript={openTranscript} onClose={() => setSent(null)} />
+      <Exchange atlas={atlas} runId={sent.run_id} asked={sent.text} onClose={() => setSent(null)} />
       {form}
     </div>
   );
@@ -416,7 +450,8 @@ export function Composer({
  */
 function useTurn(atlas: Atlas) {
   const s = atlas.state;
-  const runs = Object.entries(s.live).filter(([, l]) => l.surface !== "voice");
+  // A job's turns work in its own thread, so they show on its composer, not this one.
+  const runs = Object.entries(s.live).filter(([, l]) => l.surface !== "voice" && !l.job);
   const mine = runs.filter(([, l]) => l.surface === "app").map(([id]) => id);
   const busy = runs.length > 0 || s.pending.some((p) => !p.run_id);
   const stop = () => {
@@ -435,7 +470,7 @@ const TRAVEL = 220;
  * short run of sharp ticks travelling all the way round. Without motion,
  * only the track shows.
  */
-function BusyEdge() {
+export function BusyEdge() {
   const box = useRef<HTMLDivElement | null>(null);
   const comet = useRef<SVGRectElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -486,69 +521,24 @@ export const compose = (text: string) => window.dispatchEvent(new CustomEvent("a
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
 /**
- * The console on Home (§21.1): the last exchange, the receipts for what
- * Atlas just did, and the composer. ⌘J opens the full transcript.
- */
-export function Console({ atlas, onTranscript, onReceipt }: { atlas: Atlas; onTranscript: () => void; onReceipt: (row: LogRow) => void }) {
-  const s = atlas.state;
-  const name = s.view?.settings.assistant_name ?? "Atlas";
-  const liveRun = Object.entries(s.live).at(-1);
-  const lastIn = [...s.rows].reverse().find((r) => r.kind === "message.in");
-  const pending = s.pending.at(-1);
-  const runId = liveRun?.[0] ?? lastIn?.run_id ?? null;
-  const asked =
-    pending && !pending.run_id ? pending.text : str(s.rows.find((r) => r.kind === "message.in" && r.run_id === runId)?.body.text);
-  const { busy } = useTurn(atlas);
-  return (
-    <div className="console">
-      {busy && <BusyEdge />}
-      <Exchange atlas={atlas} runId={runId} asked={asked} onTranscript={onTranscript} onReceipt={onReceipt} latest />
-      <Composer atlas={atlas} placeholder={`Message ${name}`} reply={false} />
-    </div>
-  );
-}
-
-/**
  * One exchange: what the owner asked, Atlas's answer as it streams, and the
- * receipts for what it did. Home's console shows the latest; other pages show
- * the one sent from their composer, so a message never just disappears.
+ * receipts for what it did. Pages other than Home show the one sent from
+ * their composer, so a message never just disappears.
  */
-function Exchange({
-  atlas,
-  runId,
-  asked,
-  onTranscript,
-  onReceipt,
-  onClose,
-  latest = false,
-}: {
-  atlas: Atlas;
-  runId: string | null;
-  asked: string;
-  onTranscript: () => void;
-  onReceipt?: (row: LogRow) => void;
-  onClose?: () => void;
-  /** With no run yet, show the latest answer (Home); otherwise wait for this one. */
-  latest?: boolean;
-}) {
+function Exchange({ atlas, runId, asked, onClose }: { atlas: Atlas; runId: string | null; asked: string; onClose?: () => void }) {
   const s = atlas.state;
   const name = s.view?.settings.assistant_name ?? "Atlas";
-  const lastIn = [...s.rows].reverse().find((r) => r.kind === "message.in");
   const liveRun = runId ? ([runId, s.live[runId]] as const) : undefined;
-  const out = runId
-    ? s.rows.find((r) => r.kind === "message.out" && r.run_id === runId)
-    : latest
-      ? [...s.rows].reverse().find((r) => r.kind === "message.out")
-      : undefined;
+  const out = runId ? s.rows.find((r) => r.kind === "message.out" && r.run_id === runId) : undefined;
   const receipts = runId ? s.rows.filter((r) => r.run_id === runId && r.kind === "tool.result" && r.body.receipt) : [];
   const undone = new Set(s.rows.filter((r) => r.body.undo_of).map((r) => String(r.body.undo_of)));
   const shown = receipts.map(shownFrom).filter((v): v is Shown => v != null);
   const live = liveRun?.[1];
   const failed = !live && !out && runId ? s.rows.find((r) => r.kind === "run.end" && r.run_id === runId) : undefined;
   const said = live ? live.text : str(out?.body.text);
-  const at = out?.at ?? (latest ? lastIn?.at : undefined);
+  const at = out?.at;
   // Sent, and nothing back yet: say Atlas is on it.
-  const waiting = !latest && !said && !failed;
+  const waiting = !said && !failed;
 
   if (!(asked || said || live)) return null;
   return (
@@ -559,8 +549,8 @@ function Exchange({
           {at ? ` · ${shortDay(at)}` : ""}
         </span>
         <span className="grow" />
-        <button className="chip" onClick={onTranscript}>
-          Transcript <span className="kbd">⌘J</span>
+        <button className="chip" onClick={openConversation}>
+          In the conversation <span className="kbd">⌘J</span>
         </button>
         {onClose && (
           <button className="icon" aria-label="Close" onClick={onClose}>
@@ -588,46 +578,74 @@ function Exchange({
       {receipts.length > 0 && (
         <div className="receipts">
           {receipts.map((r) => (
-            <Receipt key={r.id} row={r} atlas={atlas} undone={undone.has(r.id)} onOpen={onReceipt ? () => onReceipt(r) : undefined} />
+            <Receipt key={r.id} row={r} atlas={atlas} undone={undone.has(r.id)} />
           ))}
         </div>
       )}
-      {/* Away from Home's stage, a view Atlas showed arrives as a card that opens it there (§21.6). */}
-      {!onReceipt && shown.map((v) => <StageCard key={v.id} atlas={atlas} shown={v} onOpen={() => openOnStage(v.id)} />)}
+      {/* Away from Home, a view Atlas showed arrives as a card that opens it on the stage there (§21.6). */}
+      {shown.map((v) => (
+        <StageCard key={v.id} atlas={atlas} shown={v} onOpen={() => openOnStage(v.id)} />
+      ))}
     </div>
   );
 }
 
-export function Receipt({ row, atlas, undone, onOpen }: { row: LogRow; atlas: Atlas; undone: boolean; onOpen?: () => void }) {
-  const receipt = row.body.receipt as { text: string; undo?: unknown } | undefined;
+/**
+ * A receipt for one thing Atlas did (§21.1): a mono chip whose check ticks in,
+ * with Undo or Review inline. Tapped, it unfolds into its full view on the stage.
+ */
+export function Receipt({
+  row,
+  atlas,
+  undone,
+  onOpen,
+}: {
+  row: LogRow;
+  atlas: Atlas;
+  undone: boolean;
+  onOpen?: (e?: React.MouseEvent<HTMLElement>) => void;
+}) {
+  const receipt = row.body.receipt as { text: string; undo?: unknown; approval?: string; link?: string } | undefined;
   if (!receipt) return null;
   const bad = row.body.ok === false;
+  const waiting = receipt.approval != null && atlas.state.inbox?.some((i) => i.id === receipt.approval);
   return (
-    <span className={`receipt ${bad ? "bad" : ""}`}>
+    <span className={`receipt ${bad ? "bad" : ""} ${waiting ? "waiting" : ""} ${undone ? "undone" : ""}`}>
       <span className="tick" aria-hidden>
-        {bad ? "×" : "✓"}
+        {bad ? (
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <path d="M2 2l6 6M8 2l-6 6" />
+          </svg>
+        ) : waiting ? (
+          <i className="sq-ac" />
+        ) : (
+          <svg width="11" height="10" viewBox="0 0 11 10">
+            <path d="M1.5 5.2 4.3 8 9.6 1.8" />
+          </svg>
+        )}
       </span>
       {onOpen ? (
-        <button className="open" onClick={onOpen} title="Open on the stage">
+        <button className="open" onClick={(e) => onOpen(e)} title={receipt.text}>
           {receipt.text}
         </button>
       ) : (
-        <span>{receipt.text}</span>
+        <span className="open" title={receipt.text}>
+          {receipt.text}
+        </span>
       )}
-      {undone && <span className="lab">Undone</span>}
-      {(receipt as { approval?: string }).approval &&
-        atlas.state.inbox?.some((i) => i.id === (receipt as { approval?: string }).approval) &&
+      {undone && <span className="r-act off">Undone</span>}
+      {waiting &&
         (onOpen ? (
-          <button className="link" onClick={onOpen}>
+          <button className="r-act" onClick={(e) => onOpen(e)}>
             Review
           </button>
         ) : (
-          <a className="link" href="#/inbox">
+          <a className="r-act" href="#/inbox">
             Review
           </a>
         ))}
       {receipt.undo != null && !undone && (
-        <button className="link" onClick={() => atlas.send({ type: "atlas.undo", log_id: row.id })}>
+        <button className="r-act" onClick={() => atlas.send({ type: "atlas.undo", log_id: row.id })}>
           Undo
         </button>
       )}
@@ -640,13 +658,15 @@ export function Receipt({ row, atlas, undone, onOpen }: { row: LogRow; atlas: At
 export function VoiceStrip({ atlas }: { atlas: Atlas }) {
   const { status, interim, level, latencyMs } = atlas.voice;
   const label = status === "idle" ? "Starting" : status[0]!.toUpperCase() + status.slice(1);
-  const live = Object.values(atlas.state.live).at(-1);
+  const live = Object.values(atlas.state.live)
+    .filter((l) => !l.job)
+    .at(-1);
   const bars = Array.from({ length: 28 }, (_, i) =>
     Math.max(0.12, Math.min(1, level * 6 * (0.55 + 0.45 * Math.abs(Math.sin(i * 1.7 + level * 9))))),
   );
   return (
     <div className="voice rise">
-      <Diamond size={30} />
+      <AsciiDiamond height={48} level={level} state={status} />
       <div className="vbody">
         <span className={`lab ${status === "speaking" ? "ac" : ""}`}>{label}</span>
         <p className="vtext">
@@ -663,24 +683,7 @@ export function VoiceStrip({ atlas }: { atlas: Atlas }) {
   );
 }
 
-// --- ⌘J and ⌘K ------------------------------------------------------------------------------
-
-export function Transcript({ atlas, onClose }: { atlas: Atlas; onClose: () => void }) {
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className="sheet rise" onClick={(e) => e.stopPropagation()}>
-        <div className="overlay-head">
-          <span className="lab">Transcript</span>
-          <span className="grow" />
-          <button className="icon" aria-label="Close" onClick={onClose}>
-            <Icon name="x" />
-          </button>
-        </div>
-        <Thread atlas={atlas} name={atlas.state.view?.settings.assistant_name ?? "Atlas"} />
-      </div>
-    </div>
-  );
-}
+// --- ⌘K ------------------------------------------------------------------------------
 
 /** ⌘K: jump to a place, find a record, or ask Atlas. */
 export function Palette({ atlas, go, onClose }: { atlas: Atlas; go: (p: Place, d?: string) => void; onClose: () => void }) {
@@ -690,15 +693,7 @@ export function Palette({ atlas, go, onClose }: { atlas: Atlas; go: (p: Place, d
     if (q.trim().length >= 2) atlas.send({ type: "atlas.records.list", ref: "palette", text: q.trim(), limit: 6 });
   }, [q]);
   const found: RecordView[] = q.trim().length >= 2 ? (atlas.state.records.palette?.records ?? []) : [];
-  const places: Array<[Place, string]> = [
-    ["home", "Home"],
-    ["inbox", "Inbox"],
-    ["agenda", "Agenda"],
-    ["automations", "Automations"],
-    ["library", "Library"],
-    ["history", "History"],
-    ["settings", "Atlas settings"],
-  ];
+  const places: Array<[Place, string]> = [...PLACES.map((p) => [p.id, p.label] as [Place, string]), ["settings", "Atlas settings"]];
   const items: Array<{ label: ReactNode; run: () => void }> = [
     ...places
       .filter(([, l]) => l.toLowerCase().includes(q.trim().toLowerCase()))
@@ -710,16 +705,16 @@ export function Palette({ atlas, go, onClose }: { atlas: Atlas; go: (p: Place, d
           {r.fact ? <span className="muted"> · {r.fact}</span> : null}
         </>
       ),
-      run: () => go("library", `memory:${r.id}`),
+      run: () => (r.type === "person" ? go("people", `person:${r.id}`) : go("library", `memory:${r.id}`)),
     })),
-    // Asked from search: the transcript opens, so the answer is in view wherever this was asked.
+    // Asked from search: the conversation opens, so the answer is in view wherever this was asked.
     ...(q.trim()
       ? [
           {
             label: <>Ask: “{q.trim()}”</>,
             run: () => {
               atlas.say(q.trim());
-              openTranscript();
+              openConversation();
             },
           },
         ]

@@ -11,9 +11,9 @@ const ext: Extension = {
   manifest: {
     id: "claude-code",
     name: "Claude Code",
-    version: "1.0.0",
+    version: "1.1.0",
     about:
-      "Anthropic's coding agent, for coding jobs: it works in your workspace on a branch, by your Anthropic API key, and each job stops at the cap you set. It never holds the key; the workspace's gate adds it.",
+      "Anthropic's coding agent, for coding jobs and a job's coding steps: it works in your workspace on a branch, by your Anthropic API key, on the model and effort you pick, and each job stops at the cap you set. It never holds the key; the workspace's gate adds it.",
     provides: ["coding"],
     hosts: ["api.anthropic.com"],
     secrets: [
@@ -43,6 +43,8 @@ const ext: Extension = {
       // Edits in the job's folder go ahead; commands ask, and Atlas answers.
       mode: "acceptEdits",
       costs_money: true,
+      // A job can pick the model and effort (code.claude.com/docs/en/env-vars).
+      choose: { model: "ANTHROPIC_MODEL", effort: "CLAUDE_CODE_EFFORT_LEVEL" },
     },
   },
   async test(ctx) {

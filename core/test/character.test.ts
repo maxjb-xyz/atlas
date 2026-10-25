@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { character, DEFAULT_PERSONA, manner, PRESETS } from "../src/character";
+import { character, DEFAULT_PERSONA, manner, PRESETS, voiceProfile } from "../src/character";
 import { PROMPTS, parseVerdict, runCharacterCheck, structuralVerdict, summary } from "../src/character-check";
 import type { BrainRequest } from "../src/brains/types";
 import { scripted, say } from "./helpers";
@@ -15,6 +15,17 @@ describe("the character", () => {
     expect(text).toContain("In Max's own words, about how you should be: Call me Max.");
     // The default reads the same as it always has, plus its manner.
     expect(character("Atlas", "Max")).toContain(manner(DEFAULT_PERSONA, "Max"));
+  });
+
+  it("tells a voice run the small talk and fillers the owner set, and nothing more by default", () => {
+    const usual = voiceProfile({ small_talk: "sometimes", fillers: "off" });
+    expect(usual).toContain("You're speaking out loud right now");
+    expect(usual).not.toMatch(/small talk|filler/i);
+    expect(voiceProfile({ small_talk: "never", fillers: "off" })).toContain("Don't make small talk");
+    expect(voiceProfile({ small_talk: "often", fillers: "off" })).toContain("Make a little small talk");
+    const fillers = voiceProfile({ small_talk: "sometimes", fillers: "light" });
+    expect(fillers.startsWith(usual)).toBe(true);
+    expect(fillers).toContain('"um"');
   });
 
   it("has presets whose scales are in range", () => {

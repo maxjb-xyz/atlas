@@ -145,7 +145,7 @@ JS = r"""
     function go(t) { return function () { self.setState({ tab: t }); }; }
     var none = function () {};
     var cells = [
-      { l: 'People', n: '214', go: go('People'), d: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
+      { l: 'People', n: '214', go: none, d: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
         items: [it('Mom', 'Personal', 'today'), it('Priya Nair', 'Keyframes', 'today'), it('Jordan Park', 'UCF', 'Mon'), it('Jordan Lee', 'Keyframes', 'Oct 14'), it('Sam Ortiz', 'Personal', 'Mon')] },
       { l: 'Places', n: '38', go: none, d: 'M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0zM12 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
         items: [it('Home', 'Personal', 'now'), it('Lake Eola Park', 'Keyframes', 'Nov 15'), it('Bright Smile Dental', 'Health', 'Thu'), it('Riverside Park', 'Keyframes', 'Sat'), it('Crunch Gym', 'Fitness', 'Sun')] },
@@ -199,7 +199,7 @@ JS = r"""
       pr('EA', 'Dr. Elena Alvarez', 'Dentist', ['Health'], 'Sep 30', 'Phone', 4)
     ];
     var built = { Overview: 1, People: 1, Areas: 1 };
-    var tabs = this.mkTabs([['Overview'], ['People', '214'], ['Places', '38'], ['Areas', '5'], ['Collections', '7'], ['Memory'], ['Files', '412']], tab, 'tab');
+    var tabs = this.mkTabs([['Overview'], ['Places', '38'], ['Areas', '5'], ['Collections', '7'], ['Memory'], ['Files', '412']], tab, 'tab');
     tabs.forEach(function (t) { if (!built[t.name]) t.pick = none; });
     var metas = { Overview: 'Updated 7:01 PM', People: 'Synced 7:01 PM', Areas: '5 areas · 1 private' };
 

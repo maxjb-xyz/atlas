@@ -3,11 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "wrangler dev -c ../wrangler.jsonc",
+    "deploy": "wrangler deploy -c ../wrangler.jsonc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "types": "wrangler types src/worker-configuration.d.ts"
+    "types": "wrangler types -c ../wrangler.jsonc src/worker-configuration.d.ts"
   },
   "dependencies": {
     "@cloudflare/codemode": "0.5.5",
@@ -15,6 +15,8 @@
     "@modelcontextprotocol/client": "^2.3.1",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@modelcontextprotocol/server": "^2.3.1",
+    "@noble/ciphers": "2.4.0",
+    "@noble/hashes": "2.4.0",
     "@simplewebauthn/server": "14.0.3",
     "agents": "0.29.0",
     "postal-mime": "2.7.6",

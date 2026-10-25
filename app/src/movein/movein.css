@@ -1,0 +1,231 @@
+/* Moving in (§23.3): where to get each export, the drop, the reading and the review. */
+
+.mv {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  position: relative;
+}
+.mv-sources {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.mv-source {
+  padding: 12px 13px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 62px;
+}
+.mv-source.on {
+  border-color: var(--dash);
+  background: var(--sel);
+}
+.mv-source .grow {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.mv-how {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+.mv-how p {
+  line-height: 1.55;
+}
+.mv-drop {
+  border: 1px dashed var(--dash);
+  border-radius: 10px;
+  background: var(--bg);
+  min-height: 150px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  transition:
+    border-color 0.15s,
+    transform 0.15s;
+}
+.mv-drop.over {
+  border-color: var(--tx2);
+  transform: scale(1.01);
+}
+.mv-drop .mv-glyph {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--sep2);
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tx2);
+  margin-bottom: 2px;
+}
+.mv-contacts {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 14px;
+  border-top: 1px solid var(--sep);
+}
+.mv-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mv-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--sep2);
+  overflow: hidden;
+}
+.mv-bar i {
+  display: block;
+  height: 100%;
+  background: var(--tx);
+  transform-origin: left;
+  transition: transform 0.3s ease;
+}
+.mv-rule {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 2px;
+}
+.mv-rule i {
+  flex: 1;
+  border-top: 1px dashed var(--dash);
+}
+.mv a.btn {
+  text-decoration: none;
+  color: inherit;
+}
+.mv-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.mv-summary .grow {
+  min-width: 240px;
+}
+.mv-count {
+  font-family: "Inter Tight", Inter, sans-serif;
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.mv-group {
+  display: flex;
+  flex-direction: column;
+}
+.mv-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--sep);
+  transition: opacity 0.15s;
+}
+.mv-item:last-child {
+  border-bottom: 0;
+}
+.mv-item.dropped .mv-words {
+  opacity: 0.45;
+}
+.mv-item .mv-words {
+  flex: 1;
+  min-width: 0;
+}
+.mv-item .mv-name {
+  font-weight: 500;
+}
+.mv-decide {
+  display: inline-flex;
+  border: 1px solid var(--sep2);
+  border-radius: 7px;
+  overflow: hidden;
+  flex: none;
+}
+.mv-decide button {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--tx2);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.mv-decide button + button {
+  border-left: 1px solid var(--sep2);
+}
+.mv-decide button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--tx);
+}
+.mv-decide button.kept {
+  color: var(--ok);
+  background: var(--sel);
+}
+.mv-decide button.dropped {
+  color: var(--tx);
+  background: var(--sel);
+}
+.mv-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.mv-steps {
+  display: flex;
+  gap: 2px;
+}
+.mv-steps i {
+  flex: 1;
+  height: 6px;
+  border-radius: 1px;
+  background: var(--sep2);
+  transition: background 0.3s;
+}
+.mv-steps i.f {
+  background: var(--tx);
+}
+.mv-steps i.x {
+  background: var(--ac);
+}
+
+@media (max-width: 900px) {
+  .mv-sources {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mv-how {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 560px) {
+  .mv-item {
+    flex-wrap: wrap;
+  }
+  .mv-decide {
+    margin-left: auto;
+  }
+}
+
+/* In setup's narrower body: two sources a row, and how to get it above the drop. */
+.mv.in-setup .mv-sources {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.mv.in-setup .mv-how {
+  grid-template-columns: minmax(0, 1fr);
+}

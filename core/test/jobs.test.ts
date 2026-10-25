@@ -7,6 +7,7 @@ import { HelperAgent, type HelperJob } from "../src/helper";
 import { createItem, getItem } from "../src/store/agenda";
 import type { Sql } from "../src/store/db";
 import { migrate } from "../src/store/db";
+import { thread } from "../src/store/log";
 import { getRun, startRun, sweepStaleRuns } from "../src/store/runs";
 import { systemPrompt } from "../src/context";
 import { readSettings } from "../src/store/settings";
@@ -53,6 +54,7 @@ function testDesk(sql: Sql, over: Partial<ConstructorParameters<typeof HelperDes
     discard: async () => {},
     watch: async () => {},
     report: (item, result) => void reports.push(`${item.title}: ${result.state}: ${result.text}`),
+    step: async () => {},
     rows: () => {},
     jobsChanged: () => {},
     ...over,
@@ -101,6 +103,10 @@ describe("helpers", () => {
           .filter((r) => r.run_id === helperRun)
           .map((r) => r.body.name),
       ).toEqual(["recall"]);
+      // What it did is its own card's, never the conversation's.
+      const did = rowsOf(sql, "tool.result").filter((r) => r.run_id === helperRun);
+      expect(did.map((r) => r.body.job)).toEqual([result.body.item_id]);
+      expect(thread(sql, 200).some((r) => r.run_id === helperRun && r.kind === "tool.result")).toBe(false);
       expect(sql.exec<{ state: string; trigger: string }>(`SELECT state, trigger FROM runs WHERE id = ?`, helperRun).one()).toMatchObject({
         state: "replied",
         trigger: expect.stringMatching(/^helper:ag_/),
@@ -211,7 +217,26 @@ describe("helpers", () => {
         surface: "app",
         sql,
       });
-      expect(system).toMatch(/Helpers working now[^\n]*\n- Spending chart \(id ag_\w+\): started 3 min ago, 0 lookups so far/);
+      expect(system).toMatch(/Helpers working now[^\n]*\n- Spending chart \(id ag_\w+\): started 3 min ago, just starting/);
+    });
+  });
+
+  it("show in jobs_look, so 'how's it going?' finds the reading the owner just asked for", async () => {
+    const b = brain([call("jobs_look", {}), say("I've looked at four laptops so far.")]);
+    await runInDurableObject(fresh(), async (agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      createItem(sql, {
+        kind: "job",
+        title: "Three laptops under $1,500",
+        due_at: Date.now(),
+        state: "running",
+        source: { via: "chat", detail: { brief: "Research three laptops." } },
+      });
+      await agent.apiTurn("how's it going?");
+      const out = String(b.requests[1]!.messages.find((m) => m.role === "tool")!.content);
+      expect(out).toContain("Three laptops under $1,500");
+      expect(out).toContain("reading_for_you_since");
     });
   });
 
@@ -387,6 +412,31 @@ describe("helpers", () => {
       await expect(agent.helperLog(job.id, { actor: "atlas", kind: "message.out", body: { text: "hi" } })).rejects.toThrow(
         "A helper can't write message.out rows.",
       );
+    });
+  });
+
+  it("working for a job Atlas owns show on that job's card: going, and ended within the hour", async () => {
+    await runInDurableObject(fresh(), async (_agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      const desk = testDesk(sql);
+      const helper = (title: string, detail: Record<string, string>) =>
+        createItem(sql, { kind: "job", title, due_at: Date.now(), state: "running", source: { via: "chat", detail } });
+      helper("Laptops: Reviews", { step_of: "job-1", brief: "Read the reviews." });
+      const prices = helper("Laptops: Prices", { step_of: "job-1", brief: "Read the prices." });
+      helper("Video: Tracks", { step_of: "job-2", brief: "Find tracks." });
+      helper("Riverside notes", { brief: "The owner's own helper." });
+      const old = helper("Laptops: Last week", { step_of: "job-1", brief: "Long done." });
+      sql.exec(`UPDATE agenda SET state = 'done' WHERE id = ?`, prices.id);
+      sql.exec(`UPDATE agenda SET state = 'done', updated_at = ? WHERE id = ?`, Date.now() - 2 * 3600_000, old.id);
+
+      const by = desk.workingFor();
+      expect([...by.keys()].sort()).toEqual(["job-1", "job-2"]);
+      const lines = by.get("job-1")!.map((h) => [h.title, h.state, h.ended_at != null]);
+      expect(lines.sort()).toEqual([
+        ["Laptops: Prices", "done", true],
+        ["Laptops: Reviews", "running", false],
+      ]);
     });
   });
 });

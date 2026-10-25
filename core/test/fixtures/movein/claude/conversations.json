@@ -1,0 +1,78 @@
+[
+  {
+    "uuid": "5b1c2d3e-0000-4000-8000-000000000001",
+    "name": "Riverside promo edit notes",
+    "summary": "",
+    "created_at": "2025-09-02T14:01:22.123456Z",
+    "updated_at": "2025-09-02T14:30:05.654321Z",
+    "account": { "uuid": "acc-0000-4000-8000-000000000009" },
+    "chat_messages": [
+      {
+        "uuid": "m-1",
+        "text": "",
+        "content": [
+          {
+            "start_timestamp": "2025-09-02T14:01:22.5Z",
+            "stop_timestamp": "2025-09-02T14:01:22.5Z",
+            "type": "text",
+            "text": "I'm cutting the Riverside promo for the city. Jordan Lee is the producer; she wants a first cut by Friday.",
+            "citations": []
+          }
+        ],
+        "sender": "human",
+        "created_at": "2025-09-02T14:01:22.5Z",
+        "updated_at": "2025-09-02T14:01:22.5Z",
+        "attachments": [],
+        "files": []
+      },
+      {
+        "uuid": "m-2",
+        "text": "",
+        "content": [
+          { "type": "thinking", "thinking": "The user is editing a promo.", "summaries": [] },
+          { "type": "text", "text": "Here's a plan for the first cut.", "citations": [] }
+        ],
+        "sender": "assistant",
+        "created_at": "2025-09-02T14:01:40.1Z",
+        "updated_at": "2025-09-02T14:01:40.1Z",
+        "attachments": [],
+        "files": []
+      },
+      {
+        "uuid": "m-3",
+        "text": "Also, I always deliver in ProRes 422 HQ.",
+        "content": [],
+        "sender": "human",
+        "created_at": "2025-09-02T14:29:00Z",
+        "updated_at": "2025-09-02T14:29:00Z",
+        "attachments": [],
+        "files": []
+      }
+    ]
+  },
+  {
+    "uuid": "5b1c2d3e-0000-4000-8000-000000000002",
+    "name": "",
+    "created_at": "2025-06-10T09:00:00Z",
+    "updated_at": "2025-06-10T09:05:00Z",
+    "account": { "uuid": "acc-0000-4000-8000-000000000009" },
+    "chat_messages": [
+      {
+        "uuid": "m-4",
+        "text": "How do I keep basil alive on a windowsill?",
+        "sender": "human",
+        "created_at": "2025-06-10T09:00:00Z",
+        "attachments": [],
+        "files": []
+      },
+      {
+        "uuid": "m-5",
+        "text": "Water it when the top inch is dry.",
+        "sender": "assistant",
+        "created_at": "2025-06-10T09:00:10Z",
+        "attachments": [],
+        "files": []
+      }
+    ]
+  }
+]

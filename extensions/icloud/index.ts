@@ -5,7 +5,7 @@
 // calendars that changed are read again. A refusal comes back as an "auth"
 // failure, and the core waits before trying again so the account isn't locked.
 
-import { type CalendarEvent, type Extension, Failure, http } from "../sdk";
+import { type CalendarEvent, type Extension, Failure, get, http, image } from "../sdk";
 import { type CalendarCopy, icloudCalendar } from "./caldav";
 import { icloudVCards } from "./carddav";
 
@@ -28,7 +28,7 @@ const ext: Extension = {
   manifest: {
     id: "icloud",
     name: "iCloud",
-    version: "1.1.0",
+    version: "1.2.0",
     about:
       "Your iCloud calendar and contacts, read with your Apple ID and an app-specific password. Atlas reads them, and moves an event when you ask, with Undo.",
     provides: ["calendar", "contacts"],
@@ -60,6 +60,16 @@ const ext: Extension = {
     const out = await cal.move!(m.id, { start: m.start, end: m.end });
     return { ...out, ...(state !== undefined ? { state: state as never } : {}) };
   },
+  async add(ctx, e) {
+    let state: CalendarCopy | null | undefined;
+    const event = await source(ctx, [], (c) => (state = c)).add!(e);
+    return { event, ...(state !== undefined ? { state: state as never } : {}) };
+  },
+  async remove(ctx, m) {
+    let state: CalendarCopy | null | undefined;
+    const event = await source(ctx, [], (c) => (state = c)).remove!(m.id);
+    return { event, ...(state !== undefined ? { state: state as never } : {}) };
+  },
   async test(ctx) {
     let state: CalendarCopy | null | undefined;
     const c = await source(ctx, [], (x) => (state = x)).check();
@@ -73,6 +83,13 @@ const ext: Extension = {
     const username = (ctx.settings.username ?? "").trim();
     if (!username) throw new Failure("iCloud needs your Apple ID first.", "auth");
     return { vcards: (await icloudVCards(ctx.basic(username, "app_password"), http)).join("\n") };
+  },
+  // iCloud's cards give a photo as an address on its contacts host, which takes the same sign-in.
+  async photo(ctx, url) {
+    const username = (ctx.settings.username ?? "").trim();
+    if (!username) throw new Failure("iCloud needs your Apple ID first.", "auth");
+    const headers = { Authorization: ctx.basic(username, "app_password"), "User-Agent": "Atlas/1.0 (CardDAV)" };
+    return image(await get(url, { headers }, "iCloud contacts"), "iCloud contacts");
   },
 };
 

@@ -48,7 +48,7 @@ export const browserOpen = defineTool({
       return {
         ok: true,
         output: seen(page, input.start),
-        receipt: { text: `Browsing · ${page.title || hostOf(page.url)}`.slice(0, 120), view: { kind: "browser" } },
+        receipt: { text: `Browsing · ${page.title || hostOf(page.url)}`.slice(0, 120), view: { kind: "browser" }, link: page.url },
       };
     } catch (err) {
       return failed(err);
@@ -155,6 +155,7 @@ export const browserSubmit = defineTool({
 export const browserTakeOver = defineTool({
   name: "browser_take_over",
   kind: "change_own",
+  status: "Handing you the browser.",
   description: [
     "Hand the browser to the owner, for what only they should do: a login, a captcha, a payment form, a choice only they can make.",
     "The stage shows them the live browser to drive; when they're done they hand it back and you carry on from where they left it. Say in a sentence what they need to do. Don't use the browser until they hand it back.",
@@ -178,9 +179,41 @@ export const browserTakeOver = defineTool({
   },
 });
 
+export const browserSave = defineTool({
+  name: "browser_save",
+  kind: "change_own",
+  status: "Saving that.",
+  timeoutMs: 180_000,
+  description: [
+    "Save a file the browser can get into your workspace (your folder, on a job): a download link on the page, or the page open now.",
+    "It's got the way the page would, with its cookies, so a file behind a site's check the browser already passed (or a sign-in the owner did when you handed them the browser) comes through. Then work on it with your shell.",
+  ].join(" "),
+  input: z.object({
+    url: z.string().max(2_000).optional().describe("The file's address, or a link's href from the page; default the page open now."),
+    path: z.string().min(1).max(300).describe("Where to save it: a path in your folder, or in /workspace."),
+  }),
+  async run(input, ctx) {
+    if (!ctx.browser) return fail("The browser can't be used from here.");
+    if (!ctx.workspace) return fail("There's no workspace to save it in from here.");
+    try {
+      const got = await ctx.browser.download(input.url ?? null, { run_id: ctx.run_id });
+      const saved = await ctx.workspace.write(input.path, got.bytes);
+      if (!saved.ok) return fail(`Got ${got.name}, but couldn't save it: ${saved.error}`);
+      return {
+        ok: true,
+        output: { saved: saved.path, name: got.name, type: got.type, size: got.bytes.length, from: got.url },
+        receipt: { text: `Saved · ${got.name}` },
+      };
+    } catch (err) {
+      return failed(err);
+    }
+  },
+});
+
 export const browserClose = defineTool({
   name: "browser_close",
   kind: "look",
+  status: "Closing the browser.",
   description: "Close the browser when you're done with it. It also closes by itself after ten minutes without use.",
   input: z.object({}),
   async run(_input, ctx) {
@@ -190,4 +223,4 @@ export const browserClose = defineTool({
   },
 });
 
-export const browserTools = [browserOpen, browserAct, browserSubmit, browserTakeOver, browserClose];
+export const browserTools = [browserOpen, browserAct, browserSubmit, browserTakeOver, browserSave, browserClose];

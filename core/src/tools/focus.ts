@@ -60,6 +60,7 @@ export async function setFocus(
 export const focusTool = defineTool({
   name: "focus",
   kind: "change_own",
+  status: "Setting your focus.",
   description: [
     "Start focus for a number of minutes, or end it with 0, when the owner asks ('focus for 45 minutes', 'I'm in a meeting till 3', 'I'm done focusing').",
     "While focus is on, notifications that can wait are held and arrive together when it ends; reminders the owner set and answers to them still come through.",

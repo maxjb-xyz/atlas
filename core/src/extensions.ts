@@ -28,7 +28,8 @@ import { seams } from "./agent/seams";
 
 export type { Manifest, Provides } from "../../extensions/sdk";
 
-export type ExtSource = "bundled" | "atlas" | "owner";
+/** Who wrote it: it ships with Atlas, Atlas or the owner wrote it (a draft, or a link), or it came from an index (§17). */
+export type ExtSource = "bundled" | "atlas" | "owner" | "index";
 export type ExtState = "on" | "off" | "draft";
 
 export interface Installed {
@@ -51,6 +52,8 @@ export interface Installed {
   ok_at: number | null;
   error: string | null;
   error_at: number | null;
+  /** The name the owner gave this account, if any (`accountName` says what to show). */
+  label: string | null;
 }
 
 type Raw = Omit<Installed, "manifest" | "methods" | "settings" | "cursor" | "data" | "source" | "state"> & {
@@ -63,14 +66,36 @@ type Raw = Omit<Installed, "manifest" | "methods" | "settings" | "cursor" | "dat
   state: string;
 };
 
+// --- accounts -------------------------------------------------------------------------------------
+
+/** A service added again is another account: its own row, "gmail--2", with the same code, its own secrets, cursor and state. */
+export const ACCOUNT_SEP = "--";
+/** The service an account is of: "gmail" for "gmail--2", and for "gmail" itself. */
+export const baseOf = (id: string): string => id.split(ACCOUNT_SEP)[0]!;
+/** What it provides, so it can be had more than once: someone's mail, calendars, address books and tools. A chat bot, a phone or a map is one. */
+export const ACCOUNT_KINDS: Provides[] = ["mail", "calendar", "contacts", "sense"];
+export const manyAccounts = (m: Manifest): boolean => m.provides.some((p) => ACCOUNT_KINDS.includes(p));
+
+/** What an account is called: the name the owner gave it, else what it signed into (an address it keeps, or signs in with). */
+export function accountName(e: Pick<Installed, "label" | "data"> & { settings?: Record<string, string> }): string | null {
+  if (e.label) return e.label;
+  const d = (e.data ?? {}) as { account?: unknown; email?: unknown };
+  if (typeof d.account === "string" && d.account) return d.account;
+  if (typeof d.email === "string" && d.email) return d.email;
+  // An account signed in by name, like an Apple ID.
+  const user = e.settings?.username?.trim();
+  return user && user.includes("@") ? user : null;
+}
+
 const fromRaw = (r: Raw): Installed => ({
   ...r,
+  label: r.label ?? null,
   source: r.source as ExtSource,
   state: r.state as ExtState,
   // A bundled extension follows the release it shipped in: its manifest (hosts, secrets, sign-in) is the bundle's, not what was saved at install.
   manifest:
-    r.source === "bundled" && BUNDLED[r.id]
-      ? (BUNDLED[r.id]!.manifest as Manifest)
+    r.source === "bundled" && BUNDLED[baseOf(r.id)]
+      ? (BUNDLED[baseOf(r.id)]!.manifest as Manifest)
       : parse<Manifest>(r.manifest, { id: r.id, name: r.name, version: r.version, about: "", provides: [], hosts: [] }),
   methods: parse(r.methods, []),
   settings: parse(r.settings, {}),
@@ -92,9 +117,9 @@ export const providing = (sql: Sql, what: Provides): Installed[] =>
     .sort((a, b) => a.installed_at - b.installed_at);
 
 /** The code that runs for an extension: a bundled one's as this release ships it, else its own. */
-export const codeOf = (e: Installed): string | null => (e.source === "bundled" ? (BUNDLED[e.id]?.code ?? null) : e.code);
+export const codeOf = (e: Installed): string | null => (e.source === "bundled" ? (BUNDLED[baseOf(e.id)]?.code ?? null) : e.code);
 /** The calls it takes. */
-export const methodsOf = (e: Installed): string[] => (e.source === "bundled" ? (BUNDLED[e.id]?.methods ?? []) : e.methods);
+export const methodsOf = (e: Installed): string[] => (e.source === "bundled" ? (BUNDLED[baseOf(e.id)]?.methods ?? []) : e.methods);
 
 const randomKey = () => Array.from(crypto.getRandomValues(new Uint8Array(18)), (b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -115,7 +140,10 @@ export function install(
     settings?: Record<string, string>;
   },
 ): Installed {
-  const bundled = o.source === "bundled" ? BUNDLED[o.id] : null;
+  // An account's id ("gmail--2") is only ever another copy of what ships with Atlas, which is trusted as it.
+  if (o.source !== "bundled" && o.id.includes(ACCOUNT_SEP))
+    throw new Error(`"${o.id}" has "${ACCOUNT_SEP}" in it, which only Atlas's own accounts use; pick another id.`);
+  const bundled = o.source === "bundled" ? BUNDLED[baseOf(o.id)] : null;
   if (o.source === "bundled" && !bundled) throw new Error(`There's no extension called ${o.id} in this release.`);
   const manifest = bundled?.manifest ?? o.manifest;
   if (!manifest) throw new Error("An extension needs its manifest.");
@@ -143,6 +171,38 @@ export function install(
   if (!was) append(sql, { actor: "owner", kind: "settings.change", body: { extension: "installed", name: manifest.name, id: o.id } });
   return getExt(sql, o.id)!;
 }
+
+/**
+ * Adds another account of a service that's installed: the next "--n", with
+ * the same code and its own sign-in, secrets, cursor and state. Only a
+ * service that ships with Atlas, and only one that can be had more than once.
+ */
+export function addAccount(sql: Sql, id: string): Installed {
+  const first = accountsOf(sql, id)[0];
+  if (!first) throw new Error(`Set up ${baseOf(id)} first; then add another account of it.`);
+  if (first.source !== "bundled") throw new Error(`${first.name} doesn't ship with Atlas, so it can't have a second account yet.`);
+  if (!manyAccounts(first.manifest)) throw new Error(`${first.name} is one per Atlas: it isn't an account of yours.`);
+  const base = baseOf(id);
+  const free = [base, ...Array.from({ length: 8 }, (_, i) => `${base}${ACCOUNT_SEP}${i + 2}`)].find((x) => !getExt(sql, x));
+  if (!free) throw new Error(`${first.name} has nine accounts already.`);
+  // The sign-in client (yours, at the service) is the same for every account; only the sign-in itself is new.
+  const client: Record<string, string> = first.manifest.signin && first.settings.client_id ? { client_id: first.settings.client_id } : {};
+  const added = install(sql, { id: free, source: "bundled", state: "on", settings: client });
+  const secret = first.manifest.signin ? extSecrets(sql, first.id).client_secret : undefined;
+  if (secret) setExtSecrets(sql, added.id, { client_secret: secret });
+  return getExt(sql, added.id)!;
+}
+
+/** Names an account (an empty name goes back to what it signed into). */
+export function nameAccount(sql: Sql, id: string, label: string): void {
+  sql.exec(`UPDATE extensions SET label = ?, updated_at = ? WHERE id = ?`, label.trim().slice(0, 60) || null, Date.now(), id);
+}
+
+/** Its accounts, oldest first: the service itself, then "--2" and on. */
+export const accountsOf = (sql: Sql, id: string): Installed[] =>
+  installed(sql)
+    .filter((e) => baseOf(e.id) === baseOf(id))
+    .sort((a, b) => a.installed_at - b.installed_at);
 
 const defaultsOf = (m: Manifest): Record<string, string> =>
   Object.fromEntries((m.settings ?? []).filter((s) => s.default != null).map((s) => [s.name, s.default!]));
@@ -247,9 +307,42 @@ export interface GateProps {
   nonce: string;
 }
 
+/**
+ * Suffixes that many people's sites share, Atlas's own deployment among
+ * them: a manifest naming one reaches only that exact host, never everything
+ * under it. A name with no dot (a top-level domain) is the same.
+ */
+const SHARED = new Set([
+  "workers.dev",
+  "pages.dev",
+  "r2.dev",
+  "github.io",
+  "githubusercontent.com",
+  "vercel.app",
+  "netlify.app",
+  "herokuapp.com",
+  "appspot.com",
+  "web.app",
+  "firebaseapp.com",
+  "cloudfront.net",
+  "amazonaws.com",
+  "azurewebsites.net",
+  "blob.core.windows.net",
+  "ngrok.io",
+  "ngrok.app",
+  "fly.dev",
+  "onrender.com",
+  "co.uk",
+  "com.au",
+  "co.jp",
+  "co.nz",
+  "com.br",
+]);
+
 export const allowedHost = (host: string, hosts: string[]) =>
   hosts.some((h) => {
     const want = h.toLowerCase().replace(/^\*\./, "");
+    if (!want.includes(".") || SHARED.has(want)) return host === want;
     return host === want || host.endsWith(`.${want}`);
   });
 
@@ -644,6 +737,13 @@ export async function postAllowed(sql: Sql, e: Installed, key: string, req: ExtR
   if (!given) return `the post has no ${sig.header} signature`;
   const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return same(given, hex(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(req.body)))) ? null : "the signature doesn't match";
+}
+
+/** Whether it's set up enough to be asked: its keys are in, and, with a sign-in, it's signed in. An account just added isn't, yet. */
+export function ready(sql: Sql, e: Installed): boolean {
+  const have = extSecrets(sql, e.id);
+  if ((e.manifest.secrets ?? []).some((x) => !x.optional && !have[x.name])) return false;
+  return !e.manifest.signin || Boolean(have.refresh_token || have.access_token);
 }
 
 // --- the looks on the clock ------------------------------------------------------------------------------

@@ -34,6 +34,14 @@ const SMALL = new Set(
   ),
 );
 
+/**
+ * Asking about what already happened ("why didn't you tell me", "did you
+ * send it") is about one thing gone wrong, not something to do again, so it's
+ * never suggested, however often it's asked.
+ */
+const ABOUT_THE_PAST =
+  /^(why|how come|what happened|did you|didn ?t you|have you|haven ?t you|were you|was it|you forgot|you missed|you didn ?t)\b/;
+
 /** The words that carry what was asked: lowercase, no small words, plurals folded. */
 export function wordsOf(text: string): string[] {
   return [
@@ -58,7 +66,7 @@ export const suggestions = (sql: Sql): Suggestion[] => getState<Suggestion[]>(sq
 
 export const openSuggestions = (sql: Sql): SuggestionView[] =>
   suggestions(sql)
-    .filter((s) => s.state === "open")
+    .filter((s) => s.state === "open" && !ABOUT_THE_PAST.test(norm(s.said)))
     .sort((a, b) => b.last_at - a.last_at)
     .map(({ id, said, times, last_at }) => ({ id, said, times, last_at }));
 
@@ -69,6 +77,7 @@ export const openSuggestions = (sql: Sql): SuggestionView[] =>
  * left alone.
  */
 export function noticeAsk(sql: Sql, text: string, now = Date.now()): boolean {
+  if (ABOUT_THE_PAST.test(norm(text))) return false;
   const words = wordsOf(text);
   if (words.length < 2 || words.length > 14 || text.length > 200) return false;
   const all = suggestions(sql);

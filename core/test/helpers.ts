@@ -22,7 +22,8 @@ export function scripted(steps: Step[], provider: Brain["provider"] = "workers-a
     provider,
     model,
     async *stream(req) {
-      requests.push(req);
+      // What Atlas knows this turn: the prompt, and what's true now, which rides with the turn's message (§4.1).
+      requests.push({ ...req, system: withContext(req) });
       const step = steps.shift();
       if (!step) throw new BrainError("script ran out");
       if (step instanceof Error) throw step;
@@ -35,6 +36,22 @@ export function scripted(steps: Step[], provider: Brain["provider"] = "workers-a
     },
   };
   return { brain, requests, steps };
+}
+
+/** The prompt with the turn's note of what's true now, as one text, for tests that check what Atlas was told. */
+export function withContext(req: BrainRequest): string {
+  const notes = req.messages
+    .filter((m) => m.role === "user")
+    .map((m) => /<now>\n([\s\S]*?)\n<\/now>/.exec(m.content)?.[1])
+    .filter(Boolean);
+  return notes.length ? `${req.system}\n\n---\n\n${notes.at(-1)}` : req.system;
+}
+
+/** Every tool a turn could use: the ones it was given, and the ones its index (tools_load) offers to load (§4.1). */
+export function offered(req: BrainRequest): string[] {
+  const index = req.tools.find((t) => t.name === "tools_load")?.description ?? "";
+  const listed = [...index.matchAll(/\(([a-z0-9_, ]+)\)$/gm)].flatMap((m) => m[1]!.split(", "));
+  return [...req.tools.map((t) => t.name), ...listed];
 }
 
 export const say = (text: string): BrainEvent[] => [
@@ -251,8 +268,17 @@ import owntracks from "../../extensions/owntracks";
 import tavily from "../../extensions/tavily";
 import resend from "../../extensions/resend";
 import telegram from "../../extensions/telegram";
+import telnyx from "../../extensions/telnyx";
+import chatgptExport from "../../extensions/chatgpt-export";
+import claudeExport from "../../extensions/claude-export";
+import hermes from "../../extensions/hermes";
+import openclaw from "../../extensions/openclaw";
 
 export const EXTENSIONS: Record<string, Extension> = {
+  "chatgpt-export": chatgptExport,
+  "claude-export": claudeExport,
+  hermes,
+  openclaw,
   brave,
   "claude-code": claudeCode,
   codex,
@@ -268,6 +294,7 @@ export const EXTENSIONS: Record<string, Extension> = {
   tavily,
   resend,
   telegram,
+  telnyx,
 };
 
 /** The requests extensions made in this test, as the gate let them out (secrets filled in). */

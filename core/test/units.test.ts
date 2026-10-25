@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { chatgptBrain, readResponsesStream, refusal, toInput } from "../src/brains/chatgpt";
 import { finishLogin, jwtClaims, listModels, newClient, readCallback, refreshTokens, startLogin } from "../src/brains/chatgpt-auth";
-import { BrainRouter } from "../src/brains/router";
+import { BrainRouter, SlowBrainError } from "../src/brains/router";
 import { BrainError } from "../src/brains/types";
 import { readWorkersAIStream, toChatMessages } from "../src/brains/workers-ai";
 import { scrub, StreamScrubber } from "../src/outbox";
@@ -300,6 +300,26 @@ describe("brain router", () => {
     router.markOk(a);
     expect(router.chain(chain).map((x) => x.model)).toEqual(["a", "b"]);
   });
+
+  it("keeps a slow brain out of the way for longer each time in a row, and remembers it across a restart", () => {
+    const a = scripted([], "chatgpt", "a").brain;
+    let kept: Record<string, unknown> | null = null;
+    const store = { load: () => kept as never, save: (all: Record<string, unknown>) => void (kept = JSON.parse(JSON.stringify(all))) };
+    const router = new BrainRouter(() => a, store);
+    const wait = () => router.health.get("chatgpt:a")!.until! - router.health.get("chatgpt:a")!.checked_at;
+    router.markFailed(a, new SlowBrainError("no answer within 6 s"));
+    expect(wait()).toBe(2 * 60_000);
+    router.markFailed(a, new SlowBrainError("no answer within 6 s"));
+    expect(wait()).toBe(4 * 60_000);
+    router.markFailed(a, new BrainError("down"));
+    expect(wait()).toBe(4 * 60_000);
+    // After a restart the router still knows.
+    const again = new BrainRouter(() => a, store);
+    expect(again.snapshot()["chatgpt:a"]).toMatchObject({ ok: false, reason: "down" });
+    again.markOk(a);
+    again.markFailed(a, new SlowBrainError("no answer within 6 s"));
+    expect(again.health.get("chatgpt:a")!.strikes).toBe(1);
+  });
 });
 
 describe("secrets scrubber", () => {
@@ -380,6 +400,18 @@ describe("voice out", () => {
     const sentences = await Promise.all(["One.", "Two.", "Three.", "Four."].map((t) => collect(tts.synthesizeStream(t))));
     expect(most).toBe(2);
     expect(sentences.map((a) => a.reduce((n, b) => n + b.byteLength, 0))).toEqual([8, 8, 8, 8]);
+  });
+
+  it("asks ElevenLabs for the owner's speed, and leaves the voice's own settings alone at normal speed", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const f = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return new Response(bytes(4));
+    }) as unknown as typeof fetch;
+    await collect(elevenLabsPcm({ apiKey: "k", voiceId: "v", modelId: "m", speed: 1.1, fetch: f }).synthesizeStream("Hi."));
+    await collect(elevenLabsPcm({ apiKey: "k", voiceId: "v", modelId: "m", speed: 1, fetch: f }).synthesizeStream("Hi."));
+    expect(bodies[0]).toEqual({ text: "Hi.", model_id: "m", voice_settings: { speed: 1.1 } });
+    expect(bodies[1]).toEqual({ text: "Hi.", model_id: "m" });
   });
 
   it("retries a refused sentence, and reports one it still can't speak", async () => {

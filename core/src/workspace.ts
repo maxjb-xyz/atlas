@@ -9,10 +9,12 @@
 // `WorkspaceEgress`, which lets through only approved sites and adds a
 // vault key to a site's requests outside the container (§15). /workspace
 // is kept in R2 after each command and put back when a new container
-// starts, so files outlive the container.
+// starts, and so is each job's folder (put back the first time a new
+// container uses it), so files outlive the container.
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { BRIDGE_JS, BRIDGE_KEY_HEADER, BRIDGE_PATH, BRIDGE_PORT, BRIDGE_VERSION } from "./bridge";
+import { deletePrefix } from "./files";
 
 const IMAGE = "cloudflare/debian-trixie";
 /** How long the container stays up after the last use. Container time is billed while it waits. */
@@ -37,10 +39,18 @@ const PACKAGES = [
   "sqlite3",
   "file",
   "tmux",
+  // Video and audio, and a browser to render with (a job's video made in code, §8.3).
+  "ffmpeg",
+  "chromium",
+  "fonts-noto-core",
 ];
-const BASE = `atlas-base-1:${PACKAGES.join(",")}`;
-/** Where the setup's packages come from: allowed only while setting up. */
+// The "2": a container that skipped setting up after the package list changed (2026-10-25) marked itself ready with the
+// new list; this mark is new to it, so it sets up again.
+const BASE = `atlas-base-2:${PACKAGES.join(",")}`;
+/** Where the setup's packages come from: allowed only while setting up, and while Atlas installs one. */
 const SETUP_HOSTS = ["deb.debian.org", "security.debian.org"];
+/** A Debian package's name, as Atlas installs one asked for (by a job or itself): no version, no source of its own. */
+const PACKAGE = /^[a-z0-9][a-z0-9+.-]{0,62}$/;
 /** /workspace bigger than this isn't kept between containers (it says so). */
 const KEEP_LIMIT = 200_000_000;
 /** The most of a command's output that comes back. */
@@ -58,7 +68,17 @@ const jobDir = (id: string) => `${JOBS}/${id}`;
 const PUSH = "/srv/push";
 /** A job's user: its own name and ids, made the first time it's needed in a container. */
 const userOf = (id: string) => `aj${id.replace(/[^a-z0-9]/g, "").slice(-12)}`;
-const JOB_SAVE = (ws: string, id: string, what: "repo.bundle" | "home.tgz") => `jobs/${ws}/${id}/${what}`;
+const JOB_SAVE = (ws: string, id: string, what: "repo.bundle" | "home.tgz" | "folder.tgz") => `jobs/${ws}/${id}/${what}`;
+/**
+ * A job's whole folder (what it made, its coding agent's repo and renders, what it installed for itself) is kept in R2
+ * after its commands, and put back the first time a new container uses it: the container's disk goes when it sleeps.
+ * Caches aren't kept. A folder bigger than this isn't kept (it says so).
+ */
+const FOLDER_LIMIT = 4_000_000_000;
+/** R2 takes a big copy in parts of one size (at least 5 MiB), so a folder streams in without being held whole. */
+const PART = 16 * 1024 * 1024;
+/** What's never kept of a folder: caches that come back by themselves, and the marks of when it was kept. */
+const NOT_KEPT = ["--exclude=.cache", "--exclude=.npm", "--exclude=./.atlas-kept", "--exclude=./.atlas-keeping"];
 /** A job's saved home bigger than this isn't kept (it says so). */
 const HOME_LIMIT = 50_000_000;
 /** Where coding agents are installed: outside /workspace, so they don't count against its copy. */
@@ -175,7 +195,8 @@ interface Gate {
   rules?: KeyRule[];
 }
 
-const allowed = (host: string, allow: string[]) => allow.some((a) => host === a || host.endsWith(`.${a}`));
+/** Whether the gate lets a host through: one the owner allowed (and what's under it), or any host when they allowed any site ("*"). */
+export const allowed = (host: string, allow: string[]) => allow.some((a) => a === "*" || host === a || host.endsWith(`.${a}`));
 const covers = (host: string, h: string) => host === h || host.endsWith(`.${h}`);
 /**
  * What a command carrying keys adds to the gate while it runs: the keys, and
@@ -297,6 +318,49 @@ interface Preview {
 /** How long a preview link works. Anyone with the link can open it, like Cloudflare's own preview URLs. */
 const PREVIEW_MS = 24 * 3600_000;
 
+/** Streams bytes into R2 in equal parts, and keeps them only if `ok` says the stream ended well. */
+export async function streamToR2(
+  bucket: R2Bucket,
+  key: string,
+  body: ReadableStream<Uint8Array>,
+  ok: () => Promise<boolean>,
+  part = PART,
+): Promise<boolean> {
+  const up = await bucket.createMultipartUpload(key);
+  const parts: R2UploadedPart[] = [];
+  let buf = new Uint8Array(part);
+  let n = 0;
+  try {
+    const reader = body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      let at = 0;
+      while (at < value.length) {
+        const take = Math.min(part - n, value.length - at);
+        buf.set(value.subarray(at, at + take), n);
+        n += take;
+        at += take;
+        if (n === part) {
+          parts.push(await up.uploadPart(parts.length + 1, buf));
+          buf = new Uint8Array(part);
+          n = 0;
+        }
+      }
+    }
+    if (n || !parts.length) parts.push(await up.uploadPart(parts.length + 1, buf.slice(0, n)));
+    if (!(await ok())) {
+      await up.abort();
+      return false;
+    }
+    await up.complete(parts);
+    return true;
+  } catch (err) {
+    await up.abort().catch(() => {});
+    throw err;
+  }
+}
+
 /** Quotes a string for bash. */
 const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
@@ -305,10 +369,38 @@ export class Workspace extends DurableObject<Env> {
   #starting: Promise<void> | null = null;
   /** The running container got all the way through setting up (see READY). */
   #ready = false;
+  /** Jobs' folders this container has: put back from their copy ("kept"), already here, or made new. */
+  #here = new Map<string, "kept" | "here" | "new">();
+  /** A copy of a job's folder being made, and whether another is wanted when it's done. */
+  #keeping = new Map<string, Promise<void>>();
+  #again = new Set<string>();
+  /** What the last copy of a job's folder said when it couldn't keep it (too big, or an error), for its next command. */
+  #folderNotes = new Map<string, string>();
 
   /** Stops the container, so the next command starts it fresh. /workspace and the setup snapshot are kept. */
   async restart(): Promise<void> {
     await this.#stop("restarted by the owner");
+  }
+
+  /**
+   * Delete everything (§23.4): stops the container, deletes /workspace's
+   * kept copy and every job's saved work from R2, and forgets the rest
+   * (sites, previews, the setup snapshot's id; the snapshot holds only the
+   * packages, and runs out by itself). Says what it couldn't delete.
+   */
+  async wipe(): Promise<string[]> {
+    const notes: string[] = [];
+    await this.#stop("Atlas is deleting everything");
+    try {
+      await this.env.FILES.delete(BACKUP(this.#name));
+      await deletePrefix(this.env.FILES, `jobs/${this.#name}/`);
+    } catch (err) {
+      notes.push(`The workspace's copies are still in the files store (R2 said: ${err instanceof Error ? err.message : String(err)}).`);
+    }
+    await this.ctx.storage.deleteAll();
+    this.#base = null;
+    this.#key = undefined;
+    return notes;
   }
 
   /** Stops the container and waits until it has, so the next start doesn't find it still going. */
@@ -409,7 +501,8 @@ export class Workspace extends DurableObject<Env> {
     const extra = [...this.#extra.values()];
     // The gate can't tell who's asking, so while a job's agent runs, the owner's vault keys stay off it: an agent could
     // otherwise reach their sites with them. The owner's own commands then reach those sites without the key.
-    this.#keysOff = jobs.length > 0 && Object.keys(this.#base.inject).length > 0;
+    const off = jobs.length > 0 || extra.some((e) => e.keysOff);
+    this.#keysOff = off && Object.keys(this.#base.inject).length > 0;
     if (jobs.length) {
       const next = Math.min(...jobs.map((j) => j.until ?? now));
       await this.ctx.storage.setAlarm(next + 1_000).catch(() => {});
@@ -418,7 +511,7 @@ export class Workspace extends DurableObject<Env> {
       props: {
         ws: this.#name,
         allow: [...new Set([...this.#base.allow, ...extra.flatMap((e) => e.allow), ...jobs.flatMap((j) => j.allow)])],
-        inject: jobs.length ? {} : this.#base.inject,
+        inject: off ? {} : this.#base.inject,
         rules: [...extra.flatMap((e) => e.rules), ...jobs.flatMap((j) => j.rules)],
       },
     });
@@ -452,6 +545,8 @@ export class Workspace extends DurableObject<Env> {
       await this.#stop(marked === "no" ? "left half set up" : "didn't answer");
     }
     this.#starting ??= (async () => {
+      // A new container has none of the jobs' folders until they're put back.
+      this.#here.clear();
       const saved = await this.#saved();
       const fromSnapshot = saved.snapshot?.base === BASE ? saved.snapshot : null;
       const start = async (snap: { id: string } | null) => {
@@ -471,16 +566,22 @@ export class Workspace extends DurableObject<Env> {
       };
       await say(fromSnapshot ? "Starting the workspace." : "Setting up the workspace for the first time (a minute or two).");
       let ok = await start(fromSnapshot);
+      let fromImage = !fromSnapshot;
       if (!ok && fromSnapshot) {
         // The snapshot ran out (they last 30 days unused): set up again from the image.
         await this.#c.destroy("snapshot expired").catch(() => {});
         await this.ctx.storage.put<Saved>("saved", { snapshot: null });
         await say("The workspace's saved setup was gone, so it's setting up again.");
         ok = await start(null);
+        fromImage = true;
       }
       if (!ok) throw new Error("The workspace container didn't start.");
+      // Started from the bare image (the first start, an expired snapshot, or a saved setup made for an older package
+      // list), it sets up: installs the packages and saves a new snapshot. An old snapshot still on file doesn't count.
+      const settingUp = fromImage;
+      if (settingUp && saved.snapshot && saved.snapshot.base !== BASE)
+        await say("The workspace's tools changed, so it's setting up again (a minute or two).");
       // The gate's certificate appears once a gate is registered, so register one (setup's package sites, or nothing) first.
-      const settingUp = !(await this.#saved()).snapshot;
       // Setting up reaches Debian's package sites only, for this step.
       if (settingUp) this.#extra.set("setup", { allow: SETUP_HOSTS, rules: [] });
       await this.#gate();
@@ -505,6 +606,13 @@ export class Workspace extends DurableObject<Env> {
       if (backup) {
         const r = await this.#exec("tar xzf - -C /", { stdin: backup.body });
         if (r.exit !== 0) await say(`Couldn't put /workspace back from its copy: ${r.out.slice(-300)}`);
+      }
+      // What Atlas installed later (for a job, or itself) goes back on, since a new container has only the setup's.
+      const extras = (await this.ctx.storage.get<string[]>("extra_packages")) ?? [];
+      if (extras.length) {
+        await say(`Putting back the ${extras.length === 1 ? "tool" : `${extras.length} tools`} installed earlier.`);
+        const r = await this.#aptInstall(extras);
+        if (r.exit !== 0) await say(`Some of them didn't come back: ${r.out.slice(-400)}`);
       }
       // Jobs' users can't read the owner's files, each other's folders, or where Atlas pushes from.
       const fence = await this.#exec(`chmod 700 /workspace && mkdir -p ${JOBS} ${PUSH} && chmod 711 ${JOBS} && chmod 700 ${PUSH}`);
@@ -573,14 +681,24 @@ export class Workspace extends DurableObject<Env> {
         if (o.as && !cwd.startsWith(`${jobDir(safeId(o.as))}`)) throw new Error("A job's commands run in its own folder.");
         // What's in a command's own environment (a nonce) never goes to a job's user.
         if (o.as && o.env && Object.keys(o.env).length) throw new Error("A job's commands don't take an environment of their own.");
+        if (o.as) await this.#folderBack(o.as, (note) => send({ note }));
         await this.#setBase({ allow: o.allow, inject: o.inject });
-        if (o.rules?.length) this.#extra.set(key, carrying(o.rules));
+        // A job's command (`as`) runs with the owner's vault keys off the gate, as a job's agent does.
+        if (o.rules?.length || o.as)
+          this.#extra.set(key, { ...(o.rules?.length ? carrying(o.rules) : { allow: [], rules: [] }), ...(o.as ? { keysOff: true } : {}) });
         await this.#gate();
         this.#blocked.clear();
         const inner = `cd ${sh(cwd)} && timeout -k 5 ${o.timeout_s} bash -lc ${sh(o.command)}`;
         const user = o.as ? await this.#jobUser(o.as) : null;
         const p = await this.#c.exec(
-          ["bash", "-lc", user ? `runuser -u ${user.name} -- bash -lc ${sh(inner)}` : `mkdir -p ${sh(cwd)} && ${inner}`],
+          [
+            "bash",
+            "-lc",
+            user
+              ? // The job's folder and home, made its own the first time (a job Atlas owns has no clone to make them).
+                `install -d -o ${user.uid} -g ${user.gid} -m 700 ${sh(jobDir(o.as!))} ${sh(`${jobDir(o.as!)}/home`)} && runuser -u ${user.name} -- bash -lc ${sh(inner)}`
+              : `mkdir -p ${sh(cwd)} && ${inner}`,
+          ],
           {
             env: { ...ENV, ...(user ? { HOME: `${jobDir(o.as!)}/home` } : {}), ...(o.env ?? {}) },
             stderr: "combined",
@@ -601,7 +719,8 @@ export class Workspace extends DurableObject<Env> {
         const exit = await p.exitCode;
         // A key behind a nonce is for this command only.
         if (this.#extra.delete(key)) await this.#gate();
-        const kept = await this.#keep();
+        const kept = o.as ? (this.#folderNotes.get(o.as) ?? "") : await this.#keep();
+        if (o.as) this.#keepSoon(o.as);
         if (this.#keysOff) await send({ note: "Your vault keys aren't added to the workspace's requests while a coding job runs." });
         await send({ done: { exit, ms: Date.now() - t0, blocked: [...this.#blocked], kept } });
       } catch (err) {
@@ -812,7 +931,7 @@ export class Workspace extends DurableObject<Env> {
    * and the work not yet committed (as a commit of its own, `refs/atlas/wip`)
    * in a git bundle, and its agent's home as a tarball, both in R2.
    */
-  async jobSave(id: string, o: { base: string }): Promise<{ ok: boolean; note: string }> {
+  async jobSave(id: string, o: { base: string; full?: boolean }): Promise<{ ok: boolean; note: string }> {
     safeId(id);
     if (!/^[0-9a-f]{7,64}$/.test(o.base)) throw new Error(`"${o.base}" isn't a commit.`);
     if (!this.ctx.container?.running) return { ok: false, note: "The workspace is asleep; nothing new to keep." };
@@ -826,7 +945,10 @@ export class Workspace extends DurableObject<Env> {
         `rm -f "$GIT_INDEX_FILE" && git read-tree HEAD && git -c core.hooksPath=/dev/null add -A >/dev/null 2>&1`,
         `tree=$(git write-tree) && wip=$(git -c user.name=Atlas -c user.email=atlas@localhost commit-tree "$tree" -p HEAD -m "Work in progress, kept by Atlas") && git update-ref refs/atlas/wip "$wip"`,
         `rm -f "$GIT_INDEX_FILE" && unset GIT_INDEX_FILE`,
-        `(git bundle create ${file} --branches refs/atlas/wip ^${o.base} >/dev/null 2>&1 || git bundle create ${file} --branches refs/atlas/wip >/dev/null 2>&1)`,
+        // A step's repo was made in the workspace, so a new container has no base to build on: all of it is kept.
+        o.full
+          ? `git bundle create ${file} --branches refs/atlas/wip >/dev/null 2>&1`
+          : `(git bundle create ${file} --branches refs/atlas/wip ^${o.base} >/dev/null 2>&1 || git bundle create ${file} --branches refs/atlas/wip >/dev/null 2>&1)`,
         `s=$(stat -c %s ${file}) && if [ "$s" -gt ${SAVE_LIMIT} ]; then rm -f ${file}; echo "The job's work is $((s / 1000000)) MB, over the ${SAVE_LIMIT / 1_000_000} MB that's kept; ignore big generated files in .gitignore." >&2; exit 3; fi`,
         `cat ${file}; rm -f ${file}`,
       ].join(" && "),
@@ -849,6 +971,9 @@ export class Workspace extends DurableObject<Env> {
     if (home.exit !== 0)
       return { ok: true, note: `The agent's home wasn't kept this time: ${home.err.slice(-200) || `exit ${home.exit}`}` };
     await this.env.FILES.put(JOB_SAVE(this.#name, id, "home.tgz"), home.bytes);
+    // A job Atlas owns keeps its whole folder too, with what its agent made that git doesn't keep (renders, downloads).
+    // A coding job on one of the owner's repos comes back from its clone and branch instead.
+    if (o.full) this.#keepSoon(id);
     return { ok: true, note: "" };
   }
 
@@ -863,6 +988,9 @@ export class Workspace extends DurableObject<Env> {
     if (!/^[A-Za-z0-9._/-]{1,120}$/.test(o.branch)) throw new Error(`"${o.branch}" isn't a branch name.`);
     await this.#up(async () => {});
     const dir = jobDir(id);
+    // The whole folder came back from its copy: its repo with it, newer than the bundle.
+    if ((await this.#folderBack(id, async () => {})) === "kept" && (await this.#exec(`test -d ${sh(`${dir}/repo/.git`)}`)).exit === 0)
+      return { restored: true, note: "" };
     const bundle = await this.env.FILES.get(JOB_SAVE(this.#name, id, "repo.bundle"));
     if (!bundle) return { restored: false, note: "Nothing of this job was kept yet." };
     // Its folder is the job's user's; what was kept is put back as that user, never as root.
@@ -1024,9 +1152,185 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /** Whether the job's folder is in the running container, so it doesn't need putting back. */
+  /**
+   * Makes sure this container has the job's folder: made for its user the first time, or put back from its copy when
+   * the container is new. Says when it's putting it back. Once per folder per container.
+   */
+  async #folderBack(id: string, say: (note: string) => Promise<unknown>): Promise<"kept" | "here" | "new"> {
+    const known = this.#here.get(safeId(id));
+    if (known) return known;
+    const dir = jobDir(id);
+    const user = await this.#jobUser(id);
+    let state: "kept" | "here" | "new" = "here";
+    if ((await this.#exec(`test -d ${sh(dir)}`)).exit !== 0) {
+      const mk = await this.#exec(`install -d -o ${user.uid} -g ${user.gid} -m 700 ${sh(dir)} ${sh(`${dir}/home`)}`);
+      if (mk.exit !== 0) throw new Error(`The workspace couldn't make the job's folder: ${mk.out.slice(-300)}`);
+      const copy = await this.env.FILES.get(JOB_SAVE(this.#name, id, "folder.tgz"));
+      state = "new";
+      if (copy) {
+        await say(`Your folder is coming back as you left it (${Math.round(copy.size / 1e6)} MB).`);
+        // Put back as the job's user, never as root: what's in it is the job's.
+        const r = await this.#exec(`tar xzf - -C ${sh(dir)} && touch ${sh(`${dir}/.atlas-kept`)}`, {
+          stdin: copy.body,
+          timeoutS: 900,
+          as: id,
+        });
+        if (r.exit !== 0) await say(`Your folder didn't all come back: ${r.out.slice(-300)}`);
+        state = "kept";
+      }
+    }
+    this.#here.set(id, state);
+    return state;
+  }
+
+  /** Keeps a job's folder soon, in the background: one copy at a time per folder, and one more if it changed meanwhile. */
+  #keepSoon(id: string): void {
+    if (this.#keeping.has(id)) {
+      this.#again.add(id);
+      return;
+    }
+    const run = (async () => {
+      do {
+        this.#again.delete(id);
+        const note = await this.folderKeep(id).catch(
+          (err: unknown) => `Couldn't keep your folder: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        if (note) {
+          this.#folderNotes.set(id, note);
+          console.error(JSON.stringify({ at: "workspace.folder_keep", job: id, note }));
+        } else this.#folderNotes.delete(id);
+      } while (this.#again.has(id));
+    })().finally(() => this.#keeping.delete(id));
+    this.#keeping.set(id, run);
+  }
+
+  /**
+   * Keeps a job's folder in R2 as it is now (not its caches), streamed in parts so it's never held whole, when anything
+   * in it changed since the last copy. Says why when it couldn't.
+   */
+  async folderKeep(id: string): Promise<string> {
+    safeId(id);
+    if (!this.ctx.container?.running) return "";
+    // After a restart of this object the container may still have the folder: it says so, rather than being skipped.
+    await this.#folderBack(id, async () => {});
+    const dir = jobDir(id);
+    const kept = `${dir}/.atlas-kept`;
+    const same = await this.#exec(
+      `test -e ${sh(kept)} && [ -z "$(find ${sh(dir)} -newer ${sh(kept)} -not -path '*/.cache/*' -not -path '*/.npm/*' -print -quit 2>/dev/null)" ]`,
+      { as: id },
+    );
+    if (same.exit === 0) return "";
+    const size = Number((await this.#exec(`du -sb --exclude=.cache --exclude=.npm ${sh(dir)} | cut -f1`, { as: id })).out.trim()) || 0;
+    if (size > FOLDER_LIMIT)
+      return `Your folder is ${(size / 1e9).toFixed(1)} GB, over the ${FOLDER_LIMIT / 1e9} GB that's kept while the workspace sleeps, so it isn't kept now; keep it smaller (delete renders you don't need).`;
+    const user = await this.#jobUser(id);
+    // Marked before it's read, so what changes while it's copied counts as changed next time.
+    const tar = `touch ${sh(`${dir}/.atlas-keeping`)} && tar czf - --warning=no-file-changed ${NOT_KEPT.join(" ")} -C ${sh(dir)} .; [ $? -le 1 ]`;
+    const p = await this.#c.exec(["bash", "-lc", `runuser -u ${user.name} -- bash -lc ${sh(tar)}`], {
+      env: { ...ENV, HOME: `${dir}/home` },
+      cwd: "/",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const errors = p.stderr ? new Response(p.stderr).text() : Promise.resolve("");
+    const stored = await streamToR2(
+      this.env.FILES,
+      JOB_SAVE(this.#name, id, "folder.tgz"),
+      p.stdout!,
+      async () => (await p.exitCode) === 0,
+    );
+    if (!stored) return `Couldn't keep your folder: ${(await errors).slice(-300) || "tar failed"}`;
+    await this.#exec(`mv -f ${sh(`${dir}/.atlas-keeping`)} ${sh(kept)}`, { as: id });
+    return "";
+  }
+
+  /**
+   * Writes a file: under /workspace, or in a job's folder as its user (`as`). The folder or /workspace is kept after,
+   * as after a command.
+   */
+  async write(
+    path: string,
+    body: ReadableStream<Uint8Array>,
+    as?: string,
+  ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+    const under = as ? `${jobDir(safeId(as))}/` : "/workspace/";
+    if (!path.startsWith(under) || path.split("/").some((p) => p === ".."))
+      return { ok: false, error: `${path} isn't in ${as ? "the job's folder" : "/workspace"}.` };
+    try {
+      await this.#up(async () => {});
+      if (as) await this.#folderBack(as, async () => {});
+      const r = await this.#exec(`mkdir -p "$(dirname ${sh(path)})" && cat > ${sh(path)}`, {
+        stdin: body,
+        timeoutS: 300,
+        ...(as ? { as } : {}),
+      });
+      if (r.exit !== 0) return { ok: false, error: r.out.slice(-300) || `Couldn't write ${path}.` };
+      if (as) this.#keepSoon(as);
+      else await this.#keep();
+      return { ok: true, path };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Installs Debian packages as root, reaching only Debian's package sites for it. */
+  async #aptInstall(packages: string[]): Promise<{ exit: number; out: string }> {
+    const key = `apt:${crypto.randomUUID()}`;
+    this.#extra.set(key, { allow: SETUP_HOSTS, rules: [] });
+    try {
+      await this.#gate();
+      return await this.#exec(
+        `${HTTP_SOURCES} && apt-get update -qq >/tmp/apt.log 2>&1 && apt-get install -y -qq --no-install-recommends ${packages.map(sh).join(" ")} >>/tmp/apt.log 2>&1 || (tail -30 /tmp/apt.log; exit 1)`,
+        { timeoutS: 900 },
+      );
+    } finally {
+      this.#extra.delete(key);
+      await this.#gate().catch(() => {});
+    }
+  }
+
+  /**
+   * Installs Debian packages a job (or Atlas) asked for, as root, so a job gets system tools without root of its own:
+   * by name only, from Debian. They're remembered and put back on every new container.
+   */
+  async install(packages: string[]): Promise<{ ok: boolean; note: string }> {
+    const names = [...new Set(packages.map((p) => p.trim().toLowerCase()))];
+    const bad = names.filter((p) => !PACKAGE.test(p));
+    if (bad.length) return { ok: false, note: `Those aren't Debian package names: ${bad.join(", ")}.` };
+    if (!names.length || names.length > 20) return { ok: false, note: "Name between 1 and 20 packages." };
+    try {
+      await this.#up(async () => {});
+      const r = await this.#aptInstall(names);
+      if (r.exit !== 0) return { ok: false, note: `apt-get couldn't install them: ${r.out.slice(-1_200)}` };
+      const had = (await this.ctx.storage.get<string[]>("extra_packages")) ?? [];
+      await this.ctx.storage.put("extra_packages", [...new Set([...had, ...names])].slice(-100));
+      return { ok: true, note: "" };
+    } catch (err) {
+      return { ok: false, note: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Puts one of the owner's files (from Library) into a job's folder, at `path` in it, as the job's user. */
+  async folderPut(id: string, path: string, fileId: string): Promise<{ ok: boolean; note: string }> {
+    safeId(id);
+    if (!/^[A-Za-z0-9_-]{3,64}$/.test(fileId)) throw new Error(`"${fileId}" isn't a file id.`);
+    const rel = path.replace(/^\.?\/+/, "");
+    if (!rel || rel.split("/").some((p) => p === ".." || p === "")) return { ok: false, note: `${path} isn't a place in your folder.` };
+    const obj = await this.env.FILES.get(`files/${fileId}`);
+    if (!obj) return { ok: false, note: "That file isn't in Library any more." };
+    await this.#up(async () => {});
+    await this.#folderBack(id, async () => {});
+    const full = `${jobDir(id)}/${rel}`;
+    const r = await this.#exec(`mkdir -p "$(dirname ${sh(full)})" && cat > ${sh(full)}`, { stdin: obj.body, timeoutS: 300, as: id });
+    if (r.exit !== 0) return { ok: false, note: `Couldn't put it there: ${r.out.slice(-300)}` };
+    this.#keepSoon(id);
+    return { ok: true, note: "" };
+  }
+
   async jobHere(id: string): Promise<boolean> {
     safeId(id);
     if (!this.ctx.container?.running) return false;
+    await this.#folderBack(id, async () => {});
     return (await this.#exec(`test -d ${sh(`${jobDir(id)}/repo/.git`)}`)).exit === 0;
   }
 
@@ -1035,7 +1339,12 @@ export class Workspace extends DurableObject<Env> {
     safeId(id);
     await this.jobStop(id);
     if (this.ctx.container?.running) await this.#exec(`rm -rf ${sh(jobDir(id))}`);
-    await this.env.FILES.delete([JOB_SAVE(this.#name, id, "repo.bundle"), JOB_SAVE(this.#name, id, "home.tgz")]);
+    this.#here.delete(id);
+    await this.env.FILES.delete([
+      JOB_SAVE(this.#name, id, "repo.bundle"),
+      JOB_SAVE(this.#name, id, "home.tgz"),
+      JOB_SAVE(this.#name, id, "folder.tgz"),
+    ]);
   }
 
   async #setJobGate(id: string, gate: JobGate | null): Promise<void> {
@@ -1059,7 +1368,8 @@ export class Workspace extends DurableObject<Env> {
 
   #base: { allow: string[]; inject: Record<string, string> } | null = null;
   /** What running commands add to the gate while they run (an install's npm, a git step's key), by command. */
-  #extra = new Map<string, { allow: string[]; rules: KeyRule[] }>();
+  /** What each command running now adds to the gate; `keysOff` takes the owner's vault keys off it while a job's command runs. */
+  #extra = new Map<string, { allow: string[]; rules: KeyRule[]; keysOff?: boolean }>();
   /** The gate was set by this instance (a deploy leaves the old version's handler until it's set again). */
   #gated = false;
   /** The owner's vault keys are off the gate while a job runs. */

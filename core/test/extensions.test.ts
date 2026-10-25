@@ -141,6 +141,9 @@ describe("moving M4's providers out of the core", () => {
         messages: async () => {},
         changed: () => {},
         origin: () => null,
+        bucket: () => null,
+        background: () => {},
+        recordsChanged: () => {},
       });
       await desk.upgrade();
       expect(
@@ -381,5 +384,16 @@ describe("the gate's placeholders", () => {
       const m = b.manifest as { id: string; hosts: string[]; signin?: { token: string } };
       if (m.signin) expect(allowedHost(new URL(m.signin.token).hostname, m.hosts), m.id).toBe(true);
     }
+  });
+});
+
+describe("an extension's hosts", () => {
+  it("cover their subdomains, but a shared suffix or a bare name covers only itself", async () => {
+    const { allowedHost } = await import("../src/extensions");
+    expect(allowedHost("api.linear.app", ["linear.app"])).toBe(true);
+    expect(allowedHost("atlas.someone.workers.dev", ["workers.dev"])).toBe(false);
+    expect(allowedHost("evil.github.io", ["github.io"])).toBe(false);
+    expect(allowedHost("anything.com", ["com"])).toBe(false);
+    expect(allowedHost("workers.dev", ["workers.dev"])).toBe(true);
   });
 });

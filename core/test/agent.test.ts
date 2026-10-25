@@ -1,6 +1,6 @@
 import { runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type PersonAgent, seams } from "../src/agent";
+import { type PersonAgent, seams, type SpeechPart } from "../src/agent";
 import type { ServerMessage } from "../src/protocol";
 import { CalendarError } from "../src/calendar/types";
 import { getItem } from "../src/store/agenda";
@@ -245,6 +245,32 @@ describe("the thread", () => {
     s.ws.close();
   });
 
+  it("sets an area's color and icon from the app, keeping an uploaded logo in the files store", async () => {
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "America/New_York" });
+    await s.next("atlas.snapshot");
+    s.send({ type: "atlas.area.create", name: "Riverside", about: "A client" });
+    const made = await s.next("atlas.areas", (m) => m.areas.some((a) => a.name === "Riverside"));
+    const area = made.areas.find((a) => a.name === "Riverside")!;
+    expect(area).toMatchObject({ custom_color: null, icon: null });
+
+    s.send({ type: "atlas.area.look", id: area.id, custom_color: "#123abc", icon: "film" });
+    const looked = await s.next("atlas.areas", (m) => m.areas.some((a) => a.id === area.id && a.icon === "film"));
+    expect(looked.areas.find((a) => a.id === area.id)).toMatchObject({ custom_color: "#123abc", icon: "film" });
+
+    // A logo: kept as a file, and the area points at it.
+    const png = btoa(String.fromCharCode(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a));
+    s.send({ type: "atlas.area.look", id: area.id, image: { name: "logo.png", type: "image/png", data: png } });
+    const logo = await s.next("atlas.areas", (m) => m.areas.some((a) => a.id === area.id && a.icon?.startsWith("file:") === true));
+    const file = logo.areas.find((a) => a.id === area.id)!.icon!.slice(5);
+    expect(await (await env.FILES.get(`files/${file}`))!.arrayBuffer()).toHaveProperty("byteLength", 8);
+
+    // Something it can't use says why, in words.
+    s.send({ type: "atlas.area.look", id: area.id, image: { name: "x.png", type: "image/png", data: "%%%" } });
+    expect((await s.next("atlas.error")).message).toMatch(/didn't arrive whole/);
+    s.ws.close();
+  });
+
   it("keeps a reminder's promise when it comes due, even with no brain", async () => {
     brains([call("reminder_create", { text: "Take the bread out", at: "2099-01-01T09:00" }), say("Will do."), new Error("down")]);
     const s = await connect();
@@ -393,10 +419,11 @@ describe("the thread", () => {
     // Once the wait is over, the next read tries iCloud again; it accepts, and the refusal clears with no help from the owner.
     refuse = false;
     await runInDurableObject(owner(), async (_a: PersonAgent, state) => {
-      const row = state.storage.sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = 'icloud_refused'`).one();
-      const waiting = JSON.parse(row.value) as { next_try: number };
-      waiting.next_try = Date.now() - 1;
-      state.storage.sql.exec(`UPDATE state SET value = ? WHERE key = 'icloud_refused'`, JSON.stringify(waiting));
+      // Each calendar's refusal is kept by its extension; the test calendar has none, so it's "".
+      const row = state.storage.sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = 'calendar_refusals'`).one();
+      const all = JSON.parse(row.value) as Record<string, { next_try: number }>;
+      all[""]!.next_try = Date.now() - 1;
+      state.storage.sql.exec(`UPDATE state SET value = ? WHERE key = 'calendar_refusals'`, JSON.stringify(all));
     });
     const today = new Date().toISOString().slice(0, 10);
     s.send({ type: "atlas.calendar", ref: "now", start: today, end: today + "T23:59" });
@@ -427,7 +454,7 @@ describe("the thread", () => {
     expect(r.next_try - r.at).toBe(30 * 60_000);
     expect(r.note).toContain("Atlas will try again by itself after");
     await runInDurableObject(owner(), async (_a: PersonAgent, state) =>
-      state.storage.sql.exec(`DELETE FROM state WHERE key = 'icloud_refused'`),
+      state.storage.sql.exec(`DELETE FROM state WHERE key IN ('icloud_refused', 'calendar_refusals')`),
     );
     s.ws.close();
   });
@@ -563,14 +590,20 @@ describe("voice", () => {
         messages: [],
         signal: new AbortController().signal,
       });
-      const it = (spoken as AsyncIterable<string>)[Symbol.asyncIterator]();
+      const it = (spoken as AsyncIterable<SpeechPart>)[Symbol.asyncIterator]();
       const status = await it.next();
+      const pause = await it.next();
       release();
       let rest = "";
-      for (let x = await it.next(); !x.done; x = await it.next()) rest += x.value;
-      return { status: status.value as string, rest };
+      for (let x = await it.next(); !x.done; x = await it.next()) rest += x.value.type === "text-delta" ? x.value.text : "|";
+      return { status: status.value, pause: pause.value, rest };
     });
-    expect(said).toEqual({ status: "Checking your calendar. ", rest: "You're free." });
+    // The status line is spoken before the lookup answers: a break follows it.
+    expect(said).toEqual({
+      status: { type: "text-delta", text: "Checking your calendar. " },
+      pause: { type: "finish-step" },
+      rest: "You're free.",
+    });
     s.send({ type: "atlas.secret.set", secret: { name: "elevenlabs_api_key", value: null } });
     await s.next("atlas.view");
     s.ws.close();
@@ -588,9 +621,9 @@ describe("voice", () => {
         messages: [],
         signal: new AbortController().signal,
       });
-      return collect(spoken as AsyncIterable<string>);
+      return collect(spoken as AsyncIterable<SpeechPart>);
     });
-    expect(words.join("")).toBe("Checking your calendar. You're free all afternoon.");
+    expect(words.map((w) => (w.type === "text-delta" ? w.text : "|")).join("")).toBe("Checking your calendar. |You're free all afternoon.");
     expect(b.voice.requests[0]!.system).toContain("speaking out loud");
     expect(b.voice.requests[0]!.tools.map((t) => t.name)).toContain("calendar_read");
 

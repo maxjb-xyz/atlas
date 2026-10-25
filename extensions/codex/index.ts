@@ -11,6 +11,7 @@ import type { Extension } from "../sdk";
 const ext: Extension = {
   manifest: {
     id: "codex",
+    icon_invert: true,
     name: "Codex",
     version: "1.0.0",
     about:

@@ -9,7 +9,7 @@ import type { AutomationInput, Step, Trigger } from "../../../core/src/automatio
 import type { AutomationView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Composer } from "../Shell";
-import { Empty, Icon, type ICONS, Sheet, shortDay, Stage, startOfDay } from "../ui";
+import { Empty, Icon, type ICONS, Picker, Seg, Sheet, shortDay, Stage, startOfDay } from "../ui";
 
 type Filter = "all" | "request" | "schedule" | "event" | "watch";
 
@@ -235,11 +235,53 @@ export function Switch({ on, onChange, disabled }: { on: boolean; onChange: (on:
 }
 
 const REPORT: Record<AutomationView["report"], [string, string]> = {
-  thread: ["Thread", "Says it to you, and notifies you if Atlas isn't open"],
-  worth: ["Thread, when it's worth saying", "Says it only when there's something worth saying, and waits for quiet hours"],
+  thread: ["Tells you", "Every time it runs"],
+  worth: ["Tells you, when it's worth it", "Only when there's something worth saying, after quiet hours"],
   inbox: ["Inbox", "Waits in Inbox for you to look over"],
   silent: ["History", "Only in History"],
 };
+
+/**
+ * Where an automation can tell the owner, only what's really there: wherever
+ * they are (in Atlas when it's open, else their Notifications lists), a chat
+ * they've linked, or a notification once a device takes them.
+ */
+function places(atlas: Atlas, keep?: string): Array<{ value: string; label: string; sub?: string; phrase: string }> {
+  const v = atlas.state.view;
+  const chats = (v?.channels ?? []).filter((c) => c.linked);
+  const devices = v?.settings.notifications.push ? (v?.push.devices ?? []) : [];
+  const word = (p: string) => (p === "push" ? (devices.length ? "a notification" : null) : (chats.find((c) => c.ext === p)?.name ?? null));
+  const usual = (v?.settings.notifications.lists.soon ?? []).map(word).filter((w): w is string => !!w);
+  const out = [
+    {
+      value: "you",
+      label: "Where you are",
+      sub: usual.length ? `In Atlas when it's open, otherwise ${usual.join(", then ")}` : "In Atlas, for when you next open it",
+      phrase: "wherever you are",
+    },
+    ...chats.map((c) => ({ value: c.ext, label: c.name, sub: `Always in your ${c.name} chat with Atlas`, phrase: `in ${c.name}` })),
+    ...(devices.length
+      ? [
+          {
+            value: "push",
+            label: "A notification",
+            sub: `Always, on ${devices.length === 1 ? devices[0]!.name : "the device you used last"}`,
+            phrase: "as a notification",
+          },
+        ]
+      : []),
+  ];
+  // A place saved before it went away (a chat unlinked) still shows, so it can be changed.
+  if (keep && !out.some((p) => p.value === keep))
+    out.push({
+      value: keep,
+      label: keep === "push" ? "A notification" : keep,
+      sub: "Not set up now, so it goes where you are",
+      phrase: "where you are",
+    });
+  return out;
+}
+const placePhrase = (atlas: Atlas, to: string) => places(atlas, to).find((p) => p.value === to)?.phrase ?? "wherever you are";
 
 /** One automation as a When → Do → Report flow, with what it may do and its runs (docs/ui screen 12). Also its stage view. */
 export function AutomationFlow({
@@ -373,7 +415,9 @@ export function AutomationFlow({
           <span className="lab">Report</span>
           <div className="flow-item">
             <span className="lab faint">{REPORT[a.report][0]}</span>
-            <span>{REPORT[a.report][1]}</span>
+            <span>
+              {a.report === "thread" || a.report === "worth" ? `${REPORT[a.report][1]}, ${placePhrase(atlas, a.to)}.` : REPORT[a.report][1]}
+            </span>
           </div>
         </div>
       </div>
@@ -525,7 +569,7 @@ function AutomationForm({
   const webhooks = atlas.state.view?.webhooks ?? [];
   const [f, setF] = useState<AutomationInput>(() =>
     a
-      ? { name: a.name, about: a.about, when: a.when, do: a.steps.map((s) => s.step), report: a.report }
+      ? { name: a.name, about: a.about, when: a.when, do: a.steps.map((s) => s.step), report: a.report, to: a.to }
       : (start ?? { name: "", about: "", when: blankTrigger("request"), do: [{ kind: "say", text: "" }], report: "thread" }),
   );
   const t = f.when;
@@ -697,14 +741,12 @@ function AutomationForm({
         </label>
       )}
       {t.kind === "event" && t.on === "automation" && (
-        <select value={t.after ?? ""} onChange={(e) => setT({ after: e.target.value })}>
-          <option value="">After which automation?</option>
-          {others.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name}
-            </option>
-          ))}
-        </select>
+        <Picker
+          label="After which automation"
+          value={t.after ?? ""}
+          options={[{ value: "", label: "After which automation?" }, ...others.map((o) => ({ value: o.id, label: o.name }))]}
+          onPick={(after) => setT({ after })}
+        />
       )}
 
       <span className="lab">Do</span>
@@ -713,11 +755,12 @@ function AutomationForm({
           <span className="mono faint" style={{ paddingTop: 8 }}>
             {String(i + 1).padStart(2, "0")}
           </span>
-          <select
+          <Seg
+            small
+            label="What this step does"
             value={s.kind}
-            style={{ width: 120 }}
-            onChange={(e) => {
-              const k = e.target.value as Step["kind"];
+            options={[["say", "Say"], ...(webhooks.length ? [["webhook", "Webhook"] as const] : []), ["atlas", "Atlas does"]]}
+            onChange={(k) =>
               setStep(
                 i,
                 k === "say"
@@ -725,15 +768,9 @@ function AutomationForm({
                   : k === "webhook"
                     ? { kind: k, webhook: webhooks[0]?.name ?? "" }
                     : { kind: k, instructions: "" },
-              );
-            }}
-          >
-            <option value="say">Say</option>
-            <option value="webhook" disabled={!webhooks.length}>
-              Webhook
-            </option>
-            <option value="atlas">Atlas does</option>
-          </select>
+              )
+            }
+          />
           {s.kind === "say" && (
             <input
               className="grow"
@@ -745,13 +782,12 @@ function AutomationForm({
           )}
           {s.kind === "webhook" && (
             <>
-              <select value={s.webhook} onChange={(e) => setStep(i, { ...s, webhook: e.target.value })}>
-                {webhooks.map((w) => (
-                  <option key={w.id} value={w.name}>
-                    {w.name}
-                  </option>
-                ))}
-              </select>
+              <Picker
+                label="Which webhook"
+                value={s.webhook}
+                options={webhooks.map((w) => ({ value: w.name, label: w.name }))}
+                onPick={(webhook) => setStep(i, { ...s, webhook })}
+              />
               <input
                 className="grow"
                 value={s.message ?? ""}
@@ -793,15 +829,34 @@ function AutomationForm({
         <span className="faint small">Say and webhook steps run as written, with no model. An Atlas step uses judgment.</span>
       </div>
 
-      <label className="field" style={{ width: 420 }}>
+      <div className="field">
         <span>Report</span>
-        <select value={f.report} onChange={(e) => setF({ ...f, report: e.target.value as AutomationInput["report"] })}>
-          <option value="thread">In the thread, and a notification if Atlas isn't open</option>
-          <option value="worth">In the thread, only when it's worth saying</option>
-          <option value="inbox">In Inbox</option>
-          <option value="silent">Only in History</option>
-        </select>
-      </label>
+        <Picker
+          label="Report"
+          width={380}
+          value={f.report}
+          options={[
+            { value: "thread", label: "Tell me", sub: "Every time it runs" },
+            { value: "worth", label: "Tell me when it's worth it", sub: "It may stay quiet" },
+            { value: "inbox", label: "Leave it in Inbox" },
+            { value: "silent", label: "Only keep it in History" },
+          ]}
+          onPick={(report) => setF({ ...f, report: report as AutomationInput["report"] })}
+        />
+      </div>
+      {/* Where only shows when there's more than one place to pick: a linked chat, or a device that takes notifications. */}
+      {(f.report === "thread" || f.report === "worth") && places(atlas, f.to).length > 1 && (
+        <div className="field">
+          <span>Where</span>
+          <Picker
+            label="Where it tells you"
+            width={380}
+            value={f.to ?? "you"}
+            options={places(atlas, f.to)}
+            onPick={(to) => setF({ ...f, to })}
+          />
+        </div>
+      )}
 
       <div className="row">
         <button className="btn primary" disabled={!!problem}>

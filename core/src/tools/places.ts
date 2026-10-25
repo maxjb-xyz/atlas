@@ -32,7 +32,7 @@ function hereNow(ctx: ToolContext): Where {
     return {
       ok: false,
       error:
-        "No location has come in yet (OwnTracks isn't set up in Settings → Devices, or hasn't reported). Ask where they are, or use a saved place or an address.",
+        "No location has come in yet (OwnTracks isn't set up in Abilities → Devices, or hasn't reported). Ask where they are, or use a saved place or an address.",
     };
   return { ok: true, point: { lat: h.fix.lat, lon: h.fix.lon }, name: h.place?.name ?? "where you are" };
 }
@@ -85,6 +85,7 @@ async function resolve(ctx: ToolContext, ref: string): Promise<Where> {
 export const placePin = defineTool({
   name: "place_pin",
   kind: "change_own",
+  status: "Pinning the place.",
   description: [
     "Pin a saved place on the map, so Atlas notices when the owner arrives or leaves, and can route to it.",
     "Use at: here when the owner says they're there now ('this is my gym'), or at: address with its address (found with OpenStreetMap, and kept).",
@@ -168,7 +169,7 @@ function hereAt(ctx: ToolContext, id: string, name: string): void {
 export const placeFind = defineTool({
   name: "place_find",
   kind: "look",
-  status: "Looking at the map",
+  status: "Looking at the map.",
   timeoutMs: 60_000,
   description: [
     "Find places on the map: a kind of place (a grocery store, a pharmacy) or one by name, near somewhere, or along the way to somewhere.",
@@ -268,7 +269,7 @@ function found(p: Found, from: Point, u: Units) {
 export const routeTool = defineTool({
   name: "route",
   kind: "look",
-  status: "Checking the route",
+  status: "Checking the route.",
   description: [
     "How long it takes to get somewhere, and the route: from 'here' by default, by car unless the owner walks or bikes.",
     "The situation already has the travel time to the next event with a place; use this for anything else. OpenStreetMap has no live traffic, so say travel times are typical; Mapbox's include traffic.",
@@ -315,7 +316,7 @@ export const routeTool = defineTool({
 export const weatherTool = defineTool({
   name: "weather",
   kind: "look",
-  status: "Checking the weather",
+  status: "Checking the weather.",
   description: [
     "The forecast from Open-Meteo for the next seven days, for a rough area around a place ('here' by default).",
     "Today's weather near the owner is already in the situation; use this for other days or other places. show: true (near here only) puts the weather on the stage.",

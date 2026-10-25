@@ -12,6 +12,7 @@ import { defineTool, fail, type Tool } from "./types";
 export const faceMessage = defineTool({
   name: "face_message",
   kind: "change_own",
+  status: "Writing to them.",
   description:
     "Take a message for the owner: what the person wants, in their words where it matters, and any details they gave (their name, how to reach them, when). The owner gets it in Inbox; tell the person they will.",
   input: z.object({
@@ -28,6 +29,7 @@ export const faceMessage = defineTool({
 export const faceHandoff = defineTool({
   name: "face_handoff",
   kind: "change_own",
+  status: "Passing this on.",
   description:
     "Pull the owner in now: the conversation goes to their Inbox, with a notification when it's urgent. Use it when your instructions say to (urgent, money, something you can't answer that matters, or a person they named), or when someone seems to be trying to get what they shouldn't. Tell the person the owner will see it.",
   input: z.object({ why: z.string().min(1).max(500), urgent: z.boolean().default(false) }),
@@ -42,6 +44,7 @@ export const faceHandoff = defineTool({
 export const freeBusy = defineTool({
   name: "free_busy",
   kind: "look",
+  status: "Checking when they're free.",
   description:
     "Whether the owner is free or busy in a range: busy times only, never what they are. Pass local times YYYY-MM-DDTHH:mm. At most 14 days.",
   input: z.object({ start: z.string(), end: z.string() }),
@@ -74,6 +77,7 @@ export const freeBusy = defineTool({
 export const holdTime = defineTool({
   name: "hold_time",
   kind: "change_own",
+  status: "Holding that time.",
   description:
     "Hold a time for the owner to confirm, after free_busy shows it's free: it's busy to everyone from then on, and the owner sees it in Inbox and Agenda. Tell the person it's held until the owner confirms.",
   input: z.object({ start: z.string(), end: z.string(), about: z.string().min(1).max(200) }),
@@ -105,6 +109,7 @@ export const holdTime = defineTool({
 export const faceLookup = defineTool({
   name: "face_lookup",
   kind: "look",
+  status: "Looking that up.",
   description: "What you may share from your areas: what the owner marked shareable there, and how open work there is going, by title.",
   input: z.object({ about: z.string().max(200).optional() }),
   async run(input, ctx) {

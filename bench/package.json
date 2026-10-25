@@ -5,7 +5,8 @@
   "scripts": {
     "bench": "node --experimental-strip-types latency.ts",
     "typecheck": "tsc --noEmit",
-    "eval:character": "node --experimental-strip-types character.ts"
+    "eval:character": "node --experimental-strip-types character.ts",
+    "eval:jarvis": "node --experimental-strip-types jarvis.ts"
   },
   "dependencies": {
     "ws": "^8.18.0"

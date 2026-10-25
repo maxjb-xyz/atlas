@@ -1,11 +1,35 @@
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
-import { correctAreas, DISCOVER_AFTER, readyToDiscover, startDiscovered, tagPending, triedDiscovery, unfiled } from "../src/agent/areas";
+import {
+  correctAreas,
+  correctEventAreas,
+  DISCOVER_AFTER,
+  eventAreas,
+  readyToDiscover,
+  startDiscovered,
+  tagEvents,
+  tagPending,
+  triedDiscovery,
+  unfiled,
+} from "../src/agent/areas";
 import { hat, systemPrompt } from "../src/context";
-import { areaByName, createArea, examples, getArea, listAreas, mergeAreas, setScope, tagsOf, updateArea } from "../src/store/areas";
+import {
+  AreaLook,
+  areaByName,
+  createArea,
+  examples,
+  getArea,
+  listAreas,
+  mergeAreas,
+  setAreaLook,
+  setScope,
+  setTags,
+  tagsOf,
+  updateArea,
+} from "../src/store/areas";
 import { migrate, type Sql } from "../src/store/db";
-import { append, get as getRow, thread } from "../src/store/log";
+import { append, get as getRow, recent, thread } from "../src/store/log";
 import { createRecord } from "../src/store/records";
 import { readSettings } from "../src/store/settings";
 import { startRun } from "../src/store/runs";
@@ -57,6 +81,38 @@ describe("tagging", () => {
       expect(again.tagged).toBe(0);
     }));
 
+  it("keeps a mail conversation in its area, and doesn't ask about a message whose area was sure as it came in", () =>
+    withSql(async (sql) => {
+      const work = createArea(sql, { name: "Keyframes", by: "owner" });
+      const runId = startRun(sql, { actor: "owner", trigger: "message", surface: "app", role: "main" });
+      const sure = append(sql, {
+        actor: "owner",
+        kind: "message.in",
+        run_id: runId,
+        surface: "app",
+        body: { text: "Doug, next week?", thread: "mail:<c1>" },
+      });
+      setTags(sql, `log:${sure.id}`, [work.id]);
+      const reply = append(sql, {
+        actor: "system",
+        kind: "sense",
+        body: { source: "email", event: "reply", what: "Mail", thread: "mail:<c1>" },
+      });
+      const elsewhere = append(sql, {
+        actor: "system",
+        kind: "sense",
+        body: { source: "email", event: "received", what: "Mail", thread: "mail:<x>" },
+      });
+      let asked = 0;
+      const d = fakeDecider();
+      const counting = { ...d, yesNo: (...a: Parameters<typeof d.yesNo>) => (asked++, d.yesNo(...a)) };
+      await tagPending(sql, counting);
+      expect(asked).toBe(0);
+      expect(tagsOf(sql, `log:${sure.id}`)).toEqual([work.id]);
+      expect(tagsOf(sql, `log:${reply.id}`)).toEqual([work.id]);
+      expect(tagsOf(sql, `log:${elsewhere.id}`)).toEqual([]);
+    }));
+
   it("collects messages that fit no area, and starts the areas the brain finds, once each", () =>
     withSql(async (sql) => {
       const said = ["Leg day at the gym", "Gym was packed", "New gym shoes", "Ran 5k before the gym", "Mom's flight lands at 3"];
@@ -73,6 +129,37 @@ describe("tagging", () => {
       expect(thread(sql, 50).some((r) => r.kind === "area.change" && r.body.name === "Gym")).toBe(true);
       // Nonsense from the brain changes nothing.
       expect(startDiscovered(sql, unfiled(sql), "no json here", "run_y")).toEqual([]);
+    }));
+});
+
+describe("calendar events' areas", () => {
+  it("follow a calendar named like an area, else Clef once per series, and the owner's move wins", () =>
+    withSql(async (sql) => {
+      const school = createArea(sql, { name: "School", by: "owner" });
+      const work = createArea(sql, { name: "Keyframes", by: "owner" });
+      const ev = (id: string, title: string, calendar: string) => ({ id, title, calendar });
+      const week = [
+        ev("A::1", "French homework due", "School"),
+        ev("B::1", "Client shoot", "Home"),
+        ev("B::2", "Client shoot", "Home"),
+        ev("C::1", "Dentist", "Home"),
+      ];
+      // Named like an area: right away. The rest wait for Clef, once per series.
+      expect(eventAreas(sql, week)).toEqual([[school.id], [], [], []]);
+      const d = fakeDecider({ Keyframes: ["shoot"] });
+      expect(await tagEvents(sql, d)).toBe(2);
+      expect(d.calls.map((c) => c.state)).toEqual([
+        'A calendar event, "Client shoot", on the owner\'s "Home" calendar.',
+        'A calendar event, "Dentist", on the owner\'s "Home" calendar.',
+      ]);
+      expect(eventAreas(sql, week)).toEqual([[school.id], [work.id], [work.id], []]);
+      expect(await tagEvents(sql, d)).toBe(0);
+      // The owner moves one: the series follows, and it teaches Clef.
+      correctEventAreas(sql, week[3]!, [school.id]);
+      expect(eventAreas(sql, [ev("C::2", "Dentist", "Home")])).toEqual([[school.id]]);
+      correctEventAreas(sql, week[0]!, []);
+      expect(eventAreas(sql, week)[0]).toEqual([]);
+      expect(examples(sql, school.id).map((e) => e.fits)).toEqual([false, true]);
     }));
 });
 
@@ -181,6 +268,34 @@ describe("the hat", () => {
       expect(getArea(sql, run.id)!.state).toBe("archived");
       expect(listAreas(sql).map((x) => x.name)).toEqual(["Gym"]);
     }));
+});
+
+describe("an area's look", () => {
+  it("keeps a palette color, a color of the owner's own and an icon, and logs each change", () =>
+    withSql((sql) => {
+      const a = createArea(sql, { name: "Keyframes", by: "owner" });
+      expect(getArea(sql, a.id)).toMatchObject({ custom_color: null, icon: null });
+      setAreaLook(sql, a.id, { custom_color: "#F5A524", icon: "camera" }, "owner");
+      expect(getArea(sql, a.id)).toMatchObject({ color: a.color, custom_color: "#f5a524", icon: "camera" });
+      // Leaving a field out keeps it; a palette color drops the owner's own color.
+      setAreaLook(sql, a.id, { color: 3 }, "owner");
+      expect(getArea(sql, a.id)).toMatchObject({ color: 3, custom_color: null, icon: "camera" });
+      setAreaLook(sql, a.id, { icon: "file:file_abc" }, "owner");
+      setAreaLook(sql, a.id, { icon: null }, "owner");
+      expect(getArea(sql, a.id)!.icon).toBeNull();
+      const looks = recent(sql, ["area.change"], 50).filter((r) => r.body.change === "look");
+      expect(looks).toHaveLength(4);
+      expect(looks[1]!.body).toMatchObject({ before: { custom_color: "#f5a524" }, after: { color: 3, custom_color: null } });
+      expect(() => setAreaLook(sql, "area_nope", { color: 1 }, "owner")).toThrow(/no area/);
+    }));
+
+  it("takes only a known line icon or an uploaded file, and a real hex color", () => {
+    expect(AreaLook.safeParse({ icon: "camera" }).success).toBe(true);
+    expect(AreaLook.safeParse({ icon: "file:file_lzx3k1a9f2c4" }).success).toBe(true);
+    expect(AreaLook.safeParse({ icon: "rocket-ship" }).success).toBe(false);
+    expect(AreaLook.safeParse({ custom_color: "red" }).success).toBe(false);
+    expect(AreaLook.safeParse({ color: 8 }).success).toBe(false);
+  });
 });
 
 describe("in the agent", () => {

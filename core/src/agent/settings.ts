@@ -1,12 +1,15 @@
 // What Settings shows (values, whether each secret is set, sign-in state and
 // brain health) and its live tests (§22: every check is a live test).
 
+import { dataKeyView } from "../store/sealed";
 import { sensesView } from "../intake";
 import { openTasks, taskView } from "../tasks";
 import { zoneOf } from "../time";
 import type { BrainRouter } from "../brains/router";
 import { type Brain, brainKey } from "../brains/types";
-import type { ClientMessage, SettingsView } from "../protocol";
+import type { BrainsView, ClientMessage, SettingsView } from "../protocol";
+import { FREE_NEURONS, nextDayUtc, nextMonthUtc, PRICES_AS_OF, priceOf } from "../brains/catalog";
+import type { Usage } from "../brains/types";
 import type { Sql } from "../store/db";
 import { runCharacterCheck, summary } from "../character-check";
 import { type BrainChoice, getSecret, readSettings, type Settings } from "../store/settings";
@@ -21,9 +24,11 @@ import { vault, vaultView } from "../vault";
 import type { VapidKeys } from "../push";
 import type { ChatGPTSignIn } from "./chatgpt";
 import { here, nearest, pins } from "../location";
-import { installed, providing } from "../extensions";
+import { accountName, installed, providing } from "../extensions";
 import type { ExtensionDesk } from "./extensions";
 import type { MailDesk } from "./mail";
+import type { UpdateDesk } from "./updates";
+import type { DataDesk } from "./data";
 import { faces } from "../faces";
 import { members } from "../members";
 import { getRecord } from "../store/records";
@@ -33,7 +38,15 @@ import type { LocationView } from "../protocol";
 
 export function settingsView(
   sql: Sql,
-  parts: { chatgpt: ChatGPTSignIn; calendar: CalendarSense; router: BrainRouter; extensions: ExtensionDesk; mail?: MailDesk },
+  parts: {
+    chatgpt: ChatGPTSignIn;
+    calendar: CalendarSense;
+    router: BrainRouter;
+    extensions: ExtensionDesk;
+    mail?: MailDesk;
+    updates?: UpdateDesk;
+    data?: DataDesk;
+  },
 ): SettingsView {
   const passkeys = (getState<StoredPasskey[]>(sql, "passkeys") ?? [])
     .filter((p) => !p.member)
@@ -50,10 +63,24 @@ export function settingsView(
     settings,
     secrets: {
       elevenlabs_api_key: Boolean(getSecret(sql, "elevenlabs_api_key")),
+      anthropic_api_key: Boolean(getSecret(sql, "anthropic_api_key")),
+      ai_gateway_token: Boolean(getSecret(sql, "ai_gateway_token")),
+      sealed: dataKeyView(),
     },
     calendar: {
       provider: provider ? { id: provider.id, name: provider.name } : null,
       refused: refusal ? { ...refusal, note: parts.calendar.note(refusal, settings) } : null,
+      // Every calendar account, each with its own refusal (§17).
+      providers: parts.calendar.providers().map((p) => {
+        const r = parts.calendar.refusal(p.id);
+        return {
+          id: p.id,
+          name: p.name,
+          account: accountName(p),
+          calendars: parts.calendar.names()[p.id] ?? [],
+          refused: r ? { ...r, note: parts.calendar.note(r, settings) } : null,
+        };
+      }),
     },
     extensions: parts.extensions?.views() ?? [],
     members: members(sql).map((m) => ({
@@ -82,6 +109,7 @@ export function settingsView(
       sending_ok: false,
       sending_note: null,
       permissions: [],
+      token_links: { cloudflare: "", other: "" },
       senders: [],
     },
     webhooks: webhooks(sql).map(webhookView),
@@ -100,12 +128,51 @@ export function settingsView(
     focus: focusNow(sql),
     chatgpt: parts.chatgpt.view(),
     health: parts.router.snapshot(),
+    brains: brainsView(settings, parts.router),
     passkeys,
     setup: setupView(sql),
     location: locationView(sql),
     nodes: nodes(sql).map(nodeView),
     senses: sensesView(sql),
     tasks: openTasks(sql).map(taskView),
+    updates: parts.updates?.view() ?? {
+      running: { version: "unknown", commit: null, version_id: null },
+      token: false,
+      token_link: "",
+      script: null,
+      looked_at: null,
+      look_error: null,
+      newest: null,
+      ready: false,
+      run: null,
+      rollback: null,
+      foreign: null,
+      busy: false,
+      planned: null,
+    },
+    data: parts.data?.view() ?? { last_export: null, export_error: null, restore: null, delete: null },
+  };
+}
+
+/** What the brains cost and what's left (§18): spending against the cap, today's free allowance, the plan's window, prices. */
+export function brainsView(settings: Settings, router: BrainRouter, now = Date.now()): BrainsView {
+  const s = router.spend(now);
+  const plans = Object.entries(router.snapshot())
+    .filter(([k, h]) => k.startsWith("chatgpt:") && h.limits)
+    .map(([, h]) => h.limits!)
+    .sort((a, b) => b.seen_at - a.seen_at);
+  const choices = [...settings.brains.main, ...settings.brains.voice, ...settings.named_brains.brains.flatMap((b) => b.chain)];
+  const prices: BrainsView["prices"] = {};
+  for (const c of choices) {
+    const p = priceOf(c);
+    if (p) prices[brainKey(c)] = p;
+  }
+  return {
+    spend: { month: s.month, paid: s.paid, cap: settings.spending.cap, by: s.usd, resets_at: nextMonthUtc(now) },
+    free: { day: s.day, neurons: Math.round(s.neurons), allowance: FREE_NEURONS, resets_at: nextDayUtc(now) },
+    plan: plans[0] ?? null,
+    prices,
+    prices_as_of: PRICES_AS_OF,
   };
 }
 
@@ -187,6 +254,7 @@ export async function liveTest(deps: TestDeps, msg: Extract<ClientMessage, { typ
       const t0 = Date.now();
       let text = "";
       let firstMs: number | null = null;
+      let usage: Usage | undefined;
       for await (const ev of brain.stream({
         system: "You are being tested. Reply with one short sentence.",
         messages: [{ role: "user", content: "Say hello." }],
@@ -197,9 +265,9 @@ export async function liveTest(deps: TestDeps, msg: Extract<ClientMessage, { typ
         if (ev.type === "text") {
           firstMs ??= Date.now() - t0;
           text += ev.text;
-        }
+        } else if (ev.type === "done") usage = ev.usage;
       }
-      deps.router.markOk(brain);
+      deps.router.markOk(brain, { ...(usage ? { usage } : {}), first_ms: firstMs, total_ms: Date.now() - t0 });
       return {
         ok: true,
         message: `${brainKey(choice)} answered: first words in ${firstMs ?? "?"} ms, done in ${Date.now() - t0} ms.`,

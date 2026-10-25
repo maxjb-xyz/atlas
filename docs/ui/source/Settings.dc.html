@@ -12,8 +12,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&amp;family=Inter+Tight:wght@500;600;700&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
 <style>
 body{margin:0;background:#141413}
-.lt{--bg:#faf9f6;--win:#ffffff;--side:#f4f3ef;--sep:#e7e5df;--sep2:#d9d6ce;--dash:#cdc9c0;--hover:#eeece7;--sel:#e7e5df;--tx:#191817;--tx2:#5c5954;--tx3:#6f6b65;--ac:#e8501b;--acs:rgba(232,80,27,.08);--dot:rgba(25,24,23,.09);--btn:#191817;--btntx:#ffffff;--m1:#191817;--m2:#4a4743;--m3:#8d8982;--m4:#c9c5bd;--P:#c0588a;--K:#c08423;--U:#3d74cf;--F:#2e9a6b;--H:#7a68c9;--Prgb:192,88,138;--Krgb:192,132,35;--Urgb:61,116,207;--Frgb:46,154,107;--Hrgb:122,104,201;--sh:0 14px 40px -18px rgba(0,0,0,.22)}
-.dk{--bg:#141413;--win:#1b1a19;--side:#181716;--sep:#2c2a28;--sep2:#3a3835;--dash:#3f3c37;--hover:#252321;--sel:#2c2a27;--tx:#f1efea;--tx2:#aaa69e;--tx3:#918d86;--ac:#ff6a3d;--acs:rgba(255,106,61,.07);--dot:rgba(241,239,234,.07);--btn:#f1efea;--btntx:#191817;--m1:rgba(250,244,238,.95);--m2:rgba(250,244,238,.6);--m3:rgba(250,244,238,.32);--m4:rgba(250,244,238,.16);--P:#e27aaa;--K:#e0a548;--U:#6c9ef0;--F:#4cc48f;--H:#a593f0;--Prgb:226,122,170;--Krgb:224,165,72;--Urgb:108,158,240;--Frgb:76,196,143;--Hrgb:165,147,240;--sh:0 18px 48px -16px rgba(0,0,0,.6)}
+.lt{--bg:#faf9f6;--win:#ffffff;--side:#f4f3ef;--sep:#e7e5df;--sep2:#d9d6ce;--dash:#cdc9c0;--hover:#eeece7;--sel:#e7e5df;--tx:#191817;--tx2:#5c5954;--tx3:#6f6b65;--ac:#e8501b;--acs:rgba(232,80,27,.08);--dot:rgba(25,24,23,.09);--btn:#191817;--btntx:#ffffff;--m1:#191817;--m2:#4a4743;--m3:#8d8982;--m4:#c9c5bd;--P:#d61f69;--K:#d97706;--U:#2563eb;--F:#059669;--H:#7c3aed;--Prgb:214,31,105;--Krgb:217,119,6;--Urgb:37,99,235;--Frgb:5,150,105;--Hrgb:124,58,237;--sh:0 14px 40px -18px rgba(0,0,0,.22)}
+.dk{--bg:#141413;--win:#1b1a19;--side:#181716;--sep:#2c2a28;--sep2:#3a3835;--dash:#3f3c37;--hover:#252321;--sel:#2c2a27;--tx:#f1efea;--tx2:#aaa69e;--tx3:#918d86;--ac:#ff6a3d;--acs:rgba(255,106,61,.07);--dot:rgba(241,239,234,.07);--btn:#f1efea;--btntx:#191817;--m1:rgba(250,244,238,.95);--m2:rgba(250,244,238,.6);--m3:rgba(250,244,238,.32);--m4:rgba(250,244,238,.16);--P:#f0458a;--K:#f5a524;--U:#3b82f6;--F:#10b981;--H:#8b5cf6;--Prgb:240,69,138;--Krgb:245,165,36;--Urgb:59,130,246;--Frgb:16,185,129;--Hrgb:139,92,246;--sh:0 18px 48px -16px rgba(0,0,0,.6)}
 .app{background:var(--bg);color:var(--tx);font-family:Inter,-apple-system,system-ui,sans-serif;font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased}
 .disp{font-family:'Inter Tight',Inter,system-ui,sans-serif;letter-spacing:-0.02em}
 .mono{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
@@ -44,6 +44,56 @@ button{cursor:pointer}
 a{color:inherit}
 .sr{position:absolute;left:-9999px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+.lg{display:block;object-fit:contain;flex:none}
+.dk .lg.inv{filter:invert(1) brightness(1.1)}
+.logo{border-radius:8px;border:1px solid var(--sep2);background:var(--win);display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box}
+.ach{height:20px;padding:0 8px;border-radius:10px;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;white-space:nowrap;background:rgba(var(--rgb),.13);color:var(--c)}
+.ach::before{content:'';width:6px;height:6px;border-radius:2px;background:var(--c)}
+.avc{border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:600;flex:none;background:rgba(var(--rgb),.2);color:var(--c)}
+
+
+.sl{width:100%;height:32px;display:flex;align-items:center;gap:10px;padding:0 10px;border:0;border-radius:7px;text-align:left;font-size:13px}
+.h2{font-size:13px;font-weight:600;color:var(--tx)}
+.aside{font-size:12px;color:var(--tx3)}
+.sub{font-size:12px;color:var(--tx3);line-height:1.4}
+.card{border:1px solid var(--sep);border-radius:8px;background:var(--win)}
+.cardb{border:1px solid var(--sep);border-radius:8px;background:var(--bg)}
+.rule{border-top:1px dashed var(--dash)}
+.tg{width:26px;height:15px;flex:none;border:0;padding:0;border-radius:8px;background:var(--sep2);position:relative;display:inline-block;transition:background .15s}
+.tg::after{content:'';position:absolute;left:2px;top:2px;width:11px;height:11px;border-radius:50%;background:var(--win);transition:transform .15s}
+.tg.on{background:var(--btn)}
+.tg.on::after{transform:translateX(11px);background:var(--btntx)}
+.seg{display:inline-flex;border:1px solid var(--sep2);border-radius:6px;overflow:hidden;flex:none}
+.seg button{height:26px;padding:0 11px;border:0;background:transparent;color:var(--tx3);font-size:12px;white-space:nowrap}
+.seg button+button{border-left:1px solid var(--sep2)}
+.seg button.on{background:var(--sel);color:var(--tx);font-weight:500}
+.seg.sm button{height:24px;padding:0 9px;font-size:11.5px}
+.seg.lock{opacity:.55}
+.seg.lock button{cursor:default}
+.pill{height:26px;padding:0 11px;border-radius:13px;border:1px solid transparent;background:transparent;color:var(--tx2);font-size:12.5px}
+.pill.on{border-color:var(--sep2);background:var(--sel);color:var(--tx);font-weight:500}
+.mtr{display:flex;gap:2px}
+.mtr i{flex:1;height:6px;background:var(--sep2);border-radius:1px}
+.mtr i.f{background:var(--m2)}
+.mtr i.q{background:var(--m4)}
+.mtr i.n{background:var(--ac)}
+.chip{height:26px;padding:0 7px 0 10px;border:1px solid var(--sep2);border-radius:6px;background:var(--win);display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500}
+.ok{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--tx2)}
+.ok::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--F)}
+.idle{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--tx3)}
+.idle::before{content:'';width:6px;height:6px;border-radius:50%;border:1px solid var(--tx3);box-sizing:border-box}
+.btn.s{height:26px;padding:0 10px;font-size:12px}
+.btnp.s{height:26px;padding:0 11px;font-size:12px}
+.tbtn{border:0;background:transparent;padding:0;color:var(--tx2);font-size:12px}
+.tbtn:hover{color:var(--tx)}
+.hold{position:relative;overflow:hidden}
+.hold .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--sel);transition:width .25s}
+.hold:active .fill{width:100%;transition:width 2.5s linear}
+.hold span{position:relative}
+.slot{cursor:pointer;transition:border-color .12s}
+.slot:hover{border-color:var(--tx3)}
+.nch{height:26px;padding:0 10px 0 7px;margin:0 1px;border-radius:13px;border:1px solid var(--sep2);background:var(--win);display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;line-height:normal;vertical-align:middle;white-space:nowrap}
+.say{font-size:14px;line-height:31px;color:var(--tx)}
 </style>
 </helmet>
 <div class="app {{tc}}" style="min-height: 100vh; display: flex; flex-wrap: wrap;">
@@ -88,8 +138,8 @@ a{color:inherit}
 
   <header style="height: 48px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 16px; border-bottom: 1px solid var(--sep); background: var(--win); position: relative; z-index: 5;">
     <button type="button" class="it" style="height: 28px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--sep2); background: var(--win); display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;">
-      <span style="display: inline-flex; gap: 2px;"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--P);"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--K);"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--U);"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--F);"></span></span>
-      All areas<svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M6 9l6 6 6-6"></path></svg></button>
+      <span style="display: inline-flex; gap: 2px;"><sc-for list="{{scopeDots}}" as="sd" hint-placeholder-count="4"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{sd}};"></span></sc-for></span>
+      {{scopeName}}<svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M6 9l6 6 6-6"></path></svg></button>
     <span style="flex: 1;"></span>
     <div style="position: relative;">
       <button type="button" class="it" onClick="{{toggleJobs}}" aria-expanded="{{jobsOpen}}" style="height: 28px; padding: 0 9px; border-radius: 6px; border: 1px solid {{jobsBd}}; background: {{jobsBg}}; display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;"><span class="mono spin" aria-hidden="true" style="color: var(--ac); width: 9px;"></span>2 jobs running</button>
@@ -137,38 +187,47 @@ a{color:inherit}
         <span class="node" aria-hidden="true" style="left: 100%; top: 100%;"></span>
         <div style="position: absolute; inset: 0; overflow: hidden; border-radius: 10px;">
 
-          <div style="position: absolute; left: 0; top: 0; bottom: 0; width: 208px; box-sizing: border-box; border-right: 1px solid var(--sep); padding: 8px 10px 14px;">
-            <sc-for list="{{groups}}" as="g" hint-placeholder-count="6">
-              <div class="lab" style="padding: 12px 8px 4px; font-size: 9.5px;">{{g.n}}</div>
-              <sc-for list="{{g.items}}" as="s" hint-placeholder-count="2">
-                <button type="button" class="it" onClick="{{s.pick}}" style="width: 100%; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border: 0; border-radius: 6px; background: {{s.bg}}; color: {{s.fg}}; font-weight: {{s.fw}}; text-align: left; font-size: 12.5px;"><span style="flex: 1;">{{s.n}}</span><span class="mono" style="font-size: 10.5px; color: {{s.mc}};">{{s.meta}}</span></button>
-              </sc-for>
+          <div style="position: absolute; left: 0; top: 0; bottom: 0; width: 188px; box-sizing: border-box; border-right: 1px solid var(--sep); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px;">
+            <sc-for list="{{secs}}" as="s" hint-placeholder-count="5">
+              <button type="button" class="sl it" onClick="{{s.pick}}" style="background: {{s.bg}}; color: {{s.fg}}; font-weight: {{s.fw}};">
+                <svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" style="color: {{s.ic}};"><path d="{{s.d}}"></path></svg>
+                <span style="flex: 1;">{{s.n}}</span>
+                <span class="mono" style="font-size: 10.5px; color: var(--tx3);">{{s.meta}}</span>
+              </button>
             </sc-for>
+            <span style="flex: 1;"></span>
+            <div style="padding: 0 10px; font-size: 12px; color: var(--tx3); line-height: 1.45;">Anything here can also be done by asking.</div>
           </div>
 
-          <div style="position: absolute; left: 208px; right: 0; top: 0; bottom: 0; overflow: hidden; padding: 20px 28px 0; box-sizing: border-box;">
-            <div style="display: flex; align-items: flex-start; gap: 16px; padding-bottom: 16px;">
-              <div style="display: flex; flex-direction: column; gap: 3px;">
+          <div style="position: absolute; left: 188px; right: 0; top: 0; bottom: 0; overflow: hidden; padding: 22px 28px 0; box-sizing: border-box;">
+            <div style="display: flex; align-items: flex-start; gap: 16px; padding-bottom: 18px;">
+              <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0;">
                 <span class="disp" style="font-size: 21px; font-weight: 600;">{{secTitle}}</span>
                 <span style="color: var(--tx2);">{{secSub}}</span>
               </div>
               <span style="flex: 1;"></span>
-              <button type="button" class="btn">{{secBtn}}</button>
+              <sc-if value="{{isAtlas}}" hint-placeholder-val="{{true}}">
+                <div role="tablist" style="display: flex; gap: 2px; padding-top: 2px;">
+                  <sc-for list="{{apills}}" as="p" hint-placeholder-count="3"><button type="button" role="tab" class="{{p.cls}}" onClick="{{p.pick}}">{{p.n}}</button></sc-for>
+                </div>
+              </sc-if>
+              <sc-if value="{{secBtn}}" hint-placeholder-val="{{false}}"><button type="button" class="btn">{{secBtn}}</button></sc-if>
             </div>
 
+            <!-- ============ ATLAS · CHARACTER ============ -->
             <sc-if value="{{isCharacter}}" hint-placeholder-val="{{true}}">
               <div class="rise" style="display: flex; flex-direction: column;">
-                <div style="display: grid; grid-template-columns: 128px minmax(0, 1fr); align-items: center; gap: 16px; padding: 12px 0; border-top: 1px dashed var(--dash);">
-                  <span class="lab">Name</span>
+                <div class="rule" style="display: grid; grid-template-columns: 132px minmax(0, 1fr); align-items: center; gap: 16px; padding: 13px 0;">
+                  <span style="font-weight: 500;">Name</span>
                   <div style="display: flex; align-items: center; gap: 14px;">
-                    <span style="width: 200px; height: 30px; box-sizing: border-box; border: 1px solid var(--sep2); border-radius: 6px; padding: 0 10px; display: inline-flex; align-items: center; background: var(--bg); font-weight: 500;">Atlas<span class="blink" style="width: 1px; height: 15px; background: var(--ac); margin-left: 1px;"></span></span>
-                    <span style="color: var(--tx3); font-size: 12.5px;">It answers to this name, out loud too.</span>
+                    <span style="width: 200px; height: 30px; box-sizing: border-box; border: 1px solid var(--sep2); border-radius: 6px; padding: 0 10px; display: inline-flex; align-items: center; background: var(--bg); font-weight: 500;">Atlas<span class="blink" style="width: 1px; height: 15px; background: var(--tx2); margin-left: 1px;"></span></span>
+                    <span class="sub">It answers to this name, out loud too.</span>
                   </div>
                 </div>
 
-                <div style="display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px dashed var(--dash);">
-                  <span class="lab" style="padding-top: 2px;">Personality</span>
-                  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 40px;">
+                <div class="rule" style="display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 15px 0;">
+                  <span style="font-weight: 500;">Personality</span>
+                  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 40px;">
                     <sc-for list="{{traits}}" as="t" hint-placeholder-count="4">
                       <div style="display: flex; flex-direction: column; gap: 7px;">
                         <div style="display: flex; align-items: baseline; gap: 8px;"><span style="font-weight: 500;">{{t.n}}</span><span style="flex: 1;"></span><span class="mono" style="font-size: 11px; color: var(--tx3);">{{t.v}}/5</span></div>
@@ -184,101 +243,532 @@ a{color:inherit}
                   </div>
                 </div>
 
-                <div style="display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px dashed var(--dash);">
-                  <span class="lab" style="padding-top: 11px;">Sounds like</span>
-                  <div style="border: 1px solid var(--sep); border-radius: 8px; background: var(--bg); padding: 10px 14px; display: grid; grid-template-columns: 50px minmax(0, 1fr); gap: 6px 12px; align-items: baseline;">
-                    <span class="lab">You</span><span style="color: var(--tx2);">Did the Lensrentals quote come in?</span>
-                    <span class="lab" style="color: var(--ac);">Atlas</span><span style="font-size: 14px; line-height: 1.5;">{{sample}}</span>
+                <div class="rule" style="display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 15px 0;">
+                  <div style="display: flex; flex-direction: column; gap: 3px; padding-top: 10px;"><span style="font-weight: 500;">Sounds like</span><span class="sub">Changes as you move the scales.</span></div>
+                  <div class="cardb" style="padding: 12px 16px; display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 7px 12px; align-items: baseline;">
+                    <span class="aside">You</span><span style="color: var(--tx2);">Did the Lensrentals quote come in?</span>
+                    <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500;"><svg viewBox="290 128 444 768" width="9" height="16" aria-hidden="true" style="flex: none;"><polygon points="512,128.96 290.84,418.52 512,505.16" style="fill: var(--m1);"></polygon><polygon points="512,128.96 512,505.16 733.16,418.52" style="fill: var(--m2);"></polygon><polygon points="512,895.04 290.84,418.52 512,505.16" style="fill: var(--m3);"></polygon><polygon points="512,895.04 512,505.16 733.16,418.52" style="fill: var(--m4);"></polygon></svg> Atlas</span><span style="font-size: 14px; line-height: 1.5;">{{sample}}</span>
                   </div>
                 </div>
 
-                <div style="display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px dashed var(--dash);">
-                  <span class="lab" style="padding-top: 5px;">Voice</span>
-                  <div style="display: flex; flex-direction: column; gap: 10px;">
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                      <span style="font-weight: 500;">ElevenLabs</span>
-                      <span class="tag">eleven_v4_turbo</span>
-                      <span class="tag" style="color: var(--F);"><span>✓</span>Connected</span>
-                      <span style="flex: 1;"></span>
-                      <span class="mono" style="font-size: 11px; color: var(--tx3); letter-spacing: .04em;">~280 MS TO FIRST WORD</span>
+                <div class="rule" style="display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 15px 0;">
+                  <div style="display: flex; flex-direction: column; gap: 3px; padding-top: 10px;"><span style="font-weight: 500;">Written character</span><span class="sub">Who Atlas is, in its own words.</span></div>
+                  <div class="card" style="padding: 12px 16px; display: flex; gap: 18px; align-items: center;">
+                    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+                      <span style="color: var(--tx2); line-height: 1.55;">Atlas is calm, quick and on your side. It says what it did and what it didn’t, owns its mistakes without fuss, and keeps its jokes dry and rare.</span>
+                      <span class="aside">From the Atlas preset, with two lines of yours · edited Oct 3</span>
                     </div>
-                    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;">
-                      <sc-for list="{{voices}}" as="v" hint-placeholder-count="3">
-                        <div onClick="{{v.pick}}" style="cursor: pointer; border: 1px solid {{v.bd}}; border-radius: 8px; background: {{v.bg}}; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px;">
-                          <div style="display: flex; align-items: center; gap: 8px;"><span style="font-weight: 600;">{{v.n}}</span><span style="font-size: 12px; color: var(--tx3); white-space: nowrap;">{{v.s}}</span><span style="flex: 1;"></span><sc-if value="{{v.on}}" hint-placeholder-val="{{false}}"><span class="tag" style="color: var(--ac); border-color: var(--ac);">In use</span></sc-if></div>
-                          <div style="display: flex; align-items: center; gap: 10px;">
-                            <button type="button" aria-label="Preview" class="it" style="width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--sep2); background: var(--win); display: inline-flex; align-items: center; justify-content: center; padding: 0; color: var(--tx2);"><svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1l7 4-7 4z" style="fill: currentColor;"></path></svg></button>
-                            <span class="mono" style="font-size: 13px; letter-spacing: .06em; color: {{v.wc}}; flex: 1; white-space: nowrap; overflow: hidden;">{{v.w}}</span>
-                            <span class="mono" style="font-size: 10.5px; color: var(--tx3);">0:04</span>
-                          </div>
-                        </div>
-                      </sc-for>
-                    </div>
-                  </div>
-                </div>
-
-                <div style="display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px dashed var(--dash);">
-                  <span class="lab" style="padding-top: 4px; line-height: 1.6;">Talks like<br>a person</span>
-                  <div style="display: flex; align-items: flex-start; gap: 28px; flex-wrap: wrap;">
-                    <sc-for list="{{segs}}" as="g" hint-placeholder-count="3">
-                      <div style="display: flex; flex-direction: column; gap: 6px;">
-                        <span style="font-size: 12px; color: var(--tx2);">{{g.n}}</span>
-                        <div style="display: inline-flex; border: 1px solid var(--sep2); border-radius: 6px; overflow: hidden;">
-                          <sc-for list="{{g.opts}}" as="o" hint-placeholder-count="3"><button type="button" onClick="{{o.pick}}" style="height: 26px; padding: 0 11px; border: 0; border-left: 1px solid {{o.bl}}; background: {{o.bg}}; color: {{o.fg}}; font-size: 12px; font-weight: {{o.fw}};">{{o.l}}</button></sc-for>
-                        </div>
-                      </div>
-                    </sc-for>
+                    <div style="display: flex; flex-direction: column; gap: 6px;"><button type="button" class="btn s">Edit the text</button><button type="button" class="btn s">Presets</button></div>
                   </div>
                 </div>
               </div>
             </sc-if>
 
-            <sc-if value="{{isBrains}}" hint-placeholder-val="{{false}}">
-              <div class="rise" style="display: flex; flex-direction: column; gap: 14px;">
-                <div style="display: flex; align-items: stretch;">
-                  <sc-for list="{{chain}}" as="b" hint-placeholder-count="3">
-                    <sc-if value="{{b.join}}" hint-placeholder-val="{{false}}">
-                      <div aria-hidden="true" style="flex: 0 0 40px; position: relative;">
-                        <div style="position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed var(--dash);"></div>
-                        <span class="node" style="left: 50%; top: 50%;"></span>
+            <!-- ============ ATLAS · VOICE ============ -->
+            <sc-if value="{{isVoice}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: flex; flex-direction: column;">
+                <div class="rule" style="display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 15px 0;">
+                  <span style="font-weight: 500; padding-top: 4px;">Speaks with</span>
+                  <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                      <span style="font-weight: 500;">ElevenLabs</span><span class="mono" style="font-size: 11px; color: var(--tx3);">eleven_v4_turbo</span><span class="ok">Connected</span>
+                      <span style="flex: 1;"></span>
+                      <span class="aside">First word in <span class="mono" style="color: var(--tx2);">~280 ms</span></span>
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;">
+                      <sc-for list="{{voices}}" as="v" hint-placeholder-count="3">
+                        <div onClick="{{v.pick}}" style="cursor: pointer; border: 1px solid {{v.bd}}; border-radius: 8px; background: {{v.bg}}; padding: 10px 12px; display: flex; flex-direction: column; gap: 7px;">
+                          <div style="display: flex; align-items: center; gap: 8px;"><span style="font-weight: 600;">{{v.n}}</span><span style="font-size: 12px; color: var(--tx3); white-space: nowrap;">{{v.s}}</span><span style="flex: 1;"></span><sc-if value="{{v.on}}" hint-placeholder-val="{{false}}"><span style="color: var(--F); font-size: 12px;">✓</span></sc-if></div>
+                          <div style="display: flex; align-items: center; gap: 10px;">
+                            <button type="button" aria-label="Preview" class="it" style="width: 24px; height: 24px; flex: none; border-radius: 50%; border: 1px solid var(--sep2); background: var(--win); display: inline-flex; align-items: center; justify-content: center; padding: 0; color: var(--tx2);"><svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1l7 4-7 4z" style="fill: currentColor;"></path></svg></button>
+                            <span class="mono" style="font-size: 13px; letter-spacing: .06em; color: {{v.wc}}; flex: 1; white-space: nowrap; overflow: hidden;">{{v.w}}</span>
+                          </div>
+                        </div>
+                      </sc-for>
+                      <div style="border: 1px dashed var(--sep2); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; justify-content: center; gap: 3px;"><span style="font-weight: 500;">More voices</span><span class="sub">Browse the library, or describe one.</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="rule" style="display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 15px 0;">
+                  <span style="font-weight: 500; padding-top: 2px;">Talks like a person</span>
+                  <div style="display: flex; align-items: flex-start; gap: 28px; flex-wrap: wrap;">
+                    <sc-for list="{{segs}}" as="g" hint-placeholder-count="3">
+                      <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <span style="font-size: 12px; color: var(--tx2);">{{g.n}}</span>
+                        <div class="seg"><sc-for list="{{g.opts}}" as="o" hint-placeholder-count="3"><button type="button" class="{{o.cls}}" onClick="{{o.pick}}">{{o.l}}</button></sc-for></div>
                       </div>
-                    </sc-if>
-                    <div style="flex: 1; min-width: 0; border: 1px {{b.bs}} {{b.bd}}; border-radius: 8px; background: var(--win); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; position: relative;">
-                      <span class="lab" style="font-size: 9.5px;">{{b.step}}</span>
-                      <div style="display: flex; align-items: center; gap: 8px;"><span class="disp" style="font-size: 18px; font-weight: 600;">{{b.n}}</span><span style="flex: 1;"></span><span class="tag" style="color: {{b.tc}}; border-color: {{b.tb}};"><span style="width: 5px; height: 5px; background: {{b.tc}};"></span>{{b.state}}</span></div>
-                      <span style="font-size: 12.5px; color: var(--tx2);">{{b.sub}}</span>
-                      <div class="mono" style="display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 5px 10px; font-size: 11.5px; color: var(--tx2); padding-top: 9px; border-top: 1px dashed var(--dash);">
-                        <sc-for list="{{b.rows}}" as="r" hint-placeholder-count="2"><span class="lab" style="font-size: 9.5px; line-height: 17px;">{{r.k}}</span><span style="color: {{r.c}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{r.v}}</span></sc-for>
+                    </sc-for>
+                  </div>
+                </div>
+
+                <div class="rule" style="display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 15px 0; align-items: center;">
+                  <span style="font-weight: 500;">Hears with</span>
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <span style="font-weight: 500;">Deepgram Flux</span><span class="ok">Connected</span><span class="aside">Knows you’ve finished in <span class="mono" style="color: var(--tx2);">~160 ms</span></span>
+                    <span style="flex: 1;"></span>
+                    <span style="font-size: 12.5px; color: var(--tx2);">Stop when I talk over it</span><button type="button" class="{{bargeCls}}" onClick="{{toggleBarge}}" aria-label="Stop when I talk over it"></button>
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- ============ ATLAS · LOOK ============ -->
+            <sc-if value="{{isLook}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: flex; flex-direction: column;">
+                <div class="rule" style="display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 15px 0;">
+                  <span style="font-weight: 500;">Theme</span>
+                  <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px;">
+                      <sc-for list="{{themes}}" as="t" hint-placeholder-count="5">
+                        <div onClick="{{t.pick}}" style="cursor: pointer; display: flex; flex-direction: column; gap: 8px;">
+                          <div style="height: 86px; border-radius: 8px; border: 1px solid {{t.ring}}; box-shadow: 0 0 0 {{t.rw}}px {{t.ring}}; background: {{t.bg}}; position: relative; overflow: hidden;">
+                            <div style="position: absolute; left: 0; top: 0; bottom: 0; width: 28px; background: {{t.side}}; border-right: 1px solid {{t.sep}};"></div>
+                            <div style="position: absolute; left: 6px; top: 8px; width: 7px; height: 7px; background: {{t.tx}}; transform: rotate(45deg) scale(.8);"></div>
+                            <div style="position: absolute; left: 6px; top: 24px; width: 15px; height: 3px; border-radius: 1px; background: {{t.tx3}};"></div>
+                            <div style="position: absolute; left: 6px; top: 31px; width: 12px; height: 3px; border-radius: 1px; background: {{t.tx3}};"></div>
+                            <div style="position: absolute; left: 6px; top: 38px; width: 14px; height: 3px; border-radius: 1px; background: {{t.tx3}};"></div>
+                            <div style="position: absolute; left: 38px; right: 10px; top: 10px; bottom: 10px; border-radius: 4px; background: {{t.win}}; border: 1px solid {{t.sep}};">
+                              <div style="position: absolute; left: 8px; top: 6px; font-family: {{t.font}}; font-size: 15px; font-weight: 600; color: {{t.tx}}; letter-spacing: -.02em;">Aa</div>
+                              <div style="position: absolute; left: 8px; top: 31px; width: 54%; height: 3px; border-radius: 1px; background: {{t.tx3}};"></div>
+                              <div style="position: absolute; left: 8px; top: 38px; width: 38%; height: 3px; border-radius: 1px; background: {{t.tx3}};"></div>
+                              <div style="position: absolute; right: 7px; top: 8px; width: 6px; height: 6px; border-radius: 1px; background: {{t.ac}};"></div>
+                              <div style="position: absolute; right: 7px; bottom: 6px; width: 18px; height: 7px; border-radius: 2px; background: {{t.tx}};"></div>
+                            </div>
+                          </div>
+                          <div style="display: flex; flex-direction: column; gap: 1px;"><span style="display: flex; align-items: center; gap: 6px; font-weight: 500; white-space: nowrap;">{{t.n}}<sc-if value="{{t.on}}" hint-placeholder-val="{{false}}"><span style="color: var(--F); font-size: 12px;">✓</span></sc-if></span><span class="aside">{{t.s}}</span></div>
+                        </div>
+                      </sc-for>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px;"><button type="button" class="{{followCls}}" onClick="{{toggleFollow}}" aria-label="Follow the system"></button><span style="font-size: 12.5px;">Follow the system</span><span class="aside">Daylight by day, Graphite at night.</span></div>
+                  </div>
+                </div>
+
+                <div class="rule" style="display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 15px 0; align-items: center;">
+                  <span style="font-weight: 500;">Accent</span>
+                  <div style="display: flex; align-items: center; gap: 10px;">
+                    <sc-for list="{{accents}}" as="a" hint-placeholder-count="6"><button type="button" aria-label="{{a.n}}" onClick="{{a.pick}}" style="width: 22px; height: 22px; padding: 0; border-radius: 6px; border: 0; background: {{a.c}}; box-shadow: 0 0 0 2px var(--win), 0 0 0 {{a.rw}}px var(--tx2);"></button></sc-for>
+                    <span class="aside" style="margin-left: 8px;">Ember marks what needs you. Pick it or one of these.</span>
+                  </div>
+                </div>
+
+                <div class="rule" style="display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 15px 0; align-items: center;">
+                  <span style="font-weight: 500;">Density and motion</span>
+                  <div style="display: flex; align-items: flex-start; gap: 28px;">
+                    <sc-for list="{{lookSegs}}" as="g" hint-placeholder-count="2">
+                      <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <span style="font-size: 12px; color: var(--tx2);">{{g.n}}</span>
+                        <div class="seg"><sc-for list="{{g.opts}}" as="o" hint-placeholder-count="2"><button type="button" class="{{o.cls}}" onClick="{{o.pick}}">{{o.l}}</button></sc-for></div>
                       </div>
-                      <div style="display: flex; gap: 6px; padding-top: 2px;">
-                        <sc-for list="{{b.btns}}" as="x" hint-placeholder-count="2"><button type="button" class="btn" style="height: 26px; padding: 0 10px; font-size: 12px;">{{x}}</button></sc-for>
-                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+
+                <div class="rule" style="display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 15px 0; align-items: center;">
+                  <span style="font-weight: 500;">Your own</span>
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <span style="color: var(--tx2);">Describe a look and Atlas makes the theme, with a live preview.</span>
+                    <span style="flex: 1;"></span>
+                    <button type="button" class="btn s">Make a theme</button><button type="button" class="btn s">Open a theme file</button>
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- ============ BRAINS, SIMPLE ============ -->
+            <sc-if value="{{isBrainsSimple}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: flex; flex-direction: column; gap: 14px; padding-top: 4px;">
+                <div style="border: 1px solid var(--sep); border-radius: 10px; background: var(--bg); padding: 18px 20px; display: flex; align-items: center; gap: 18px;">
+                  <span class="logo" style="width: 56px; height: 56px; border-radius: 14px;"><img class="lg {{bs.main.inv}}" src="{{bs.main.lg}}" width="30" height="30" alt=""></span>
+                  <span style="display: flex; flex-direction: column; gap: 4px; flex: 1;">
+                    <span class="disp" style="font-size: 19px; font-weight: 600;">Atlas thinks with ChatGPT, on your Plus plan.</span>
+                    <span style="color: var(--tx2);">If ChatGPT is busy, Claude takes over for that answer. Voice uses Workers AI, because it starts talking fastest.</span>
+                  </span>
+                  <button type="button" class="btn">Change</button>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;">
+                  <sc-for list="{{bs.provs}}" as="p" hint-placeholder-count="3">
+                    <div style="border: 1px solid var(--sep); border-radius: 10px; background: var(--win); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+                      <span style="display: flex; align-items: center; gap: 10px;"><span class="logo" style="width: 32px; height: 32px;"><img class="lg {{p.inv}}" src="{{p.lg}}" width="18" height="18" alt=""></span><span style="display: flex; flex-direction: column; flex: 1;"><span style="font-weight: 600;">{{p.n}}</span><span style="font-size: 12px; color: var(--tx3);">{{p.how}}</span></span><span style="width: 7px; height: 7px; border-radius: 50%; background: var(--F);"></span></span>
+                      <span style="font-size: 13.5px;">{{p.line}}</span>
+                      <span style="height: 6px; border-radius: 3px; background: var(--sep); overflow: hidden; display: block;"><span style="display: block; height: 6px; width: {{p.pct}}%; border-radius: 3px; background: {{p.c}};"></span></span>
+                      <span style="font-size: 12px; color: var(--tx3);">{{p.foot}}</span>
                     </div>
                   </sc-for>
                 </div>
-                <div class="mono" style="font-size: 10.5px; letter-spacing: .06em; color: var(--tx3); display: flex; gap: 8px; align-items: center;"><span style="width: 6px; height: 6px; border: 1px solid var(--dash);"></span>ATLAS GOES BACK TO MAIN AS SOON AS IT RECOVERS · LAST SWITCH OCT 12, FOR 14 MIN</div>
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <span style="font-weight: 600; padding-bottom: 4px;">For different kinds of work</span>
+                  <sc-for list="{{bs.kinds}}" as="k" hint-placeholder-count="4">
+                    <div class="row" style="display: grid; grid-template-columns: 220px minmax(0, 1fr) auto; align-items: center; gap: 16px; height: 46px; border-top: 1px solid var(--sep); padding: 0 6px; margin: 0 -6px; border-radius: 6px;">
+                      <span style="display: flex; flex-direction: column;"><span style="font-weight: 500;">{{k.n}}</span><span style="font-size: 12px; color: var(--tx3);">{{k.what}}</span></span>
+                      <span style="display: flex; align-items: center; gap: 8px; color: var(--tx2);"><sc-for list="{{k.by}}" as="b" hint-placeholder-count="2"><span style="display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px 0 7px; border-radius: 13px; border: 1px solid var(--sep2); background: var(--win); color: var(--tx); font-size: 12.5px;"><img class="lg {{b.inv}}" src="{{b.lg}}" width="14" height="14" alt="">{{b.n}}</span><sc-if value="{{b.then}}" hint-placeholder-val="{{false}}"><span style="font-size: 12px; color: var(--tx3);">then</span></sc-if></sc-for></span>
+                      <span style="font-size: 12px; color: var(--tx3);">{{k.week}}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; padding-top: 2px;"><span style="font-size: 12.5px; color: var(--tx3);">Models, fallbacks and limits for each role are in the details.</span><button type="button" class="btn" style="height: 26px; font-size: 12px;">Show details</button></div>
+              </div>
+            </sc-if>
 
-                <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding-top: 4px;">
-                  <sc-for list="{{panels}}" as="p" hint-placeholder-count="2">
-                    <div style="border: 1px solid var(--sep); border-radius: 8px; background: var(--bg); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
-                      <div style="display: flex; align-items: baseline; gap: 8px;"><span style="font-weight: 600;">{{p.n}}</span><span style="font-size: 12px; color: var(--tx3);">{{p.on}}</span><span style="flex: 1;"></span><button type="button" class="btn" style="height: 24px; padding: 0 9px; font-size: 12px;">Change</button></div>
-                      <span style="font-size: 12.5px; color: var(--tx2); line-height: 1.45;">{{p.sub}}</span>
-                      <div class="mono" style="display: grid; grid-template-columns: 90px minmax(0, 1fr) auto; gap: 0 12px; font-size: 11.5px; color: var(--tx2);">
-                        <sc-for list="{{p.rows}}" as="r" hint-placeholder-count="3">
-                          <span class="lab" style="font-size: 9.5px; line-height: 26px; border-top: 1px dashed var(--dash);">{{r.k}}</span>
-                          <span style="line-height: 26px; border-top: 1px dashed var(--dash); color: var(--tx);">{{r.v}}</span>
-                          <span style="line-height: 26px; border-top: 1px dashed var(--dash); color: var(--tx3); text-align: right;">{{r.u}}</span>
+            <!-- ============ BRAINS ============ -->
+            <sc-if value="{{isBrains}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: flex; flex-direction: column;">
+                <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 11px 0 9px;"><span class="h2">Roles</span><span class="aside">A fallback covers one turn, and Atlas tells you.</span></div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <sc-for list="{{roles}}" as="r" hint-placeholder-count="2">
+                    <div style="display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px; align-items: center;">
+                      <div style="display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 600;">{{r.n}}</span><span class="aside">{{r.sub}}</span></div>
+                      <div style="display: flex; align-items: stretch;">
+                        <sc-for list="{{r.slots}}" as="b" hint-placeholder-count="3">
+                          <sc-if value="{{b.join}}" hint-placeholder-val="{{false}}">
+                            <div aria-hidden="true" style="flex: 0 0 28px; position: relative;"><div style="position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed var(--dash);"></div><span class="node" style="left: 50%; top: 50%;"></span></div>
+                          </sc-if>
+                          <div style="flex: 1 1 0; min-width: 0; position: relative;">
+                            <sc-if value="{{b.real}}" hint-placeholder-val="{{true}}">
+                              <div class="slot" onClick="{{b.pick}}" style="height: 44px; box-sizing: border-box; border: 1px solid {{b.bd}}; border-radius: 8px; background: var(--win); padding: 0 10px 0 12px; display: flex; align-items: center; gap: 10px;">
+                                <div style="display: flex; flex-direction: column; min-width: 0; flex: 1;"><span style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{b.model}}</span><span class="aside">{{b.prov}}</span></div>
+                                <span class="{{b.stc}}">{{b.state}}</span>
+                                <svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M6 9l6 6 6-6"></path></svg>
+                              </div>
+                            </sc-if>
+                            <sc-if value="{{b.ghost}}" hint-placeholder-val="{{false}}">
+                              <div style="height: 44px; box-sizing: border-box; border: 1px dashed var(--sep2); border-radius: 8px; padding: 0 12px; display: flex; align-items: center; gap: 8px; color: var(--tx3); font-size: 12.5px;"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Add a fallback</div>
+                            </sc-if>
+                            <sc-if value="{{b.open}}" hint-placeholder-val="{{false}}">
+                              <div class="rise" role="dialog" aria-label="Choose a model" style="position: absolute; left: -1px; top: 52px; width: 460px; background: var(--win); border: 1px solid var(--sep2); border-radius: 10px; box-shadow: var(--sh); z-index: 30; overflow: hidden;">
+                                <div style="display: flex; align-items: center; gap: 10px; padding: 12px 14px 10px;">
+                                  <span style="font-weight: 600;">Main, if ChatGPT is unavailable</span><span style="flex: 1;"></span><span class="kbd">esc</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 10px; padding: 0 14px 10px;">
+                                  <div class="seg sm"><sc-for list="{{pickProv}}" as="o" hint-placeholder-count="3"><button type="button" class="{{o.cls}}" onClick="{{o.pick}}">{{o.l}}</button></sc-for></div>
+                                  <span style="flex: 1;"></span><span class="aside">{{pickNote}}</span>
+                                </div>
+                                <div style="display: grid; grid-template-columns: minmax(0, 1fr) 104px 86px; gap: 0 14px; padding: 6px 14px; border-top: 1px solid var(--sep); font-size: 11.5px; color: var(--tx3);"><span>Model</span><span>Speed</span><span style="text-align: right;">{{pickCostHd}}</span></div>
+                                <sc-for list="{{pickRows}}" as="m" hint-placeholder-count="4">
+                                  <div class="row" onClick="{{m.pick}}" style="cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) 104px 86px; gap: 0 14px; align-items: center; padding: 8px 14px; border-top: 1px solid var(--sep); background: {{m.bg}};">
+                                    <div style="display: flex; flex-direction: column; gap: 1px; min-width: 0;"><span style="display: flex; align-items: center; gap: 7px; font-weight: 500;">{{m.n}}<sc-if value="{{m.on}}" hint-placeholder-val="{{false}}"><span style="color: var(--F); font-size: 12px;">✓</span></sc-if></span><span class="aside">{{m.s}}</span></div>
+                                    <div style="display: flex; flex-direction: column; gap: 4px;"><div class="mtr"><sc-for list="{{m.sp}}" as="c" hint-placeholder-count="5"><i class="{{c.k}}"></i></sc-for></div><span class="mono" style="font-size: 10.5px; color: var(--tx3);">{{m.tps}}</span></div>
+                                    <span class="mono" style="font-size: 11.5px; color: var(--tx2); text-align: right;">{{m.cost}}</span>
+                                  </div>
+                                </sc-for>
+                                <div style="padding: 9px 14px 10px; border-top: 1px solid var(--sep); font-size: 12px; color: var(--tx3);">{{pickFoot}}</div>
+                              </div>
+                            </sc-if>
+                          </div>
                         </sc-for>
                       </div>
                     </div>
                   </sc-for>
                 </div>
 
-                <div style="display: flex; align-items: center; gap: 22px; flex-wrap: wrap; padding: 11px 0 0; border-top: 1px dashed var(--dash);">
-                  <span class="lab">This month</span>
-                  <sc-for list="{{usage}}" as="u" hint-placeholder-count="4"><span style="display: inline-flex; align-items: baseline; gap: 7px; font-size: 12.5px;"><span style="color: var(--tx2);">{{u.n}}</span><span class="mono" style="font-size: 12px;">{{u.v}}</span></span></sc-for>
-                  <span style="flex: 1;"></span>
-                  <span class="mono" style="font-size: 12px; color: var(--tx2);">$24.52 <span style="color: var(--tx3);">+ plans</span></span>
+                <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 11px 0 9px; margin-top: 14px;"><span class="h2">Named brains</span><span class="aside">Atlas sees only these names and lines when it hands work to a helper.</span><span style="flex: 1;"></span><button type="button" class="tbtn">New brain</button></div>
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;">
+                  <sc-for list="{{named}}" as="nb" hint-placeholder-count="3">
+                    <div class="card" style="padding: 11px 14px 12px; display: flex; flex-direction: column; gap: 10px;">
+                      <div style="display: flex; flex-direction: column; gap: 2px;"><div style="display: flex; align-items: baseline; gap: 8px;"><span class="disp" style="font-size: 16px; font-weight: 600;">{{nb.n}}</span><span style="flex: 1;"></span><span class="mono" style="font-size: 10.5px; color: var(--tx3);">{{nb.stat}}</span></div><span style="font-size: 12.5px; color: var(--tx2);">{{nb.line}}</span></div>
+                      <div style="display: flex; align-items: stretch;">
+                        <sc-for list="{{nb.slots}}" as="b" hint-placeholder-count="2">
+                          <sc-if value="{{b.join}}" hint-placeholder-val="{{false}}"><div aria-hidden="true" style="flex: 0 0 16px; position: relative;"><div style="position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed var(--dash);"></div></div></sc-if>
+                          <sc-if value="{{b.real}}" hint-placeholder-val="{{true}}"><div class="slot" style="flex: 1 1 0; min-width: 0; border: 1px solid var(--sep2); border-radius: 6px; padding: 5px 9px; display: flex; flex-direction: column;"><span style="font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{b.model}}</span><span style="font-size: 11px; color: var(--tx3);">{{b.prov}}</span></div></sc-if>
+                          <sc-if value="{{b.ghost}}" hint-placeholder-val="{{false}}"><div style="flex: 1 1 0; min-width: 0; border: 1px dashed var(--sep2); border-radius: 6px; padding: 5px 9px; display: flex; align-items: center; font-size: 12px; color: var(--tx3);">Add a fallback</div></sc-if>
+                        </sc-for>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+                <div class="cardb" style="margin-top: 10px; padding: 8px 14px; display: grid; grid-template-columns: 112px repeat(5, minmax(0, 1fr)); gap: 12px; align-items: center;">
+                  <span style="font-weight: 500;">Used for</span>
+                  <sc-for list="{{usedFor}}" as="u" hint-placeholder-count="5">
+                    <div style="display: flex; flex-direction: column; gap: 3px; align-items: flex-start;"><span class="aside">{{u.k}}</span><button type="button" class="chip">{{u.v}}<svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M6 9l6 6 6-6"></path></svg></button></div>
+                  </sc-for>
+                </div>
+
+                <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 11px 0 9px; margin-top: 14px;"><span class="h2">Providers</span><span class="aside">Checked every minute. A failing one is skipped within seconds.</span><span style="flex: 1;"></span><span class="mono" style="font-size: 11px; color: var(--tx3);">$18.40 this month + plan</span></div>
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;">
+                  <sc-for list="{{provs}}" as="p" hint-placeholder-count="3">
+                    <div class="card" style="padding: 11px 14px; display: flex; flex-direction: column; gap: 7px;">
+                      <div style="display: flex; align-items: center; gap: 10px;"><span style="font-weight: 600;">{{p.n}}</span><span class="ok">{{p.state}}</span><span style="flex: 1;"></span><button type="button" class="tbtn">Manage</button></div>
+                      <div style="display: flex; align-items: baseline; gap: 8px;"><span style="font-size: 12.5px; color: var(--tx2);">{{p.k}}</span><span style="flex: 1;"></span><span class="mono" style="font-size: 11.5px;">{{p.v}}</span></div>
+                      <div class="mtr"><sc-for list="{{p.cells}}" as="c" hint-placeholder-count="24"><i class="{{c.k}}"></i></sc-for></div>
+                      <span class="aside">{{p.foot}}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- ============ NOTIFICATIONS, SIMPLE ============ -->
+            <sc-if value="{{isNotifSimple}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: flex; flex-direction: column;">
+                <sc-if value="{{showSugg}}" hint-placeholder-val="{{true}}">
+                  <div class="pick" style="border: 1px solid var(--ac); background: var(--acs); border-radius: 10px; padding: 12px 14px 12px 16px; display: flex; align-items: center; gap: 14px; margin-bottom: 14px;">
+                    <svg viewBox="290 128 444 768" width="9" height="16" aria-hidden="true" style="flex: none;"><polygon points="512,128.96 290.84,418.52 512,505.16" style="fill: var(--m1);"></polygon><polygon points="512,128.96 512,505.16 733.16,418.52" style="fill: var(--m2);"></polygon><polygon points="512,895.04 290.84,418.52 512,505.16" style="fill: var(--m3);"></polygon><polygon points="512,895.04 512,505.16 733.16,418.52" style="fill: var(--m4);"></polygon></svg>
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 2px;"><span style="font-weight: 500;">You open Telegram faster than notifications. Want me to try it first when something can’t wait?</span><span class="aside">Over the last month you opened Telegram in about a minute, and notifications in about six.</span></div>
+                    <button type="button" class="btnp s" onClick="{{acceptSugg}}">Try it</button><button type="button" class="btn s" onClick="{{dismissSugg}}">Not now</button>
+                  </div>
+                </sc-if>
+                <sc-for list="{{nsimple}}" as="u" hint-placeholder-count="3">
+                  <div style="display: grid; grid-template-columns: 128px minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 10px 0; border-top: 1px solid var(--sep);">
+                    <span style="display: flex; flex-direction: column; gap: 1px;"><span class="disp" style="font-size: 16px; font-weight: 600;">{{u.n}}</span><span class="aside">{{u.count}}</span></span>
+                    <span class="say"><sc-for list="{{u.parts}}" as="p" hint-placeholder-count="5"><sc-if value="{{p.t}}" hint-placeholder-val="{{true}}">{{p.t}}</sc-if><sc-if value="{{p.c}}" hint-placeholder-val="{{false}}"><span class="nch"><sc-if value="{{p.lg}}" hint-placeholder-val="{{true}}"><img class="lg {{p.inv}}" src="{{p.lg}}" width="14" height="14" alt=""></sc-if><sc-if value="{{p.ic}}" hint-placeholder-val="{{false}}"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx2);"><path d="{{p.ic}}"></path></svg></sc-if><sc-if value="{{p.dia}}" hint-placeholder-val="{{false}}"><svg viewBox="290 128 444 768" width="7" height="12" aria-hidden="true" style="flex: none;"><polygon points="512,128.96 290.84,418.52 512,505.16" style="fill: var(--m1);"></polygon><polygon points="512,128.96 512,505.16 733.16,418.52" style="fill: var(--m2);"></polygon><polygon points="512,895.04 290.84,418.52 512,505.16" style="fill: var(--m3);"></polygon><polygon points="512,895.04 512,505.16 733.16,418.52" style="fill: var(--m4);"></polygon></svg></sc-if>{{p.n}}</span></sc-if></sc-for></span>
+                    <button type="button" class="btn s">Change</button>
+                  </div>
+                </sc-for>
+                <div class="aside" style="padding: 10px 0 0; border-top: 1px solid var(--sep);">Read it anywhere and it’s cleared everywhere.</div>
+
+                <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px;">
+                  <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+                    <div style="display: flex; align-items: center; gap: 10px; height: 24px;"><span style="font-weight: 600;">Quiet hours</span><span style="flex: 1;"></span><button type="button" class="{{quietCls}}" onClick="{{toggleQuiet}}" aria-label="Quiet hours"></button></div>
+                    <div style="display: flex; flex-direction: column; gap: 2px;"><span style="font-size: 13.5px;">From 10 pm to 7 am, only what can’t wait gets through.</span><span class="aside">They start in 7 hours.</span></div>
+                    <div class="mtr"><sc-for list="{{dayCells}}" as="c" hint-placeholder-count="24"><i class="{{c.k}}" style="height: 8px;"></i></sc-for></div>
+                    <div style="display: flex; font-size: 11.5px; color: var(--tx3);"><span style="flex: 1;">Midnight</span><span style="flex: 1; text-align: center;">Noon</span><span style="flex: 1; text-align: right;">Midnight</span></div>
+                  </div>
+                  <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+                    <div style="display: flex; align-items: center; gap: 10px; height: 24px;"><span style="font-weight: 600;">Interruptions</span><span style="flex: 1;"></span>
+                      <div style="display: inline-flex; align-items: center; border: 1px solid var(--sep2); border-radius: 6px; height: 24px;"><button type="button" aria-label="Fewer" style="width: 24px; height: 22px; border: 0; background: transparent; color: var(--tx2); padding: 0;">−</button><span class="num" style="font-size: 12px; padding: 0 4px;">10 a day</span><button type="button" aria-label="More" style="width: 24px; height: 22px; border: 0; background: transparent; color: var(--tx2); padding: 0;">+</button></div></div>
+                    <div style="display: flex; align-items: baseline; gap: 8px;"><span class="disp num" style="font-size: 22px; font-weight: 600;">4</span><span style="font-size: 13.5px; color: var(--tx2);">of 10 so far today</span></div>
+                    <div class="mtr"><sc-for list="{{budget}}" as="c" hint-placeholder-count="10"><i class="{{c.k}}" style="height: 8px;"></i></sc-for></div>
+                    <span class="aside">Atlas’s own check-ins count too. The count starts again at 7 am.</span>
+                  </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; padding-top: 16px;"><span style="font-size: 12.5px; color: var(--tx3);">Focus times, the order Atlas tries, and each channel’s settings are in the details.</span><button type="button" class="btn" style="height: 26px; font-size: 12px;">Show details</button></div>
+              </div>
+            </sc-if>
+
+            <!-- ============ NOTIFICATIONS ============ -->
+            <sc-if value="{{isNotif}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: flex; flex-direction: column;">
+                <sc-if value="{{showSugg}}" hint-placeholder-val="{{true}}">
+                  <div class="pick" style="border: 1px solid var(--ac); background: var(--acs); border-radius: 8px; padding: 10px 12px 10px 14px; display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+                    <svg viewBox="290 128 444 768" width="9" height="16" aria-hidden="true" style="flex: none;"><polygon points="512,128.96 290.84,418.52 512,505.16" style="fill: var(--m1);"></polygon><polygon points="512,128.96 512,505.16 733.16,418.52" style="fill: var(--m2);"></polygon><polygon points="512,895.04 290.84,418.52 512,505.16" style="fill: var(--m3);"></polygon><polygon points="512,895.04 512,505.16 733.16,418.52" style="fill: var(--m4);"></polygon></svg>
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">You read Telegram faster than notifications. Reach you there first for Now?</span><span class="aside">Last 30 days: Telegram read in about 1 minute, push in about 6.</span></div>
+                    <button type="button" class="btnp s" onClick="{{acceptSugg}}">Accept</button><button type="button" class="btn s" onClick="{{dismissSugg}}">Not now</button>
+                  </div>
+                </sc-if>
+                <div class="rule" style="display: flex; align-items: center; gap: 10px; padding: 12px 0 12px;">
+                  <span class="h2">Where it goes</span><span class="aside" style="margin-right: 6px;">The first that applies:</span>
+                  <sc-for list="{{order}}" as="o" hint-placeholder-count="3">
+                    <sc-if value="{{o.join}}" hint-placeholder-val="{{false}}"><span aria-hidden="true" style="width: 18px; border-top: 1px dashed var(--dash);"></span></sc-if>
+                    <span class="tag" style="text-transform: none; letter-spacing: 0; font-family: Inter, sans-serif; font-size: 12px; height: 22px; padding: 0 8px; border-radius: 4px; color: {{o.c}}; border-color: {{o.bd}};"><span class="mono" style="font-size: 10px; color: var(--tx3);">{{o.i}}</span>{{o.n}}</span>
+                  </sc-for>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                  <sc-for list="{{urg}}" as="u" hint-placeholder-count="3">
+                    <div style="display: grid; grid-template-columns: 156px minmax(0, 1fr); gap: 16px; align-items: center;">
+                      <div style="display: flex; flex-direction: column; gap: 1px;"><div style="display: flex; align-items: baseline; gap: 8px;"><span class="disp" style="font-size: 15px; font-weight: 600;">{{u.n}}</span><span class="mono" style="font-size: 10px; color: var(--tx3);">{{u.stat}}</span></div><span class="aside">{{u.sub}}</span></div>
+                      <div style="display: flex; align-items: stretch;">
+                        <sc-for list="{{u.steps}}" as="c" hint-placeholder-count="3">
+                          <sc-if value="{{c.join}}" hint-placeholder-val="{{false}}">
+                            <div aria-hidden="true" style="flex: 0 0 {{c.jw}}px; position: relative;"><div style="position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed var(--dash);"></div><span class="node" style="left: 50%; top: 50%;"></span><span class="mono" style="position: absolute; left: 0; right: 0; bottom: calc(50% + 6px); text-align: center; font-size: 9.5px; letter-spacing: .06em; color: var(--tx3); white-space: nowrap;">{{c.jl}}</span></div>
+                          </sc-if>
+                          <div class="slot" style="flex: 0 0 160px; height: 46px; box-sizing: border-box; border: 1px solid var(--sep2); border-radius: 8px; background: var(--win); padding: 0 12px; display: flex; align-items: center; gap: 10px;">
+                            <svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx2);"><path d="{{c.d}}"></path></svg>
+                            <div style="display: flex; flex-direction: column; min-width: 0;"><span style="font-weight: 500;">{{c.n}}</span><span class="aside" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{c.s}}</span></div>
+                          </div>
+                        </sc-for>
+                        <div aria-hidden="true" style="flex: 0 0 10px;"></div>
+                        <button type="button" aria-label="Add a channel" class="it" style="flex: 0 0 34px; height: 46px; border: 1px dashed var(--sep2); border-radius: 8px; background: transparent; color: var(--tx3); display: inline-flex; align-items: center; justify-content: center; padding: 0;"><svg class="ic" width="13" height="13" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg></button>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+                <div class="aside" style="padding: 10px 0 0 172px;">Reading it on one device clears it everywhere.</div>
+
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 18px;">
+                  <div class="card" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 9px;">
+                    <div style="display: flex; align-items: center; gap: 10px;"><span style="font-weight: 600;">Quiet hours</span><span style="flex: 1;"></span><button type="button" class="{{quietCls}}" onClick="{{toggleQuiet}}" aria-label="Quiet hours"></button></div>
+                    <div style="display: flex; flex-direction: column; gap: 1px;"><span style="font-size: 12.5px;">10 pm to 7 am</span><span class="aside">Only Now gets through. Starts in 7 hours.</span></div>
+                    <div class="mtr" style="position: relative;"><sc-for list="{{dayCells}}" as="c" hint-placeholder-count="24"><i class="{{c.k}}"></i></sc-for></div>
+                    <div class="mono" style="display: flex; font-size: 10px; color: var(--tx3);"><span style="flex: 1;">12 AM</span><span style="flex: 1; text-align: center;">NOON</span><span style="flex: 1; text-align: right;">12 AM</span></div>
+                  </div>
+                  <div class="card" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 9px;">
+                    <div style="display: flex; align-items: center; gap: 10px;"><span style="font-weight: 600;">Focus</span><span style="flex: 1;"></span><button type="button" class="{{focusCls}}" onClick="{{toggleFocus}}" aria-label="Focus"></button></div>
+                    <span style="font-size: 12.5px; color: var(--tx2); line-height: 1.45;">Holds Soon during focus blocks on your calendar, or while you’ve picked an area.</span>
+                    <span style="flex: 1;"></span>
+                    <div style="display: flex; align-items: center; gap: 8px;"><span class="idle">Not focusing</span><span style="flex: 1;"></span><span class="aside">Next: Riverside edit, 3 pm</span></div>
+                  </div>
+                  <div class="card" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 9px;">
+                    <div style="display: flex; align-items: center; gap: 10px;"><span style="font-weight: 600;">Interruption budget</span><span style="flex: 1;"></span>
+                      <div style="display: inline-flex; align-items: center; border: 1px solid var(--sep2); border-radius: 6px; height: 22px;"><button type="button" aria-label="Fewer" style="width: 22px; height: 20px; border: 0; background: transparent; color: var(--tx2); padding: 0;">−</button><span class="mono" style="font-size: 11px; padding: 0 4px;">10/day</span><button type="button" aria-label="More" style="width: 22px; height: 20px; border: 0; background: transparent; color: var(--tx2); padding: 0;">+</button></div></div>
+                    <div style="display: flex; align-items: baseline; gap: 8px;"><span class="disp num" style="font-size: 20px; font-weight: 600;">4</span><span style="font-size: 12.5px; color: var(--tx2);">of 10 used today</span></div>
+                    <div class="mtr"><sc-for list="{{budget}}" as="c" hint-placeholder-count="10"><i class="{{c.k}}" style="height: 8px;"></i></sc-for></div>
+                    <span class="aside">Atlas’s own pings count. Resets at 7 am.</span>
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- ============ PERMISSIONS, SIMPLE ============ -->
+            <sc-if value="{{isPermsSimple}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: flex; flex-direction: column;">
+                <sc-for list="{{psimple}}" as="k" hint-placeholder-count="4">
+                  <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 11px 0; border-top: 1px solid var(--sep);">
+                    <span class="logo" style="width: 36px; height: 36px; border-radius: 9px;"><svg class="ic" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true" style="color: {{k.icc}};"><path d="{{k.d}}"></path></svg></span>
+                    <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0;"><span style="font-size: 14.5px; font-weight: 500;">{{k.n}}</span><span class="aside">{{k.s}}</span></span>
+                    <sc-if value="{{k.lock}}" hint-placeholder-val="{{false}}"><span style="display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--tx3);"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4"></path></svg>Always, and it can’t be turned off</span></sc-if>
+                    <sc-if value="{{k.free}}" hint-placeholder-val="{{true}}"><div class="seg"><sc-for list="{{k.opts}}" as="o" hint-placeholder-count="2"><button type="button" class="{{o.cls}}" onClick="{{o.pick}}">{{o.l}}</button></sc-for></div></sc-if>
+                  </div>
+                </sc-for>
+
+                <div style="display: flex; align-items: baseline; gap: 10px; padding: 16px 0 10px; border-top: 1px solid var(--sep);"><span class="h2">Your own rules</span><span class="aside">Trust you’ve given Atlas, and rules you’ve set.</span><span style="flex: 1;"></span><button type="button" class="btn s">Show all rules</button></div>
+                <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+                  <sc-for list="{{ptrust}}" as="t" hint-placeholder-count="6">
+                    <div style="border: 1px {{t.bs}} var(--sep2); border-radius: 8px; background: {{t.bg}}; padding: 0 12px; height: 54px; box-sizing: border-box; display: flex; align-items: center; gap: 12px;">
+                      <sc-if value="{{t.lg}}" hint-placeholder-val="{{true}}"><span class="logo" style="width: 32px; height: 32px;"><img class="lg {{t.inv}}" src="{{t.lg}}" width="17" height="17" alt=""></span></sc-if>
+                      <sc-if value="{{t.av}}" hint-placeholder-val="{{false}}"><span class="avc" style="width: 32px; height: 32px; font-size: 11.5px; --c: {{t.c}}; --rgb: {{t.rgb}};">{{t.av}}</span></sc-if>
+                      <sc-if value="{{t.ic}}" hint-placeholder-val="{{false}}"><span class="logo" style="width: 32px; height: 32px; border-style: dashed; background: transparent;"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="{{t.ic}}"></path></svg></span></sc-if>
+                      <span style="display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0;"><span style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: {{t.fg}};">{{t.n}}</span><span style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--tx3); white-space: nowrap;"><sc-if value="{{t.area}}" hint-placeholder-val="{{false}}"><span class="ach" style="height: 18px; font-size: 11.5px; --c: {{t.c}}; --rgb: {{t.rgb}};">{{t.area}}</span></sc-if>{{t.s}}</span></span>
+                      <sc-if value="{{t.act}}" hint-placeholder-val="{{true}}"><button type="button" class="tbtn">{{t.act}}</button></sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- ============ PERMISSIONS ============ -->
+            <sc-if value="{{isPerms}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: flex; flex-direction: column;">
+                <div style="display: grid; grid-template-columns: minmax(0, 1.42fr) minmax(0, 1fr); gap: 28px;">
+                  <div style="display: flex; flex-direction: column;">
+                    <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 12px 0 4px;"><span class="h2">Kinds of action</span></div>
+                    <sc-for list="{{kinds}}" as="k" hint-placeholder-count="5">
+                      <div style="display: flex; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--sep);">
+                        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">{{k.n}}</span><span class="aside">{{k.s}}</span></div>
+                        <sc-if value="{{k.lock}}" hint-placeholder-val="{{false}}"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3);"><path d="M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4"></path></svg></sc-if>
+                        <div class="{{k.segCls}}"><sc-for list="{{k.opts}}" as="o" hint-placeholder-count="3"><button type="button" class="{{o.cls}}" onClick="{{o.pick}}">{{o.l}}</button></sc-for></div>
+                      </div>
+                    </sc-for>
+                    <div class="aside" style="padding-top: 9px;">A vault login asks the first time on each site, and secrets only go through the app.</div>
+                  </div>
+                  <div style="display: flex; flex-direction: column;">
+                    <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 12px 0 4px;"><span class="h2">Atlas doesn’t ask for</span><span style="flex: 1;"></span><span class="aside">Trust you gave it</span></div>
+                    <sc-for list="{{trusted}}" as="t" hint-placeholder-count="4">
+                      <div style="display: flex; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--sep);">
+                        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">{{t.n}}</span><span class="aside">{{t.s}}</span></div>
+                        <button type="button" class="btn s">Ask again</button>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+
+                <div class="rule" style="display: flex; align-items: baseline; gap: 10px; padding: 12px 0 4px; margin-top: 14px;"><span class="h2">Your own rules</span><span class="aside">Each starts as Atlas behaves out of the box, on the left.</span></div>
+                <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 28px;">
+                  <sc-for list="{{rules}}" as="r" hint-placeholder-count="10">
+                    <div style="display: flex; align-items: center; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--sep);">
+                      <span style="flex: 1; min-width: 0; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{r.n}}</span>
+                      <div class="seg sm"><sc-for list="{{r.opts}}" as="o" hint-placeholder-count="2"><button type="button" class="{{o.cls}}" onClick="{{o.pick}}">{{o.l}}</button></sc-for></div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- ============ ACCOUNT, SIMPLE ============ -->
+            <sc-if value="{{isAccountSimple}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px;">
+                <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column;">
+                  <div style="display: flex; align-items: center; gap: 10px; padding-bottom: 10px;"><span class="h2" style="white-space: nowrap;">Signing in</span><span class="aside" style="white-space: nowrap;">With passkeys, no passwords.</span><span style="flex: 1;"></span><button type="button" class="btn s">Add a device</button></div>
+                  <sc-for list="{{passkeysS}}" as="p" hint-placeholder-count="2">
+                    <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--sep);">
+                      <span class="logo" style="width: 34px; height: 34px;"><img class="lg {{p.inv}}" src="{{p.lg}}" width="17" height="17" alt=""></span>
+                      <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">{{p.n}}</span><span class="aside">{{p.s}}</span></div>
+                      <span class="{{p.uc}}">{{p.used}}</span>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+                  <div style="display: flex; align-items: center; gap: 10px;"><span class="h2">Passwords and cards</span><span class="aside">Locked away.</span><span style="flex: 1;"></span><button type="button" class="btn s">Open</button></div>
+                  <div style="display: flex; align-items: baseline; gap: 10px; padding-top: 2px;"><span class="disp num" style="font-size: 26px; font-weight: 600;">14</span><span style="color: var(--tx2);">kept safe</span></div>
+                  <div style="display: flex; gap: 6px; flex-wrap: wrap;"><sc-for list="{{vault}}" as="v" hint-placeholder-count="4"><span style="height: 24px; padding: 0 10px; border: 1px solid var(--sep2); border-radius: 12px; display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--tx2);"><span class="num" style="color: var(--tx); font-weight: 500;">{{v.c}}</span>{{v.s}}</span></sc-for></div>
+                  <span class="aside">Atlas uses them without ever seeing them. Last used 2 hours ago, to sign in to your bank.</span>
+                </div>
+
+                <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+                  <div style="display: flex; align-items: center; gap: 10px;"><span class="h2">Updates</span><span class="aside">Checked this morning.</span></div>
+                  <div class="cardb" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; align-items: baseline; gap: 8px;"><span class="disp" style="font-size: 16px; font-weight: 600;">A new Atlas is ready</span><span class="aside">Out since yesterday</span></div>
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                      <sc-for list="{{notesS}}" as="n" hint-placeholder-count="3"><div style="display: flex; gap: 9px; font-size: 12.5px; color: var(--tx2);"><span style="color: var(--tx3);">·</span><span>{{n}}</span></div></sc-for>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px; padding-top: 4px;">
+                      <button type="button" class="btnp s">Update now</button>
+                      <span class="aside">Takes about a minute, and you can go back.</span>
+                    </div>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 10px; padding-top: 2px;"><button type="button" class="{{autoCls}}" onClick="{{toggleAuto}}" aria-label="Update on its own"></button><span style="font-size: 12.5px;">Update on its own</span><span class="aside">Overnight, when you’re not talking.</span></div>
+                </div>
+
+                <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column;">
+                  <div style="display: flex; align-items: center; gap: 10px; padding-bottom: 10px;"><span class="h2">Your data</span><span class="aside">It’s yours, and it only grows.</span></div>
+                  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--sep);">
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Take a copy of everything</span><span class="aside">Conversations, records, files, skills and settings.</span></div>
+                    <button type="button" class="btn s">Download</button>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--sep);">
+                    <div style="display: flex; align-items: center; gap: 12px;"><div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Go back in time</span><span class="aside">To any moment in the last 30 days.</span></div><button type="button" class="btn s">Choose a day</button></div>
+                    <div class="mtr"><sc-for list="{{days}}" as="c" hint-placeholder-count="30"><i class="{{c.k}}" style="height: 10px;"></i></sc-for></div>
+                    <div style="display: flex; font-size: 11.5px; color: var(--tx3);"><span style="flex: 1;">A month ago</span><span>Today</span></div>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0 2px; border-top: 1px solid var(--sep);">
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Delete everything</span><span class="aside">Everything, and every backup. There’s no undo.</span></div>
+                    <button type="button" class="btn s hold"><span class="fill"></span><span>Hold to delete</span></button>
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- ============ ACCOUNT ============ -->
+            <sc-if value="{{isAccount}}" hint-placeholder-val="{{false}}">
+              <div class="rise" style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px;">
+                <div class="card" style="padding: 13px 16px; display: flex; flex-direction: column;">
+                  <div style="display: flex; align-items: center; gap: 10px; padding-bottom: 8px;"><span class="h2">Passkeys</span><span class="aside">How you sign in. No passwords.</span><span style="flex: 1;"></span><button type="button" class="btn s">Add a passkey</button></div>
+                  <sc-for list="{{passkeys}}" as="p" hint-placeholder-count="2">
+                    <div style="display: flex; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--sep);">
+                      <svg class="ic" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx2);"><path d="{{p.d}}"></path></svg>
+                      <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">{{p.n}}</span><span class="aside">{{p.s}}</span></div>
+                      <span style="font-size: 12px; color: var(--tx2);">{{p.used}}</span>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div class="card" style="padding: 13px 16px; display: flex; flex-direction: column; gap: 10px;">
+                  <div style="display: flex; align-items: center; gap: 10px;"><span class="h2">Vault</span><span class="aside">Built in and encrypted.</span><span style="flex: 1;"></span><button type="button" class="btn s">Open the vault</button></div>
+                  <div style="display: flex; align-items: baseline; gap: 10px; padding-top: 2px;"><span class="disp num" style="font-size: 26px; font-weight: 600;">14</span><span style="color: var(--tx2);">entries</span></div>
+                  <div style="display: flex; gap: 6px; flex-wrap: wrap;"><sc-for list="{{vault}}" as="v" hint-placeholder-count="4"><span style="height: 22px; padding: 0 8px; border: 1px solid var(--sep2); border-radius: 4px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--tx2);"><span class="mono" style="color: var(--tx);">{{v.c}}</span>{{v.n}}</span></sc-for></div>
+                  <span class="aside">Atlas never sees the values. Last used 2 hours ago, on chase.com.</span>
+                </div>
+
+                <div class="card" style="padding: 13px 16px; display: flex; flex-direction: column; gap: 10px;">
+                  <div style="display: flex; align-items: center; gap: 10px;"><span class="h2">Updates</span><span class="aside">Running 0.7.0</span><span style="flex: 1;"></span><span class="mono" style="font-size: 10.5px; color: var(--tx3);">CHECKED 6:02 AM</span></div>
+                  <div class="cardb" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; align-items: baseline; gap: 8px;"><span class="disp" style="font-size: 16px; font-weight: 600;">Atlas 0.7.1 is out</span><span class="aside">Oct 23</span></div>
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                      <sc-for list="{{notes}}" as="n" hint-placeholder-count="3"><div style="display: flex; gap: 9px; font-size: 12.5px; color: var(--tx2);"><span style="color: var(--tx3);">·</span><span>{{n}}</span></div></sc-for>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px; padding-top: 4px;">
+                      <button type="button" class="btnp s">Update</button>
+                      <span class="aside">Takes a minute. You can roll back to 0.7.0.</span>
+                    </div>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 10px; padding-top: 2px;"><button type="button" class="{{autoCls}}" onClick="{{toggleAuto}}" aria-label="Update on its own"></button><span style="font-size: 12.5px;">Update on its own</span><span class="aside">Overnight, when you’re not talking.</span></div>
+                </div>
+
+                <div class="card" style="padding: 13px 16px; display: flex; flex-direction: column;">
+                  <div style="display: flex; align-items: center; gap: 10px; padding-bottom: 8px;"><span class="h2">Your data</span><span class="aside">It only grows, and it’s yours.</span></div>
+                  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--sep);">
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Export everything</span><span class="aside">The log, records, files, skills and settings.</span></div>
+                    <button type="button" class="btn s">Export</button>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--sep);">
+                    <div style="display: flex; align-items: center; gap: 12px;"><div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Restore to a point</span><span class="aside">Any moment in the last 30 days.</span></div><button type="button" class="btn s">Choose a point</button></div>
+                    <div class="mtr"><sc-for list="{{days}}" as="c" hint-placeholder-count="30"><i class="{{c.k}}" style="height: 10px;"></i></sc-for></div>
+                    <div class="mono" style="display: flex; font-size: 10px; color: var(--tx3);"><span style="flex: 1;">SEP 24</span><span>TODAY</span></div>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0 2px; border-top: 1px solid var(--sep);">
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;"><span style="font-weight: 500;">Delete everything</span><span class="aside">Everything, and every backup. No undo.</span></div>
+                    <button type="button" class="btn s hold"><span class="fill"></span><span>Hold to delete</span></button>
+                  </div>
                 </div>
               </div>
             </sc-if>
@@ -291,7 +781,7 @@ a{color:inherit}
     <div style="position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(680px, calc(100% - 120px)); background: var(--win); border: 1px solid var(--sep2); border-radius: 12px; box-shadow: var(--sh); display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 14px; box-sizing: border-box;">
       <svg viewBox="290 128 444 768" width="9" height="16" aria-hidden="true" style="flex: none;"><polygon points="512,128.96 290.84,418.52 512,505.16" style="fill: var(--m1);"></polygon><polygon points="512,128.96 512,505.16 733.16,418.52" style="fill: var(--m2);"></polygon><polygon points="512,895.04 290.84,418.52 512,505.16" style="fill: var(--m3);"></polygon><polygon points="512,895.04 512,505.16 733.16,418.52" style="fill: var(--m4);"></polygon></svg>
       <label for="msg" class="sr">Message Atlas</label>
-      <input id="msg" placeholder="Change anything by asking, like: talk a bit slower" style="flex: 1; height: 30px; border: 0; outline: none; background: transparent; font-size: 14px; margin-left: 4px;">
+      <input id="msg" placeholder="Change anything by asking, like: don’t call me before 9 am" style="flex: 1; height: 30px; border: 0; outline: none; background: transparent; font-size: 14px; margin-left: 4px;">
       <span class="kbd">/</span>
       <button type="button" aria-label="Talk" class="it" style="width: 30px; height: 30px; border-radius: 7px; border: 0; background: transparent; color: var(--tx2); display: inline-flex; align-items: center; justify-content: center;"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0M12 17v4"></path></svg></button>
       <button type="button" aria-label="Send" style="width: 30px; height: 30px; border-radius: 7px; border: 0; background: var(--btn); color: var(--btntx); display: inline-flex; align-items: center; justify-content: center;"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width: 2.1;"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></button>
@@ -304,41 +794,65 @@ a{color:inherit}
 class Component extends DCLogic {
   constructor(props) {
     super(props);
-    this.state = { sec: 'character', warmth: 4, humor: 3, directness: 4, initiative: 3 };
+    this.state = { sec: 'atlas', atab: 'Character', warmth: 4, humor: 3, directness: 4, initiative: 3 };
   }
 
   renderVals() {
     var self = this;
     var st = this.state;
-    var sec = st.sec || 'character';
-    var built = { character: 1, brains: 1 };
-    var G = [
-      ['Atlas', [['character', 'Character & voice', ''], ['look', 'Look & themes', '']]],
-      ['Brains', [['brains', 'Brains', '3'], ['usage', 'Usage & limits', '']]],
-      ['Connected', [['connections', 'Connections', '9'], ['devices', 'Devices', '3'], ['vault', 'Vault', '14']]],
-      ['People', [['members', 'Members', '2'], ['faces', 'Faces', '2']]],
-      ['Abilities', [['skills', 'Skills & tools', '23'], ['permissions', 'Permissions', '']]],
-      ['System', [['notifications', 'Notifications', ''], ['updates', 'Updates', '✓'], ['data', 'Data & export', '']]]
+    var sec = st.sec || 'atlas';
+    function set(k, v) { var s = {}; s[k] = v; self.setState(s); }
+    var L = {"gmail": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjA0Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9IlNWR0h6RGJIY3dHIiB4MT0iMTY1IiB4Mj0iMTY1IiB5MT0iNDQiIHkyPSIxNjYiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj48c3RvcCBzdG9wLWNvbG9yPSIjNjBkNjczIi8+PHN0b3Agb2Zmc2V0PSIuMTciIHN0b3AtY29sb3I9IiM0MmM4NjgiLz48c3RvcCBvZmZzZXQ9Ii4zOSIgc3RvcC1jb2xvcj0iIzBlYmM1ZiIvPjxzdG9wIG9mZnNldD0iLjYyIiBzdG9wLWNvbG9yPSIjMDBhOWJiIi8+PHN0b3Agb2Zmc2V0PSIuODYiIHN0b3AtY29sb3I9IiMzYzkwZmYiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMzMTg2ZmYiLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHNDFBVFhib1oiIHgxPSI4IiB4Mj0iMTg0IiB5MT0iNDYuMTMiIHkyPSI0Ni4xMyIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iLjA4IiBzdG9wLWNvbG9yPSIjZmY2M2EwIi8+PHN0b3Agb2Zmc2V0PSIuMyIgc3RvcC1jb2xvcj0iI2ZjNDEzZCIvPjxzdG9wIG9mZnNldD0iLjUiIHN0b3AtY29sb3I9IiNmYzQxM2QiLz48c3RvcCBvZmZzZXQ9Ii42NSIgc3RvcC1jb2xvcj0iI2ZjNDEzZCIvPjxzdG9wIG9mZnNldD0iLjcyIiBzdG9wLWNvbG9yPSIjZmM1YzMwIi8+PHN0b3Agb2Zmc2V0PSIuODYiIHN0b3AtY29sb3I9IiNmZWIxMGMiLz48c3RvcCBvZmZzZXQ9Ii45MSIgc3RvcC1jb2xvcj0iI2ZlYzcwMCIvPjxzdG9wIG9mZnNldD0iLjk2IiBzdG9wLWNvbG9yPSIjZmZkYjBmIi8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHBhdGggZmlsbD0idXJsKCNTVkdIekRiSGN3RykiIGQ9Ik0xNDYgNDRoMzh2MTEwYzAgNi42MjctNS4zNzMgMTItMTIgMTJoLTIwYTYgNiAwIDAgMS02LTZ6IiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtMTEuNjM2IC0zNy44MTgpc2NhbGUoMS40NTQ1NCkiLz48cGF0aCBmaWxsPSIjZmM0MTNkIiBkPSJNNTUuMjczIDI2LjE4MkgwdjE2MGMwIDkuNjM4IDcuODE2IDE3LjQ1NCAxNy40NTUgMTcuNDU0aDI5LjA5YTguNzI3IDguNzI3IDAgMCAwIDguNzI4LTguNzI4eiIvPjxwYXRoIGZpbGw9InVybCgjU1ZHNDFBVFhib1opIiBkPSJNMzkuMjI2IDMwLjQ1NmMtOC4wMzMtNi43NTItMjAuMDE4LTUuNzE0LTI2Ljc3IDIuMzE5Yy02Ljc1MiA4LjAzMi01LjcxNCAyMC4wMTcgMi4zMTkgMjYuNzdsNzYuMDc4IDYzLjk0OWE4IDggMCAwIDAgMTAuMjk1IDBsNzYuMDc4LTYzLjk1YzguMDMyLTYuNzUyIDkuMDctMTguNzM3IDIuMzE4LTI2Ljc3Yy02Ljc1Mi04LjAzMi0xOC43MzctOS4wNy0yNi43NjktMi4zMThMOTYgNzguMTh6IiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtMTEuNjM2IC0zNy44MTgpc2NhbGUoMS40NTQ1NCkiLz48L3N2Zz4=", "inv": ""}, "google": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjYyIj48cGF0aCBmaWxsPSIjNDI4NWY0IiBkPSJNMjU1Ljg3OCAxMzMuNDUxYzAtMTAuNzM0LS44NzEtMTguNTY3LTIuNzU2LTI2LjY5SDEzMC41NXY0OC40NDhoNzEuOTQ3Yy0xLjQ1IDEyLjA0LTkuMjgzIDMwLjE3Mi0yNi42OSA0Mi4zNTZsLS4yNDQgMS42MjJsMzguNzU1IDMwLjAyM2wyLjY4NS4yNjhjMjQuNjU5LTIyLjc3NCAzOC44NzUtNTYuMjgyIDM4Ljg3NS05Ni4wMjciLz48cGF0aCBmaWxsPSIjMzRhODUzIiBkPSJNMTMwLjU1IDI2MS4xYzM1LjI0OCAwIDY0LjgzOS0xMS42MDUgODYuNDUzLTMxLjYyMmwtNDEuMTk2LTMxLjkxM2MtMTEuMDI0IDcuNjg4LTI1LjgyIDEzLjA1NS00NS4yNTcgMTMuMDU1Yy0zNC41MjMgMC02My44MjQtMjIuNzczLTc0LjI2OS01NC4yNWwtMS41MzEuMTNsLTQwLjI5OCAzMS4xODdsLS41MjcgMS40NjVDMzUuMzkzIDIzMS43OTggNzkuNDkgMjYxLjEgMTMwLjU1IDI2MS4xIi8+PHBhdGggZmlsbD0iI2ZiYmMwNSIgZD0iTTU2LjI4MSAxNTYuMzdjLTIuNzU2LTguMTIzLTQuMzUxLTE2LjgyNy00LjM1MS0yNS44MmMwLTguOTk0IDEuNTk1LTE3LjY5NyA0LjIwNi0yNS44MmwtLjA3My0xLjczTDE1LjI2IDcxLjMxMmwtMS4zMzUuNjM1QzUuMDc3IDg5LjY0NCAwIDEwOS41MTcgMCAxMzAuNTVzNS4wNzcgNDAuOTA1IDEzLjkyNSA1OC42MDJ6Ii8+PHBhdGggZmlsbD0iI2ViNDMzNSIgZD0iTTEzMC41NSA1MC40NzljMjQuNTE0IDAgNDEuMDUgMTAuNTg5IDUwLjQ3OSAxOS40MzhsMzYuODQ0LTM1Ljk3NEMxOTUuMjQ1IDEyLjkxIDE2NS43OTggMCAxMzAuNTUgMEM3OS40OSAwIDM1LjM5MyAyOS4zMDEgMTMuOTI1IDcxLjk0N2w0Mi4yMTEgMzIuNzgzYzEwLjU5LTMxLjQ3NyAzOS44OTEtNTQuMjUxIDc0LjQxNC01NC4yNTEiLz48L3N2Zz4=", "inv": ""}, "telegram": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9IlNWRzZEYU9aY3d0IiB4MT0iNTAlIiB4Mj0iNTAlIiB5MT0iMCUiIHkyPSIxMDAlIj48c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMmFhYmVlIi8+PHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMjI5ZWQ5Ii8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHBhdGggZmlsbD0idXJsKCNTVkc2RGFPWmN3dCkiIGQ9Ik0xMjggMEM5NC4wNiAwIDYxLjQ4IDEzLjQ5NCAzNy41IDM3LjQ5QTEyOC4wNCAxMjguMDQgMCAwIDAgMCAxMjhjMCAzMy45MzQgMTMuNSA2Ni41MTQgMzcuNSA5MC41MUM2MS40OCAyNDIuNTA2IDk0LjA2IDI1NiAxMjggMjU2czY2LjUyLTEzLjQ5NCA5MC41LTM3LjQ5YzI0LTIzLjk5NiAzNy41LTU2LjU3NiAzNy41LTkwLjUxcy0xMy41LTY2LjUxNC0zNy41LTkwLjUxQzE5NC41MiAxMy40OTQgMTYxLjk0IDAgMTI4IDAiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNNTcuOTQgMTI2LjY0OHE1NS45OC0yNC4zODQgNzQuNjQtMzIuMTUyYzM1LjU2LTE0Ljc4NiA0Mi45NC0xNy4zNTQgNDcuNzYtMTcuNDQxYzEuMDYtLjAxNyAzLjQyLjI0NSA0Ljk2IDEuNDljMS4yOCAxLjA1IDEuNjQgMi40NyAxLjgyIDMuNDY3Yy4xNi45OTYuMzggMy4yNjYuMiA1LjAzOGMtMS45MiAyMC4yNC0xMC4yNiA2OS4zNTYtMTQuNSA5Mi4wMjZjLTEuNzggOS41OTItNS4zMiAxMi44MDgtOC43NCAxMy4xMjJjLTcuNDQuNjg0LTEzLjA4LTQuOTEyLTIwLjI4LTkuNjNjLTExLjI2LTcuMzg2LTE3LjYyLTExLjk4Mi0yOC41Ni0xOS4xODhjLTEyLjY0LTguMzI4LTQuNDQtMTIuOTA2IDIuNzYtMjAuMzg2YzEuODgtMS45NTggMzQuNjQtMzEuNzQ4IDM1LjI2LTM0LjQ1Yy4wOC0uMzM4LjE2LTEuNTk4LS42LTIuMjYyYy0uNzQtLjY2Ni0xLjg0LS40MzgtMi42NC0uMjU4Yy0xLjE0LjI1Ni0xOS4xMiAxMi4xNTItNTQgMzUuNjg2Yy01LjEgMy41MDgtOS43MiA1LjIxOC0xMy44OCA1LjEyOGMtNC41Ni0uMDk4LTEzLjM2LTIuNTg0LTE5LjktNC43MDhjLTgtMi42MDYtMTQuMzgtMy45ODQtMTMuODItOC40MWMuMjgtMi4zMDQgMy40Ni00LjY2MiA5LjUyLTcuMDcyIi8+PC9zdmc+", "inv": ""}, "slack": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij48cGF0aCBmaWxsPSIjZTAxZTVhIiBkPSJNNTMuODQxIDE2MS4zMmMwIDE0LjgzMi0xMS45ODcgMjYuODItMjYuODE5IDI2LjgyUy4yMDMgMTc2LjE1Mi4yMDMgMTYxLjMyYzAtMTQuODMxIDExLjk4Ny0yNi44MTggMjYuODItMjYuODE4SDUzLjg0em0xMy40MSAwYzAtMTQuODMxIDExLjk4Ny0yNi44MTggMjYuODE5LTI2LjgxOHMyNi44MTkgMTEuOTg3IDI2LjgxOSAyNi44MTl2NjcuMDQ3YzAgMTQuODMyLTExLjk4NyAyNi44Mi0yNi44MiAyNi44MmMtMTQuODMgMC0yNi44MTgtMTEuOTg4LTI2LjgxOC0yNi44MnoiLz48cGF0aCBmaWxsPSIjMzZjNWYwIiBkPSJNOTQuMDcgNTMuNjM4Yy0xNC44MzIgMC0yNi44Mi0xMS45ODctMjYuODItMjYuODE5Uzc5LjIzOSAwIDk0LjA3IDBzMjYuODE5IDExLjk4NyAyNi44MTkgMjYuODE5djI2Ljgyem0wIDEzLjYxM2MxNC44MzIgMCAyNi44MTkgMTEuOTg3IDI2LjgxOSAyNi44MTlzLTExLjk4NyAyNi44MTktMjYuODIgMjYuODE5SDI2LjgyQzExLjk4NyAxMjAuODg5IDAgMTA4LjkwMiAwIDk0LjA2OWMwLTE0LjgzIDExLjk4Ny0yNi44MTggMjYuODE5LTI2LjgxOHoiLz48cGF0aCBmaWxsPSIjMmViNjdkIiBkPSJNMjAxLjU1IDk0LjA3YzAtMTQuODMyIDExLjk4Ny0yNi44MiAyNi44MTgtMjYuODJzMjYuODIgMTEuOTg4IDI2LjgyIDI2Ljgycy0xMS45ODggMjYuODE5LTI2LjgyIDI2LjgxOUgyMDEuNTV6bS0xMy40MSAwYzAgMTQuODMyLTExLjk4OCAyNi44MTktMjYuODIgMjYuODE5Yy0xNC44MzEgMC0yNi44MTgtMTEuOTg3LTI2LjgxOC0yNi44MlYyNi44MkMxMzQuNTAyIDExLjk4NyAxNDYuNDg5IDAgMTYxLjMyIDBzMjYuODE5IDExLjk4NyAyNi44MTkgMjYuODE5eiIvPjxwYXRoIGZpbGw9IiNlY2IyMmUiIGQ9Ik0xNjEuMzIgMjAxLjU1YzE0LjgzMiAwIDI2LjgyIDExLjk4NyAyNi44MiAyNi44MThzLTExLjk4OCAyNi44Mi0yNi44MiAyNi44MmMtMTQuODMxIDAtMjYuODE4LTExLjk4OC0yNi44MTgtMjYuODJWMjAxLjU1em0wLTEzLjQxYy0xNC44MzEgMC0yNi44MTgtMTEuOTg4LTI2LjgxOC0yNi44MmMwLTE0LjgzMSAxMS45ODctMjYuODE4IDI2LjgxOS0yNi44MThoNjcuMjVjMTQuODMyIDAgMjYuODIgMTEuOTg3IDI2LjgyIDI2LjgxOXMtMTEuOTg4IDI2LjgxOS0yNi44MiAyNi44MTl6Ii8+PC9zdmc+", "inv": ""}, "notion": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjY4Ij48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTYuMDkyIDExLjUzOEwxNjQuMDkuNjA4YzE4LjE3OS0xLjU2IDIyLjg1LS41MDggMzQuMjggNy44MDFsNDcuMjQzIDMzLjI4MkMyNTMuNDA2IDQ3LjQxNCAyNTYgNDguOTc1IDI1NiA1NS4yMDd2MTgyLjUyN2MwIDExLjQzOS00LjE1NSAxOC4yMDUtMTguNjk2IDE5LjI0TDY1LjQ0IDI2Ny4zNzhjLTEwLjkxMy41MTctMTYuMTEtMS4wNDMtMjEuODI1LTguMzI3TDguODI2IDIxMy44MTRDMi41ODYgMjA1LjQ4NyAwIDE5OS4yNTQgMCAxOTEuOTdWMjkuNzI2YzAtOS4zNTIgNC4xNTUtMTcuMTUzIDE2LjA5Mi0xOC4xODgiLz48cGF0aCBkPSJNMTY0LjA5LjYwOEwxNi4wOTIgMTEuNTM4QzQuMTU1IDEyLjU3MyAwIDIwLjM3NCAwIDI5LjcyNnYxNjIuMjQ1YzAgNy4yODQgMi41ODUgMTMuNTE2IDguODI2IDIxLjg0M2wzNC43ODkgNDUuMjM3YzUuNzE1IDcuMjg0IDEwLjkxMiA4Ljg0NCAyMS44MjUgOC4zMjdsMTcxLjg2NC0xMC40MDRjMTQuNTMyLTEuMDM1IDE4LjY5Ni03LjgwMSAxOC42OTYtMTkuMjRWNTUuMjA3YzAtNS45MTEtMi4zMzYtNy42MTQtOS4yMS0xMi42NmwtMS4xODUtLjg1NkwxOTguMzcgOC40MDlDMTg2Ljk0LjEgMTgyLjI3LS45NTIgMTY0LjA5LjYwOE02OS4zMjcgNTIuMjJjLTE0LjAzMy45NDUtMTcuMjE2IDEuMTU5LTI1LjE4Ni01LjMyM0wyMy44NzYgMzAuNzc4Yy0yLjA2LTIuMDg2LTEuMDI2LTQuNjkgNC4xNjMtNS4yMDdsMTQyLjI3NC0xMC4zOTVjMTEuOTQ3LTEuMDQzIDE4LjE3IDMuMTIgMjIuODQyIDYuNzU4bDI0LjQwMSAxNy42OGMxLjA0My41MjUgMy42MzggMy42MzcuNTE3IDMuNjM3TDcxLjE0NiA1Mi4wOTV6bS0xNi4zNiAxODMuOTU0VjgxLjIyMmMwLTYuNzY3IDIuMDc3LTkuODg3IDguMy0xMC40MTNMMjMwLjAyIDYwLjkzYzUuNzI0LS41MTcgOC4zMSAzLjEyIDguMzEgOS44Nzl2MTUzLjkxN2MwIDYuNzY3LTEuMDQ0IDEyLjQ5LTEwLjM4NyAxMy4wMDhsLTE2MS40ODcgOS4zNjFjLTkuMzQzLjUxNy0xMy40ODktMi41OTQtMTMuNDg5LTEwLjkyMU0yMTIuMzc3IDg5LjUzYzEuMDM0IDQuNjgxIDAgOS4zNjItNC42ODEgOS44OTdsLTcuNzgzIDEuNTQydjExNC40MDRjLTYuNzU4IDMuNjM3LTEyLjk4MSA1LjcxNS0xOC4xOCA1LjcxNWMtOC4zMDggMC0xMC4zODYtMi42MDQtMTYuNjA5LTEwLjM5NmwtNTAuODk4LTgwLjA3OXY3Ny40NzZsMTYuMSAzLjY0NnMwIDkuMzYyLTEyLjk4OSA5LjM2MmwtMzUuODE0IDIuMDc3Yy0xLjA0My0yLjA4NiAwLTcuMjg0IDMuNjMtOC4zMThsOS4zNTEtMi41OTVWMTA5LjgyM2wtMTIuOTgtMS4wNTJjLTEuMDQ0LTQuNjggMS41NS0xMS40MzkgOC44MjYtMTEuOTY1bDM4LjQyNi0yLjU4NWw1Mi45NTggODEuMTEzdi03MS43NmwtMTMuNDk4LTEuNTUyYy0xLjA0My01LjczMyAzLjExMS05Ljg5NiA4LjMtMTAuNDA0eiIvPjwvc3ZnPg==", "inv": ""}, "github": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjUwIj48cGF0aCBmaWxsPSIjMTYxNjE0IiBkPSJNMTI4LjAwMSAwQzU3LjMxNyAwIDAgNTcuMzA3IDAgMTI4LjAwMWMwIDU2LjU1NCAzNi42NzYgMTA0LjUzNSA4Ny41MzUgMTIxLjQ2YzYuMzk3IDEuMTg1IDguNzQ2LTIuNzc3IDguNzQ2LTYuMTU4YzAtMy4wNTItLjEyLTEzLjEzNS0uMTc0LTIzLjgzYy0zNS42MSA3Ljc0Mi00My4xMjQtMTUuMTAzLTQzLjEyNC0xNS4xMDNjLTUuODIzLTE0Ljc5NS0xNC4yMTMtMTguNzMtMTQuMjEzLTE4LjczYy0xMS42MTMtNy45NDQuODc2LTcuNzguODc2LTcuNzhjMTIuODUzLjkwMiAxOS42MjEgMTMuMTkgMTkuNjIxIDEzLjE5YzExLjQxNyAxOS41NjggMjkuOTQ1IDEzLjkxMSAzNy4yNDkgMTAuNjRjMS4xNDktOC4yNzIgNC40NjYtMTMuOTIgOC4xMjctMTcuMTE2Yy0yOC40MzEtMy4yMzYtNTguMzE4LTE0LjIxMi01OC4zMTgtNjMuMjU4YzAtMTMuOTc1IDUtMjUuMzk0IDEzLjE4OC0zNC4zNThjLTEuMzI5LTMuMjI0LTUuNzEtMTYuMjQyIDEuMjQtMzMuODc0YzAgMCAxMC43NDktMy40NCAzNS4yMSAxMy4xMjFjMTAuMjEtMi44MzYgMjEuMTYtNC4yNTggMzIuMDM4LTQuMzA3YzEwLjg3OC4wNDkgMjEuODM3IDEuNDcgMzIuMDY2IDQuMzA3YzI0LjQzMS0xNi41NiAzNS4xNjUtMTMuMTIgMzUuMTY1LTEzLjEyYzYuOTY3IDE3LjYzIDIuNTg0IDMwLjY1IDEuMjU1IDMzLjg3M2M4LjIwNyA4Ljk2NCAxMy4xNzMgMjAuMzgzIDEzLjE3MyAzNC4zNThjMCA0OS4xNjMtMjkuOTQ0IDU5Ljk4OC01OC40NDcgNjMuMTU3YzQuNTkxIDMuOTcyIDguNjgyIDExLjc2MiA4LjY4MiAyMy43MDRjMCAxNy4xMjYtLjE0OCAzMC45MS0uMTQ4IDM1LjEyNmMwIDMuNDA3IDIuMzA0IDcuMzk4IDguNzkyIDYuMTRDMjE5LjM3IDIzMi41IDI1NiAxODQuNTM3IDI1NiAxMjguMDAyQzI1NiA1Ny4zMDcgMTk4LjY5MSAwIDEyOC4wMDEgMG0tODAuMDYgMTgyLjM0Yy0uMjgyLjYzNi0xLjI4My44MjctMi4xOTQuMzljLS45MjktLjQxNy0xLjQ1LTEuMjg0LTEuMTUtMS45MjJjLjI3Ni0uNjU1IDEuMjc5LS44MzggMi4yMDUtLjM5OWMuOTMuNDE4IDEuNDYgMS4yOTMgMS4xMzkgMS45MzFtNi4yOTYgNS42MThjLS42MS41NjYtMS44MDQuMzAzLTIuNjE0LS41OTFjLS44MzctLjg5Mi0uOTk0LTIuMDg2LS4zNzUtMi42NmMuNjMtLjU2NiAxLjc4Ny0uMzAxIDIuNjI2LjU5MWMuODM4LjkwMyAxIDIuMDg4LjM2MyAyLjY2bTQuMzIgNy4xODhjLS43ODUuNTQ1LTIuMDY3LjAzNC0yLjg2LTEuMTA0Yy0uNzg0LTEuMTM4LS43ODQtMi41MDMuMDE3LTMuMDVjLjc5NS0uNTQ3IDIuMDU4LS4wNTUgMi44NjEgMS4wNzVjLjc4MiAxLjE1Ny43ODIgMi41MjItLjAxOSAzLjA4bTcuMzA0IDguMzI1Yy0uNzAxLjc3NC0yLjE5Ni41NjYtMy4yOS0uNDljLTEuMTE5LTEuMDMyLTEuNDMtMi40OTYtLjcyNi0zLjI3Yy43MS0uNzc2IDIuMjEzLS41NTggMy4zMTUuNDljMS4xMSAxLjAzIDEuNDUgMi41MDUuNzAxIDMuMjdtOS40NDIgMi44MWMtLjMxIDEuMDAzLTEuNzUgMS40NTktMy4xOTkgMS4wMzNjLTEuNDQ4LS40MzktMi4zOTUtMS42MTMtMi4xMDMtMi42MjZjLjMwMS0xLjAxIDEuNzQ3LTEuNDg0IDMuMjA3LTEuMDI4YzEuNDQ2LjQzNiAyLjM5NiAxLjYwMiAyLjA5NSAyLjYyMm0xMC43NDQgMS4xOTNjLjAzNiAxLjA1NS0xLjE5MyAxLjkzLTIuNzE1IDEuOTVjLTEuNTMuMDM0LTIuNzY5LS44Mi0yLjc4Ni0xLjg2YzAtMS4wNjUgMS4yMDItMS45MzIgMi43MzMtMS45NThjMS41MjItLjAzIDIuNzY4LjgxOCAyLjc2OCAxLjg2OG0xMC41NTUtLjQwNWMuMTgyIDEuMDMtLjg3NSAyLjA4OC0yLjM4NyAyLjM3Yy0xLjQ4NS4yNzEtMi44NjEtLjM2NS0zLjA1LTEuMzg2Yy0uMTg0LTEuMDU2Ljg5My0yLjExNCAyLjM3Ni0yLjM4N2MxLjUxNC0uMjYzIDIuODY4LjM1NiAzLjA2MSAxLjQwMyIvPjwvc3ZnPg==", "inv": "inv"}, "claude": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU3Ij48cGF0aCBmaWxsPSIjZDk3NzU3IiBkPSJtNTAuMjI4IDE3MC4zMjFsNTAuMzU3LTI4LjI1N2wuODQzLTIuNDYzbC0uODQzLTEuMzYxaC0yLjQ2MmwtOC40MjYtLjUxOGwtMjguNzc1LS43NzhsLTI0Ljk1Mi0xLjAzN2wtMjQuMTc1LTEuMjk2bC02LjA5Mi0xLjI5N0wwIDEyNS43OTZsLjU4My0zLjc1OWw1LjEyLTMuNDM0bDcuMzI0LjY0OGwxNi4yMDIgMS4xMDFsMjQuMzA0IDEuNjg1bDE3LjYyOSAxLjAzN2wyNi4xMTggMi43MjJoNC4xNDhsLjU4My0xLjY4NWwtMS40MjYtMS4wMzdsLTEuMTAxLTEuMDM3bC0yNS4xNDctMTcuMDQ1bC0yNy4yMi0xOC4wMTdsLTE0LjI1OC0xMC4zN2wtNy43MTMtNS4yNWwtMy44ODgtNC45MjVsLTEuNjg1LTEwLjc1OGw3LTcuNzEzbDkuMzk3LjY0OWwyLjM5OC42NDhsOS41MjcgNy4zMjNsMjAuMzUgMTUuNzVMOTQuODE3IDkxLjlsMy44ODkgMy4yNGwxLjU1NS0xLjEwMmwuMTk1LS43NzdsLTEuNzUtMi45MTdsLTE0LjQ1My0yNi4xMThsLTE1LjQyNS0yNi41NzJsLTYuODctMTEuMDE4bC0xLjgxNC02LjYxYy0uNjQ4LTIuNzIzLTEuMTAyLTQuOTkxLTEuMTAyLTcuNzc4bDcuOTcyLTEwLjgyM0w3MS40MiAwbDEwLjYzIDEuNDI2bDQuNDcyIDMuODg4bDYuNjEgMTUuMTAxbDEwLjY5NCAyMy43ODZsMTYuNTkxIDMyLjM0bDQuODYxIDkuNTkybDIuNTkyIDguODc5bC45NzMgMi43MjJoMS42ODV2LTEuNTU2bDEuMzYtMTguMjExbDIuNTI4LTIyLjM2bDIuNDYzLTI4Ljc3NmwuODQzLTguMWw0LjAxOC05LjcyMmw3Ljk3MS01LjI1bDYuMjIyIDIuOTgxbDUuMTIgNy4zMjRsLS43MTMgNC43M2wtMy4wNDYgMTkuNzY4bC01Ljk2MiAzMC45OGwtMy44ODkgMjAuNzM5aDIuMjY4bDIuNTkzLTIuNTkzbDEwLjQ5OS0xMy45MzRsMTcuNjI4LTIyLjAzNmw3Ljc3OC04Ljc0OWw5LjA3My05LjY1N2w1LjgzMy00LjYwMWgxMS4wMThsOC4xIDEyLjA1NWwtMy42MjggMTIuNDQzbC0xMS4zNDIgMTQuMzg4bC05LjM5OCAxMi4xODRsLTEzLjQ4IDE4LjE0N2wtOC40MjYgMTQuNTE4bC43NzggMS4xNjZsMi4wMS0uMTk0bDMwLjQ2LTYuNDgxbDE2LjQ2Mi0yLjk4MmwxOS42MzctMy4zN2w4Ljg4IDQuMTQ4bC45NzEgNC4yMTNsLTMuNSA4LjYybC0yMC45OTggNS4xODRsLTI0LjYyOCA0LjkyNmwtMzYuNjgyIDguNjg1bC0uNDU0LjMyNGwuNTE5LjY0OGwxNi41MjYgMS41NTVsNy4wNjUuMzg5aDE3LjMwNGwzMi4yMSAyLjM5OGw4LjQyNiA1LjU3NGw1LjA1NSA2LjgwNWwtLjg0MyA1LjE4NGwtMTIuOTYyIDYuNjExbC0xNy40OTgtNC4xNDhsLTQwLjgzLTkuNzIxbC0xNC0zLjVoLTEuOTQ0djEuMTY3bDExLjY2NiAxMS40MDZsMjEuMzg3IDE5LjMxNGwyNi43NjcgMjQuODg3bDEuMzYgNi4xNTdsLTMuNDM0IDQuODZsLTMuNjMtLjUxOGwtMjMuNTI2LTE3LjY5M2wtOS4wNzMtNy45NzJsLTIwLjU0NS0xNy4zMDRoLTEuMzZ2MS44MTRsNC43MyA2LjkzNWwyNS4wMTcgMzcuNTlsMS4yOTYgMTEuNTM2bC0xLjgxNCAzLjc2bC02LjQ4MSAyLjI2OGwtNy4xMy0xLjI5N2wtMTQuNjQ3LTIwLjU0NGwtMTUuMS0yMy4xMzhsLTEyLjE4NS0yMC43MzlsLTEuNDkuODQzbC03LjE5NCA3Ny40NDhsLTMuMzcgMy45NTNsLTcuNzc4IDIuOTgxbC02LjQ4LTQuOTI1bC0zLjQzNi03Ljk3MmwzLjQzNS0xNS43NDlsNC4xNDgtMjAuNTQ0bDMuMzctMTYuMzMzbDMuMDQ2LTIwLjI4NWwxLjgxNS02Ljc0bC0uMTMtLjQ1NGwtMS40OS4xOTRsLTE1LjI5NSAyMC45OTlsLTIzLjI2NyAzMS40MzNsLTE4LjQwNiAxOS43MDJsLTQuNDA3IDEuNzVsLTcuNjQ4LTMuOTU0bC43MTMtNy4wNjRsNC4yNzctNi4yODZsMjUuNDctMzIuNDA1bDE1LjM2LTIwLjA5Mmw5LjkxNy0xMS42bC0uMDY1LTEuNjg2aC0uNTgzTDQ0LjA3IDE5OC4xMjVsLTEyLjA1NSAxLjU1NWwtNS4xODUtNC44NmwuNjQ4LTcuOTcybDIuNDYzLTIuNTkzbDIwLjM1LTEzLjk5OXoiLz48L3N2Zz4=", "inv": ""}, "anthropic": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMTc2Ij48cGF0aCBmaWxsPSIjMTgxODE4IiBkPSJtMTQ3LjQ4NyAwbDcwLjA4MSAxNzUuNzhIMjU2TDE4NS45MTkgMHpNNjYuMTgzIDEwNi4yMjFsMjMuOTgtNjEuNzc0bDIzLjk4IDYxLjc3NHpNNzAuMDcgMEwwIDE3NS43OGgzOS4xOGwxNC4zMy0zNi45MTRoNzMuMzA4bDE0LjMyOCAzNi45MTRoMzkuMTc5TDExMC4yNTUgMHoiLz48L3N2Zz4=", "inv": "inv"}, "openai": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjYwIj48cGF0aCBkPSJNMjM5LjE4NCAxMDYuMjAzYTY0LjcyIDY0LjcyIDAgMCAwLTUuNTc2LTUzLjEwM0MyMTkuNDUyIDI4LjQ1OSAxOTEgMTUuNzg0IDE2My4yMTMgMjEuNzRBNjUuNTg2IDY1LjU4NiAwIDAgMCA1Mi4wOTYgNDUuMjJhNjQuNzIgNjQuNzIgMCAwIDAtNDMuMjMgMzEuMzZjLTE0LjMxIDI0LjYwMi0xMS4wNjEgNTUuNjM0IDguMDMzIDc2Ljc0YTY0LjY3IDY0LjY3IDAgMCAwIDUuNTI1IDUzLjEwMmMxNC4xNzQgMjQuNjUgNDIuNjQ0IDM3LjMyNCA3MC40NDYgMzEuMzZhNjQuNzIgNjQuNzIgMCAwIDAgNDguNzU0IDIxLjc0NGMyOC40ODEuMDI1IDUzLjcxNC0xOC4zNjEgNjIuNDE0LTQ1LjQ4MWE2NC43NyA2NC43NyAwIDAgMCA0My4yMjktMzEuMzZjMTQuMTM3LTI0LjU1OCAxMC44NzUtNTUuNDIzLTguMDgzLTc2LjQ4M20tOTcuNTYgMTM2LjMzOGE0OC40IDQ4LjQgMCAwIDEtMzEuMTA1LTExLjI1NWwxLjUzNS0uODdsNTEuNjctMjkuODI1YTguNiA4LjYgMCAwIDAgNC4yNDctNy4zNjd2LTcyLjg1bDIxLjg0NSAxMi42MzZjLjIxOC4xMTEuMzcuMzIuNDA5LjU2M3Y2MC4zNjdjLS4wNTYgMjYuODE4LTIxLjc4MyA0OC41NDUtNDguNjAxIDQ4LjYwMU0zNy4xNTggMTk3LjkzYTQ4LjM1IDQ4LjM1IDAgMCAxLTUuNzgxLTMyLjU4OWwxLjUzNC45MjFsNTEuNzIyIDI5LjgyNmE4LjM0IDguMzQgMCAwIDAgOC40NDEgMGw2My4xODEtMzYuNDI1djI1LjIyMWEuODcuODcgMCAwIDEtLjM1OC42NjVsLTUyLjMzNSAzMC4xODRjLTIzLjI1NyAxMy4zOTgtNTIuOTcgNS40MzEtNjYuNDA0LTE3LjgwM00yMy41NDkgODUuMzhhNDguNSA0OC41IDAgMCAxIDI1LjU4LTIxLjMzM3Y2MS4zOWE4LjI5IDguMjkgMCAwIDAgNC4xOTUgNy4zMTZsNjIuODc0IDM2LjI3MmwtMjEuODQ1IDEyLjYzNmEuODIuODIgMCAwIDEtLjc2NyAwTDQxLjM1MyAxNTEuNTNjLTIzLjIxMS0xMy40NTQtMzEuMTcxLTQzLjE0NC0xNy44MDQtNjYuNDA1em0xNzkuNDY2IDQxLjY5NWwtNjMuMDgtMzYuNjNMMTYxLjczIDc3Ljg2YS44Mi44MiAwIDAgMSAuNzY4IDBsNTIuMjMzIDMwLjE4NGE0OC42IDQ4LjYgMCAwIDEtNy4zMTYgODcuNjM1di02MS4zOTFhOC41NCA4LjU0IDAgMCAwLTQuNC03LjIxM20yMS43NDItMzIuNjlsLTEuNTM1LS45MjJsLTUxLjYxOS0zMC4wODFhOC4zOSA4LjM5IDAgMCAwLTguNDkyIDBMOTkuOTggOTkuODA4Vjc0LjU4N2EuNzIuNzIgMCAwIDEgLjMwNy0uNjY1bDUyLjIzMy0zMC4xMzNhNDguNjUyIDQ4LjY1MiAwIDAgMSA3Mi4yMzYgNTAuMzkxek04OC4wNjEgMTM5LjA5N2wtMjEuODQ1LTEyLjU4NWEuODcuODcgMCAwIDEtLjQxLS42MTRWNjUuNjg1YTQ4LjY1MiA0OC42NTIgMCAwIDEgNzkuNzU3LTM3LjM0NmwtMS41MzUuODdsLTUxLjY3IDI5LjgyNWE4LjYgOC42IDAgMCAwLTQuMjQ2IDcuMzY3em0xMS44NjgtMjUuNThMMTI4LjA2NyA5Ny4zbDI4LjE4OCAxNi4yMTh2MzIuNDM0bC0yOC4wODYgMTYuMjE4bC0yOC4xODgtMTYuMjE4eiIvPjwvc3ZnPg==", "inv": "inv"}, "codex": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij48cGF0aCBmaWxsPSIjMTExIiBkPSJNODYuMjQ3IDQuODg2QTY1LjEgNjUuMSAwIDAgMSAxMTguNzM3LjQ2YzE0LjIxOSAxLjYzMiAyNi44OSA3LjY4IDM4LjAxNiAxOC4xMzJjLjMwNC4yODguNzMzLjQwNSAxLjE0MS4zMWMxNS4wMTktMy42OSAyOS40NjEtMi4zOSA0My4zMTcgMy45MDNsLjY3Mi4zMmwxLjY0My44MWMxNC40NzQgNy41IDI0Ljg1MyAxOC44OCAzMS4xMjUgMzQuMTFjMi45NjUgNy4yNDMgNC40NTggMTQuODA1IDQuNDkgMjIuNjc3YTYwLjMgNjAuMyAwIDAgMS0xLjkyIDE3LjM5NmMtLjE0OC41ODguMDEzIDEuMjEuNDI3IDEuNjUzYTYzLjggNjMuOCAwIDAgMSAxNi44MzIgMzAuODM1YzQuMTA2IDIwLjI3Ni0uMTA3IDM4LjU1OC0xMi42MTkgNTQuODIzbC0xLjk0MSAyLjM0N2E2NC42NyA2NC42NyAwIDAgMS0zMS4yOTYgMTkuNzQzYTEuNzMgMS43MyAwIDAgMC0xLjE1MiAxLjA4OGMtMi43MiA3Ljg1LTUuNDUgMTQuNTQ4LTEwLjUyOCAyMS4yNDZjLTEyLjc4OSAxNi44NzQtMzEuNTk0IDI2LjI2LTUyLjc3OCAyNi4xNDVjLTE2Ljg4NS0uMDg4LTMxLjg1LTYuMjYzLTQ0LjkwNi0xOC41MTlhMS41NCAxLjU0IDAgMCAwLTEuNDkzLS4zNGMtNS41MjUgMS43OC0xMS4wOTMgMi4wMzYtMTcuMTEgMS45NzJhNjMuMiA2My4yIDAgMCAxLTI3LjY3OS02LjYzNGE2NC42IDY0LjYgMCAwIDEtMjIuODktMTguOTk2Yy0yLjE2Ni0yLjg3LTQuMzEtNS41NjgtNS44NzgtOC43NTdhODIuNiA4Mi42IDAgMCAxLTUuMjgtMTMuNjg0YTY1LjIgNjUuMiAwIDAgMS0uMTgxLTMyLjY4YTEuOCAxLjggMCAwIDAgLjA4NS0uNzlhMS4yMyAxLjIzIDAgMCAwLS4zOTQtLjY4M2E2My41NSA2My41NSAwIDAgMS0xNC43Mi0yMy40ODZhNTUuNCA1NS40IDAgMCAxLTMuNTUyLTE2Ljk0OGE3My44IDczLjggMCAwIDEgMi4wMDUtMjIuNzRjNC44LTE1LjgyOSAxMy45NjMtMjguMjQ0IDI3LjQ4OC0zNy4yNTdjMy4wMDgtMi4wMDUgNS44NjctMy41NjIgOC41NTQtNC42NzFhODYgODYgMCAwIDEgOS4xODQtMy4yNDNjLjQ0Ny0uMTMyLjc5Ni0uNDgxLjkyOC0uOTI4QTY0LjIgNjQuMiAwIDAgMSA2MC4xMDMgMjQuNjVjNy4yNTMtOS4wMjMgMTUuOTY4LTE1LjYxNCAyNi4xNDQtMTkuNzY0TTc3LjY3IDg4LjYxNGE5LjA1IDkuMDUgMCAwIDAtMTUuNzEyIDguOTgxbDE4LjA3IDMxLjYyNWwtMTguMDA2IDMwLjM3NmE5LjA1NiA5LjA1NiAwIDAgMCAxNS41NzMgOS4yMTVsMjAuNjkzLTM0Ljg5OGE5LjA2IDkuMDYgMCAwIDAgLjA3NS05LjEwOXptNTguMDkgNjYuNTU2YTkuMDU2IDkuMDU2IDAgMCAwIDAgMTguMDc5aDUxLjcxMWE5LjA1NiA5LjA1NiAwIDAgMCAwLTE4LjA5aC01MS43MXoiLz48L3N2Zz4=", "inv": "inv"}, "elevenlabs": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgNDE2Ij48cGF0aCBkPSJNMTcwLjY2NyAwSDI1NnY0MTUuMjg5aC04NS4zMzN6TTAgMGg4NS4zMzN2NDE1LjI4OUgweiIvPjwvc3ZnPg==", "inv": "inv"}, "mapbox": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU0Ij48cGF0aCBmaWxsPSIjNDg1MTYwIiBkPSJNMTI4IDBjNzAuNjk1IDAgMTI4IDU2LjY4OCAxMjggMTI2LjYyM3MtNTcuMzA1IDEyNi42MjMtMTI4IDEyNi42MjNTMCAxOTYuNTU4IDAgMTI2LjYyM1M1Ny4zMDUgMCAxMjggMG01OC43NDUgNjguNTFjLTI1LjQ4NS0yNS4wNjgtNjUuOC0yNi4wNjUtOTAuMTMzLTEuOTk0Yy00My4wMzYgNDIuNTc0LTMwLjM0NiAxMTcuNTY3LTI5LjgyIDEyMC41NWwuMDE2LjA5MXM3OC4xODIgMTMuODE2IDEyMS45NTItMjkuNDg0YzI0LjMzMy0yNC4wNyAyMy40Ny02NC4wOTQtMi4wMTUtODkuMTYzbS00NC4wNTkgNS42OThsMTIuNTI3IDI1LjQ5NWwyNS43NzIgMTIuMzkybC0yNS43NzIgMTIuMzkybC0xMi41MjcgMjUuNDk1bC0xMi41MjYtMjUuNDk1bC0yNS43NzMtMTIuMzkybDI1Ljc3My0xMi4zOTJ6Ii8+PC9zdmc+", "inv": ""}, "cloudflare": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjMxIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9IlNWR0ZmM1YzY0VUIiB4MT0iNTAlIiB4Mj0iMjUuNyUiIHkxPSIxMDAlIiB5Mj0iOC43JSI+PHN0b3Agb2Zmc2V0PSIwJSIgc3RvcC1jb2xvcj0iI2ViNmYwNyIvPjxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iI2ZhYjc0MyIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJTVkdiS0VQSmVveiIgeDE9IjgxJSIgeDI9IjQwLjUlIiB5MT0iODMuNyUiIHkyPSIyOS41JSI+PHN0b3Agb2Zmc2V0PSIwJSIgc3RvcC1jb2xvcj0iI2Q5NjUwNCIvPjxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iI2Q5NjUwNCIgc3RvcC1vcGFjaXR5PSIwIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9IlNWR294Tk1kclRIIiB4MT0iNDIlIiB4Mj0iODQlIiB5MT0iOC43JSIgeTI9Ijc5LjklIj48c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjZWI2ZjA3Ii8+PHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjZWI3MjBhIiBzdG9wLW9wYWNpdHk9IjAiLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHS0RCd2hSZW8iIHgxPSI1MCUiIHgyPSIyNS43JSIgeTE9IjEwMCUiIHkyPSI4LjclIj48c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjZWU2ZjA1Ii8+PHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjZmFiNzQzIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9IlNWR0gxOGdiZU5sIiB4MT0iLTMzLjIlIiB4Mj0iOTEuNyUiIHkxPSIxMDAlIiB5Mj0iMCUiPjxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiNkOTY1MDQiIHN0b3Atb3BhY2l0eT0iLjgiLz48c3RvcCBvZmZzZXQ9IjQ5LjglIiBzdG9wLWNvbG9yPSIjZDk2NTA0IiBzdG9wLW9wYWNpdHk9Ii4yIi8+PHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjZDk2NTA0IiBzdG9wLW9wYWNpdHk9IjAiLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iU1ZHdERrSHpjQXMiIHgxPSI1MCUiIHgyPSIyNS43JSIgeTE9IjEwMCUiIHkyPSI4LjclIj48c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjZmZhOTVmIi8+PHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjZmZlYmM4Ii8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9IlNWR3JuQWVvZFZKIiB4MT0iOC4xJSIgeDI9Ijk2LjUlIiB5MT0iMS4xJSIgeTI9IjQ4LjglIj48c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjZmZmIiBzdG9wLW9wYWNpdHk9Ii41Ii8+PHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjZmZmIiBzdG9wLW9wYWNpdHk9Ii4xIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9IlNWR2VqODV0VGlRIiB4MT0iLTEzLjclIiB4Mj0iMTAwJSIgeTE9IjEwNC4yJSIgeTI9IjQ2LjIlIj48c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjZmZmIiBzdG9wLW9wYWNpdHk9Ii41Ii8+PHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjZmZmIiBzdG9wLW9wYWNpdHk9Ii4xIi8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHBhdGggZmlsbD0idXJsKCNTVkdGZjNWM2NFVCkiIGQ9Im02NS44MiAzLjMyNGwzMC4xNjEgNTQuNDExbC0yNy42OTggNDkuODU3YTE2IDE2IDAgMCAwIDAgMTUuNTczbDI3LjY5OCA0OS45OGwtMzAuMTYgNTQuNDExYTMyIDMyIDAgMCAxLTEzLjU0Mi0xMi43NEw0LjI3IDEzMS40MTJhMzIuMTMgMzIuMTMgMCAwIDEgMC0zMi4wMDdsNDguMDEtODMuNDAzYTMyIDMyIDAgMCAxIDEzLjU0Mi0xMi42OCIvPjxwYXRoIGZpbGw9InVybCgjU1ZHYktFUEplb3opIiBkPSJNNjguMjgzIDEwNy42NTRhMTYgMTYgMCAwIDAgMCAxNS41MWwyNy42OTggNDkuOThsLTMwLjE2IDU0LjQxMmEzMiAzMiAwIDAgMS0xMy41NDItMTIuNzRMNC4yNyAxMzEuNDEyYy0zLjgxNi02LjU4NiAxNy41NDItMTQuNDY1IDY0LjAxNC0yMy42OTh6IiBvcGFjaXR5PSIuNyIvPjxwYXRoIGZpbGw9InVybCgjU1ZHb3hOTWRyVEgpIiBkPSJtNjguODk4IDguODAybDI3LjA4MyA0OC45MzNsLTQuNDkzIDcuODE4bC0yMy44ODItNDAuNDRjLTYuODk0LTExLjI2NC0xNy40Mi01LjQxNi0zMC41OTEgMTcuMzU4bDEuOTctMy4zODZsMTMuMjk0LTIzLjA4MmEzMiAzMiAwIDAgMSAxMy40MTktMTIuNjhsMy4xMzkgNS40Nzl6IiBvcGFjaXR5PSIuNSIvPjxwYXRoIGZpbGw9InVybCgjU1ZHS0RCd2hSZW8pIiBkPSJtMjAzLjY5NiAxNi4wMDNsNDguMDEgODMuNDAzYzUuNzI1IDkuODQ4IDUuNzI1IDIyLjE1OSAwIDMyLjAwN2wtNDguMDEgODMuNDAyYTMyLjAxIDMyLjAxIDAgMCAxLTI3LjY5OCAxNi4wMDRoLTQ4LjAxbDU5LjcwNS0xMDcuNjU0YTE2IDE2IDAgMCAwIDAtMTUuNTExTDEyNy45ODggMGg0OC4wMWEzMi4wMSAzMi4wMSAwIDAgMSAyNy42OTggMTYuMDAzIi8+PHBhdGggZmlsbD0idXJsKCNTVkdIMThnYmVObCkiIGQ9Im0xNzMuNTM2IDIzMC40NWwtNDcuMzk1LjQzbDU3LjM2Ny0xMDguMjA4YTE2LjYyIDE2LjYyIDAgMCAwIDAtMTUuNjM0TDEyNi4xNCAwaDEwLjgzNGw2MC4xOTcgMTA2LjU0NmExNi42MiAxNi42MiAwIDAgMS0uMDYyIDE2LjQ5NmE5NjE3IDk2MTcgMCAwIDAtMzguNTkyIDY3LjcwN2MtMTEuNjk1IDIwLjU1OC02LjY0OCAzMy43OTEgMTUuMDE4IDM5LjciLz48cGF0aCBmaWxsPSJ1cmwoI1NWR3REa0h6Y0FzKSIgZD0iTTc5Ljk3OCAyMzAuODE5Yy00LjkyNCAwLTkuODQ5LTEuMTctMTQuMTU3LTMuMjYzbDU5LjIxMi0xMDYuNzkyYTExLjA1IDExLjA1IDAgMCAwIDAtMTAuNzFMNjUuODIxIDMuMzI0QTMyIDMyIDAgMCAxIDc5Ljk3OCAwaDQ4LjAxbDU5LjcwNSAxMDcuNjU0YTE2IDE2IDAgMCAxIDAgMTUuNTFMMTI3Ljk4OCAyMzAuODJ6Ii8+PHBhdGggZmlsbD0idXJsKCNTVkdybkFlb2RWSikiIGQ9Ik0xODMuNTA4IDExMC4wNTRMMTIyLjQ0OCAwaDUuNTRsNTkuNzA1IDEwNy42NTRhMTYgMTYgMCAwIDEgMCAxNS41MUwxMjcuOTg4IDIzMC44MmgtNS41NGw2MS4wNi0xMTAuMDU1YTExLjA1IDExLjA1IDAgMCAwIDAtMTAuNzEiIG9wYWNpdHk9Ii42Ii8+PHBhdGggZmlsbD0idXJsKCNTVkdlajg1dFRpUSkiIGQ9Ik0xMjUuMDMzIDExMC4wNTRMNjUuODIxIDMuMzI0YzEuODQ2LS45ODUgNC4wNjItMS43MjQgNi4xNTUtMi4zNGMxMy4wNDkgMjMuNDUyIDMyLjMxNSA1OS4wMjkgNTcuODU5IDEwNi42N2ExNiAxNiAwIDAgMSAwIDE1LjUxTDcxLjA1MyAyMjkuNTg5Yy0yLjA5My0uNjE2LTMuMjAxLTEuMDQ3LTUuMTctMS45N2w1OS4wODktMTA2Ljc5MmExMS4wNSAxMS4wNSAwIDAgMCAwLTEwLjcxeiIgb3BhY2l0eT0iLjYiLz48L3N2Zz4=", "inv": ""}, "raspberrypi": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMzI3Ij48cGF0aCBkPSJNNjkuMjk4LjAwNWMtMS42NTMuMDUxLTMuNDMzLjY2Mi01LjQ1MyAyLjI1NUM1OC45LjM1MyA1NC4xMDItLjMxIDQ5LjgxMyAzLjU3M2MtNi42MjMtLjg1OS04Ljc3NS45MTQtMTAuNDA2IDIuOTg0Yy0xLjQ1NC0uMDMtMTAuODc5LTEuNDk1LTE1LjIwMiA0Ljk1M0MxMy4zNDMgMTAuMjI1IDkuOTEgMTcuODk5IDEzLjggMjUuMDU2Yy0yLjIxOSAzLjQzNC00LjUxOCA2LjgyNy42NyAxMy4zNzVjLTEuODM1IDMuNjQ2LS42OTcgNy42MDIgMy42MjYgMTIuMzg5Yy0xLjE0IDUuMTI3IDEuMTAyIDguNzQzIDUuMTI1IDExLjU2MmMtLjc1MyA3LjAxNSA2LjQzMyAxMS4wOTQgOC41NzggMTIuNTQ3Yy44MjQgNC4wODcgMi41NDEgNy45NDUgMTAuNzQ4IDEwLjA3N2MxLjM1NCA2LjA5MiA2LjI4NiA3LjE0NCAxMS4wNjMgOC40MjJjLTE1Ljc4NyA5LjE3Ny0yOS4zMjUgMjEuMjUtMjkuMjMzIDUwLjg3NWwtMi4zMTMgNC4xMjVjLTE4LjEwMiAxMS4wMDgtMzQuMzg4IDQ2LjM5LTguOTIgNzUuMTQ4YzEuNjYzIDkuMDAyIDQuNDUzIDE1LjQ2OCA2LjkzNyAyMi42MjRjMy43MTUgMjguODM2IDI3Ljk2MiA0Mi4zMzkgMzQuMzU4IDQzLjkzNmM5LjM3MSA3LjEzOCAxOS4zNTIgMTMuOTExIDMyLjg2IDE4LjY1NmMxMi43MzEgMTMuMTMxIDI2LjUyNSAxOC4xMzYgNDAuMzk0IDE4LjEyOGMuMjA0IDAgMjguMjc3LTQuOTk2IDQxLjAxLTE4LjEyOGMxMy41MDYtNC43NDUgMjMuNDg3LTExLjUxOCAzMi44Ni0xOC42NTZjNi4zOTQtMS41OTcgMzAuNjQxLTE1LjEgMzQuMzU2LTQzLjkzNmMyLjQ4NC03LjE1NiA1LjI3NC0xMy42MjIgNi45MzgtMjIuNjI0YzI1LjQ2Ni0yOC43NjEgOS4xODEtNjQuMTQ0LTguOTItNzUuMTUybC0yLjMxNy00LjEyNWMuMDkyLTI5LjYyMi0xMy40NDYtNDEuNjk2LTI5LjIzMy01MC44NzVjNC43NzYtMS4yNzggOS43MS0yLjMzIDExLjA2Mi04LjQyMmM4LjIwNy0yLjEzMyA5LjkyNS01Ljk5IDEwLjc0OC0xMC4wNzdjMi4xNDYtMS40NTMgOS4zMzEtNS41MzIgOC41OC0xMi41NDdjNC4wMjEtMi44MTkgNi4yNjQtNi40MzYgNS4xMjMtMTEuNTYyYzQuMzI0LTQuNzg3IDUuNDYxLTguNzQzIDMuNjI2LTEyLjM5YzUuMTktNi41NDQgMi44ODctOS45MzcuNjcxLTEzLjM3MWMzLjg4OC03LjE1Ny40NTctMTQuODMyLTEwLjQwOS0xMy41NDZjLTQuMzItNi40NDgtMTMuNzQ0LTQuOTg0LTE1LjIwMi00Ljk1NGMtMS42My0yLjA2OS0zLjc4Mi0zLjg0Mi0xMC40MDUtMi45ODNjLTQuMjg5LTMuODgzLTkuMDg1LTMuMjIxLTE0LjAzMi0xLjMxM2MtNS44NzQtNC42MzUtOS43Ni0uOTItMTQuMi40ODVjLTcuMTEyLTIuMzI0LTguNzM5Ljg1OS0xMi4yMzMgMi4xNTZjLTcuNzU2LTEuNjM5LTEwLjExMyAxLjkyOS0xMy44MyA1LjY5NWwtNC4zMjYtLjA4NmMtMTEuNjk4IDYuODk0LTE3LjUxIDIwLjkzMi0xOS41NyAyOC4xNDljLTIuMDYtNy4yMTgtNy44NTktMjEuMjU2LTE5LjU1NS0yOC4xNDlsLTQuMzI1LjA4NmMtMy43MjMtMy43NjYtNi4wNzktNy4zMzQtMTMuODM1LTUuNjk1Qzg2Ljc4IDMuNjAzIDg1LjE2LjQyIDc4LjA0MiAyLjc0NGMtMi45MTQtLjkyMi01LjU5NC0yLjgzOC04Ljc0OS0yLjc0TC0xMSAxNDEiLz48cGF0aCBmaWxsPSIjNzVhOTI4IiBkPSJNNDYuMDA4IDMwLjMzNGMzMS4wMzYgMTYuMDAxIDQ5LjA3OSAyOC45NDUgNTguOTY0IDM5Ljk2OWMtNS4wNjIgMjAuMjg5LTMxLjQ3IDIxLjIxNS00MS4xMjYgMjAuNjQ2YzEuOTc3LS45MiAzLjYyNy0yLjAyMyA0LjIxMi0zLjcxNmMtMi40MjMtMS43MjItMTEuMDE0LS4xODItMTcuMDEyLTMuNTUxYzIuMzA0LS40NzggMy4zODItLjk0MyA0LjQ1OS0yLjY0M2MtNS42NjYtMS44MDctMTEuNzctMy4zNjUtMTUuMzYtNi4zNTljMS45MzcuMDI0IDMuNzQ2LjQzNCA2LjI3Ni0xLjMyMWMtNS4wNzUtMi43MzUtMTAuNDkxLTQuOTAzLTE0LjY5OS05LjA4NGMyLjYyNC0uMDY0IDUuNDUzLS4wMjYgNi4yNzYtLjk5MWMtNC42NDUtMi44NzgtOC41NjUtNi4wNzgtMTEuODA5LTkuNTc5YzMuNjcyLjQ0MyA1LjIyMy4wNjIgNi4xMTEtLjU3OGMtMy41MTItMy41OTctNy45NTYtNi42MzQtMTAuMDc1LTExLjA2NmMyLjcyNi45NCA1LjIyMSAxLjMgNy4wMTktLjA4MmMtMS4xOTMtMi42OTItNi4zMDUtNC4yOC05LjI0OS0xMC41NzFjMi44NzEuMjc5IDUuOTE1LjYyNiA2LjUyNCAwYy0xLjMzMi01LjQyOC0zLjYxOC04LjQ4LTUuODYtMTEuNjQyYzYuMTQzLS4wOTEgMTUuNDUxLjAyNCAxNS4wMy0uNDk1TDMxLjg5IDE1LjM5YzYuMDAxLTEuNjE2IDEyLjE0MS4yNTkgMTYuNTk5IDEuNjUxYzIuMDAxLTEuNTc5LS4wMzYtMy41NzYtMi40NzgtNS42MTVjNS4xLjY4MSA5LjcwOCAxLjg1MyAxMy44NzQgMy40NjhjMi4yMjUtMi4wMDktMS40NDUtNC4wMTktMy4yMjEtNi4wMjhjNy44NzkgMS40OTQgMTEuMjE3IDMuNTk1IDE0LjUzNCA1LjY5OGMyLjQwNy0yLjMwNy4xMzgtNC4yNjgtMS40ODYtNi4yNzZjNS45NDEgMi4yIDkuMDAxIDUuMDQxIDEyLjIyMiA3Ljg0NWMxLjA5Mi0xLjQ3NCAyLjc3NS0yLjU1NS43NDMtNi4xMTFjNC4yMTggMi40MzEgNy4zOTUgNS4yOTYgOS43NDUgOC41MDZjMi42MS0xLjY2MiAxLjU1NS0zLjkzNCAxLjU2OS02LjAyOWM0LjM4NCAzLjU2NiA3LjE2NiA3LjM2MSAxMC41NzEgMTEuMDY2Yy42ODYtLjUgMS4yODYtMi4xOTMgMS44MTctNC44NzJjMTAuNDU3IDEwLjE0NSAyNS4yMzQgMzUuNyAzLjc5OCA0NS44MzJjLTE4LjI0My0xNS4wNDYtNDAuMDMxLTI1Ljk4My02NC4xNzYtMzQuMTg3em0xNjQuNjc4IDBjLTMxLjAzMiAxNi4wMDMtNDkuMDc1IDI4Ljk0My01OC45NTkgMzkuOTY5YzUuMDYyIDIwLjI4OSAzMS40NjkgMjEuMjE1IDQxLjEyNSAyMC42NDZjLTEuOTc3LS45Mi0zLjYyNy0yLjAyMy00LjIxMS0zLjcxNmMyLjQyMy0xLjcyMiAxMS4wMTQtLjE4MiAxNy4wMTEtMy41NTFjLTIuMzA0LS40NzgtMy4zODEtLjk0My00LjQ1OS0yLjY0M2M1LjY2Ny0xLjgwNyAxMS43NzEtMy4zNjUgMTUuMzYtNi4zNTljLTEuOTM3LjAyNC0zLjc0Ni40MzQtNi4yNzYtMS4zMjFjNS4wNzYtMi43MzUgMTAuNDkyLTQuOTAzIDE0LjctOS4wODRjLTIuNjI1LS4wNjQtNS40NTQtLjAyNi02LjI3Ni0uOTkxYzQuNjQ1LTIuODc4IDguNTY1LTYuMDc4IDExLjgwOS05LjU3OWMtMy42NzMuNDQzLTUuMjIzLjA2Mi02LjExMS0uNTc4YzMuNTExLTMuNTk3IDcuOTU2LTYuNjM0IDEwLjA3NS0xMS4wNjZjLTIuNzI3Ljk0LTUuMjIyIDEuMy03LjAyLS4wODJjMS4xOTMtMi42OTIgNi4zMDYtNC4yOCA5LjI0OS0xMC41NzFjLTIuODcuMjc5LTUuOTE1LjYyNi02LjUyNCAwYzEuMzM1LTUuNDMgMy42MjEtOC40ODIgNS44NjMtMTEuNjQ0Yy02LjE0My0uMDkxLTE1LjQ1MS4wMjQtMTUuMDMtLjQ5NWwzLjc5OS0zLjg4MmMtNi4wMDEtMS42MTUtMTIuMTQxLjI2LTE2LjU5OSAxLjY1MmMtMi4wMDEtMS41NzkuMDM1LTMuNTc2IDIuNDc3LTUuNjE1Yy01LjA5OS42OC05LjcwOCAxLjg1My0xMy44NzMgMy40NjhjLTIuMjI2LTIuMDA5IDEuNDQ1LTQuMDE5IDMuMjIxLTYuMDI4Yy03Ljg3OSAxLjQ5NC0xMS4yMTcgMy41OTUtMTQuNTM1IDUuNjk4Yy0yLjQwNy0yLjMwNy0uMTM3LTQuMjY4IDEuNDg3LTYuMjc2Yy01Ljk0MSAyLjItOS4wMDEgNS4wNDEtMTIuMjIyIDcuODQ1Yy0xLjA5My0xLjQ3NC0yLjc3NS0yLjU1NS0uNzQ0LTYuMTExYy00LjIxNyAyLjQzMS03LjM5NCA1LjI5Ni05Ljc0NCA4LjUwNmMtMi42MS0xLjY2Mi0xLjU1NS0zLjkzNS0xLjU2OS02LjAyOWMtNC4zODQgMy41NjYtNy4xNjYgNy4zNi0xMC41NzEgMTEuMDY2Yy0uNjg2LS41LTEuMjg2LTIuMTkzLTEuODE3LTQuODczYy0xMC40NTcgMTAuMTQ2LTI1LjIzNCAzNS43MDEtMy43OTggNDUuODMzYzE4LjIzMy0xNS4wNSA0MC4wMi0yNS45ODUgNjQuMTY2LTM0LjE4OXoiLz48cGF0aCBmaWxsPSIjYmMxMTQyIiBkPSJNMTY1LjkzMyAyMzYuOTMzYy4xMDggMTguOTMzLTE2LjQ0OSAzNC4zNjItMzYuOTggMzQuNDYxYy0yMC41MzIuMS0zNy4yNjQtMTUuMTY3LTM3LjM3Mi0zNC4xdi0uMzYxYy0uMTA4LTE4LjkzMiAxNi40NDgtMzQuMzYxIDM2Ljk4LTM0LjQ2MXMzNy4yNjMgMTUuMTY3IDM3LjM3MiAzNC4xem0tNTguNjg3LTk3LjkyOWMxNS40MDQgMTAuMDkzIDE4LjE4MSAzMi45NjkgNi4yMDIgNTEuMDk1Yy0xMS45NzkgMTguMTI3LTM0LjE3NyAyNC42NDEtNDkuNTgxIDE0LjU0OWMtMTUuNDA0LTEwLjA5My0xOC4xOC0zMi45NjktNi4yMDItNTEuMDk1YzExLjk3OS0xOC4xMjcgMzQuMTc3LTI0LjY0MSA0OS41ODEtMTQuNTQ5bTQxLjU3Ni0xLjgyN2MtMTUuNDAzIDEwLjA5Mi0xOC4xOCAzMi45NjktNi4yMDIgNTEuMDk1YzExLjk3OSAxOC4xMjcgMzQuMTc3IDI0LjY0MSA0OS41ODEgMTQuNTQ4czE4LjE4MS0zMi45NjggNi4yMDItNTEuMDk1Yy0xMS45NzgtMTguMTI2LTM0LjE3Ni0yNC42NC00OS41ODEtMTQuNTQ4TTMwLjI1OCAxNTUuNTA0YzE2LjYzMS00LjQ1OCA1LjYxNSA2OC44MDMtNy45MTcgNjIuNzkyYy0xNC44ODUtMTEuOTcyLTE5LjY3OS00Ny4wMzMgNy45MTctNjIuNzkybTE5Mi4xOTUtLjkxM2MtMTYuNjMzLTQuNDU3LTUuNjE1IDY4LjgwNyA3LjkxNyA2Mi43OTZjMTQuODg1LTExLjk3MyAxOS42NzktNDcuMDM4LTcuOTE3LTYyLjc5Nm0tNTYuNTA3LTU0LjU1N2MyOC43MDEtNC44NDYgNTIuNTgzIDEyLjIwNiA1MS42MTkgNDMuMzI4Yy0uOTQ0IDExLjkzMi02Mi4xOTMtNDEuNTUxLTUxLjYxOS00My4zMjhtLTc5LjMtLjkxM2MtMjguNzAzLTQuODQ3LTUyLjU4MyAxMi4yMDktNTEuNjE5IDQzLjMyOWMuOTQ0IDExLjkzMSA2Mi4xOTQtNDEuNTUyIDUxLjYxOS00My4zMjltNDEuMjI4LTcuMjU4Yy0xNy4xMy0uNDQ2LTMzLjU3IDEyLjcxMy0zMy42MSAyMC4zNDZjLS4wNDcgOS4yNzQgMTMuNTQ0IDE4Ljc3IDMzLjcyNyAxOS4wMTFjMjAuNjEuMTQ3IDMzLjc2Mi03LjYwMSAzMy44MjgtMTcuMTcyYy4wNzYtMTAuODQ0LTE4Ljc0NS0yMi4zNTMtMzMuOTQ1LTIyLjE4NnptMS4wNDYgMTkwLjE4YzE0LjkzNS0uNjUyIDM0Ljk3NSA0LjgxIDM1LjAxNSAxMi4wNTdjLjI0OCA3LjAzNi0xOC4xNzUgMjIuOTM0LTM2LjAwNSAyMi42MjdjLTE4LjQ2Ni43OTctMzYuNTczLTE1LjEyNi0zNi4zMzYtMjAuNjQ1Yy0uMjc3LTguMDkyIDIyLjQ4NC0xNC40MSAzNy4zMjYtMTQuMDM5bS01NS4xNjQtNDIuOTQ1YzEwLjYzMyAxMi44MSAxNS40ODEgMzUuMzE2IDYuNjA3IDQxLjk1MWMtOC4zOTUgNS4wNjUtMjguNzgyIDIuOTc5LTQzLjI3Mi0xNy44MzhjLTkuNzczLTE3LjQ2OC04LjUxNC0zNS4yNDMtMS42NTItNDAuNDY1YzEwLjI2MS02LjI1IDI2LjExNSAyLjE5MyAzOC4zMTggMTYuMzUyem0xMDguMi00LjA2MWMtMTEuNTA1IDEzLjQ3NS0xNy45MTEgMzguMDUzLTkuNTE5IDQ1Ljk2OWM4LjAyNSA2LjE1IDI5LjU2NyA1LjI5IDQ1LjQ3OS0xNi43ODljMTEuNTU0LTE0LjgyOSA3LjY4My0zOS41OTQgMS4wODMtNDYuMTdjLTkuODA0LTcuNTgzLTIzLjg3OSAyLjEyMi0zNy4wNDMgMTYuOTg2eiIvPjwvc3ZnPg==", "inv": ""}, "apple": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMzE1Ij48cGF0aCBkPSJNMjEzLjgwMyAxNjcuMDNjLjQ0MiA0Ny41OCA0MS43NCA2My40MTMgNDIuMTk3IDYzLjYxNWMtLjM1IDEuMTE2LTYuNTk5IDIyLjU2My0yMS43NTcgNDQuNzE2Yy0xMy4xMDQgMTkuMTUzLTI2LjcwNSAzOC4yMzUtNDguMTMgMzguNjNjLTIxLjA1LjM4OC0yNy44Mi0xMi40ODMtNTEuODg4LTEyLjQ4M2MtMjQuMDYxIDAtMzEuNTgyIDEyLjA4OC01MS41MSAxMi44NzFjLTIwLjY4Ljc4My0zNi40MjgtMjAuNzEtNDkuNjQtMzkuNzkzYy0yNy0zOS4wMzMtNDcuNjMzLTExMC4zLTE5LjkyOC0xNTguNDA2YzEzLjc2My0yMy44OSAzOC4zNi0zOS4wMTcgNjUuMDU2LTM5LjQwNWMyMC4zMDctLjM4NyAzOS40NzUgMTMuNjYyIDUxLjg4OSAxMy42NjJjMTIuNDA2IDAgMzUuNjk5LTE2Ljg5NSA2MC4xODYtMTQuNDE0YzEwLjI1LjQyNyAzOS4wMjYgNC4xNCA1Ny41MDMgMzEuMTg2Yy0xLjQ5LjkyMy0zNC4zMzUgMjAuMDQ0LTMzLjk3OCA1OS44MjJNMTc0LjI0IDUwLjE5OWMxMC45OC0xMy4yOSAxOC4zNjktMzEuNzkgMTYuMzUzLTUwLjE5OWMtMTUuODI2LjYzNi0zNC45NjIgMTAuNTQ2LTQ2LjMxNCAyMy44MjhjLTEwLjE3MyAxMS43NjMtMTkuMDgyIDMwLjU4OS0xNi42NzggNDguNjMzYzE3LjY0IDEuMzY1IDM1LjY2LTguOTY0IDQ2LjY0LTIyLjI2MiIvPjwvc3ZnPg==", "inv": "inv"}, "brave": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMzAxIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9IlNWR0U1b3pHTll0IiB4MT0iMCUiIHgyPSIxMDAuMDk3JSIgeTE9IjUwLjAxOCUiIHkyPSI1MC4wMTglIj48c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjZmZmIi8+PHN0b3Agb2Zmc2V0PSIxNC4xMyUiIHN0b3AtY29sb3I9IiNmZmYiIHN0b3Atb3BhY2l0eT0iLjk1OCIvPjxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iI2ZmZiIgc3RvcC1vcGFjaXR5PSIuNyIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJTVkdYQTR2YmJkayIgeDE9Ii0uMDM5JSIgeDI9IjEwMCUiIHkxPSI0OS45ODIlIiB5Mj0iNDkuOTgyJSI+PHN0b3Agb2Zmc2V0PSIwJSIgc3RvcC1jb2xvcj0iI2YxZjFmMiIvPjxzdG9wIG9mZnNldD0iOS4xOTElIiBzdG9wLWNvbG9yPSIjZTRlNWU2Ii8+PHN0b3Agb2Zmc2V0PSIyMy41NyUiIHN0b3AtY29sb3I9IiNkOWRhZGIiLz48c3RvcCBvZmZzZXQ9IjQzLjglIiBzdG9wLWNvbG9yPSIjZDJkNGQ1Ii8+PHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjZDBkMmQzIi8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHBhdGggZmlsbD0iI2YxNWEyMiIgZD0iTTI1NiA5Ny4xTDI0Ni43IDcybDYuNC0xNC40Yy44LTEuOS40LTQtMS01LjVsLTE3LjUtMTcuN2MtNy43LTcuNy0xOS4xLTEwLjQtMjkuNC02LjhsLTQuOSAxLjdsLTI2LjgtMjlsLTQ1LjMtLjNoLS4zTDgyLjMuNEw1NS42IDI5LjZsLTQuOC0xLjdjLTEwLjQtMy43LTIxLjktMS0yOS42IDYuOWwtMTcuOCAxOGMtMS4yIDEuMi0xLjUgMi45LS45IDQuNGw2LjcgMTVMMCA5Ny4zTDYgMTIwbDI3LjIgMTAzLjNjMy4xIDExLjkgMTAuMyAyMi4zIDIwLjQgMjkuNWMwIDAgMzMgMjMuMyA2NS41IDQ0LjRjMi45IDEuOSA1LjkgMy4yIDkuMSAzLjJzNi4yLTEuMyA5LjEtMy4yYzM2LjYtMjQgNjUuNS00NC41IDY1LjUtNDQuNWMxMC03LjIgMTcuMi0xNy42IDIwLjMtMjkuNWwyNy0xMDMuM3oiLz48cGF0aCBmaWxsPSJ1cmwoI1NWR0U1b3pHTll0KSIgZD0iTTM0LjUgMjI3LjdMMCA5OS41bDEwLjEtMjUuMWwtNy0xOC42bDE2LjctMTdjNS41LTQuOSAxNi4zLTYuNiAyMS4zLTMuN2wyNi4xIDE1bDM0IDcuOWwyNi41LTExbDIuMiAyMjcuN2MtLjQgMzIuOCAxLjcgMjkuMy0yMi40IDEzLjhMNDggMjQ4LjZjLTYuNC02LjEtMTEuMy0xMy0xMy41LTIwLjkiIG9wYWNpdHk9Ii4xNSIvPjxwYXRoIGZpbGw9InVybCgjU1ZHWEE0dmJiZGspIiBkPSJtMjAyLjIgMjUyLjI0NmwtNTAuNiAzNC42Yy0xNC4xIDcuNy0yMC45IDE1LjMtMjIgMTEuNmMtLjktMi45LS4yLTExLjQtLjUtMjQuNmwtLjYtMjIyLjdjLjEtMi4yIDEuNi01LjkgNC4yLTUuNWwyNS44IDcuOGwzNy4yLTUuOGwyNC42LTE4LjFjMi42LTIgNi40LTEuOCA4LjguNWwyMiAyMWMyIDIuMSAyLjEgNi4yLjkgOC44bC02LjEgMTEuM2wxMC4xIDI2LjFsLTM0LjggMTI5LjRjLTUuNCAxNi4xLTEzIDIwLjMtMTkgMjUuNiIgb3BhY2l0eT0iLjQiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTM0IDE4NC44MDFjLTEuMi0uNS0yLjUtLjktMi45LS45aC0zLjJjLS40IDAtMS43LjQtMi45LjlsLTEzIDUuNGMtMS4yLjUtMy4yIDEuNC00LjQgMmwtMTkuNiAxMC4yYy0xLjIuNi0xLjMgMS43LS4yIDIuNWwxNy4zIDEyLjJjMS4xLjggMi44IDIuMSAzLjggM2w3LjcgNi42YzEgLjkgMi42IDIuMyAzLjYgMy4ybDcuNCA2LjZjMSAuOSAyLjYuOSAzLjYgMGw3LjYtNi42YzEtLjkgMi42LTIuMyAzLjYtMy4ybDcuNy02LjdjMS0uOSAyLjctMi4yIDMuOC0zbDE3LjMtMTIuM2MxLjEtLjggMS0xLjktLjItMi41bC0xOS42LTEwYy0xLjItLjYtMy4yLTEuNS00LjQtMnoiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMjI3LjgxMyAxMDEuNTU3Yy40LTEuMy40LTEuOC40LTEuOGMwLTEuMy0uMS0zLjUtLjMtNC44bC0xLTIuOWMtLjYtMS4yLTEuNi0zLjEtMi40LTQuMmwtMTEuMy0xNi43Yy0uNy0xLjEtMi0yLjgtMi45LTMuOWwtMTQuNi0xOC4zYy0uOC0xLTEuNi0xLjktMS43LTEuOGgtLjJzLTEuMS4yLTIuNC40bC0yMi4zIDQuNGMtMS4zLjMtMy40LjctNC43LjlsLS40LjFjLTEuMy4yLTMuNC4xLTQuNy0uM2wtMTguNy02Yy0xLjMtLjQtMy40LTEtNC42LTEuM2MwIDAtMy44LS45LTYuOS0uOGMtMy4xIDAtNi45LjgtNi45LjhjLTEuMy4zLTMuNC45LTQuNiAxLjNsLTE4LjcgNmMtMS4zLjQtMy40LjUtNC43LjNsLS40LS4xYy0xLjMtLjItMy40LS43LTQuNy0uOWwtMjIuNS00LjJjLTEuMy0uMy0yLjQtLjQtMi40LS40aC0uMmMtLjEgMC0uOS44LTEuNyAxLjhsLTE0LjYgMTguM2MtLjggMS0yLjEgMi44LTIuOSAzLjlsLTExLjMgMTYuN2MtLjcgMS4xLTEuOCAzLTIuNCA0LjJsLTEgMi45Yy0uMiAxLjMtLjQgMy41LS4zIDQuOGMwIDAgMCAuNC40IDEuOGMuNyAyLjQgMi40IDQuNiAyLjQgNC42Yy44IDEgMi4zIDIuNyAzLjIgMy42bDMzLjEgMzUuMmMuOSAxIDEuMiAyLjguNyA0bC02LjkgMTYuM2MtLjUgMS4yLS42IDMuMi0uMSA0LjVsMS45IDUuMWMxLjYgNC4zIDQuMyA4LjEgNy45IDExbDYuNyA1LjRjMSAuOCAyLjggMS4xIDQgLjVsMjEuMi0xMC4xYzEuMi0uNiAzLTEuOCA0LTIuN2wxNS4yLTEzLjdjMi4yLTIgMi4zLTUuNC4zLTcuNmwtMzEuOS0yMS41Yy0xLjEtLjctMS41LTIuMy0uOS0zLjVsMTQtMjYuNGMuNi0xLjIuNy0zLjEuMi00LjNsLTEuNy0zLjljLS41LTEuMi0yLTIuNi0zLjItMy4xbC00MS4xLTE1LjRjLTEuMi0uNS0xLjItMSAuMS0xLjFsMjYuNS0yLjVjMS4zLS4xIDMuNC4xIDQuNy40bDIzLjYgNi42YzEuMy40IDIuMSAxLjcgMS45IDNsLTguMiA0NC45Yy0uMiAxLjMtLjIgMy4xLjEgNC4xczEuNiAxLjkgMi45IDIuMmwxNi40IDMuNWMxLjMuMyAzLjQuMyA0LjcgMGwxNS4zLTMuNWMxLjMtLjMgMi42LTEuMyAyLjktMi4ycy40LTIuOC4xLTQuMWwtOC4xLTQ0LjljLS4yLTEuMy42LTIuNyAxLjktM2wyMy42LTYuNmMxLjMtLjQgMy40LS41IDQuNy0uNGwyNi41IDIuNWMxLjMuMSAxLjQuNi4xIDEuMWwtNDEuMSAxNS42Yy0xLjIuNS0yLjcgMS44LTMuMiAzLjFsLTEuNyAzLjljLS41IDEuMi0uNSAzLjIuMiA0LjNsMTQuMSAyNi40Yy42IDEuMi4yIDIuNy0uOSAzLjVsLTMxLjkgMjEuNmMtMi4xIDIuMS0xLjkgNS42LjMgNy42bDE1LjIgMTMuN2MxIC45IDIuOCAyLjEgNCAyLjZsMjEuMyAxMC4xYzEuMi42IDMgLjMgNC0uNWw2LjctNS41YzMuNi0yLjkgNi4zLTYuNyA3LjgtMTFsMS45LTUuMWMuNS0xLjIuNC0zLjMtLjEtNC41bC02LjktMTYuM2MtLjUtMS4yLS4yLTMgLjctNGwzMy4xLTM1LjJjLjktMSAyLjMtMi42IDMuMi0zLjZjLS4yLS4zIDEuNi0yLjUgMi4yLTQuOSIvPjwvc3ZnPg==", "inv": ""}, "exa": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMzExIj48cGF0aCBmaWxsPSIjMDE0M2Q5IiBkPSJNMjU2IDIyLjM5YTIuNzggMi43OCAwIDAgMS0uNjMgMS43NkwxNDguMDQgMTU1LjE2M2wxMDcuMzI5IDEzMS4wMWMuNDA2LjQ5Ni42MyAxLjEyLjYzIDEuNzZ2MTkuNjFhMi43OSAyLjc5IDAgMCAxLTIuNzk1IDIuNzgzSDIuNzk1QTIuNzkgMi43OSAwIDAgMSAwIDMwNy41NDNWMi43ODNBMi43OSAyLjc5IDAgMCAxIDIuNzk1IDBoMjUwLjQxQTIuNzkgMi43OSAwIDAgMSAyNTYgMi43ODN6TTQ1Ljc5NSAyNzkuOTcyaDE2NS4xNkwxMjguMzcyIDE3OS4xN3ptLTE1LjMxNi0yOS4zMjVsNjYuMDktODAuNjY5aC02Ni4wOXptMC0xMTEuMDIyaDY1LjQ5N2wtNjUuNDk3LTc5Ljk1em05Ny44OTMtOC40NzJsODIuNTgzLTEwMC44SDQ1Ljc5NXoiLz48L3N2Zz4=", "inv": ""}, "tavily": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij48cGF0aCBmaWxsPSIjMWYxZTFlIiBkPSJNMTgwLjY0MyAwYzI2LjM4MyAwIDM5LjU3NSAwIDQ5LjYzMyA1LjEwMmM4LjgyMiA0LjUyNSAxNi4wNzkgMTEuNjg0IDIwLjYxMiAyMC41N0MyNTYgMzUuNzExIDI1NiA0OC44NzYgMjU2IDc1LjIwN3YxMDUuMDc1YzAgMjYuMzMgMCAzOS40OTYtNS4xMTIgNDkuNTM1Yy00LjUzMyA4LjgwNS0xMS43MDggMTYuMDQ1LTIwLjYxMiAyMC41NzJjLTEwLjA1OCA1LjEtMjMuMjUgNS4xLTQ5LjYzMyA1LjFINzUuMzU3Yy0yNi4zODMgMC0zOS41NzUgMC00OS42MzMtNS4xYy04LjgyMi00LjUyNy0xNi4wNzgtMTEuNjg1LTIwLjYxMi0yMC41NzJDMCAyMTkuNzc4IDAgMjA2LjYxMyAwIDE4MC4yODJWNzUuMjA3YzAtMjYuMzMgMC0zOS40OTYgNS4xMTItNDkuNTM1YzQuNTM0LTguODA0IDExLjcwNy0xNi4wNDUgMjAuNjEyLTIwLjU3QzM1Ljc4MiAwIDQ4Ljk3NCAwIDc1LjM1NyAwek0xMDguODMgMTQxLjE5OGMtMS40MDIgMC0yLjcyLjI0Ny00LjA0LjgyM2MtMS4zMi40OTMtMi40NzMgMS4zMTYtMy40NjMgMi4zMDRMODEuMjEgMTY0LjQ4NGwtNS4zNi01LjM0OWMtMy45NTctMy45NS0xMC42MzUtMS45NzQtMTEuODcyIDMuNDU2bC03LjY2NyAzMy45MDFjLS4yNDggMS4xNTItLjI0OCAyLjM4Ni4wODIgMy41MzhzLjkwNyAyLjIyMiAxLjgxNCAzLjA0NWE3LjIgNy4yIDAgMCAwIDMuMDUgMS44MWMxLjE1NS4zMjkgMi4zOTIuMzI5IDMuNTQ2LjA4MmwzMy44MDQtNy42NTJjNS40NDEtMS4yMzQgNy4zMzctNy45ODIgMy40NjItMTEuOTMxbC01LjM1OS01LjM0OWwyMC4xMTctMjAuMTU5YzEuOTgtMS45NzUgMy4wNTEtNC42OSAzLjA1MS03LjQ4OHMtMS4wNzItNS41MTMtMy4wNS03LjQ4OGwtLjI0OC0uMjQ2bC0uMjQ3LS4yNDdjLS45OS0uOTg4LTIuMTQ0LTEuNzI4LTMuNDYzLTIuMzA0Yy0xLjMyLS40OTQtMi42MzktLjgyMy00LjA0LS44MjN6bTcyLjcxOS0xMi42NzJjLTQuNy0yLjk2Mi0xMC44LjQxMi0xMC44IDYuMDA3djcuNTdoLTQzLjIwM2MxLjQwMSAyLjc5NyAyLjIyNiA1LjkyNCAyLjIyNiA5LjIxNmMwIDQuODU0LTEuNzMyIDkuMjE1LTQuNTM1IDEyLjY3MWg0NS40Mjl2Ny41N2MwIDUuNTk2IDYuMSA4Ljk2OSAxMC44ODMgNi4wMDdsMjkuMzUxLTE4LjUxNGMyLjIyNi0xLjM5OSAzLjI5OC0zLjcwMyAzLjI5OC02LjAwNnMtMS4wNzItNC42MDgtMy4yOTgtNi4wMDd6bS03MS42NDctODEuMDQ5Yy0xLjE1NCAwLTIuMzkxLjMzLTMuMzguOTA1Yy0xLjA3Mi41NzYtMS44OTcgMS40LTIuNTU3IDIuNDY5bC0xOC41NSAyOS4zNzVjLTIuOTY4IDQuNjkuNDEyIDEwLjg2MSA1LjkzNiAxMC44NjFoNy41ODV2NDMuNjFhMjAgMjAgMCAwIDEgMTAuOTY2LTMuMjljNC4wNCAwIDcuODMyIDEuMjMzIDEwLjk2NSAzLjI5di00My42MWg3LjU4NmM1LjYwNiAwIDguOTg2LTYuMTcgNS45MzYtMTAuODZsLTE4LjU1LTI5LjM3N2E2Ljk5IDYuOTkgMCAwIDAtNS45MzYtMy4yOTF6Ii8+PC9zdmc+", "inv": "inv"}, "resend": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij48cGF0aCBkPSJNMTU2LjU3NSAwYzQ5LjU4MiAwIDc5LjA3IDI5LjQ4OCA3OS4wNyA2OC42MzJzLTI5LjQ4OCA2OC42MzItNzkuMDcgNjguNjMyaC0yNS4wNTJMMjU2IDI1NmgtODcuOTQybC05NC43MjktOTAuMDNjLTYuNzg0LTYuMjYzLTkuOTE2LTEzLjU3LTkuOTE2LTE5LjgzM2MwLTguODczIDYuMjYzLTE2LjcwMSAxOC4yNjctMjAuMDk0bDQ4LjgtMTMuMDQ4YzE4LjUyNy00Ljk1OCAzMS4zMTQtMTkuMzEgMzEuMzE0LTM4LjFjMC0yMi45NjQtMTguNzktMzYuMjczLTQyLjAxNC0zNi4yNzNIMFYweiIvPjwvc3ZnPg==", "inv": "inv"}, "linear": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iIzVFNkFEMiIgZD0iTTIuODg2IDQuMThBMTEuOTgyIDExLjk4MiAwIDAgMSAxMS45OSAwQzE4LjYyNCAwIDI0IDUuMzc2IDI0IDEyLjAwOWMwIDMuNjQtMS42MiA2LjkwMy00LjE4IDkuMTA1TDIuODg3IDQuMThaTTEuODE3IDUuNjI2bDE2LjU1NiAxNi41NTZjLS41MjQuMzMtMS4wNzUuNjItMS42NS44NjZMLjk1MSA3LjI3N2MuMjQ3LS41NzUuNTM3LTEuMTI2Ljg2Ni0xLjY1Wk0uMzIyIDkuMTYzbDE0LjUxNSAxNC41MTVjLS43MS4xNzItMS40NDMuMjgyLTIuMTk1LjMyMkwwIDExLjM1OGExMiAxMiAwIDAgMSAuMzIyLTIuMTk1Wm0tLjE3IDQuODYyIDkuODIzIDkuODI0YTEyLjAyIDEyLjAyIDAgMCAxLTkuODI0LTkuODI0WiIvPjwvc3ZnPg==", "inv": ""}, "stripe": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iIzYzNUJGRiIgZD0iTTEzLjk3NiA5LjE1Yy0yLjE3Mi0uODA2LTMuMzU2LTEuNDI2LTMuMzU2LTIuNDA5IDAtLjgzMS42ODMtMS4zMDUgMS45MDEtMS4zMDUgMi4yMjcgMCA0LjUxNS44NTggNi4wOSAxLjYzMWwuODktNS40OTRDMTguMjUyLjk3NSAxNS42OTcgMCAxMi4xNjUgMCA5LjY2NyAwIDcuNTg5LjY1NCA2LjEwNCAxLjg3MiA0LjU2IDMuMTQ3IDMuNzU3IDQuOTkyIDMuNzU3IDcuMjE4YzAgNC4wMzkgMi40NjcgNS43NiA2LjQ3NiA3LjIxOSAyLjU4NS45MiAzLjQ0NSAxLjU3NCAzLjQ0NSAyLjU4MyAwIC45OC0uODQgMS41NDUtMi4zNTQgMS41NDUtMS44NzUgMC00Ljk2NS0uOTIxLTYuOTktMi4xMDlsLS45IDUuNTU1QzUuMTc1IDIyLjk5IDguMzg1IDI0IDExLjcxNCAyNGMyLjY0MSAwIDQuODQzLS42MjQgNi4zMjgtMS44MTMgMS42NjQtMS4zMDUgMi41MjUtMy4yMzYgMi41MjUtNS43MzIgMC00LjEyOC0yLjUyNC01Ljg1MS02LjU5NC03LjMwNWguMDAzeiIvPjwvc3ZnPg==", "inv": ""}, "icloud": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iIzM2OTNGMyIgZD0iTTEzLjc2MiA0LjI5YTYuNTEgNi41MSAwIDAgMC01LjY2OSAzLjMzMiAzLjU3MSAzLjU3MSAwIDAgMC0xLjU1OC0uMzYgMy41NzEgMy41NzEgMCAwIDAtMy41MTYgM0E0LjkxOCA0LjkxOCAwIDAgMCAwIDE0Ljc5NmE0LjkxOCA0LjkxOCAwIDAgMCA0LjkyIDQuOTE0IDQuOTMgNC45MyAwIDAgMCAuNjE3LS4wNDVoMTQuNDJjMi4zMDUtLjI3MiA0LjA0MS0yLjI1OCA0LjA0My00LjU4OXYtLjAwOWE0LjU5NCA0LjU5NCAwIDAgMC0zLjcyNy00LjUwOCA2LjUxIDYuNTEgMCAwIDAtNi41MTEtNi4yN3oiLz48L3N2Zz4=", "inv": ""}, "homeassistant": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iIzE4QkNGMiIgZD0iTTIyLjkzOSAxMC42MjcgMTMuMDYxLjc0OWExLjUwNSAxLjUwNSAwIDAgMC0yLjEyMSAwbC05Ljg3OSA5Ljg3OEMuNDc4IDExLjIxIDAgMTIuMzYzIDAgMTMuMTg3djljMCAuODI2LjY3NSAxLjUgMS41IDEuNWg5LjIyN2wtNC4wNjMtNC4wNjJhMi4wMzQgMi4wMzQgMCAwIDEtLjY2NC4xMTNjLTEuMTMgMC0yLjA1LS45Mi0yLjA1LTIuMDVzLjkyLTIuMDUgMi4wNS0yLjA1IDIuMDUuOTIgMi4wNSAyLjA1YzAgLjIzMy0uMDQxLjQ1Ni0uMTEzLjY2NWwzLjE2MyAzLjE2M1Y5LjkyOGEyLjA1IDIuMDUgMCAwIDEtMS4xNS0xLjg0YzAtMS4xMy45Mi0yLjA1IDIuMDUtMi4wNXMyLjA1LjkyIDIuMDUgMi4wNWEyLjA1IDIuMDUgMCAwIDEtMS4xNSAxLjg0djguMTI3bDMuMTQ2LTMuMTQ2QTIuMDUxIDIuMDUxIDAgMCAxIDE4IDEyLjIzOWMxLjEzIDAgMi4wNS45MiAyLjA1IDIuMDVzLS45MiAyLjA1LTIuMDUgMi4wNWMtLjI1IDAtLjQ4OC0uMDQ3LS43MDktLjEzTDEyLjkgMjAuNjAydjMuMDg4aDkuNmMuODI1IDAgMS41LS42NzUgMS41LTEuNXYtOWMwLS44MjUtLjQ3Ny0xLjk3Ny0xLjA2MS0yLjU2MXoiLz48L3N2Zz4=", "inv": ""}, "openstreetmap": {"uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iIzdFQkM2RiIgZD0iTTIuNjcyIDIzLjk2OWMtLjM1Mi0uMDg5LS41MzQtLjIzNC0xLjQ3MS0xLjE2OEMuMDg1IDIxLjY4OC4wMTQgMjEuNTc5LjAxOCAyMC45OTljMC0uNjQ1LS4xOTYtLjQxNCAzLjM2OC0zLjk4NiAzLjYtMy42MDggMy40MTUtMy40NTEgNC4wNjQtMy40NDkuMzAyIDAgLjM3OC4wMTYuNjIuMTRsLjI3Ny4xNCAxLjc0NC0xLjc0NC0uMjE4LS4zNDNjLS40MjUtLjY2Mi0uODI1LTEuNjI5LTEuMDA2LTIuNDI5YTcuNjU3IDcuNjU3IDAgMCAxIDEuNDc5LTYuNDRjMi40OS0zLjEyIDYuOTU5LTMuODEyIDEwLjI2LTEuNTg4IDEuODEyIDEuMjE4IDIuOTkgMy4wOTkgMy4zMjggNS4zMTQuMDcuNDY3LjA3IDEuNTc5IDAgMi4wNzRhNy41NTQgNy41NTQgMCAwIDEtMi4yMDUgNC40MDIgNi43MTIgNi43MTIgMCAwIDEtMS45NDMgMS40MDFjLS45NTkuNDgzLTEuNzc1LjcxLTIuODgxLjgwMy0xLjU3My4xMzEtMy4zMi0uMzA1LTQuNjU2LTEuMTYzbC0uMzQzLS4yMTgtMS43NDQgMS43NDQuMTQuMjhjLjEyNS4yNDEuMTQuMzE2LjE0LjYxNy4wMDMuNjUxLjE1Ni40NjctMy40MjYgNC4wNDktMi43NjEgMi43NTYtMy4xODYgMy4xNjQtMy4zOTggMy4yNjEtLjI3MS4xMjUtLjY5LjE3MS0uOTQ1LjEwNnpNMTcuNDg1IDEzLjk1YTYuNDI1IDYuNDI1IDAgMCAwIDQuNjAzLTMuNTFjMS4zOTEtMi44OTkuNDU1LTYuMzA2LTIuMjI3LTguMTA4LS42MzgtLjQzLTEuNTI5LS43OTQtMi4zNjctLjk2Mi0uNTgxLS4xMTctMS44MDktLjEwNC0yLjQxNC4wMjVhNi41OTMgNi41OTMgMCAwIDAtMi40NTIgMS4wNjRjLS40NDQuMzE1LTEuMTc3IDEuMDQ4LTEuNDg3IDEuNDg3YTYuMzg0IDYuMzg0IDAgMCAwIC4zOCA3LjkwNyA2LjQwNiA2LjQwNiAwIDAgMCAzLjkwMSAyLjEzNmMuNTA5LjA3OCAxLjU0Mi4wNTggMi4wNjUtLjAzN3ptLTMuNzM4IDcuMzc2YTgwLjk3IDgwLjk3IDAgMCAxLTIuMTk2LS42NTFjLS4wMjUtLjAyOCAxLjIwNy00LjM5NiAxLjI1Ny00LjQ0OS4wMjMtLjAyNiA0LjI0MiAxLjE1MiA0LjQxNCAxLjIzNi4wNjIuMDI2LS4wMDMuMjg4LS41MjUgMi4xMDJhMzk4LjUxMyAzOTguNTEzIDAgMCAwLS42MzUgMi4yMzZjLS4wMjUuMDg3LS4wNjkuMTU2LS4wOTcuMTU2LS4wMjgtLjAwMy0xLjAyOC0uMjg3LTIuMjE5LS42MzF6bTIuOTEyLjUyNGMwLS4wNTMgMS4yMjctNC4zMzMgMS4yNDYtNC4zNDcuMDQ3LS4wMzQgNC4zMjQtMS4yMyA0LjM0MS0xLjIxMS4wMTkuMDE5LTEuMTk5IDQuMzM3LTEuMjMgNC4zNi0uMDIuMDE5LTQuMTI2IDEuMTkxLTQuMjU5IDEuMjE4LS4wNTQuMDExLS4wOTggMC0uMDk4LS4wMTl6bS03LjEwNS0xLjkxMWMuODQ2LS44NTIgMS41OTktMS42MjcgMS42NzQtMS43MjguMTcxLS4yMTguNDA1LS43MzIuNDcyLTEuMDE1LjAyNi0uMTE4LjA1My0uMzUyLjA1OC0uNTIybC4wMTEtLjMwNy4xODItLjA1MWMuMTAzLS4wMjguMTkzLS4wNDQuMjAyLS4wMzQuMDIzLjAyNS0xLjIwNyA0LjMyMS0xLjI0NiA0LjM2LS4wMi4wMTYtLjY3Ny4yMTMtMS40NjQuNDM2bC0xLjQyNS40MDUgMS41MzctMS41NDJ6bTguMjg5LTMuMDZhMS4zNzEgMS4zNzEgMCAwIDEtLjA1OS0uMTg3bC0uMDQ0LS4xNTYuMTU2LS4wMjhjMS4zMzktLjIyNyAyLjc3Ni0uODU2IDMuOTA4LTEuNzEzLjE2LS4xMjUuMjUyLS4xNzEuMjY1LS4xMzQuMDU0LjE2NS4yNzIuOTUuMjY1Ljk1OS0uMDM0LjAzNC00LjQ4IDEuMjgyLTQuNDkyIDEuMjYxem0tMTUuMDgzLTEuM2MtLjA1LS4wMzktMS4xNzktMy44NjYtMS4yNjQtNC4yOS0uMDE2LS4wODQuMTQ2LS4wNDQgMi4xNzQuNTM2IDIuMTIxLjYwNCAyLjE5Mi42MjkgMi4yMjIuNzQuMDI4LjA5OC4wMTEuMTI5LS4xMjUuMjIzLS4wODQuMDU5LS43NjkuNzI0LTEuNTIzIDEuNDc5YTYzLjg3NyA2My44NzcgMCAwIDEtMS4zOSAxLjM2N2MtLjAxNiAwLS4wNTYtLjAyNS0uMDkzLS4wNTR6bS44MjEtNC4zNzhjLTEuMTg4LS4zNDMtMi4xNjQtLjYyMy0yLjE2Ny0uNjI2LS4wMTYtLjAxMiAxLjI2MS00LjQzMyAxLjI4NS00LjQ2LjAyMi0uMDIyIDQuNDIyIDEuMjExIDQuNDY5IDEuMjUyLjAwOS4wMDktLjI2OSAxLjAxNy0uNjE4IDIuMjM5LS41NzYgMi4wMi0uNjQzIDIuMjI0LS43MjMgMi4yMi0uMDUtLjAwMy0xLjA1OS0uMjg1LTIuMjQ3LS42MjZ6bTIuOTU5LjUzOGMuMDEyLS4wMzEuMjEyLS43MjMuNDQ0LTEuNTM0bC40Mi0xLjQ3Ni4wNTYuMzIxYy4wOTMuNTU2LjI2NSAxLjE4OC40NjQgMS43NDEuMTA2LjI5Ni4xODcuNTM5LjE4MS41NDUtLjAwOC4wMDYtLjMzMi4xMDEtLjcxOS4yMTItLjM4OS4xMDktLjc0MS4yMS0uNzg2LjIyNC0uMDU4LjAxNi0uMDc1LjAwNi0uMDU5LS4wMzR6TTQuOTA1IDYuMTEyYy0xLjE4Ny0uMzM5LTIuMTY3LS42MzUtMi4xOC0uNjU0LS4wNC0uMDYyLTEuMjQ2LTQuMzIxLTEuMjMtNC4zMzguMDI2LS4wMjUgNC4zMSAxLjIwNCA0LjM1MSAxLjI0Ni4wNDcuMDUxIDEuMjggNC4zNzkgMS4yNDYgNC4zNzZMNC45MSA2LjExM3ptMi4xNDgtMS43MTNsLS41MTktMS44MDYtLjA3OC0uMjggMS42OTMtLjQ4M2MuOTM0LS4yNjUgMS43MjQtLjQ5NSAxLjc2LS41MDguMDM0LS4wMTYtLjA4My4xNC0uMjYuMzM2QTguNzI5IDguNzI5IDAgMCAwIDcuNjkgNS4yM2E0LjM0OCA0LjM0OCAwIDAgMC0uMTMyLjU2MWMwIC4yOTMtLjExNS0uMDI1LS41MDUtMS4zOXoiLz48L3N2Zz4=", "inv": ""}, "outlook": {"uri": "data:image/png;base64,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", "inv": ""}, "telnyx": {"uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAP3ElEQVR4nOWbf2xkV3XHP+feN79n7PVmzWZ/UxJSwRKgyaIWqoLT0lYJKIRlPSQRQSJtg4pAbWlQI0ixTcKPVEUq0FIRoaoU2CRjSDdtBSkqWqO2lJSERiTLtkmAxLvr7GKv1/aM59d7957+8cZee8a/dm0nqP1KT9Z43j333nPPvefH9w78P4e8KL2qStz3cKv/fgUUEX1RxvOCQFU4OhCgA2b5dwZM/I6+YAvzwnSkJYsU3fzn0dJWUom9NF0PAEl7jkY4yt7i5LJtNgmbrQBBVRDxPP53ObZnbwQponoVIttIBPFbYQSqE4j8AEyJs6ce4FXvr6BqWtti07bG5ilgzoxFlJOlG0kGd5FOX45zUG9C6AB8621DwkI6CdZCvf4Mofsou/rvWyRnE7D8flwPVAUG44GfGv48Xbn7QC5nqhxRrjnCSImPQdN6IIyUcs0xVY5ALqeQPcyp4c/HAgdls86FjReqCJQMUnScKB1mW/dNjE9FgEFkbQpX9YCnd0vAxPR97CnejJYsFD2ysdthEyygNfmf3ncX27pvYmK6iUiw5skDiBhEAiamm2zrvomf3ndXfCCWNny8G2sBpZKlv+h5vnQVQeL7hJHDqUXa+lFVBIe2lCLqQQztC6IoVhyJwBKFr2NH8QcMlwzFjfMOG28BghLpPSQDwTnpmLz3SmCFLYWAbMqQTRq2FAISgWmZ/kJZsYxkIIT+zzba/OMuNgpzfvtU6TfJpL9Fpe4Q7KJ3vFcyKSHy06B/RehHMCYCfT2BeR+JYBezdY+Rdktw5NOWcuO32df/rY2METZQAWoYHITfeeUj5DIHmG1TgOJJJUB1DM9vsfPg8UXtnzu8k2TqmwT21dQaftGZoThyacts7VH2/OiXYRBEFlvLRWJjtoCWLCKe33vlIbrzB5itdq4+KMnAUGvcxs6Dx3nqGym0ZCmVLE99JsW+m8eoNm7Ba4RpG5Zgma06uvMHOPWqQ4j42CusH+u3AEVgQGB/wKg+QTb1cmpNRVi8gl1Zy3Tl2+y78c3o0QC5Jlok59EvJDjw3pBnH/gSWwvvZqocIRIskOHJJIVa42n2yJVwLIIhXe+5sH4LGDlqkSHPqN7K1sIVVOt+0eQhPsyaoSdh7wBgeLxz0Fff5lAV0naI2Vodaw26YHKCoVr39BSuYFRvRYY8I0fXbQXrU4Cq0DfiOX6kgDV3Uq0rYtpPfUd3zlCtl9jZ/yhasku6MREPw4ZLD/2EZvhFurIGdPF7YoRqXbHmTo4fKdA34tcbIa5PASMj8epnGx9gS34XjdC1mb4SBEK1UcfYP40H27+CyR7T+B3/SWZmyy3XuNgKGqFjS34X2cYHYisYWZcVXLwCVIW+PsdYqZeE/WPKNQ/tB586urKGRvNe9hafgWGz4uktQ7EV7Lt5DOc+RyFrgHZrsZRrnsDczlipl74+x8AKNYZVsA4LGI5T1VBvJ5fuIQxDEI/i4kcjEoEwMztFMvFxVIXBY2s4sPpbZm0+zVRlgmRCgHBeLuIJw5B8Zguh3o6IMrj/orfB2hvqgGGkz9A3rhzDMn7Mc/kr9pPPPU4iAO9BFohzDroLcOLMR9lTvBseC5ADYSxLheFhQz8wcmzxGPr2K+QDuLbJyeE72P2STzBdjtPk+bEoGBPXESqzr+WZ48fo3W8YP+ahD/r6/FrjhPW5wbFSL4X8qxmvRCSkU5a1ys6D3zk/8AED++WCorixB9+Ec52yQ1V68wHlyg/ZWRy/uAmsRQFxRUcZvf91FHL7qNQ9OIEARBtEUY0gIbho8QngiD87zVHIdzM7+xR7bvweAD8udZOzr8DppXgsRECwoPHcZ1W8m+kIqRxgA4hCJQgyqKTiNlbJpw2z9TF29393fuwrIFjpSwBGBm08IvkQW/L9eH/eHEXALKNDASIP3Tk4PfldEpmD/M9XX0ZP9nac3oCRHaQTK/ct0BEVtsNrvCUAXKu/cu3bwJtheKlDdBFWV8D50cwyU3VU6xEqa2jnHblMkrGz32TXoev4yVfeRk/+b8kkt1CpQT1U6uGGxPML4DDGglbW2uACFKCmFd/rEnF+26t4UqmARniG588e4rnD19PddYRaAyZnIkQsIkKH21wnlDhvYO3Fl82pCYKSTRki/0F6ehKkUoepNZTQOYwJWpP/ucDGK0DxJAPLVOUMe4uHSTBAIZejGS6VIb7ouFAFrCGQUU82rah/OM4U9WbKVcWscJqpKmjUCqD0oh/m/q49Q1zbGaAqnCwlSSWEwAaLgpI5eI2DocgFpAJQ8wgTR3aQ8ttpRrCcy/VesVbozgWoQuTOD1+IT3Ztm48IWNM5TecD8hko17JxNDm86tTWEAcgCMqTpTwv69nK5IQiNm5XB9JA1SkZmwUyqFe25gMa1Weo+NeQzXyHaqMzRZ6bfCYlON/E+y/io2Eif5pEJvYOjQZkbIEGSQKrEEJkhAQ16uEs6YxAY8FYE0pvtzB57hw7i+PzY79oBcylmk9/pUAueyvedQpT7+npCpia+i57bn5k0Xcnh3+DdPJfllRAXCIzqD+B+mvZ0X+MyYfeSuheSiMSLEombWiE97PjHT9b1Pb54f3kc7/O5HSELLG1rBWSwZfY9rbYHa4QDK28BUYGLdcMRTz3wAfZ2TtApRIHJnNqi91OC4lfQdXw2L2Wq68Gro44Obx0x4piBISQinsLWaqMH3mWdGofKaBAvJ1yOTjx/Cil0j/Sj+Wxc8rVPZ7TRojcZ9m+Nd4ii3IQD/k8nDi9FZGPcXQgIA4Tl8TKVHXfoONM6VIC80ecHg85Vw45Ox0x0XrOTtcJI8/49OfY0/8IDAsH3hvCT/yKIai00uRavcRlxSeI+Bbp5D4mZprz8s+VG0xORUCtVUBxsWxgxzueZGb2LuqhcnamPj+euF3I6fEQaz7I6Ye20ze4Yrq8ghfYH8fRdf8RunJdhJEgkmixPAFgCYIks/VZRO6Jt8ta0t0WrIHAfp3R0pV0ZS9ncsYhJM/Ln/vbHmu30mUxf0GldpZEkJpnkuInQRgJXdluGrUPr5YuL60AVQP9njMPXkYq+bvMVD1IZ0rSlTU0o8+xt3iKkcG4OrQWqAheQYJJvHsJYnTNwZuIMjJi2VucxPt7KGQE79vdhGWm6kkmbuP0114WK21pK1im1+F49WvNj5FNpXHOtzE8nkRgmaqMsyX/5wy0tsuFwjlBpV326ujrc+iAwWY+z7nKKJmUQTmv/JhR8uQyaRrRULwdl7aCTgXErIvn5PAvkU29k+lZv6g8DTF7W8gK3t3Dlreeo6/PrJZ2bihElJE+w67rq6gOkUkJ2mYFIpbpiieduokTX38NUvSUOrmE5exOce7jJBN2UWk6/saTTlomZ57DZv86Piz7Nv0qSwf6romt4GdTX+Zc5UfkMu2pr6Ao6YTFhx8HlP5OMW2+ucW5jZXeRD5zLeUlGB71SjoloEPsur7KyAu8+nMQYrOOPcOdBLYz5BEsM1VHLvMWRr/2RqTo2hmlNgtolaxD/0lEloqoHbmMYap8jD3bv4wOGK655oVf/TlI0aFq2FM8wvTs98inbVw4XQClFTa7T8T/WFyWX1DDb/F7o/ffQHf+9UuyuwoEVkDvjKmt/cImXmBaG4bjcNfYD6PaGdsKlnLN0Z37VU6Wrm/nFc38axxT9GgAcjeRU2hjXOYo6unKf7D3xiPxDa7Nv8a2KqToKJUsew4dpVL/ZwrZTisQIHKKcnc8x/PxSqyAowOxDz81fgs9hf3M1hbT03NCvIKxH47/MfxzU9Q4D/kIjXApt2qZrXm25K5kdPxdyNC8FZiY4cFz6h+yKAPUGp38nuIoZC2V2sPs6R+h9MJcYlwziq3DbV/xMerNEt05g/edvGKtqRgGGC1l5mg4M8/vudr76Cnsiy8nLMHuNkJPMLf6P4/oj3lF6weo1hsEgXSwy7WGpyf/UpTfn+MVYx8+WtqKMX/Sqty0X2iK2JI31BoPsLv/v5Zld19szLHLu296imb4N3TnOtllY4RKTbHmDp77ag99fS724cIf0FPYRhg5aGN3jbHM1mtkMh9dnd29ACgKIhdSl14dLXY5k76bmeo0gbWL2GUwNCNHT74Xk/hDRNRw/IsFVG+lUtPOg08dXVmhET7I9retzu6uBfEVOSWKhCj8KWL2xeRHe93rIjDHLvfeMEYYfoVCVmgnRkQMlZqieitnSnlDV/frSSV202hC5z29OBsNzBPxqXnuwqvIc0XK+cIlwo5LAiq1f+IXbnoWp++hGbK4qrEe9Apashjzw2VeMDSakErspi5vCPB+P8k0NKIl+H0RnAfnrkJudOijJvajq6Fm0aPCifEkubSg2Pm03rkm49PD7H3nu3i2dAtdmTdSrnqkI90+j4EBA/kAPboGJY0bpNjk2QeuWt6oxJNMWOrh/gCR7LKypHUZIZ16O6dKb0cO/P3qAwDOl6Ae5sxDL6dei0eSToFNj7P9uhnGvv4+jPks1YZnpdqkeMPQkGdoYfVzFZz82ptJmlviSxsrKNZKNsD7mRW3n/dC5BIY+yCjpQcRnlyUey/diNZucjRqNawFr0IjEijv5MTwteRSv0i51nmvYA46p5TEJCeGX01X7hDT5XBF2kswIFcg9OPU4pwuy0Kpgmc6QO3j1JfY//NCRYhcPMiu7EGsObjy5InXU1maPfYKtQZMzcYR29IDVIzEfrupx0nyIbq6P4J3ECyxoAszEu+hXI3vDyxPwRnqTbA8HrA395+cKD9NNn0Z1YZ2BEEwt0Ial8Y24LRGTMd12MXwZFNCpf5DLitO89wDv8a5sxGzNYeuQq/FWaxdfuXxZFNQrT9NvfB9g1zXwJjPkEsbVFcKcATBLig+ruNZhZJT9WRSBriHHx/eTjrxBmbrFiS5qmwIViyxqTpyaQP6Ga64rmFQNeza9gUmpv+NS7oSqG/yYqa46pts7UowPvXv7C3ejzWfIpMOWlHd+lyl+iaXdCWYmPpXfrz9XlSNxNXSIeX50jZM8A26sgeYmNFWh2bdna4JoqDxaXhJwVKu/TfN6Cqi8I105R+m1oh/cXJxlyIViL3Bti5hevZR1F3Hjv4JBgdb+2RgIHY1T/5lnm07P4VwG9l0gkYIUbS59iDEV25SifjWV+hLnPzZe9jW9VoyqW9jTJowurg4SYAgiGVX6yHKvUyM3cGr3l+Zm/N5qXNKABgtXUk6+W5cdA1Od+M12BwtCBgcxpzB2u/h9KvsPPgdTgxfS8p+Aac5mpHHiFz42StgJMLKSYwZoRF9ib3FJ4BFc23P/CSO9xdke+NHClR08y42FFKebdfNLBiDYeKhS9mWrvP0eERv3jB1kbLz4ui9oXxedslC/8q0XfziwBpD3g3E0YFgqbr9hkCPLvuT3bXdE9xstK/IRvb5f/oH2RuA/wUMfobOIR+TYQAAAABJRU5ErkJggg==", "inv": ""}, "owntracks": {"uri": "data:image/png;base64,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", "inv": ""}};
+
+    function lb(k, n, then) { return { lg: L[k].uri, inv: L[k].inv, n: n, then: !!then }; }
+    var bsimple = {
+      main: { lg: L.openai.uri, inv: L.openai.inv },
+      provs: [
+        { lg: L.openai.uri, inv: L.openai.inv, n: 'ChatGPT', how: 'Your Plus plan', line: 'Most of today’s plan is left', pct: 62, c: 'var(--tx2)', foot: '62% used · resets at 4:10 pm' },
+        { lg: L.claude.uri, inv: L.claude.inv, n: 'Claude', how: 'By Anthropic key', line: '$18.40 of your $100 this month', pct: 18, c: '#d97757', foot: 'At $100 it stops and asks you' },
+        { lg: L.cloudflare.uri, inv: L.cloudflare.inv, n: 'Workers AI', how: 'Comes with Cloudflare', line: 'Free so far today', pct: 41, c: '#f38020', foot: '41% of the free allowance · resets 8 pm' }
+      ],
+      kinds: [
+        { n: 'Quick jobs', what: 'Lookups and small helpers', by: [lb('cloudflare', 'Workers AI', true), lb('openai', 'ChatGPT')], week: '1,906 this week' },
+        { n: 'Hard problems', what: 'Research, plans, checking a job’s work', by: [lb('openai', 'ChatGPT', true), lb('claude', 'Claude')], week: '48 this week' },
+        { n: 'Long reading', what: 'Whole documents and long threads', by: [lb('claude', 'Claude')], week: '6 this week' },
+        { n: 'Learning skills', what: 'What it keeps after a conversation', by: [lb('cloudflare', 'Workers AI')], week: '12 this week' }
+      ]
+    };
+    function cells(n, f) { var a = []; for (var i = 0; i < n; i++) a.push({ k: f(i) }); return a; }
+    function seg(key, opts, def) {
+      var cur = st[key] || def;
+      return opts.map(function (o) { return { l: o, cls: o === cur ? 'on' : '', pick: function () { set(key, o); } }; });
+    }
+    function tg(key, def) { var on = st[key] === undefined ? def : st[key]; return 'tg' + (on ? ' on' : ''); }
+    function flip(key, def) { return function () { var on = st[key] === undefined ? def : st[key]; set(key, !on); }; }
+
+    var S = [
+      ['atlas', 'Atlas', 'M12 2 4.5 12 12 22l7.5-10z', ''],
+      ['brains', 'Brains', 'M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM9.5 9.5h5v5h-5z', ''],
+      ['notifications', 'Notifications', 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0', '4/10'],
+      ['permissions', 'Permissions', 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z', ''],
+      ['account', 'Account', 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0', '0.7.1']
     ];
-    var groups = G.map(function (g) {
-      return { n: g[0], items: g[1].map(function (s) {
-        var on = s[0] === sec;
-        return { n: s[1], meta: s[2], mc: s[2] === '✓' ? 'var(--F)' : 'var(--tx3)', bg: on ? 'var(--sel)' : 'transparent', fg: on ? 'var(--tx)' : 'var(--tx2)', fw: on ? 500 : 400,
-          pick: function () { if (built[s[0]]) self.setState({ sec: s[0] }); } };
-      }) };
+    var secs = S.map(function (s) {
+      var on = s[0] === sec;
+      return { n: s[1], d: s[2], meta: st.level === 'developer' ? s[3] : (s[0] === 'account' ? '1 update' : ''), bg: on ? 'var(--sel)' : 'transparent', fg: on ? 'var(--tx)' : 'var(--tx2)', fw: on ? 500 : 400, ic: on ? 'var(--tx)' : 'var(--tx3)', pick: function () { self.setState({ sec: s[0], picker: false }); } };
     });
+
+    // ---------- Atlas ----------
+    var atab = st.atab || 'Character';
+    var apills = ['Character', 'Voice', 'Look'].map(function (p) { return { n: p, cls: 'pill' + (p === atab ? ' on' : ''), pick: function () { set('atab', p); } }; });
 
     var T = [['warmth', 'Warmth', 'Reserved', 'Warm'], ['humor', 'Humor', 'Serious', 'Playful'], ['directness', 'Directness', 'Explains', 'Brief'], ['initiative', 'Initiative', 'Waits', 'Jumps in']];
     var val = {};
     T.forEach(function (t) { val[t[0]] = st[t[0]] || 3; });
     var traits = T.map(function (t) {
       var v = val[t[0]];
-      var cells = [1, 2, 3, 4, 5].map(function (k) {
+      var cs = [1, 2, 3, 4, 5].map(function (k) {
         var cur = k === v, fill = k < v;
-        return { label: t[1] + ' ' + k, bd: cur ? 'var(--ac)' : (fill ? 'var(--m3)' : 'var(--sep2)'), bg: cur ? 'var(--ac)' : (fill ? 'var(--m3)' : 'transparent'),
-          pick: function () { var s = {}; s[t[0]] = k; self.setState(s); } };
+        return { label: t[1] + ' ' + k, bd: cur ? 'var(--tx)' : (fill ? 'var(--m3)' : 'var(--sep2)'), bg: cur ? 'var(--tx)' : (fill ? 'var(--m3)' : 'transparent'), pick: function () { set(t[0], k); } };
       });
-      return { n: t[1], lo: t[2], hi: t[3], v: v, cells: cells };
+      return { n: t[1], lo: t[2], hi: t[3], v: v, cells: cs };
     });
     var w = val.warmth, h = val.humor, d = val.directness, i = val.initiative;
     var sample = (w >= 4 ? 'Yep, good news. ' : (w === 3 ? 'Yes. ' : '')) +
@@ -347,47 +861,218 @@ class Component extends DCLogic {
       (i >= 4 ? ' Say go and I’ll book it.' : (i === 3 ? ' Want me to book it?' : ''));
 
     var vsel = st.voice || 'Harlan';
-    var voices = [['Harlan', 'Low, calm', '▁▂▄▃▅▄▂▃▄▂▁▂▃▂▁'], ['Wren', 'Bright, quick', '▂▅▃▇▄▆▂▅▃▆▄▂▅▃▂'], ['Inés', 'Warm, husky', '▁▃▅▄▃▅▆▄▂▃▂▁▃▄▂']].map(function (v) {
+    var voices = [['Harlan', 'Low, calm', '▁▂▄▃▅▄▂▃▄▂▁▂▃▂▁▂▃'], ['Wren', 'Bright, quick', '▂▅▃▇▄▆▂▅▃▆▄▂▅▃▂▄▃'], ['Inés', 'Warm, husky', '▁▃▅▄▃▅▆▄▂▃▂▁▃▄▂▃▂']].map(function (v) {
       var on = v[0] === vsel;
-      return { n: v[0], s: v[1], w: v[2], on: on, bd: on ? 'var(--ac)' : 'var(--sep2)', bg: on ? 'var(--bg)' : 'var(--win)', wc: on ? 'var(--ac)' : 'var(--tx3)', pick: function () { self.setState({ voice: v[0] }); } };
+      return { n: v[0], s: v[1], w: v[2], on: on, bd: on ? 'var(--tx2)' : 'var(--sep2)', bg: on ? 'var(--bg)' : 'var(--win)', wc: on ? 'var(--tx)' : 'var(--tx3)', pick: function () { set('voice', v[0]); } };
+    });
+    var segs = [
+      { n: 'Speed', opts: seg('speed', ['0.9×', '1.0×', '1.1×', '1.2×'], '1.0×') },
+      { n: 'Small talk', opts: seg('small', ['Never', 'Sometimes', 'Often'], 'Sometimes') },
+      { n: 'Fillers like “um”', opts: seg('fillers', ['Off', 'Light'], 'Off') }
+    ];
+
+    var TH = [
+      ['Graphite', 'Warm dark', { bg: '#141413', win: '#1b1a19', side: '#181716', sep: '#2c2a28', tx: '#f1efea', tx3: '#5a5752', ac: '#ff6a3d', font: "'Inter Tight', Inter, sans-serif" }],
+      ['Daylight', 'Light', { bg: '#faf9f6', win: '#ffffff', side: '#f4f3ef', sep: '#e7e5df', tx: '#191817', tx3: '#cdc9c0', ac: '#e8501b', font: "'Inter Tight', Inter, sans-serif" }],
+      ['Terminal', 'Mono, dense', { bg: '#0b0b0a', win: '#0f0f0e', side: '#0b0b0a', sep: '#2a2a28', tx: '#e4e2dc', tx3: '#4a4945', ac: '#ff6a3d', font: "'Geist Mono', monospace" }],
+      ['Midnight', 'Cool dark', { bg: '#0e1117', win: '#151a22', side: '#11151c', sep: '#252c38', tx: '#e6ebf2', tx3: '#4b5566', ac: '#ff7a52', font: "'Inter Tight', Inter, sans-serif" }],
+      ['High contrast', 'Strongest', { bg: '#000000', win: '#000000', side: '#000000', sep: '#ffffff', tx: '#ffffff', tx3: '#bdbdbd', ac: '#ff8a5c', font: "'Inter Tight', Inter, sans-serif" }]
+    ];
+    var tsel = st.lookTheme || 'Graphite';
+    var themes = TH.map(function (t) {
+      var on = t[0] === tsel, c = t[2];
+      return { n: t[0], s: t[1], on: on, ring: on ? 'var(--tx2)' : 'var(--sep)', rw: on ? 1 : 0, bg: c.bg, win: c.win, side: c.side, sep: c.sep, tx: c.tx, tx3: c.tx3, ac: c.ac, font: c.font, pick: function () { set('lookTheme', t[0]); } };
+    });
+    var asel = st.accent || 'Ember';
+    var accents = [['Ember', '#ff6a3d'], ['Blue', 'var(--U)'], ['Green', 'var(--F)'], ['Violet', 'var(--H)'], ['Amber', 'var(--K)'], ['Pink', 'var(--P)']].map(function (a) {
+      return { n: a[0], c: a[1], rw: a[0] === asel ? 3.5 : 0, pick: function () { set('accent', a[0]); } };
+    });
+    var lookSegs = [
+      { n: 'Density', opts: seg('density', ['Comfortable', 'Compact'], 'Comfortable') },
+      { n: 'Motion', opts: seg('motion', ['Full', 'Reduced'], 'Full') },
+      { n: 'Detail', opts: seg('detail', ['Casual', 'Everyday', 'Developer'], 'Everyday') }
+    ];
+
+    // ---------- Brains ----------
+    var picker = !!st.picker;
+    function slot(i, model, prov, state, open) {
+      var on = state === 'In use';
+      return { real: true, join: i > 1, model: model, prov: prov, state: on ? state : '', stc: on ? 'ok' : 'idle', open: !!open, bd: open ? 'var(--tx2)' : (on ? 'var(--tx3)' : 'var(--sep2)'),
+        pick: function () { if (open !== undefined) set('picker', !picker); } };
+    }
+    var roles = [
+      { n: 'Main', sub: 'Chats and jobs', slots: [slot(1, 'gpt-5.6-terra', 'ChatGPT', 'In use'), slot(2, 'Claude Sonnet 5.5', 'Anthropic', 'Ready', picker), slot(3, 'Kimi K2.6', 'Workers AI', 'Ready')] },
+      { n: 'Voice', sub: 'Thinks while it talks', slots: [slot(1, 'Kimi K2.6', 'Workers AI', 'In use'), slot(2, 'gpt-5.6-terra', 'ChatGPT', 'Ready'), { ghost: true, join: true }] }
+    ];
+    function mini(i, model, prov) { return { real: true, join: i > 1, model: model, prov: prov }; }
+    var named = [
+      { n: 'Quick', line: 'Fast and cheap, for routine work.', slots: [mini(1, 'Kimi K2.6', 'Workers AI'), mini(2, 'gpt-5.6-terra', 'ChatGPT')], stat: '1,906 THIS WEEK' },
+      { n: 'Deep', line: 'Careful thinking, for hard problems.', slots: [mini(1, 'gpt-5.6-terra', 'ChatGPT'), mini(2, 'Sonnet 5.5', 'Anthropic')], stat: '48 THIS WEEK' },
+      { n: 'Long reading', line: 'Whole documents and long threads.', slots: [mini(1, 'Sonnet 5.5', 'Anthropic'), { ghost: true, join: true }], stat: '6 THIS WEEK' }
+    ];
+    var usedFor = [['Helpers', 'Quick'], ['Research', 'Deep'], ['A job’s work', 'Quick'], ['A job’s looks', 'Deep'], ['Skill review', 'Quick']].map(function (u) { return { k: u[0], v: u[1] }; });
+    function meter(n, pct) { var f = Math.round(n * pct / 100); return cells(n, function (k) { return k < f ? 'f' : ''; }); }
+    var provs = [
+      { n: 'ChatGPT', state: 'Signed in, Plus', k: 'Plan window', v: '62% used', cells: meter(24, 62), foot: 'Resets 4:10 pm. Until then, all in your plan.' },
+      { n: 'Anthropic', state: 'API key', k: 'This month', v: '$18.40 of $100', cells: meter(24, 18.4), foot: 'At the cap, it stops and asks you.' },
+      { n: 'Workers AI', state: 'Connected', k: 'Free allowance today', v: '41% used', cells: meter(24, 41), foot: 'Resets 8 pm. Then a few cents a day.' }
+    ];
+    var pv = st.pickProvider || 'Anthropic';
+    var pickProv = ['ChatGPT', 'Anthropic', 'Workers AI'].map(function (p) { return { l: p, cls: p === pv ? 'on' : '', pick: function () { set('pickProvider', p); } }; });
+    var CAT = {
+      Anthropic: [['Claude Opus 5.5', 'Most capable, slower, costs more.', 2, '~55 tok/s', '$5 · $25'], ['Claude Sonnet 5.5', 'Strong and quick. The usual pick.', 3, '~80 tok/s', '$3 · $15'], ['Claude Haiku 5.5', 'Fastest and cheapest.', 5, '~160 tok/s', '$1 · $5']],
+      ChatGPT: [['gpt-5.6-terra', 'The plan’s best model.', 3, '~90 tok/s', 'In plan'], ['gpt-5.6-terra-mini', 'Lighter, uses less of the window.', 4, '~140 tok/s', 'In plan'], ['gpt-5.5', 'The one before.', 3, '~85 tok/s', 'In plan']],
+      'Workers AI': [['Kimi K2.6', 'The best open model here.', 4, '~120 tok/s', 'Free · then $0.60'], ['gpt-oss-120b', 'Open, good at tools.', 4, '~130 tok/s', 'Free · then $0.35'], ['Llama 4 Scout', 'Small and very fast.', 5, '~210 tok/s', 'Free · then $0.27']]
+    };
+    var csel = st.pickModel || 'Claude Sonnet 5.5';
+    var pickRows = CAT[pv].map(function (m) {
+      var on = m[0] === csel;
+      return { n: m[0], s: m[1], on: on, bg: on ? 'var(--sel)' : 'transparent', sp: cells(5, function (k) { return k < m[2] ? 'f' : ''; }), tps: m[3], cost: m[4], pick: function () { self.setState({ pickModel: m[0], picker: false }); } };
+    });
+    var pickNote = pv === 'ChatGPT' ? 'Signed in, Plus' : (pv === 'Anthropic' ? 'By API key' : 'Your Cloudflare account');
+    var pickCostHd = pv === 'ChatGPT' ? 'Cost' : 'Per M tokens';
+    var pickFoot = pv === 'ChatGPT' ? 'Live from your ChatGPT plan, checked 2 min ago.' : (pv === 'Anthropic' ? 'Live from Anthropic, checked 2 min ago. Prices are in and out.' : 'Live from Workers AI, checked 2 min ago. Free up to the daily allowance.');
+
+    // ---------- Notifications ----------
+    var PH = 'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM11 18h2';
+    var TGM = 'M22 2 11 13M22 2l-7 20-4-9-9-4z';
+    var CALL = 'M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z';
+    var BRIEF = 'M12 3v2M5.6 5.6l1.4 1.4M3 12h2M19 12h2M17 7l1.4-1.4M7 16a5 5 0 0 1 10 0M3 20h18';
+    var accepted = !!st.accepted;
+    function ch(d, n, s, jl, jw) { return { d: d, n: n, s: s, join: !!jl, jl: jl || '', jw: jw || 0 }; }
+    var nowSteps = accepted ? [ch(TGM, 'Telegram', '@maxbarbare'), ch(PH, 'Push', 'Max’s iPhone', 'THEN', 48), ch(CALL, 'Phone call', 'Max’s iPhone', '10 MIN UNSEEN', 100)]
+                            : [ch(PH, 'Push', 'Max’s iPhone'), ch(TGM, 'Telegram', '@maxbarbare', 'THEN', 48), ch(CALL, 'Phone call', 'Max’s iPhone', '10 MIN UNSEEN', 100)];
+    var urg = [
+      { n: 'Now', sub: 'Right away, even at night', steps: nowSteps, stat: '2 THIS WEEK' },
+      { n: 'Soon', sub: 'At your next free moment', steps: [ch(TGM, 'Telegram', '@maxbarbare')], stat: '7 TODAY' },
+      { n: 'Later', sub: 'Waits for a better time', steps: [ch(BRIEF, 'The next brief', 'Tomorrow, 8:00 am'), ch('M3 5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM3 15h18', 'Or the app', 'When you next open it', 'OR', 48)], stat: '11 WAITING' }
+    ];
+    var order = [['1', 'Where you’re talking now'], ['2', 'Where it started'], ['3', 'Your list for its urgency']].map(function (o, k) {
+      return { i: o[0], n: o[1], join: k > 0, c: 'var(--tx2)', bd: 'var(--sep2)' };
+    });
+    // The same lists as plain sentences, for the Simple detail level (the default).
+    function tx(t) { return { t: t, c: false }; }
+    function lc(k, n) { return { t: '', c: true, n: n, lg: L[k].uri, inv: L[k].inv, ic: '', dia: false }; }
+    function icp(d, n) { return { t: '', c: true, n: n, lg: '', inv: '', ic: d, dia: false }; }
+    function dia(n) { return { t: '', c: true, n: n, lg: '', inv: '', ic: '', dia: true }; }
+    var nowParts = accepted
+      ? [tx('When something can’t wait, Atlas messages you on '), lc('telegram', 'Telegram'), tx(', then pushes to your '), lc('apple', 'iPhone'), tx(', and gives you a '), lc('telnyx', 'phone call'), tx(' if you still haven’t seen it after 10 minutes.')]
+      : [tx('When something can’t wait, Atlas pushes to your '), lc('apple', 'iPhone'), tx(', then messages you on '), lc('telegram', 'Telegram'), tx(', and gives you a '), lc('telnyx', 'phone call'), tx(' if you still haven’t seen it after 10 minutes.')];
+    var nsimple = [
+      { n: 'Now', count: 'Twice this week', parts: nowParts },
+      { n: 'Soon', count: '7 today', parts: [tx('When it can wait a little, Atlas sends it to '), lc('telegram', 'Telegram'), tx(' at your next free moment.')] },
+      { n: 'Later', count: '11 waiting', parts: [tx('Everything else waits until you next open '), dia('Atlas'), tx(', or for your '), icp(BRIEF, 'morning brief'), tx(' at 8 am.')] }
+    ];
+    // quiet hours strip: 24 hours, 22 to 7 quiet, now at 14
+    var dayCells = cells(24, function (k) { if (k === 14) return 'n'; return (k >= 22 || k < 7) ? 'f' : 'q'; });
+    var budget = cells(10, function (k) { return k < 4 ? 'f' : ''; });
+
+    // ---------- Permissions ----------
+    var KO = ['Always ask', 'Until trusted', 'Don’t ask'];
+    var K = [
+      ['k_look', 'Looking', 'Your data, the web', 'Don’t ask', false],
+      ['k_own', 'Changing your own things', 'Calendar, notes, with undo', 'Don’t ask', false],
+      ['k_speak', 'Speaking to others', 'Messages, email, posts', 'Until trusted', false],
+      ['k_undo', 'Things that can’t be undone', 'Always asks, with hold to confirm', 'Always ask', true],
+      ['k_money', 'Money', 'Always asks, showing the amount', 'Always ask', true]
+    ];
+    var kinds = K.map(function (k) {
+      var cur = k[4] ? k[3] : (st[k[0]] || k[3]);
+      return { n: k[1], s: k[2], lock: k[4], segCls: 'seg' + (k[4] ? ' lock' : ''),
+        opts: KO.map(function (o) { return { l: o, cls: o === cur ? 'on' : '', pick: function () { if (!k[4]) set(k[0], o); } }; }) };
+    });
+    var trusted = [
+      ['Meeting confirmations', 'Email · trusted Oct 9, after 5 OKs as-is'],
+      ['Texts to Mom', 'Messages · trusted Sep 30'],
+      ['Keyframes face, to known clients', 'Faces · trusted Oct 14'],
+      ['Linear', 'All 12 tools · trusted Oct 2']
+    ].map(function (t) { return { n: t[0], s: t[1] }; });
+    var R = [
+      ['r1', 'Websites the workspace reaches', ['Each site', 'Any site'], 0],
+      ['r6', 'Calendar changes with others', ['Asks', 'Does it, tells you'], 0],
+      ['r2', 'Forms in the browser', ['Asks', 'Allowed sites'], 0],
+      ['r7', 'MCP tools', ['One at a time', 'Whole service'], 0],
+      ['r3', 'After reading the web', ['Asks first', 'Known people'], 0],
+      ['r8', 'Paid brain when a plan runs out', ['Asks', 'Within the cap'], 0],
+      ['r4', 'Email sent as you', ['Always asks', 'Per recipient'], 0],
+      ['r9', 'Tools on your devices', ['Until trusted', 'Always asks'], 0],
+      ['r5', 'Faces replying to contacts', ['Until trusted', 'Sends'], 0],
+      ['r10', 'Phone calls', ['Doesn’t call', 'Calls if urgent'], 1]
+    ];
+    var rules = R.map(function (r) {
+      var cur = st[r[0]] === undefined ? r[3] : st[r[0]];
+      return { n: r[1], opts: r[2].map(function (o, k) { return { l: o, cls: k === cur ? 'on' : '', pick: function () { set(r[0], k); } }; }) };
     });
 
-    function seg(key, name, opts, def) {
+    // Permissions in plain statements, for the Simple detail level. The words follow the choice.
+    var EYE = 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z';
+    var PEN = 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z';
+    var SAY = 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z';
+    var CASH = 'M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6';
+    function stmt(key, d, opts, def, words, s) {
       var cur = st[key] || def;
-      return { n: name, opts: opts.map(function (o, k) {
-        var on = o === cur;
-        return { l: o, bl: k === 0 ? 'transparent' : 'var(--sep2)', bg: on ? 'var(--sel)' : 'transparent', fg: on ? 'var(--tx)' : 'var(--tx3)', fw: on ? 500 : 400, pick: function () { var s = {}; s[key] = o; self.setState(s); } };
-      }) };
+      return { d: d, icc: 'var(--tx2)', n: words[opts.indexOf(cur)], s: s, lock: false, free: true,
+        opts: opts.map(function (o) { return { l: o, cls: o === cur ? 'on' : '', pick: function () { set(key, o); } }; }) };
     }
-    var segs = [seg('speed', 'Speed', ['0.9×', '1.0×', '1.1×', '1.2×'], '1.0×'), seg('small', 'Small talk', ['Never', 'Sometimes', 'Often'], 'Sometimes'), seg('fillers', 'Fillers like “um”', ['Off', 'Light'], 'Off')];
-
-    var chain = [
-      { join: false, step: '01 · Main', n: 'ChatGPT', state: 'In use', tc: 'var(--ac)', tb: 'var(--ac)', bs: 'solid', bd: 'var(--tx3)', sub: 'Codex sign-in, so it runs on your ChatGPT plan.',
-        rows: [{ k: 'Plan', v: 'ChatGPT Plus', c: 'var(--tx)' }, { k: 'Limit', v: '[■■■□□□□□] 31%', c: 'var(--tx2)' }, { k: 'Month', v: '1,284 turns', c: 'var(--tx2)' }], btns: ['Change', 'Sign out'] },
-      { join: true, step: '02 · If it’s unavailable', n: 'Claude', state: 'Standby', tc: 'var(--tx3)', tb: 'var(--sep2)', bs: 'dashed', bd: 'var(--sep2)', sub: 'Anthropic API key, with a monthly cap.',
-        rows: [{ k: 'Cap', v: '$100 a month', c: 'var(--tx)' }, { k: 'Used', v: '[■■□□□□□□] $23.40', c: 'var(--tx2)' }, { k: 'Month', v: '212 turns', c: 'var(--tx2)' }], btns: ['Set cap', 'Change'] },
-      { join: true, step: '03 · Last resort', n: 'Workers AI', state: 'Standby', tc: 'var(--tx3)', tb: 'var(--sep2)', bs: 'dashed', bd: 'var(--sep2)', sub: 'Your Cloudflare account. Always there.',
-        rows: [{ k: 'Model', v: 'Best open model', c: 'var(--tx)' }, { k: 'Feel', v: 'Fast, simpler', c: 'var(--tx2)' }, { k: 'Month', v: 'Unused · $0.00', c: 'var(--tx2)' }], btns: ['Change'] }
+    var psimple = [
+      stmt('p_look', EYE, ['Asks first', 'Just looks'], 'Just looks', ['Atlas asks before it looks', 'Atlas looks without asking'], 'Your mail, calendar, files and the web.'),
+      stmt('p_own', PEN, ['Asks first', 'Does it, tells you'], 'Does it, tells you', ['Asks before it changes your own things', 'Changes your own things and tells you, with undo'], 'Your calendar, notes and lists.'),
+      stmt('p_speak', SAY, ['Always asks', 'Until trusted', 'Never asks'], 'Until trusted', ['Always asks before it speaks for you', 'Asks before it speaks for you, until you trust it', 'Speaks for you without asking'], 'Messages, email and posts. Say yes to the same kind a few times and it stops asking.'),
+      { d: CASH, icc: 'var(--tx2)', n: 'Always asks about money and anything it can’t undo', s: 'It shows you the amount, and you hold to confirm.', lock: true, free: false, opts: [] }
     ];
-    var panels = [
-      { n: 'Quick jobs', on: 'on Workers AI', sub: 'Sorting, pulling out facts and remembering run on small fast models, so the main brain stays free.',
-        rows: [{ k: 'Decide', v: 'Clef', u: '18,402 calls' }, { k: 'Extract', v: 'Clairic', u: '9,733 calls' }, { k: 'Remember', v: 'Embeddings', u: '13,785 calls' }] },
-      { n: 'Voice', on: 'on ElevenLabs', sub: 'Speech uses eleven_v4_turbo. Voice turns use the main brain on a faster setting.',
-        rows: [{ k: 'Speaks', v: 'eleven_v4_turbo', u: '3h 12m · 38% of plan' }, { k: 'Thinks', v: 'ChatGPT · fast', u: '412 turns' }, { k: 'First word', v: '~280 ms', u: 'median this week' }] }
+    function tr(o) { return Object.assign({ lg: '', inv: '', av: '', ic: '', area: '', c: '', rgb: '', act: 'Ask again', bs: 'solid', bg: 'var(--win)', fg: 'var(--tx)' }, o); }
+    var ptrust = [
+      tr({ lg: L.gmail.uri, inv: L.gmail.inv, n: 'Sends meeting confirmations', s: 'Since Oct 9, after you said yes to five as they were' }),
+      tr({ av: 'M', c: 'var(--P)', rgb: 'var(--Prgb)', n: 'Texts Mom', s: 'Since Sep 30' }),
+      tr({ ic: '', lg: L.linear.uri, inv: L.linear.inv, n: 'Uses Linear', s: 'Everything it can do there, since Oct 2' }),
+      tr({ av: 'FD', c: 'var(--K)', rgb: 'var(--Krgb)', n: 'Front desk replies to your clients', area: 'Keyframes', s: 'Since Oct 14' }),
+      tr({ lg: L.telnyx.uri, inv: L.telnyx.inv, n: 'Calls you when something’s urgent', s: 'You turned this on', act: 'Turn off' }),
+      tr({ ic: 'M12 5v14M5 12h14', n: 'Add a rule by asking', s: 'Like: never email my professors without asking', act: '', bs: 'dashed', bg: 'transparent', fg: 'var(--tx2)' })
     ];
-    var usage = [{ n: 'ChatGPT', v: 'in plan' }, { n: 'Claude', v: '$23.40' }, { n: 'Workers AI', v: '$1.12' }, { n: 'ElevenLabs', v: '38% of plan' }];
 
-    var secs = {
-      character: ['Character & voice', 'How Atlas sounds when it writes and when it talks.', 'Reset to default'],
-      brains: ['Brains', 'Which models think for Atlas. If one is down or over its cap, the next takes over.', 'Add a brain']
+    // ---------- Account ----------
+    var passkeysS = [
+      { lg: L.apple.uri, inv: L.apple.inv, n: 'MacBook Pro', s: 'Touch ID, on this Mac', used: 'In use now', uc: 'ok' },
+      { lg: L.apple.uri, inv: L.apple.inv, n: 'iPhone 17 Pro', s: 'Face ID', used: 'Yesterday evening', uc: 'aside' }
+    ];
+    var passkeys = [
+      { d: 'M4 5h16v10H4zM2 19h20', n: 'MacBook Pro', s: 'Touch ID · this device', used: 'In use now' },
+      { d: PH, n: 'iPhone 17 Pro', s: 'Face ID', used: 'Yesterday, 9:14 pm' }
+    ];
+    var vault = [['8', 'logins', 'logins'], ['2', 'cards', 'cards'], ['3', 'two-factor codes', 'sign-in codes'], ['1', 'API key', 'service key']].map(function (v) { return { c: v[0], n: v[1], s: v[2] }; });
+    var notes = ['Voice answers start about 80 ms sooner.', 'Approvals on Telegram show the whole draft.', 'Fixes calendar sync stalling after the Mac sleeps.'];
+    var notesS = ['Voice answers start a little sooner.', 'Approvals on Telegram show the whole draft.', 'Your calendar keeps up after the Mac wakes from sleep.'];
+    var days = cells(30, function (k) { return k === 29 ? 'f' : 'q'; });
+
+    var H = {
+      atlas: ['Atlas', 'Who Atlas is, how it sounds, and how it looks.', ''],
+      brains: ['Brains', 'Who does Atlas’s thinking, and what it costs.', 'Add a provider'],
+      notifications: ['Notifications', 'How Atlas reaches you when you aren’t already talking.', 'Send a test'],
+      permissions: ['Permissions', 'When Atlas asks first. Each area can raise or lower these; Health asks for everything.', ''],
+      account: ['Account', 'How you sign in, your secrets, updates and your data.', '']
     };
-    var s = secs[sec];
+    var dev = st.level === 'developer';
+    if (!dev) {
+      H.permissions = ['Permissions', 'When Atlas asks you first. Each area can change these, and Health always asks.', ''];
+      H.account = ['Account', 'How you sign in, your passwords, updates and your data.', ''];
+    }
+    var hd = H[sec];
     return Object.assign(this.shellVals('Settings'), {
-      tabs: this.mkTabs([[s[0], '']], s[0], 'crumb'), meta: 'Atlas 0.1 · up to date',
-      groups: groups, secTitle: s[0], secSub: s[1], secBtn: s[2],
-      isCharacter: sec === 'character', isBrains: sec === 'brains',
+      tabs: this.mkTabs([[hd[0], '']], hd[0], 'crumb'), meta: st.level === 'developer' ? 'Atlas 0.7.0 · 0.7.1 ready' : 'An update is ready',
+      secs: secs, secTitle: hd[0], secSub: hd[1], secBtn: hd[2],
+      isAtlas: sec === 'atlas', apills: apills,
+      isCharacter: sec === 'atlas' && atab === 'Character', isVoice: sec === 'atlas' && atab === 'Voice', isLook: sec === 'atlas' && atab === 'Look',
       traits: traits, sample: sample, voices: voices, segs: segs,
-      chain: chain, panels: panels, usage: usage
+      bargeCls: tg('barge', true), toggleBarge: flip('barge', true),
+      themes: themes, accents: accents, lookSegs: lookSegs, followCls: tg('follow', true), toggleFollow: flip('follow', true),
+      isBrains: sec === 'brains' && st.level === 'developer', isBrainsSimple: sec === 'brains' && st.level !== 'developer', bs: bsimple, roles: roles, named: named, usedFor: usedFor, provs: provs,
+      pickProv: pickProv, pickRows: pickRows, pickNote: pickNote, pickCostHd: pickCostHd, pickFoot: pickFoot,
+      isNotif: sec === 'notifications' && dev, isNotifSimple: sec === 'notifications' && !dev, nsimple: nsimple, showSugg: !accepted && !st.dismissed, acceptSugg: function () { set('accepted', true); }, dismissSugg: function () { set('dismissed', true); },
+      order: order, urg: urg, dayCells: dayCells, budget: budget,
+      quietCls: tg('quiet', true), toggleQuiet: flip('quiet', true), focusCls: tg('focus', true), toggleFocus: flip('focus', true),
+      isPerms: sec === 'permissions' && dev, isPermsSimple: sec === 'permissions' && !dev, psimple: psimple, ptrust: ptrust, kinds: kinds, trusted: trusted, rules: rules,
+      isAccount: sec === 'account' && dev, isAccountSimple: sec === 'account' && !dev, passkeysS: passkeysS, notesS: notesS, passkeys: passkeys, vault: vault, notes: notes, days: days,
+      autoCls: tg('auto', false), toggleAuto: flip('auto', false)
     });
   }
 
@@ -400,11 +1085,14 @@ class Component extends DCLogic {
   { name: 'Agenda', d: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z' },
   { name: 'Automations', d: 'M13 2 3 14h9l-1 8 10-12h-9l1-8z', gap: 10 },
   { name: 'Library', d: 'M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z' },
+  { name: 'People', d: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' },
+  { name: 'Abilities', d: 'M9 2h6v6H9zM2 16h6v6H2zM16 16h6v6h-6zM5 16v-3h14v3M12 13V8' },
   { name: 'History', d: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2' }
 ];
     var jobsOpen = !!self.state.jobsOpen;
   return {
     tc: self.props.theme === 'Dark' ? 'dk' : 'lt',
+    scopeDots: ['var(--P)', 'var(--K)', 'var(--U)', 'var(--F)'], scopeName: 'All areas',
     nav: NAV.map(function (n) { var on = n.name === active; return { name: n.name, d: n.d, badge: n.badge || '', gap: n.gap || 0, bg: on ? 'var(--sel)' : 'transparent', fw: on ? 500 : 400, ic: on ? 'var(--tx)' : 'var(--tx2)' }; }),
     pinned: [
       { n: 'Keyframes', isArea: true, c: 'var(--K)', meta: '' },

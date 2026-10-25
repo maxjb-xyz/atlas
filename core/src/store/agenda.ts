@@ -11,9 +11,13 @@ export type AgendaKind =
   | "promise"
   | "job"
   | "notify"
+  /** Something urgent that hasn't been seen (§14): when it's due and the owner still hasn't been, it goes to the next place on its list. */
+  | "follow_up"
   | "approval"
   | "automation"
   | "skills"
+  /** A look back over a conversation that went quiet, keeping what's worth keeping as skills (§9.3). */
+  | "skill_review"
   /** Something to do when you're near the right kind of place (§10.3), with no time unless it has a deadline. */
   | "errand"
   /** A rhythm moment (§10.3): start of day, evening, or a look before leaving for an event. */
@@ -29,7 +33,11 @@ export type AgendaKind =
   /** A time a face held for someone (§7.2), for the owner to confirm; busy to every face until then. */
   | "hold"
   /** The faces' digest (§7.2): what their conversations were, once a day, to Inbox. */
-  | "digest";
+  | "digest"
+  /** The services index's daily look (§17): a newer catalog, and updates to what was installed from it. */
+  | "index"
+  /** The daily look at Atlas's releases (§23.2). */
+  | "updates";
 export type AgendaState = "scheduled" | "running" | "done" | "cancelled" | "failed";
 
 export interface AgendaSource {

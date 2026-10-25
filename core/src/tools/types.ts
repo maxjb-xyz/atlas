@@ -59,6 +59,18 @@ export interface ToolContext {
   helpers: HelperDeskApi | null;
   /** Coding jobs (§8.2): start one, pass the owner's words to one, see how they're doing. Absent where jobs can't be reached. */
   coding?: CodingApi | null;
+  /** Jobs Atlas owns (§8.3): owner runs start one. */
+  goals?: GoalsApi | null;
+  /**
+   * Changing Atlas's own settings (§21), only in a run the owner started: the change, through the same path as the
+   * app's, and whether this run has read the web (§20), which keeps it from loosening the owner's rules.
+   */
+  settingsEdit?: {
+    change(patch: import("../store/settings").SettingsPatch): { ok: boolean; text: string };
+    readWeb(): boolean;
+  } | null;
+  /** A job's turn (§8.3): its moves, bound to that job. Null elsewhere. */
+  ownedJob?: OwnedJobApi | null;
   /**
    * The way out for actions that may need the owner's OK (§12): the outbox
    * does it now when the kind allows, or it waits as an approval card. Null
@@ -89,8 +101,27 @@ export interface ToolContext {
   automations: AutomationsApi | null;
   /** Extensions (§17): keeps one Atlas wrote as a draft, for the owner to install. Owner runs only. */
   extensions?: { draft(code: string): Promise<{ id: string; name: string; hosts: string[] }> } | null;
+  /**
+   * Skill hubs (§17): finding a skill to install, and installing one. Only a run the owner started, in the
+   * owner's own Atlas; `readWeb` says the run has read the web, which could be steering it.
+   */
+  hubs?: {
+    find(query: string): ReturnType<import("../agent/hubs").HubDesk["find"]>;
+    install(hub: string, name: string, o: { run_id: string }): ReturnType<import("../agent/hubs").HubDesk["install"]>;
+    readWeb(): boolean;
+  } | null;
   /** Speaking up changed (`speaking_up`): the moments are put on the clock again. */
   speaking?: () => Promise<void>;
+  /**
+   * Runs an extension's tool (§17) through the outbox, for a look or a change Undo takes back; anything that
+   * asks goes through `exit`. Absent where extensions' tools can't be used.
+   */
+  extTool?:
+    | ((
+        c: { ext: string; tool: string; name: string; input: Record<string, unknown>; undo?: string },
+        o: { run_id: string },
+      ) => Promise<{ ok: boolean; text: string; link?: string; undo?: import("../store/log").Undo }>)
+    | null;
   /** The one scheduler (§4.3): wakes an agenda item at its time. */
   clock: {
     schedule(item: AgendaItem): Promise<void>;
@@ -127,6 +158,8 @@ export interface BrowserApi {
   takeOver(why: string): Promise<void>;
   close(): Promise<void>;
   where(): { open: boolean; url: string; title: string };
+  /** A file as the browser gets it (its cookies, past a check it cleared): `url`, or the page open now. */
+  download(url: string | null, o: { run_id: string }): Promise<import("../browser").Download>;
 }
 
 /**
@@ -194,6 +227,10 @@ export interface WorkspaceApi {
     },
   ): Promise<RunResult>;
   read(path: string): Promise<{ ok: true; bytes: ArrayBuffer } | { ok: false; error: string }>;
+  /** Installs Debian packages as root, remembered for every new container. */
+  install(packages: string[]): Promise<{ ok: boolean; note: string }>;
+  /** Writes a file: in /workspace (a path in it, or under it), or in a job's folder for a job's runs. */
+  write(path: string, bytes: Uint8Array): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
   /** A link to a server on `port` in the workspace, for a day. */
   preview(port: number): Promise<{ url: string; expires: number }>;
   /** Websites the workspace may reach. */
@@ -209,7 +246,14 @@ export interface ExitApi {
 
 export interface HelperDeskApi {
   /** Starts a job; `asked_in` is the run that asked. Throws, with the reason, if the helper can't start. */
-  start(o: { title: string; brief: string; tools: string[]; asked_in: string; research?: boolean }): Promise<{ id: string }>;
+  start(o: {
+    title: string;
+    brief: string;
+    tools: string[];
+    asked_in: string;
+    research?: boolean;
+    brain?: string;
+  }): Promise<{ id: string }>;
   /** The job's result, or null if it's still running after `ms` (it's then reported when it ends). */
   wait(id: string, ms: number): Promise<{ state: "done" | "failed" | "cancelled"; text: string; error?: string } | null>;
 }
@@ -231,6 +275,39 @@ export interface CodingApi {
   look(id?: string): unknown[];
 }
 
+/** What the owner's runs can do with jobs Atlas owns (§8.3). */
+export interface GoalsApi {
+  start(o: {
+    title: string;
+    goal: string;
+    brain?: string;
+    deadline?: number;
+    asked_in: string;
+    asked_by: string | null;
+  }): Promise<{ id: string; folder: string }>;
+}
+
+type Done = Promise<{ ok: boolean; text: string }>;
+
+/** A job's turn (§8.3): its moves, bound to the job it's working on. */
+export interface OwnedJobApi {
+  id: string;
+  notes(text: string): { ok: boolean; text: string };
+  update(o: { text: string; files?: Array<{ path: string; name?: string }> }): Done;
+  ask(o: { text: string; options?: string[]; content?: string; files?: Array<{ path: string; name?: string }> }): Done;
+  build(o: { brief: string; agent?: string; model?: string; effort?: string; minutes?: number }): Done;
+  helpers(o: { tasks: Array<{ title: string; brief: string }>; research?: boolean }): Done;
+  wait(o: { minutes: number; why: string }): Done;
+  site(o: { host: string; why: string }): Done;
+  deadline(at: number | null): { ok: boolean; text: string };
+  finish(o: { summary: string; files?: Array<{ path: string; name?: string; note?: string }> }): Done;
+  fail(why: string): Done;
+  /** One of the owner's files, back into the job's folder. */
+  bring(o: { file: string; path?: string }): Done;
+  /** Stops the work the job handed off, at once. */
+  stopWork(why: string): Done;
+}
+
 export interface ToolResult {
   ok: boolean;
   /** What the model sees. */
@@ -244,6 +321,8 @@ export interface Tool {
   description: string;
   kind: ToolKind;
   input: z.ZodType;
+  /** Its input as brains see it, when it's given as a JSON Schema rather than made from `input` (an extension's tool, §17). */
+  schema?: Record<string, unknown>;
   /** Said or shown while it runs, when Atlas hasn't said anything yet ("Checking your calendar"). */
   status?: string;
   timeoutMs?: number;
@@ -255,7 +334,8 @@ export function defineTool<S extends z.ZodType>(t: {
   description: string;
   kind: ToolKind;
   input: S;
-  status?: string;
+  /** Said or shown while it runs, when Atlas hasn't said anything yet: every tool has one, so voice is never quiet while it works. */
+  status: string;
   timeoutMs?: number;
   run(input: z.infer<S>, ctx: ToolContext): Promise<ToolResult>;
 }): Tool {
@@ -268,6 +348,8 @@ export function defineTool<S extends z.ZodType>(t: {
  * left out; the tool still checks its input in full.
  */
 export function toSpec(tool: Tool): ToolSpec {
+  if (tool.schema)
+    return { name: tool.name, description: tool.description, parameters: withoutPropertyNames(tool.schema) as Record<string, unknown> };
   const schema = z.toJSONSchema(tool.input, { target: "draft-7", io: "input" }) as Record<string, unknown>;
   delete schema.$schema;
   return { name: tool.name, description: tool.description, parameters: withoutPropertyNames(schema) as Record<string, unknown> };

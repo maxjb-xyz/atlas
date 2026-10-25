@@ -6,6 +6,7 @@ import type { Atlas } from "../connection";
 import { ApprovalCard } from "../Approval";
 import { Markdown } from "../Markdown";
 import { Composer, compose } from "../Shell";
+import { questionFromItem, QuestionBody } from "../JobViews";
 import { addDays, AreaChip, clock, dayName, Empty, pressable, Sheet, shortDay, Stage, startOfDay } from "../ui";
 import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
@@ -138,6 +139,18 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                   )}
                   {on && i.face && <FaceHandoff atlas={atlas} item={i} />}
                   {on && i.job && <JobQuestion atlas={atlas} item={i} />}
+                  {on && (i.job || i.approval || s.rows.some((r) => r.id === i.id)) && (
+                    <span className="row small" style={{ gap: 18 }}>
+                      <a className="link" href={`#/home/${encodeURIComponent(`at:${i.id}`)}`}>
+                        Show it in the conversation
+                      </a>
+                      {i.job && (
+                        <a className="link" href={`#/home/${encodeURIComponent(`job:${i.job.id}`)}`}>
+                          Open {i.job.title}
+                        </a>
+                      )}
+                    </span>
+                  )}
                   {on && !i.approval && !i.question && !i.face && !i.job && (
                     <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       <div className="panel">{i.text ? <Markdown text={i.text} /> : "No details."}</div>
@@ -168,44 +181,14 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
   );
 }
 
-/** A coding job's question (§8.2): pick one of its choices, or answer in your own words; the answer goes back to its agent. */
+/**
+ * A job's question (§8.2, §8.3, §21.4): the same message as in the conversation, with its files and buttons, or
+ * the owner's own words. It's one thing: answered here, it's answered there.
+ */
 function JobQuestion({ atlas, item }: { atlas: Atlas; item: InboxItem }) {
-  const q = item.job!;
-  const [text, setText] = useState("");
-  const answer = (t: string) => atlas.send({ type: "atlas.job.say", id: q.id, text: t });
   return (
-    <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }} onClick={(e) => e.stopPropagation()}>
-      <p style={{ fontSize: 15 }}>{q.question}</p>
-      {q.why && <p className="muted">{q.why}</p>}
-      {q.options.length > 0 && (
-        <div className="row">
-          {q.options.map((o, n) => (
-            <button key={o} className={`btn ${n === 0 ? "primary" : ""}`} onClick={() => answer(o)}>
-              {o}
-            </button>
-          ))}
-        </div>
-      )}
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (text.trim()) answer(text.trim());
-        }}
-      >
-        <input
-          className="grow"
-          placeholder={q.options.length ? "Or say it in your words" : "Your answer, for the job"}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-        <button className="btn" type="submit" disabled={!text.trim()}>
-          Answer
-        </button>
-        <a className="btn" href={`#/home/${encodeURIComponent(`jobs:${q.id}`)}`}>
-          Open the job
-        </a>
-      </form>
+    <div className="rise inbox-question" onClick={(e) => e.stopPropagation()}>
+      <QuestionBody atlas={atlas} q={questionFromItem(item)} open title={false} selection={false} />
     </div>
   );
 }
@@ -218,6 +201,8 @@ interface AgendaEntry {
   kind: "Event" | "Reminder" | "Promise" | "Job" | "Automation" | "Waiting";
   title: string;
   source: string;
+  /** The calendar event, so its areas can be moved. */
+  event?: CalendarEventView;
   id: string;
   /** Where it was said: the owner's words, for reminders and promises (§13.4). */
   said?: { text: string; at: number };
@@ -239,13 +224,34 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
   const entries: AgendaEntry[] = [
     ...(cal?.events ?? [])
       .filter((e: CalendarEventView) => eventEnd(e).getTime() > Date.now())
-      .map((e) => ({ at: eventStart(e), allDay: e.all_day, kind: "Event" as const, title: e.title, source: e.calendar, id: e.id })),
+      .map((e) => ({
+        at: eventStart(e),
+        allDay: e.all_day,
+        kind: "Event" as const,
+        title: e.title,
+        source: e.calendar,
+        event: e,
+        id: e.id,
+      })),
     ...s.agenda
       // Notifications held for quiet hours are the outbox's, and approvals wait in Inbox: neither is something on your clock.
       .filter(
         (a) =>
           (a.state === "scheduled" || a.state === "running") &&
-          !["notify", "approval", "skills", "situation", "rhythm", "errand", "looks", "device"].includes(a.kind),
+          ![
+            "notify",
+            "follow_up",
+            "approval",
+            "skills",
+            "skill_review",
+            "situation",
+            "rhythm",
+            "errand",
+            "looks",
+            "index",
+            "updates",
+            "device",
+          ].includes(a.kind),
       )
       .map((a): AgendaEntry => {
         const d = a.source.detail ?? {};
@@ -302,7 +308,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                 <h1 className="disp">This week</h1>
               </div>
               <CalendarNote atlas={atlas} cal={week} />
-              <WeekGrid events={week?.events ?? []} agenda={s.agenda} start={start} />
+              <WeekGrid events={week?.events ?? []} agenda={s.agenda} start={start} areas={s.areas} />
             </>
           ) : (
             <>
@@ -388,7 +394,33 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
                               </span>
                             )}
                           </span>
-                          <span className="faint small hide-phone">{e.source}</span>
+                          {e.event ? (
+                            <span className="hide-phone" onClick={(x) => x.stopPropagation()}>
+                              <AreaChip
+                                ids={e.event.areas ?? []}
+                                areas={s.areas}
+                                onMove={
+                                  s.areas.length
+                                    ? (ids) => {
+                                        const ev = e.event!;
+                                        atlas.send({
+                                          type: "atlas.event.areas",
+                                          event: {
+                                            id: ev.id,
+                                            title: ev.title,
+                                            calendar: ev.calendar,
+                                            ...(ev.location ? { location: ev.location } : {}),
+                                          },
+                                          areas: ids,
+                                        });
+                                      }
+                                    : undefined
+                                }
+                              />
+                            </span>
+                          ) : (
+                            <span className="faint small hide-phone">{e.source}</span>
+                          )}
                           {e.cancel && (
                             <button className="link small" onClick={() => atlas.send({ type: "atlas.agenda.cancel", id: e.id })}>
                               Cancel

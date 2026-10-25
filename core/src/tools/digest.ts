@@ -13,6 +13,7 @@ import { defineTool, fail } from "./types";
 export const areaLook = defineTool({
   name: "area_look",
   kind: "look",
+  status: "Looking over that area.",
   description: [
     "Look back over an area (Work, Home, a project): what was said and kept there over the last days, what's open, and what's waiting on whom.",
     "Use it for a digest ('the week in Work') and for 'what's going on with Keyframes?'. Say only what's worth saying; when nothing happened, say so in a line or nothing.",

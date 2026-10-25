@@ -17,7 +17,7 @@ export interface FaceDeps {
   /** Runs the face on a conversation: its prompt, its tools, the conversation so far. Returns what it says. */
   run(o: { face: Face; conv: string; from: string; person: string | null; note: string | null; test?: boolean }): Promise<string>;
   /** Sends the face's words out on the address the conversation is on. */
-  send(o: { conv: string; where: Where; text: string; face: Face }): Promise<void>;
+  send(o: { conv: string; where: Where; text: string; face: Face; person?: string | null }): Promise<void>;
   /** Tells the owner, on one device, when something can't wait. */
   push(text: string, row: LogRow): Promise<void>;
   /** Inbox changed. */
@@ -138,7 +138,7 @@ export class FaceDesk {
     }
     if (!said.trim()) return;
     append(this.d.sql, { actor: "atlas", kind: "face.out", body: { face: face.id, conv: o.conv, text: said, channel: o.channel } });
-    await this.d.send({ conv: o.conv, where: o.where, text: said, face });
+    await this.d.send({ conv: o.conv, where: o.where, text: said, face, person: o.person });
   }
 
   /** Something for the owner from a face: a message or a pull-in, in Inbox, pushed when urgent. */

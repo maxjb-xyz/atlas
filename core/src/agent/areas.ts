@@ -15,6 +15,7 @@ import {
   setTags,
   type Tagged,
   tagsOf,
+  threadAreas,
   updateArea,
 } from "../store/areas";
 import { parse, type Sql } from "../store/db";
@@ -98,7 +99,7 @@ export async function tagPending(
   const since = getState<number>(sql, "areas_seq") ?? 0;
   const rows = sql
     .exec<{ seq: number; id: string }>(
-      `SELECT seq, id FROM log WHERE seq > ? AND kind IN ('message.in', 'message.out') ORDER BY seq LIMIT ?`,
+      `SELECT seq, id FROM log WHERE seq > ? AND (kind IN ('message.in', 'message.out') OR (kind = 'sense' AND json_extract(body, '$.thread') IS NOT NULL)) ORDER BY seq LIMIT ?`,
       since,
       limit,
     )
@@ -121,6 +122,21 @@ export async function tagPending(
         setState(sql, "areas_seq", r.seq);
         continue;
       }
+    }
+    // Already in an area as it came in (mail from an area's account): nothing to ask.
+    if (row.areas.length) {
+      setState(sql, "areas_seq", r.seq);
+      continue;
+    }
+    // A conversation stays in its area: mail answering mail that has one takes it.
+    const thread = typeof row.body.thread === "string" ? row.body.thread : null;
+    const inThread = thread ? threadAreas(sql, thread) : [];
+    if (inThread.length) {
+      setTags(sql, `log:${row.id}`, inThread);
+      changed.push(row.id);
+      tagged += 1;
+      setState(sql, "areas_seq", r.seq);
+      continue;
     }
     if (text.trim() && row.actor === "owner") {
       const p = await ask(decider, text, questions, row.id);
@@ -321,4 +337,121 @@ function textOf(sql: Sql, ref: Tagged): string {
   }
   const r = getRecord(sql, ref.slice(4));
   return r ? recordText(r) : "";
+}
+
+// --- calendar events (§6.3) ---------------------------------------------------------------
+
+/** The events Atlas has sorted, by series: what Clef said, or the owner. Kept to the most recent. */
+interface EventTags {
+  areas: string[];
+  by: "clef" | "owner";
+  at: number;
+}
+/** An event waiting for Clef: enough to ask about it. */
+interface EventAsk {
+  series: string;
+  title: string;
+  calendar: string;
+  location?: string;
+}
+type EventLike = { id: string; title: string; calendar: string; location?: string; account?: string };
+
+const EVENTS_KEPT = 1_000;
+const EVENTS_WAITING = 200;
+
+/** A repeating event's instances share a series: the part of the id before "::". */
+export const seriesOf = (id: string) => id.split("::")[0]!;
+
+const eventText = (e: { title: string; calendar: string; location?: string }) =>
+  `A calendar event, "${e.title}", on the owner's "${e.calendar}" calendar${e.location ? `, at ${e.location.split("\n")[0]}` : ""}.`;
+
+/**
+ * Each event's areas (§6.3): what the owner set for it, else the areas its
+ * account is in (the account's card, or the area's row), else what Clef
+ * said, else the area its calendar is named after (the School calendar is
+ * School, no call needed). An event none of those covers waits for Clef's next pass,
+ * with no area until then (if unsure, nothing).
+ */
+export function eventAreas(sql: Sql, events: EventLike[]): string[][] {
+  const known = getState<Record<string, EventTags>>(sql, "event_areas") ?? {};
+  const live = new Set(listAreas(sql).map((a) => a.id));
+  const byName = new Map(listAreas(sql).map((a) => [a.name.trim().toLowerCase(), a.id]));
+  const waiting = getState<EventAsk[]>(sql, "events_untagged") ?? [];
+  const queued = new Set(waiting.map((w) => w.series));
+  const add: EventAsk[] = [];
+  // A calendar the owner put in an area (a whole account, or one calendar in it): its events are that area's.
+  const byRef = new Map<string, string[]>();
+  for (const a of listAreas(sql)) for (const ref of a.settings.calendars) byRef.set(ref, [...(byRef.get(ref) ?? []), a.id]);
+  const out = events.map((e) => {
+    const series = seriesOf(e.id);
+    const k = known[series];
+    if (k?.by === "owner") return k.areas.filter((a) => live.has(a));
+    const fromAccount = e.account ? (byRef.get(`${e.account}::${e.calendar}`) ?? byRef.get(e.account)) : undefined;
+    if (fromAccount?.length) return fromAccount;
+    if (k) return k.areas.filter((a) => live.has(a));
+    const named = byName.get(e.calendar.trim().toLowerCase());
+    if (named) return [named];
+    if (!queued.has(series)) {
+      queued.add(series);
+      add.push({
+        series,
+        title: e.title.slice(0, 200),
+        calendar: e.calendar.slice(0, 80),
+        ...(e.location ? { location: e.location.slice(0, 200) } : {}),
+      });
+    }
+    return [];
+  });
+  if (add.length) setState(sql, "events_untagged", [...waiting, ...add].slice(-EVENTS_WAITING));
+  return out;
+}
+
+function keepEventTags(sql: Sql, series: string, tags: EventTags): void {
+  const known = getState<Record<string, EventTags>>(sql, "event_areas") ?? {};
+  delete known[series];
+  known[series] = tags;
+  const entries = Object.entries(known);
+  setState(sql, "event_areas", Object.fromEntries(entries.slice(-EVENTS_KEPT)));
+}
+
+/** Asks Clef about the events waiting, a few at a time. Returns how many it sorted. */
+export async function tagEvents(sql: Sql, decider: Decider, opts: { limit?: number; between?: () => Promise<void> } = {}): Promise<number> {
+  const areas = listAreas(sql).slice(0, MAX_QUESTIONS);
+  const waiting = getState<EventAsk[]>(sql, "events_untagged") ?? [];
+  if (!waiting.length || !areas.length) return 0;
+  const questions: Record<string, YesNo> = {};
+  for (const a of areas) questions[a.id] = question(sql, a);
+  const batch = waiting.slice(0, opts.limit ?? 20);
+  for (const e of batch) {
+    const p = await ask(decider, eventText(e), questions, `event:${e.series}`);
+    keepEventTags(sql, e.series, { areas: areas.filter((a) => (p[a.id] ?? 0) >= TAG_AT).map((a) => a.id), by: "clef", at: Date.now() });
+    const left = (getState<EventAsk[]>(sql, "events_untagged") ?? []).filter((w) => w.series !== e.series);
+    setState(sql, "events_untagged", left);
+    await opts.between?.();
+  }
+  return batch.length;
+}
+
+/**
+ * The owner moved an event's areas: every event in its series follows, and
+ * the event becomes an example for tagging, like a moved message.
+ */
+export function correctEventAreas(sql: Sql, e: EventLike, areaIds: string[]): LogRow {
+  const valid = areaIds.filter((id) => getArea(sql, id));
+  const series = seriesOf(e.id);
+  const before = eventAreas(sql, [e])[0]!;
+  keepEventTags(sql, series, { areas: valid, by: "owner", at: Date.now() });
+  setState(
+    sql,
+    "events_untagged",
+    (getState<EventAsk[]>(sql, "events_untagged") ?? []).filter((w) => w.series !== series),
+  );
+  const text = eventText(e);
+  for (const a of valid.filter((a) => !before.includes(a))) addExample(sql, a, text, true);
+  for (const a of before.filter((a) => !valid.includes(a))) addExample(sql, a, text, false);
+  return append(sql, {
+    actor: "owner",
+    kind: "area.change",
+    body: { change: "moved", ref: `event:${series}`, title: e.title, before, after: valid },
+  });
 }

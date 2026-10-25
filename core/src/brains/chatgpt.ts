@@ -3,8 +3,20 @@
 // api.openai.com with the sign-in token. (chatgpt.com's own backend blocks
 // requests from Cloudflare, and OpenAI asks tools not to use it.)
 // https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference
+//
+// The plan's limits: OpenAI's errors page for plan usage (read 2026-10-25)
+// documents `subscription_sharing_usage_limit_exceeded` (429) but no reset
+// time, no `retry-after` and no usage headers, and says not to guess one from
+// the code. Codex's own client reads `x-codex-primary-used-percent`,
+// `-primary-window-minutes` and `-primary-reset-at` (Unix seconds), the same
+// for `secondary`, and other families like `x-codex-other-*`
+// (openai/codex, codex-rs/codex-api/src/rate_limits.rs, main on 2026-10-25).
+// Whether the public API sends them for plan usage isn't documented, so Atlas
+// reads them when they're there, with `retry-after`, logs which came back
+// (`chatgpt.limits` in the Worker log), and otherwise says it doesn't know.
+// https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery
 
-import { type Brain, BrainError, type BrainEvent, type BrainRequest, type Message, parseArgs, sseData } from "./types";
+import { type Brain, BrainError, type BrainEvent, type BrainRequest, type Message, type PlanLimits, parseArgs, sseData } from "./types";
 
 export const RESPONSES_URL = "https://api.openai.com/v1/responses";
 /** Plan usage needs function tools grouped in a namespace. */
@@ -20,10 +32,22 @@ type Item =
   | { type: "function_call"; call_id: string; name: string; namespace: string; arguments: string }
   | { type: "function_call_output"; call_id: string; output: string };
 
-export function toInput(messages: Message[]): Item[] {
+/**
+ * The loop's messages as Responses input items. With `breakpoints`, the last two of the owner's messages mark where
+ * the provider may cache the prompt up to (GPT-5.6 and later cache only at explicit breakpoints, §4.1): the one before
+ * is where the next turn's prompt still matches, and the last is where this turn's next steps do.
+ */
+export function toInput(messages: Message[], o: { breakpoints?: boolean } = {}): Item[] {
   const out: Item[] = [];
-  for (const m of messages) {
-    if (m.role === "user") out.push({ type: "message", role: "user", content: [{ type: "input_text", text: m.content }] });
+  const users = messages.flatMap((m, i) => (m.role === "user" ? [i] : []));
+  const marks = new Set(o.breakpoints ? users.slice(-2) : []);
+  for (const [i, m] of messages.entries()) {
+    if (m.role === "user")
+      out.push({
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: m.content, ...(marks.has(i) ? { prompt_cache_breakpoint: { mode: "explicit" } } : {}) }],
+      });
     else if (m.role === "tool") out.push({ type: "function_call_output", call_id: m.callId, output: m.content });
     else {
       if (m.content) out.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: m.content }] });
@@ -124,8 +148,66 @@ function planError(code: string | undefined, message: string, status?: number): 
   return new BrainError(`ChatGPT: ${message}${code ? ` (${code})` : ""}`, false, status);
 }
 
+/**
+ * The plan's limits from a response's headers, in Codex's names: each
+ * family's primary and secondary windows. Null when none came back.
+ */
+export function planLimits(h: Headers, now = Date.now()): PlanLimits | null {
+  const families = new Set<string>();
+  h.forEach((_v, name) => {
+    const m = /^x-(.+)-primary-used-percent$/i.exec(name);
+    if (m) families.add(m[1]!.toLowerCase());
+  });
+  const windows: PlanLimits["windows"] = [];
+  for (const fam of [...families].sort()) {
+    for (const which of ["primary", "secondary"] as const) {
+      const used = Number(h.get(`x-${fam}-${which}-used-percent`));
+      if (!Number.isFinite(used) || h.get(`x-${fam}-${which}-used-percent`) == null) continue;
+      const minutes = Number(h.get(`x-${fam}-${which}-window-minutes`));
+      const reset = Number(h.get(`x-${fam}-${which}-reset-at`));
+      const label = h.get(`x-${fam}-limit-name`)?.trim();
+      windows.push({
+        name: `${fam === "codex" ? "" : `${label || fam} `}${which}`,
+        used_percent: used,
+        ...(Number.isFinite(minutes) && minutes > 0 ? { window_minutes: minutes } : {}),
+        ...(Number.isFinite(reset) && reset > 0 ? { resets_at: reset * 1000 } : {}),
+      });
+    }
+  }
+  return windows.length ? { windows, seen_at: now } : null;
+}
+
+/** When a plan that's run out can be used again: `retry-after`, else the reset of a window that's full. */
+export function resetFrom(h: Headers, limits: PlanLimits | null, now = Date.now()): number | undefined {
+  const after = Number(h.get("retry-after"));
+  if (Number.isFinite(after) && after > 0) return now + after * 1000;
+  const full = (limits?.windows ?? []).filter((w) => w.used_percent >= 100 && w.resets_at && w.resets_at > now);
+  return full.length ? Math.max(...full.map((w) => w.resets_at!)) : undefined;
+}
+
+let lastLogged = "";
+/** Which limit headers OpenAI sent, in the Worker log when they change, so what's really there can be seen. */
+function logLimits(res: Response): void {
+  const seen: Record<string, string> = {};
+  res.headers.forEach((v, k) => {
+    if (/^x-codex|ratelimit|retry-after/i.test(k)) seen[k] = v;
+  });
+  const names = Object.keys(seen).sort().join(",");
+  if (names === lastLogged && res.status !== 429) return;
+  lastLogged = names;
+  console.log(JSON.stringify({ at: "chatgpt.limits", status: res.status, headers: seen }));
+}
+
+/** The same error, with when it can be tried again. */
+const withReset = (e: BrainError, at: number | undefined) =>
+  at && e.status === 429 && !e.resetAt ? new BrainError(e.message, e.permanent, e.status, at) : e;
+
 /** A plain reason for a refused request, with the status and what OpenAI said. Exported for tests. */
 export async function refusal(res: Response): Promise<BrainError> {
+  return withReset(await refused(res), resetFrom(res.headers, planLimits(res.headers)));
+}
+
+async function refused(res: Response): Promise<BrainError> {
   const raw = await res.text().catch(() => "");
   let code: string | undefined;
   let detail = raw;
@@ -149,10 +231,17 @@ export async function refusal(res: Response): Promise<BrainError> {
   return new BrainError(`ChatGPT: ${status}${detail ? ` ${detail}` : ""}`, false, res.status);
 }
 
+/** Whether ChatGPT refused the cache key or explicit cache breakpoints, for the run's end to say (§4.1). */
+export const chatgptCacheKey = { refused: false, breakpoints: true };
+
 export function chatgptBrain(auth: ChatGPTAccess, model: string, f: typeof fetch = fetch): Brain {
+  // Whether ChatGPT took a cache key: if it ever says it doesn't know one, Atlas stops sending it.
+  let keyless = chatgptCacheKey.refused;
   async function open(req: BrainRequest, force: boolean): Promise<Response> {
     const token = await auth.access(force);
     if (!token) throw new BrainError("ChatGPT isn't signed in.", true);
+    // Explicit breakpoints for a conversation's turns, unless ChatGPT said it doesn't take them.
+    const explicit = Boolean(req.cacheKey) && chatgptCacheKey.breakpoints;
     return f(RESPONSES_URL, {
       method: "POST",
       headers: {
@@ -165,7 +254,7 @@ export function chatgptBrain(auth: ChatGPTAccess, model: string, f: typeof fetch
       body: JSON.stringify({
         model,
         instructions: req.system,
-        input: toInput(req.messages),
+        input: toInput(req.messages, { breakpoints: explicit }),
         ...(req.tools.length
           ? {
               tools: [
@@ -187,6 +276,8 @@ export function chatgptBrain(auth: ChatGPTAccess, model: string, f: typeof fetch
             }
           : {}),
         reasoning: { effort: req.effort ?? "medium" },
+        ...(req.cacheKey && !keyless ? { prompt_cache_key: req.cacheKey } : {}),
+        ...(explicit ? { prompt_cache_options: { mode: "explicit" } } : {}),
         store: false,
         stream: true,
       }),
@@ -199,8 +290,35 @@ export function chatgptBrain(auth: ChatGPTAccess, model: string, f: typeof fetch
     async *stream(req: BrainRequest): AsyncIterable<BrainEvent> {
       let res = await open(req, false);
       if (res.status === 401) res = await open(req, true);
+      if (
+        res.status === 400 &&
+        req.cacheKey &&
+        chatgptCacheKey.breakpoints &&
+        /prompt_cache_(?:breakpoint|options)/i.test(await res.clone().text())
+      ) {
+        // The endpoint doesn't take explicit breakpoints: say so in the Worker log, and go on with its own caching.
+        console.error(
+          JSON.stringify({ at: "chatgpt.cache_breakpoints", status: 400, note: "explicit breakpoints refused; sending without them" }),
+        );
+        chatgptCacheKey.breakpoints = false;
+        res = await open(req, false);
+      }
+      if (res.status === 400 && req.cacheKey && !keyless && /prompt_cache_key/i.test(await res.clone().text())) {
+        // The plan's endpoint doesn't take a cache key: say so in the Worker log, and go on without one.
+        console.error(JSON.stringify({ at: "chatgpt.cache_key", status: 400, note: "prompt_cache_key refused; sending without it" }));
+        keyless = true;
+        chatgptCacheKey.refused = true;
+        res = await open(req, false);
+      }
+      logLimits(res);
       if (!res.ok || !res.body) throw await refusal(res);
-      yield* readResponsesStream(res.body, req.signal);
+      const limits = planLimits(res.headers);
+      try {
+        for await (const ev of readResponsesStream(res.body, req.signal)) yield ev.type === "done" && limits ? { ...ev, limits } : ev;
+      } catch (err) {
+        // A limit can also arrive mid-stream as response.failed: the headers may still say when it resets.
+        throw err instanceof BrainError ? withReset(err, resetFrom(res.headers, limits)) : err;
+      }
     },
   };
 }

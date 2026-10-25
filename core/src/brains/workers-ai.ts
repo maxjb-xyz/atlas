@@ -2,7 +2,15 @@
 // same network as the agent, and needs no key. Models take OpenAI-style chat
 // messages and tools; streams come back as server-sent events in either the
 // OpenAI chunk shape or the older `{ response }` shape, so both are read.
+//
+// With an AI Gateway set, calls go through it by the binding's own `gateway`
+// option (`{ id }`, per workers-types' AiOptions and Cloudflare's Workers AI
+// binding page, read 2026-10-25), so they show in the gateway's logs. The free
+// allowance (10,000 neurons a day) resets at 00:00 UTC; on the free plan,
+// running past it fails until then, which is a brain running out.
+// https://developers.cloudflare.com/ai-gateway/integrations/aig-workers-ai-binding/
 
+import { nextDayUtc } from "./catalog";
 import { type Brain, BrainError, type BrainEvent, type BrainRequest, type Message, parseArgs, sseData, type ToolSpec } from "./types";
 
 interface AiLike {
@@ -116,7 +124,20 @@ export async function* readWorkersAIStream(body: ReadableStream<Uint8Array>, sig
   yield { type: "done", finish, usage };
 }
 
-export function workersAIBrain(ai: AiLike, model: string): Brain {
+/** Workers AI's failure in its own words, with whether it's the free allowance, a paid model or the request. Exported for tests. */
+export function workersAIError(model: string, message: string, now = Date.now()): BrainError {
+  if (/daily free allocation|neurons? (?:per day|a day|limit)|4006/i.test(message)) {
+    return new BrainError(`Workers AI: ${message} The free allowance starts again at 00:00 UTC.`, false, 429, nextDayUtc(now));
+  }
+  // Some models need the Workers Paid plan; that won't change by retrying, so say what to do.
+  const paid = /paid|billing|upgrade/i.test(message);
+  const permanent = paid || /no such model|not found|invalid|unsupported|bad input/i.test(message);
+  const hint = paid ? ` ${model} may need the Workers Paid plan; on the free plan, @cf/moonshotai/kimi-k2.5 works.` : "";
+  return new BrainError(`Workers AI: ${message}${hint}`, permanent);
+}
+
+/** Workers AI as a brain; `gateway` names the owner's AI Gateway to go through, when they set one. */
+export function workersAIBrain(ai: AiLike, model: string, gateway: () => string | null = () => null): Brain {
   return {
     provider: "workers-ai",
     model,
@@ -128,15 +149,12 @@ export function workersAIBrain(ai: AiLike, model: string): Brain {
       };
       if (req.tools.length) inputs.tools = toTools(req.tools);
       let result: unknown;
+      const id = gateway();
       try {
-        result = await ai.run(model, inputs, { signal: req.signal });
+        result = await ai.run(model, inputs, { signal: req.signal, ...(id ? { gateway: { id } } : {}) });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        // Some models need the Workers Paid plan; that won't change by retrying, so say what to do.
-        const paid = /paid|billing|upgrade/i.test(message);
-        const permanent = paid || /no such model|not found|invalid|unsupported|bad input/i.test(message);
-        const hint = paid ? ` ${model} may need the Workers Paid plan; on the free plan, @cf/moonshotai/kimi-k2.5 works.` : "";
-        throw new BrainError(`Workers AI: ${message}${hint}`, permanent);
+        const e = workersAIError(model, err instanceof Error ? err.message : String(err));
+        throw id ? new BrainError(`${e.message} (through AI Gateway "${id}")`, e.permanent, e.status, e.resetAt) : e;
       }
       if (!(result instanceof ReadableStream)) {
         // A model that ignored `stream`: one complete answer, in either shape.
