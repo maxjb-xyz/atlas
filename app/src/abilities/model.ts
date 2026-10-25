@@ -45,6 +45,7 @@ export const GIVES: Record<string, { about: string; hears?: string; does?: strin
   search: { about: "Web search", does: "Searches the web", group: "work" },
   coding: { about: "Coding jobs", does: "Runs a coding agent for coding jobs", group: "coding" },
   code: { about: "Code and reviews", does: "Opens pull requests for coding jobs", group: "coding" },
+  reader: { about: "Moving in", does: "Reads what another assistant knew about you, in Library → Move in", group: "work" },
 };
 
 export const CHIPS: Array<[id: string, name: string]> = [
@@ -92,6 +93,7 @@ const GROUP: Record<string, string> = {
   maps: "maps",
   weather: "maps",
   location: "maps",
+  "moving-in": "work",
 };
 
 const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);

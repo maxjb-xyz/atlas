@@ -29,7 +29,16 @@ interface OwnerApi {
   apiWorkspaceGate(): Promise<{ allow: string[]; inject: Record<string, string> }>;
   apiReaction(id: string, how: "opened" | "dismissed"): Promise<void>;
   apiExport(): Promise<{ name: string; stream: ReadableStream<Uint8Array> }>;
+  apiMoveInRead(o: { reader: string; path: string; part: number; text: string }): Promise<{ ok: boolean; text: string }>;
+  apiMoveInSkill(o: {
+    reader: string;
+    folder: string;
+    files: Array<{ path: string; base64: string }>;
+  }): Promise<{ ok: boolean; text: string }>;
 }
+
+/** The most one request of moving in carries: a part of a big file, or a skill's folder as base64. */
+const MOVE_IN_BYTES = 12_000_000;
 
 interface SenseApi {
   apiOwnTracks(authorization: string | null, text: string): Promise<{ status: number; body: string; headers: Record<string, string> }>;
@@ -299,6 +308,42 @@ export default {
           const error = `The copy couldn't start: ${err instanceof Error ? err.message : String(err)}`;
           console.error(JSON.stringify({ at: "data.export", error }));
           return json({ error }, 500);
+        }
+      }
+      // Moving in (§23.3): the app opens the owner's export or folder on their device and sends only the files its
+      // reader takes, one file or part of one at a time, and each skill folder as it was.
+      if ((path === "/api/movein/read" || path === "/api/movein/skill") && request.method === "POST") {
+        if (!sameOrigin(request)) return json({ error: "Wrong origin." }, 403);
+        if (Number(request.headers.get("content-length") ?? "0") > MOVE_IN_BYTES)
+          return json({ ok: false, text: `That's over ${MOVE_IN_BYTES / 1_000_000} MB in one go; the app sends big files in parts.` }, 413);
+        const reader = url.searchParams.get("reader") ?? "";
+        if (!/^[a-z][a-z0-9-]{1,39}$/.test(reader)) return json({ ok: false, text: "Which reader is this for? Send ?reader=." }, 400);
+        try {
+          if (path === "/api/movein/read") {
+            const text = await request.text();
+            if (text.length > MOVE_IN_BYTES) return json({ ok: false, text: "That part is too big." }, 413);
+            const out = await agent.apiMoveInRead({
+              reader,
+              path: (url.searchParams.get("path") ?? "").slice(0, 400),
+              part: Math.max(1, Number(url.searchParams.get("part") ?? "1") || 1),
+              text,
+            });
+            return json(out, out.ok ? 200 : 422);
+          }
+          const body = (await request.json().catch(() => null)) as { folder?: unknown; files?: unknown } | null;
+          const files = Array.isArray(body?.files)
+            ? (body!.files as Array<{ path?: unknown; base64?: unknown }>)
+                .filter((f) => typeof f?.path === "string" && typeof f.base64 === "string")
+                .map((f) => ({ path: String(f.path).slice(0, 300), base64: String(f.base64) }))
+            : [];
+          if (typeof body?.folder !== "string" || !files.length)
+            return json({ ok: false, text: 'Send {"folder": "...", "files": [...]}.' }, 400);
+          const out = await agent.apiMoveInSkill({ reader, folder: body.folder.slice(0, 300), files });
+          return json(out, out.ok ? 200 : 422);
+        } catch (err) {
+          const error = `Moving in stopped: ${err instanceof Error ? err.message : String(err)}`;
+          console.error(JSON.stringify({ at: "movein.http", reader, error }));
+          return json({ ok: false, text: error }, 500);
         }
       }
       // A skill's folder as a zip (§9.3: Download gives the folder back), its SKILL.md and every file in it.

@@ -152,7 +152,13 @@ export type StateName =
   /** Updates (§23.2): the releases from the daily look, this Atlas's Worker, the last update or rollback, and what ran before it. */
   | "updates"
   /** Your data (§23.4): the last copy taken or why it stopped, and the last time Atlas went back in time, with its Undo. */
-  | "data";
+  | "data"
+  /** Moving in (§23.3): what the move-in under way has read, its review list and what was kept. */
+  | "movein"
+  /** Moving in: the owner's own words from past conversations, waiting to be read, newest first within the budget. */
+  | "movein_talks"
+  /** Moving in: notes another assistant kept, waiting to be read. */
+  | "movein_notes";
 
 export function getState<T>(sql: Sql, key: StateName): T | null {
   const row = sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = ?`, key).toArray()[0];

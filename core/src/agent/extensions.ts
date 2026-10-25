@@ -75,12 +75,27 @@ export const ManifestShape = z
     about: z.string().min(1).max(400),
     icon: Icon.optional(),
     provides: z
-      .array(z.enum(["sense", "channel", "mail", "sending", "calendar", "contacts", "location", "maps", "weather", "search", "tools"]))
+      .array(
+        z.enum(["sense", "channel", "mail", "sending", "calendar", "contacts", "location", "maps", "weather", "search", "tools", "reader"]),
+      )
       .min(1),
     hosts: z.array(z.string().min(3).max(120)).max(20),
     tools: ToolsShape.optional(),
+    /** What a reader reads (§23.3): where to get it in a sentence or two, and the files it takes. */
+    reads: z
+      .object({
+        what: z.string().min(1).max(80),
+        how: z.string().min(1).max(500),
+        link: z.string().url().max(300).optional(),
+        pick: z.enum(["file", "folder"]),
+        files: z.array(z.string().min(1).max(120)).min(1).max(20),
+        marks: z.array(z.string().min(1).max(120)).max(20).optional(),
+        skills: z.array(z.string().min(1).max(60)).max(5).optional(),
+      })
+      .optional(),
   })
   .refine((m) => !m.provides.includes("tools") || (m.tools ?? []).length > 0, "it provides tools, so it needs `tools`")
+  .refine((m) => !m.provides.includes("reader") || m.reads, "it provides reader, so it needs `reads`")
   .refine(
     (m) => (m.tools ?? []).every((t) => `ext_${m.id}_${t.name}`.length <= 64),
     "a tool's name with its extension's id is over 64 characters",

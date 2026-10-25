@@ -47,13 +47,14 @@ export function recordView(sql: Sql, r: AtlasRecord): RecordView {
     details: details as Record<string, unknown>,
     areas: r.areas,
     learned_at: r.learned_at,
-    // Written down by Atlas from something said or done (a run, a message, setup), not brought in by an import or seen on mail.
-    learned: Boolean(r.source.run_id || r.source.log_id || r.source.via === "setup"),
+    // Written down by Atlas from something said or done (a run, a message, setup), or kept by the owner when moving in
+    // (§23.3); not brought in by an address book or seen on mail.
+    learned: Boolean(r.source.run_id || r.source.log_id || r.source.via === "setup" || r.source.via === "moving in"),
     updated_at: r.updated_at,
     confidence: r.confidence,
     source: from
       ? { via: r.source.via, text: String(from.body.text ?? "").slice(0, 200), at: from.at, surface: from.surface }
-      : { via: r.source.via },
+      : { via: r.source.via, ...(r.source.from ? { from: r.source.from } : {}) },
     corrections: history.length,
     was: last ? { name: last.name ?? r.name, fact: typeof last.fields.fact === "string" ? last.fields.fact : "", at: last.at } : null,
     shared: r.visibility === "shared",
@@ -91,7 +92,7 @@ export function listRecords(
   // Learned, as recordView says: from a run, a message or setup, newest first.
   if (q.learned)
     where.push(
-      `(json_extract(source, '$.run_id') IS NOT NULL OR json_extract(source, '$.log_id') IS NOT NULL OR json_extract(source, '$.via') = 'setup')`,
+      `(json_extract(source, '$.run_id') IS NOT NULL OR json_extract(source, '$.log_id') IS NOT NULL OR json_extract(source, '$.via') IN ('setup', 'moving in'))`,
     );
   const rows = sql
     .exec<{ id: string }>(

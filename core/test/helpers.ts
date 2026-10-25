@@ -252,8 +252,16 @@ import tavily from "../../extensions/tavily";
 import resend from "../../extensions/resend";
 import telegram from "../../extensions/telegram";
 import telnyx from "../../extensions/telnyx";
+import chatgptExport from "../../extensions/chatgpt-export";
+import claudeExport from "../../extensions/claude-export";
+import hermes from "../../extensions/hermes";
+import openclaw from "../../extensions/openclaw";
 
 export const EXTENSIONS: Record<string, Extension> = {
+  "chatgpt-export": chatgptExport,
+  "claude-export": claudeExport,
+  hermes,
+  openclaw,
   brave,
   "claude-code": claudeCode,
   codex,

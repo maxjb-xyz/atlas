@@ -10,9 +10,10 @@ import { Composer } from "../Shell";
 import { StageSheet } from "../StageViews";
 import { fileBase64 } from "../settings/parts";
 import { signedIn } from "../abilities/Services";
+import { MoveIn } from "../movein/MoveIn";
 import { AREA_ICON_PATHS, AreaChip, areaColor, AreaDot, Empty, Icon, Picker, pressable, Sheet, shortDay, Stage, Toggle } from "../ui";
 
-type LibTab = "overview" | "places" | "memory" | "areas" | "files";
+type LibTab = "overview" | "places" | "memory" | "areas" | "files" | "movein";
 
 /** Asks for records under `ref`, and again whenever they change. */
 function useRecords(atlas: Atlas, ref: string, q: { record_type?: RecordView["type"]; text?: string; limit?: number; learned?: boolean }) {
@@ -41,12 +42,16 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
         : page.kind === "page" || page.kind === "file"
           ? "files"
           : "places"
-      : ["overview", "places", "memory", "areas", "files"].includes(head)
+      : ["overview", "places", "memory", "areas", "files", "movein"].includes(head)
         ? head
         : "overview"
   ) as LibTab;
   const all = useRecords(atlas, "lib:all", { limit: 200 });
   const counts = all?.counts ?? {};
+  // For Move in's badge: what's waiting to be kept or dropped.
+  useEffect(() => {
+    if (atlas.voice.connected) atlas.send({ type: "atlas.movein" });
+  }, [atlas.voice.connected]);
 
   return (
     <Stage
@@ -57,6 +62,8 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
         { id: "areas", label: "Areas", badge: s.areas.filter((a) => a.state !== "archived").length || null },
         { id: "memory", label: "Memory", badge: counts.all || null },
         { id: "files", label: "Pages & files", badge: (s.pages?.length ?? 0) + (s.files?.length ?? 0) || null },
+        // Moving in (§23.3): what's waiting to be kept or dropped shows as its badge.
+        { id: "movein", label: "Move in", badge: s.movein?.items.filter((i) => i.state === "new").length || null },
       ]}
       tab={tab}
       onTab={(t) => go(t === "overview" ? "" : t)}
@@ -94,6 +101,13 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
       {tab === "memory" && <Records atlas={atlas} title="Everything Atlas knows" focus={detail.split(":")[1]} search go={go} />}
       {!page && tab === "areas" && <Areas atlas={atlas} go={go} />}
       {!page && tab === "files" && <Pages atlas={atlas} go={go} />}
+      {!page && tab === "movein" && (
+        <Sheet>
+          <div className="sheet-in">
+            <MoveIn atlas={atlas} />
+          </div>
+        </Sheet>
+      )}
     </Stage>
   );
 }
@@ -224,7 +238,13 @@ function Overview({
           <span className="lab ac">■ Recently learned</span>
         </div>
         {!learned.length && (
-          <Empty title="Nothing learned yet">Tell Atlas something worth remembering, and it shows up here with where it came from.</Empty>
+          <Empty title="Nothing learned yet">
+            Tell Atlas something worth remembering, and it shows up here with where it came from. Or{" "}
+            <button className="link" onClick={() => go("movein")}>
+              move in
+            </button>{" "}
+            what ChatGPT, Claude, Hermes or OpenClaw knew about you.
+          </Empty>
         )}
         <div className="rows">
           {learned.slice(0, 8).map((r) => (
@@ -248,6 +268,7 @@ function sourceText(r: RecordView): string {
     return `${r.source.surface === "voice" ? "You said" : "You wrote"} ${r.source.at ? shortDay(r.source.at) : ""}: “${r.source.text}”`;
   if (r.source.via === "owner") return "You set it";
   if (r.source.via === "setup") return "From setup";
+  if (r.source.via === "moving in") return r.source.from ? `Moved in from ${r.source.from}` : "Moved in";
   if (r.source.via === "compaction") return "From an earlier conversation";
   return `From ${r.source.via}`;
 }

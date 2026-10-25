@@ -133,6 +133,7 @@ import { workspaceTools } from "./tools/workspace";
 import { codeRun } from "./tools/code";
 import { hubTools, reviewTools, skillRead, skillTools, unpackSkill } from "./tools/skills";
 import { HubDesk } from "./agent/hubs";
+import { MoveInDesk } from "./agent/movein";
 import { zip } from "./zip";
 import { mcpCall, mcpToolset, mcpTools, UNTRUSTED } from "./tools/mcp";
 import {
@@ -542,6 +543,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #services!: ServiceDesk;
   /** Skill hubs (§17): Get skills, installing a hub's skill folder unchanged, and its updates. */
   #hubs!: HubDesk;
+  /** Moving in (§23.3): exports and other assistants' memory, read and offered to keep or drop. */
+  #movein!: MoveInDesk;
   /** Updates (§23.2): the daily look at releases, Update and Roll back through Cloudflare's API. */
   #updates!: UpdateDesk;
   /** Your data (§23.4): take a copy of everything, go back in time, delete everything. */
@@ -806,6 +809,16 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         (...args) =>
           (seams.fetch ?? fetch)(...args),
       files: () => this.#bucket(),
+    });
+    this.#movein = new MoveInDesk({
+      sql: this.#sql,
+      host: this.#ext,
+      router: this.#router,
+      bucket: () => this.#bucket(),
+      changed: (movein) => this.#broadcast({ type: "atlas.movein", movein }),
+      background: (fn) => void this.keepAliveWhile(fn).catch(() => {}),
+      recordsChanged: () => this.#broadcast({ type: "atlas.records.changed" }),
+      skillsChanged: () => this.#broadcast({ type: "atlas.skills", skills: this.#skillViews() }),
     });
     this.#updates = new UpdateDesk({
       sql: this.#sql,
@@ -1473,6 +1486,23 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         void this.#tendMemory();
         return;
       }
+      case "atlas.movein":
+        this.#send(connection, { type: "atlas.movein", movein: this.#movein.view() });
+        return;
+      case "atlas.movein.learn": {
+        const out = this.#movein.learn();
+        if (!out.ok) this.#send(connection, { type: "atlas.error", message: out.text });
+        return;
+      }
+      case "atlas.movein.keep": {
+        const out = await this.#movein.decide(msg);
+        if (!out.ok) this.#send(connection, { type: "atlas.error", message: out.text });
+        if (msg.keep) void this.#tendMemory();
+        return;
+      }
+      case "atlas.movein.done":
+        await this.#movein.done();
+        return;
       case "atlas.sense.hook.add": {
         const origin = getState<string>(this.#sql, "origin") ?? new URL(connection.uri ?? "https://atlas.invalid").origin;
         const { hook, key } = addHook(this.#sql, msg.name);
@@ -5830,6 +5860,16 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
   async apiFile(id: string): Promise<{ key: string; name: string; type: string } | null> {
     const f = getFile(this.#sql, id);
     return f ? { key: keyOf(f), name: f.name, type: f.type } : null;
+  }
+
+  /** Moving in (§23.3): one file, or part of one, the app read from the owner's export or folder, for its reader. */
+  async apiMoveInRead(o: { reader: string; path: string; part: number; text: string }) {
+    return this.keepAliveWhile(() => this.#movein.read(o));
+  }
+
+  /** Moving in: one skill folder, as it was, waiting for the owner to keep it. */
+  async apiMoveInSkill(o: { reader: string; folder: string; files: Array<{ path: string; base64: string }> }) {
+    return this.#movein.skill(o);
   }
 
   /** Where a person's photo from the address book is in R2, and its type (photos.ts). */
