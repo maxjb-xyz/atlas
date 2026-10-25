@@ -98,7 +98,7 @@ Before the model sees anything, code sets the run's **run context**:
 How the loop behaves:
 - **Long step budgets,** set by kind of run. Starting points: 40 steps for chat and 150 for background work. Limits are soft time limits, not hard walls.
 - **Compaction.** At about 70% of the context window, a silent "save what matters" pass runs, then older context is summarized.
-- **A turn reads what it needs, not everything** (decided 2026-10-25). A chat or voice turn reads the recent conversation (about the last 10k tokens) with the summary of what came before; recall has the rest. It gets the tools most turns use, plus one line for each group of the others, which it loads by name when it needs them. A reply's first words should come within 2 seconds; a long prompt is what slows them.
+- **A turn reads what it needs, not everything** (decided 2026-10-25). A chat or voice turn reads the recent conversation (the last few thousand tokens) with the summary of what came before; recall has the rest. It gets the tools most turns use, plus one line for each group of the others, which it loads by name when it needs them. A reply's first words should come within 2 seconds; a long prompt is what slows them.
 - **Parallel tool calls,** and helpers for big jobs.
 - **When a budget runs out,** one final answer with no tools: "Here's what I found. Want me to keep going?"
 - **Long work moves to the background** on its own, survives restarts, and reports back where it was asked for. Background runs execute inside durable fibers (the Agents SDK's `runFiber`): the loop saves a checkpoint after each step and picks up from it after a restart. A chat reply that a restart cuts off simply ends as failed, with the reason.
