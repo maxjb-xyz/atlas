@@ -32,10 +32,22 @@ type Item =
   | { type: "function_call"; call_id: string; name: string; namespace: string; arguments: string }
   | { type: "function_call_output"; call_id: string; output: string };
 
-export function toInput(messages: Message[]): Item[] {
+/**
+ * The loop's messages as Responses input items. With `breakpoints`, the last two of the owner's messages mark where
+ * the provider may cache the prompt up to (GPT-5.6 and later cache only at explicit breakpoints, §4.1): the one before
+ * is where the next turn's prompt still matches, and the last is where this turn's next steps do.
+ */
+export function toInput(messages: Message[], o: { breakpoints?: boolean } = {}): Item[] {
   const out: Item[] = [];
-  for (const m of messages) {
-    if (m.role === "user") out.push({ type: "message", role: "user", content: [{ type: "input_text", text: m.content }] });
+  const users = messages.flatMap((m, i) => (m.role === "user" ? [i] : []));
+  const marks = new Set(o.breakpoints ? users.slice(-2) : []);
+  for (const [i, m] of messages.entries()) {
+    if (m.role === "user")
+      out.push({
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: m.content, ...(marks.has(i) ? { prompt_cache_breakpoint: { mode: "explicit" } } : {}) }],
+      });
     else if (m.role === "tool") out.push({ type: "function_call_output", call_id: m.callId, output: m.content });
     else {
       if (m.content) out.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: m.content }] });
@@ -219,8 +231,8 @@ async function refused(res: Response): Promise<BrainError> {
   return new BrainError(`ChatGPT: ${status}${detail ? ` ${detail}` : ""}`, false, res.status);
 }
 
-/** Whether ChatGPT refused the cache key, for the run's end to say (§4.1). */
-export const chatgptCacheKey = { refused: false };
+/** Whether ChatGPT refused the cache key or explicit cache breakpoints, for the run's end to say (§4.1). */
+export const chatgptCacheKey = { refused: false, breakpoints: true };
 
 export function chatgptBrain(auth: ChatGPTAccess, model: string, f: typeof fetch = fetch): Brain {
   // Whether ChatGPT took a cache key: if it ever says it doesn't know one, Atlas stops sending it.
@@ -228,6 +240,8 @@ export function chatgptBrain(auth: ChatGPTAccess, model: string, f: typeof fetch
   async function open(req: BrainRequest, force: boolean): Promise<Response> {
     const token = await auth.access(force);
     if (!token) throw new BrainError("ChatGPT isn't signed in.", true);
+    // Explicit breakpoints for a conversation's turns, unless ChatGPT said it doesn't take them.
+    const explicit = Boolean(req.cacheKey) && chatgptCacheKey.breakpoints;
     return f(RESPONSES_URL, {
       method: "POST",
       headers: {
@@ -240,7 +254,7 @@ export function chatgptBrain(auth: ChatGPTAccess, model: string, f: typeof fetch
       body: JSON.stringify({
         model,
         instructions: req.system,
-        input: toInput(req.messages),
+        input: toInput(req.messages, { breakpoints: explicit }),
         ...(req.tools.length
           ? {
               tools: [
@@ -263,6 +277,7 @@ export function chatgptBrain(auth: ChatGPTAccess, model: string, f: typeof fetch
           : {}),
         reasoning: { effort: req.effort ?? "medium" },
         ...(req.cacheKey && !keyless ? { prompt_cache_key: req.cacheKey } : {}),
+        ...(explicit ? { prompt_cache_options: { mode: "explicit" } } : {}),
         store: false,
         stream: true,
       }),
@@ -275,6 +290,19 @@ export function chatgptBrain(auth: ChatGPTAccess, model: string, f: typeof fetch
     async *stream(req: BrainRequest): AsyncIterable<BrainEvent> {
       let res = await open(req, false);
       if (res.status === 401) res = await open(req, true);
+      if (
+        res.status === 400 &&
+        req.cacheKey &&
+        chatgptCacheKey.breakpoints &&
+        /prompt_cache_(?:breakpoint|options)/i.test(await res.clone().text())
+      ) {
+        // The endpoint doesn't take explicit breakpoints: say so in the Worker log, and go on with its own caching.
+        console.error(
+          JSON.stringify({ at: "chatgpt.cache_breakpoints", status: 400, note: "explicit breakpoints refused; sending without them" }),
+        );
+        chatgptCacheKey.breakpoints = false;
+        res = await open(req, false);
+      }
       if (res.status === 400 && req.cacheKey && !keyless && /prompt_cache_key/i.test(await res.clone().text())) {
         // The plan's endpoint doesn't take a cache key: say so in the Worker log, and go on without one.
         console.error(JSON.stringify({ at: "chatgpt.cache_key", status: 400, note: "prompt_cache_key refused; sending without it" }));

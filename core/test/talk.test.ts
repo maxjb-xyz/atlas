@@ -65,6 +65,47 @@ describe("ChatGPT's cache key", () => {
     return out;
   }
 
+  it("marks explicit cache breakpoints on the last two of the owner's messages, and drops them if refused", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let refuse = false;
+    const f = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      bodies.push(body);
+      if (refuse && "prompt_cache_options" in body)
+        return new Response(JSON.stringify({ error: { message: "Unknown parameter: 'prompt_cache_options'." } }), { status: 400 });
+      return ok();
+    }) as unknown as typeof fetch;
+    chatgptCacheKey.refused = false;
+    chatgptCacheKey.breakpoints = true;
+    const b = chatgptBrain({ access: async () => "token" }, "gpt-5.6-terra", f);
+    const req = {
+      system: "",
+      messages: [
+        { role: "user" as const, content: "one" },
+        { role: "assistant" as const, content: "1" },
+        { role: "user" as const, content: "two" },
+        { role: "assistant" as const, content: "2" },
+        { role: "user" as const, content: "three" },
+      ],
+      tools: [],
+      cacheKey: "atlas:owner:owner:main",
+    };
+    await collect(b.stream(req));
+    const input = bodies[0]!.input as Array<{ content?: Array<{ text: string; prompt_cache_breakpoint?: unknown }> }>;
+    const marked = input
+      .flatMap((i) => i.content ?? [])
+      .filter((c) => c.prompt_cache_breakpoint)
+      .map((c) => c.text);
+    expect(marked).toEqual(["two", "three"]);
+    expect(bodies[0]!.prompt_cache_options).toEqual({ mode: "explicit" });
+    // Refused: dropped for good, and the turn still answers.
+    refuse = true;
+    expect((await collect(b.stream(req))).at(-1)).toMatchObject({ type: "done" });
+    expect(chatgptCacheKey.breakpoints).toBe(false);
+    expect(bodies.at(-1)!.prompt_cache_options).toBeUndefined();
+    chatgptCacheKey.breakpoints = true;
+  });
+
   it("is sent with each turn, and dropped for good if the endpoint says it doesn't take one", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     let refuse = true;
@@ -75,6 +116,8 @@ describe("ChatGPT's cache key", () => {
         return new Response(JSON.stringify({ detail: "Unsupported parameter: prompt_cache_key" }), { status: 400 });
       return ok();
     }) as unknown as typeof fetch;
+    chatgptCacheKey.refused = false;
+    chatgptCacheKey.breakpoints = false;
     const b = chatgptBrain({ access: async () => "token" }, "gpt-5.6-terra", f);
     const req = { system: "", messages: [{ role: "user" as const, content: "hi" }], tools: [], cacheKey: "atlas:owner:owner:main" };
     expect((await collect(b.stream(req))).at(-1)).toMatchObject({ type: "done" });
@@ -90,5 +133,6 @@ describe("ChatGPT's cache key", () => {
     const c = chatgptBrain({ access: async () => "token" }, "gpt-5.6-terra", f);
     await collect(c.stream(req));
     expect(bodies.at(-1)!.prompt_cache_key).toBe("atlas:owner:owner:main");
+    chatgptCacheKey.breakpoints = true;
   });
 });

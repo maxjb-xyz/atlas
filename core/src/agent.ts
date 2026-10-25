@@ -4103,7 +4103,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       usage: res.usage as never,
       ...(res.calls?.length ? { calls: res.calls as never } : {}),
       // Whether ChatGPT took the cache key, so a run's end says why nothing was cached (§4.1).
-      ...(res.brain?.provider === "chatgpt" ? { cache_key: chatgptCacheKey.refused ? "refused" : "sent" } : {}),
+      ...(res.brain?.provider === "chatgpt"
+        ? { cache_key: chatgptCacheKey.refused ? "refused" : "sent", cache_breakpoints: chatgptCacheKey.breakpoints ? "sent" : "refused" }
+        : {}),
       ...(res.interrupted ? { interrupted: true } : {}),
     });
     const end = this.#sql.exec<{ id: string }>(`SELECT id FROM log WHERE run_id = ? AND kind = 'run.end'`, runId).toArray()[0];
