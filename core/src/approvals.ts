@@ -266,6 +266,9 @@ export function permits(sql: Sql, a: Action, o: { permissions: Permissions; read
   const kind = kindOf(a);
   if (ASKS[kind].asks === "never") return true;
   if (kind === "irreversible") return false;
+  // "Any site" means the workspace reaches any site (§12.3): it's open to all of them, so nothing a run read could make
+  // a site riskier to ask for, and there's nothing for the owner to decide.
+  if (a.kind === "site" && p.sites === "any") return true;
   // What it read could be steering it (§20): it asks before anything leaves. With "not for what you trust", only what
   // the owner already trusts goes: people and places, never everything the other rules would let through.
   if (o.read_web) {

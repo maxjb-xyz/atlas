@@ -4708,7 +4708,8 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
       const key = vault(this.#sql).find((e) => e.kind === "key" && fillsOn(e, site) && e.allowed.includes(siteFor(e, site)));
       if (key?.values.key) inject[site] = /\s/.test(key.values.key) ? key.values.key : `Bearer ${key.values.key}`;
     }
-    return { allow, inject };
+    // "Any site" (§12.3): the workspace reaches every site, not only the ones asked for; vault keys still go only to theirs.
+    return { allow: readSettings(this.#sql).permissions.sites === "any" ? ["*", ...allow] : allow, inject };
   }
 
   #workspaceApi: WorkspaceApi = {

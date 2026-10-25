@@ -2,6 +2,7 @@ import { runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
 import { type Action, countApproval, earnsTrust, permits, setTrust, TRUST_AFTER } from "../src/approvals";
+import { allowed } from "../src/workspace";
 import { Settings } from "../src/store/settings";
 import type { ServerMessage } from "../src/protocol";
 import { migrate, type Sql } from "../src/store/db";
@@ -352,6 +353,15 @@ describe("your own rules (§12.3)", () => {
       // Forms go on sites the owner picked themselves: not under "any site", where sites join without asking,
       // and not in a run that has read the web elsewhere.
       expect(go(form)).toBe(false);
+      // The gate: a site the owner allowed and what's under it, or any host under "any site".
+      expect([allowed("cdn.pixabay.com", ["pixabay.com"]), allowed("evil.test", ["pixabay.com"]), allowed("evil.test", ["*"])]).toEqual([
+        true,
+        false,
+        true,
+      ]);
+      // Under "any site" a site isn't asked about even once a run has read the web: the workspace reaches them all.
+      expect(permits(sql, site, { ...base, read_web: true, permissions: loose })).toBe(true);
+      expect(permits(sql, site, { ...base, read_web: true, permissions: rules({}) })).toBe(false);
       const forms = rules({ forms: "allowed_sites" });
       expect(permits(sql, form, { ...base, permissions: forms })).toBe(true);
       expect(permits(sql, form, { ...base, read_web: true, permissions: forms })).toBe(false);
@@ -379,7 +389,8 @@ describe("your own rules (§12.3)", () => {
       // "Not for what you trust" means only that: what isn't trusted still asks, whatever else is loosened.
       const trustedAfter = rules({ outside: "never", sites: "any", after_web: "trusted" });
       expect(permits(sql, hook, { ...base, read_web: true, permissions: trustedAfter })).toBe(false);
-      expect(permits(sql, site, { ...base, read_web: true, permissions: trustedAfter })).toBe(false);
+      // A site under "any site" is the exception: the workspace already reaches every site, so there's nothing to ask.
+      expect(permits(sql, site, { ...base, read_web: true, permissions: trustedAfter })).toBe(true);
       for (let i = 0; i < TRUST_AFTER; i++) countApproval(sql, [hook], true);
       setTrust(sql, "webhook:wh_rules", true);
       expect(permits(sql, hook, { ...base, read_web: true, permissions: trustedAfter })).toBe(true);

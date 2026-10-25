@@ -179,7 +179,8 @@ interface Gate {
   rules?: KeyRule[];
 }
 
-const allowed = (host: string, allow: string[]) => allow.some((a) => host === a || host.endsWith(`.${a}`));
+/** Whether the gate lets a host through: one the owner allowed (and what's under it), or any host when they allowed any site ("*"). */
+export const allowed = (host: string, allow: string[]) => allow.some((a) => a === "*" || host === a || host.endsWith(`.${a}`));
 const covers = (host: string, h: string) => host === h || host.endsWith(`.${h}`);
 /**
  * What a command carrying keys adds to the gate while it runs: the keys, and
