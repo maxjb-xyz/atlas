@@ -22,9 +22,9 @@ import {
 import { HelperDesk, helperBrain, RESEARCH_BUDGET } from "./agent/helpers";
 import { CodingDesk, getJob, type JobWorkspace, type PullRequest } from "./agent/coding";
 import { codingTools, type Effort } from "./tools/coding";
-import { getGoal, type GoalHost, GoalDesk, type GoalJob, inFolder } from "./agent/goals";
+import { getGoal, type GoalHost, GoalDesk, type GoalJob, inFolder, JOB_LIMITS } from "./agent/goals";
 import { CallDesk } from "./agent/calls";
-import { folderRun, jobOwn, lookTools } from "./tools/goals";
+import { folderRun, jobOwn, lookTools, STEP_TOOLS } from "./tools/goals";
 import { elevenLabsVoices, LOOK_NOTE, markStep, parseLook } from "./agent/setup";
 import { history as logHistory, historyStats, inbox, inboxDone, listRecords, runDetail, stagePage } from "./agent/views";
 import { correctRecord, createRecord, findRecords, forgetRecord, getRecord } from "./store/records";
@@ -554,14 +554,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       makeBrain: (c) => this.#makeBrain(c),
       toolContext: (runId) => {
         const settings = readSettings(this.#sql);
+        const base = this.#toolContext(settings, new Date(), "helper", null);
+        const folder = this.#stepFolder(runId);
         return {
-          ...this.#toolContext(settings, new Date(), "helper", null),
+          ...base,
           helpers: null,
           exit: null,
           automations: null,
-          browser: null,
+          // A step of a job Atlas owns can browse to read and look (§8.3); with no way out, it can't submit or send anything.
+          browser: folder ? base.browser : null,
           // A step of a job Atlas owns works in that job's folder (§8.3); other helpers can't change anything.
-          workspace: this.#stepFolder(runId),
+          workspace: folder,
           mcp: null,
           extensions: null,
           run_id: runId,
@@ -628,10 +631,21 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         await this.#calls.dial(text);
         return true;
       },
-      chat: async (ext, text) => {
+      chat: async (ext, text, card) => {
         const l = links(this.#sql)[ext];
         if (!l) return false;
-        await this.#channels.send(ext, { chat: l.chat, text });
+        const origin = getState<string>(this.#sql, "origin");
+        const buttons = !card
+          ? undefined
+          : card.hold
+            ? origin
+              ? [{ label: "Open in Atlas", url: `${origin}/#/inbox` }]
+              : undefined
+            : [
+                { label: "Approve", data: `ok:${card.approval}` },
+                { label: "Decline", data: `no:${card.approval}` },
+              ];
+        await this.#channels.send(ext, { chat: l.chat, text, ...(buttons ? { buttons } : {}) });
         return true;
       },
       followUp: async (at, note, rest) => {
@@ -3388,7 +3402,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         setScheduleId(sql, id, s.id);
       },
       look: (job, note) => this.#inLine(() => this.#goalLook(job, note)),
-      helper: async ({ job, step, brief, brain }) => {
+      helper: async ({ job, step, brief, brain, minutes }) => {
         const settings = readSettings(sql);
         const chain = brain === "Main" ? settings.brains.main : chainFor(settings, "job_work", brain).chain;
         const research = step.kind === "research";
@@ -3398,21 +3412,35 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           system: `${helperSystem(settings, new Date())}
 
 ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
-          tools: research ? HELPER_TOOLS.map((t) => t.name) : [...HELPER_TOOLS.map((t) => t.name), folderRun.name],
+          tools: [...HELPER_TOOLS, ...STEP_TOOLS.filter((t) => !research || t !== folderRun)].map((t) => t.name),
           chain,
           brain,
           askedIn: job.asked_in ?? job.id,
-          ...(research ? { budget: RESEARCH_BUDGET } : {}),
+          // A step given minutes keeps to them: past its time, the helper's next move is its last (§4.1).
+          ...(minutes
+            ? { budget: { steps: research ? RESEARCH_BUDGET.steps : 60, ms: minutes * 60_000 } }
+            : research
+              ? { budget: RESEARCH_BUDGET }
+              : {}),
           step: { of: job.id, folder: job.folder },
         });
         return item.id;
       },
       site: ({ job, host, why }) => this.#askSite({ run_id: job.asked_in ?? job.id, host, why }),
-      coder: async ({ job, step, brief, agent, model, effort }) => {
+      // A reminder goes the way any message that can wait does (quiet hours and the day's budget kept), a card with its buttons.
+      remind: async ({ job, text, approval, log }) => {
+        await this.#outbox.notify({ id: log ?? approval ?? job.id, run_id: job.asked_in, text }, "soon", {
+          ...(approval ? { approval } : {}),
+          url: "/#/inbox",
+        });
+      },
+      coder: async ({ job, step, brief, agent, model, effort, minutes }) => {
         const started = await this.#coding.start({
           title: `${job.title}: ${step.title}`,
           step: { goal: job.id, step: step.id },
-          task: brief,
+          task: minutes
+            ? `${brief}\n\nYou have about ${minutes} minutes for this: keep to it, and when time's up, stop and say what's done and what isn't.`
+            : brief,
           ...(agent ? { agent } : {}),
           ...(model ? { model } : {}),
           ...(effort ? { effort: effort as Effort } : {}),
@@ -5199,12 +5227,13 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
       const hold = needsHold(actionsOf(item));
       if (created) {
         await this.#clock.schedule(item);
-        // Nobody looking: the card reaches the owner as a push, with Approve when it doesn't need a hold.
+        // Nobody looking: the card reaches the owner as a push or on their chat, with Approve when it doesn't need a
+        // hold; anything that touches the vault opens the app instead (§15).
         if (!this.#looking()) {
           void this.#outbox
             .notify({ id: item.id, run_id: c.run_id, text: `Waiting for your OK: ${item.title}` }, "soon", {
               approval: item.id,
-              hold,
+              hold: hold || actionsOf(item).some((a) => a.kind === "vault"),
               url: "/#/inbox",
             })
             .catch(() => {});
@@ -5633,7 +5662,7 @@ const RESEARCH_BRIEF =
 
 /** What a step's helper is told beyond the usual (§8.3): it works in the job's folder, and what it makes stays there. */
 function stepBrief(job: GoalJob): string {
-  return `This is one step of a longer job, "${job.title}". You have a shell in the job's own folder (${job.folder}) with folder_run: make what the step needs there, as files the next steps can use, and say in your reply which files you made and what's in them. The folder is the job's alone; it reaches only the websites the owner allowed, and nothing in it reaches the owner until Atlas keeps it for them.`;
+  return `This is one step of a longer job, "${job.title}". You have a shell in the job's own folder (${job.folder}) with folder_run: make what the step needs there, as files the next steps can use, and say in your reply which files you made and what's in them. The folder is the job's alone; it reaches only the websites the owner allowed, and nothing in it reaches the owner until Atlas keeps it for them. A site that needs a real browser (pages built by script, a download behind a button) opens with browser_open. When something you were asked for can't be done from here, say so plainly with what you found instead, rather than trying the same thing again. ${JOB_LIMITS}`;
 }
 
 function helperSystem(settings: Settings, now: Date): string {

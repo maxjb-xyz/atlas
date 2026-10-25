@@ -703,6 +703,7 @@ function GoalPlan({ atlas, job }: { atlas: Atlas; job: JobView }) {
         <span className="lab">The plan</span>
         <span className="grow" />
         <span className="aside">
+          {g.deadline ? `Due ${new Date(g.deadline).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })} · ` : ""}
           {g.spent.steps} of {g.budget.steps} steps · {g.spent.looks} of {g.budget.looks} looks
         </span>
       </div>

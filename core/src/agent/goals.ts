@@ -37,6 +37,10 @@ export interface GoalStep {
   brain?: string;
   /** What came of it: the helper's words, or the owner's answer at a checkpoint. */
   result?: string;
+  /** When it started and ended, and the minutes it was given (§8.3: a job keeps to its time). */
+  started_at?: number;
+  ended_at?: number;
+  minutes?: number;
 }
 
 export interface GoalEntry {
@@ -90,7 +94,15 @@ export interface GoalJob {
   /** Files it kept for the owner, by name. */
   files: string[];
   /** A website it asked the owner to let the workspace reach, while it waits for the card. */
-  site?: { approval: string; host: string } | null;
+  site?: { approval: string; host: string; at?: number } | null;
+  /** When it must be done by, if the owner said: its looks plan to it. */
+  deadline?: number | null;
+  /** The deadline has passed and a look has been told. */
+  overdue?: boolean;
+  /** When the owner was last reminded of what the job waits on. */
+  reminded_at?: number | null;
+  /** When the owner last answered it (a checkpoint, a card): time spent waiting on them isn't the job stalling. */
+  answered_at?: number;
   started_at: number;
   progress_at: number;
 }
@@ -108,9 +120,29 @@ export const GOALS_DIR = "/srv/jobs";
 export const RETRY_AFTER_MS = 60 * 60_000;
 /** A step that hasn't come back in this long is looked at again. */
 const STEP_LOST_MS = 4 * 3600_000;
+/** A job waiting on the owner reminds them after this long, then once a day (through their notification settings). */
+export const REMIND_FIRST_MS = 3 * 3600_000;
+export const REMIND_AGAIN_MS = 24 * 3600_000;
+/** Working this long without a step finishing, a look is told to change approach or bring the owner what it has. */
+export const STALL_MS = 90 * 60_000;
 
 const key = (id: string) => `goal:${id}` as const;
 const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
+/**
+ * What no step of a job can do, so a job never sets itself a task it can't
+ * meet and loops on it: the owner judges these, from options the job brings.
+ */
+export const JOB_LIMITS =
+  "No step can hear audio or watch video (it can read about them, and measure them with ffmpeg in the folder), get past a site's bot check or a sign-in wall, or judge taste for the owner (punchy, on brand, funny). When one of those decides something, bring the owner a few options to judge for themselves (links to listen to or look at, and why each), never a promise to audition or check them yourself.";
+
+/** A stretch of time in words: "25 min", "3 h 10 min", "2 days". */
+export function ago(ms: number): string {
+  const min = Math.max(1, Math.round(ms / 60_000));
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 48) return min % 60 ? `${h} h ${min % 60} min` : `${h} h`;
+  return `${Math.round(h / 24)} days`;
+}
 
 export function getGoal(sql: Sql, id: string): GoalJob | null {
   return getState<GoalJob>(sql, key(id));
@@ -154,7 +186,7 @@ export interface GoalHost {
   /** A look: one of Atlas's own runs with the job's tools, on the job's looks brain. Its words are a note for the job. */
   look(job: GoalJob, note: string): Promise<{ text: string; error?: string }>;
   /** Starts a helper on one step, in the job's folder, on the named brain. Its id. */
-  helper(o: { job: GoalJob; step: GoalStep; brief: string; brain: string }): Promise<string>;
+  helper(o: { job: GoalJob; step: GoalStep; brief: string; brain: string; minutes?: number }): Promise<string>;
   /**
    * Starts a coding agent on one step (§8.3): Claude Code or Codex, working
    * in repo/ in the job's folder, with Atlas as its middleman. Its coding job's id, and the agent's name.
@@ -166,6 +198,7 @@ export interface GoalHost {
     agent?: string;
     model?: string;
     effort?: string;
+    minutes?: number;
   }): Promise<{ id: string; name: string }>;
   /** Stops a step's helper, or its coding agent. */
   stopHelper(id: string): void;
@@ -177,6 +210,8 @@ export interface GoalHost {
   ask(o: { job: GoalJob; question: GoalQuestion; row: LogRow }): Promise<void>;
   /** Asks the owner to let the workspace reach a site: an approval card. Its id, or that it's already allowed. */
   site(o: { job: GoalJob; host: string; why: string }): Promise<{ approval: string } | { allowed: true }>;
+  /** Reminds the owner what the job waits on, through their notification settings (a card's buttons with it). */
+  remind(o: { job: GoalJob; text: string; approval?: string; log?: string }): Promise<void>;
   /** Tells the owner how the job ended, in the thread. */
   report(item: AgendaItem, result: { state: "done" | "failed"; text: string }): void;
   /** The named brains the owner has, with the one for a job's work first. */
@@ -198,6 +233,7 @@ export class GoalDesk {
     brain?: string;
     record?: string | null;
     budget?: Partial<GoalJob["budget"]>;
+    deadline?: number | null;
   }): Promise<GoalJob> {
     const now = Date.now();
     const item = createItem(this.h.sql, {
@@ -228,6 +264,7 @@ export class GoalDesk {
       files: [],
       started_at: now,
       progress_at: now,
+      ...(o.deadline ? { deadline: o.deadline } : {}),
     };
     saveGoal(this.h.sql, job);
     this.h.changed();
@@ -259,6 +296,7 @@ export class GoalDesk {
   async resume(): Promise<void> {
     for (const g of goals(this.h.sql)) {
       if (g.phase === "working" || (g.phase === "paused" && g.until)) await this.h.watch(g.id, Math.max(Date.now() + 2_000, g.until ?? 0));
+      else if (g.phase === "waiting") await this.#arm(g);
     }
   }
 
@@ -271,11 +309,37 @@ export class GoalDesk {
       // The brain's limit has had time to reset: try again from where it stopped.
       job = this.#note({ ...job, phase: "working", until: null }, "atlas", "Trying again after the pause.");
     }
-    if (job.phase === "waiting" && !job.mail.length) return;
+    // Waiting on the owner: their answer wakes it (a card for a site, only the card); meanwhile they're reminded.
+    if (job.phase === "waiting" && (job.site || !job.mail.length)) {
+      const since = job.reminded_at ?? job.site?.at ?? job.question?.at ?? job.progress_at;
+      if (now - since >= (job.reminded_at ? REMIND_AGAIN_MS : REMIND_FIRST_MS)) {
+        await this.h.remind({
+          job,
+          text: job.site
+            ? `${job.title} is still waiting for your OK to let the workspace reach ${job.site.host} (asked ${ago(now - (job.site.at ?? since))} ago).`
+            : `${job.title} is still waiting on you (asked ${ago(now - (job.question?.at ?? since))} ago): ${job.question?.text ?? ""}`,
+          ...(job.site ? { approval: job.site.approval } : {}),
+          ...(job.question ? { log: job.question.log } : {}),
+        });
+        job = { ...job, reminded_at: now };
+        saveGoal(this.h.sql, job);
+      }
+      await this.#arm(job);
+      return;
+    }
+    // The deadline passing is news for a look, even while a step is out.
+    const due = !!job.deadline && now >= job.deadline && !job.overdue;
+    if (due) {
+      job = this.#note({ ...job, overdue: true }, "atlas", "The deadline passed.");
+      saveGoal(this.h.sql, job);
+    }
     const running = job.plan.find((s) => s.state === "doing");
-    if (running && !job.mail.length) {
+    if (running && !job.mail.length && !due) {
       // A step is still out; its end wakes the job. This wake is the safety net for one that never came back.
-      if (now - job.progress_at < STEP_LOST_MS) return;
+      if (now - job.progress_at < STEP_LOST_MS) {
+        await this.#arm(job);
+        return;
+      }
       job = this.#note(job, "atlas", `"${running.title}" hasn't come back in ${Math.round(STEP_LOST_MS / 3600_000)} hours.`);
       running.state = "failed";
       running.result = "It never came back.";
@@ -324,9 +388,28 @@ export class GoalDesk {
       return;
     }
     this.h.changed();
-    // Nothing out and nothing asked: the next look is now.
+    // Nothing out and nothing asked: the next look is now. Otherwise the clock keeps its time: a reminder, the deadline.
     const fresh = getGoal(this.h.sql, id)!;
     if (fresh.phase === "working" && !fresh.plan.some((s) => s.state === "doing")) await this.h.watch(id, Date.now() + 1_000);
+    else await this.#arm(fresh);
+  }
+
+  /**
+   * The job's next wake when nothing else will wake it: a reminder while it
+   * waits on the owner, its deadline, or the check on a step that never came
+   * back. A job has one wake on the clock, so it's the soonest of these.
+   */
+  async #arm(job: GoalJob): Promise<void> {
+    if (ENDED.includes(job.phase)) return;
+    const at: number[] = [];
+    if (job.phase === "waiting") {
+      const since = job.reminded_at ?? job.site?.at ?? job.question?.at ?? job.progress_at;
+      at.push(since + (job.reminded_at ? REMIND_AGAIN_MS : REMIND_FIRST_MS));
+    }
+    if (job.deadline && !job.overdue && job.phase !== "waiting") at.push(job.deadline);
+    if (job.plan.some((s) => s.state === "doing")) at.push(job.progress_at + STEP_LOST_MS);
+    if (job.phase === "paused" && job.until) at.push(job.until);
+    if (at.length) await this.h.watch(job.id, Math.max(Date.now() + 1_000, Math.min(...at)));
   }
 
   #note(job: GoalJob, who: GoalEntry["who"], text: string): GoalJob {
@@ -349,10 +432,11 @@ export class GoalDesk {
       },
     });
     const question: GoalQuestion = { ...q, log: row.id, at: Date.now() };
-    const next = this.#note({ ...job, phase: "waiting", question }, "atlas", `Asked: ${q.text}`);
+    const next = this.#note({ ...job, phase: "waiting", question, reminded_at: null }, "atlas", `Asked: ${q.text}`);
     saveGoal(this.h.sql, next);
     this.h.changed();
     await this.h.ask({ job: next, question, row });
+    await this.#arm(next);
     return question;
   }
 
@@ -380,7 +464,7 @@ export class GoalDesk {
   /** Starts a step: a helper on it, in the folder; a checkpoint is asked with `checkpoint` instead. */
   async startStep(
     id: string,
-    o: { step: string; brief: string; brain?: string; agent?: string; model?: string; effort?: string },
+    o: { step: string; brief: string; brain?: string; agent?: string; model?: string; effort?: string; minutes?: number },
   ): Promise<{ ok: boolean; text: string }> {
     const job = getGoal(this.h.sql, id);
     if (!job || ENDED.includes(job.phase)) return { ok: false, text: "That job has ended." };
@@ -398,10 +482,18 @@ export class GoalDesk {
     let helper: string;
     try {
       if (coding) {
-        const c = await this.h.coder({ job, step, brief: o.brief, agent: o.agent, model: o.model, effort: o.effort });
+        const c = await this.h.coder({
+          job,
+          step,
+          brief: o.brief,
+          agent: o.agent,
+          model: o.model,
+          effort: o.effort,
+          ...(o.minutes ? { minutes: o.minutes } : {}),
+        });
         helper = c.id;
         brain = [c.name, o.model, o.effort ? `${o.effort} effort` : ""].filter(Boolean).join(", ");
-      } else helper = await this.h.helper({ job, step, brief: o.brief, brain });
+      } else helper = await this.h.helper({ job, step, brief: o.brief, brain, ...(o.minutes ? { minutes: o.minutes } : {}) });
     } catch (err) {
       const why = err instanceof Error ? err.message : String(err);
       if (ranOut(why)) {
@@ -410,7 +502,11 @@ export class GoalDesk {
       }
       return { ok: false, text: `The step couldn't start: ${why}` };
     }
-    const plan = job.plan.map((s) => (s.id === step.id ? { ...s, state: "doing" as const, job: helper, brain } : s));
+    const plan = job.plan.map((s) =>
+      s.id === step.id
+        ? { ...s, state: "doing" as const, job: helper, brain, started_at: Date.now(), ...(o.minutes ? { minutes: o.minutes } : {}) }
+        : s,
+    );
     const by = { ...job.spent.by, [brain]: (job.spent.by[brain] ?? 0) + 1 };
     saveGoal(
       this.h.sql,
@@ -432,11 +528,14 @@ export class GoalDesk {
     if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(host)) return { ok: false, text: `"${o.host}" isn't a site's name, like pixabay.com.` };
     const r = await this.h.site({ job, host, why: o.why });
     if ("allowed" in r) return { ok: true, text: `The workspace can reach ${host}; carry on.` };
-    saveGoal(
-      this.h.sql,
-      this.#note({ ...job, phase: "waiting", site: { approval: r.approval, host } }, "atlas", `Asked to reach ${host}.`),
+    const waiting = this.#note(
+      { ...job, phase: "waiting", site: { approval: r.approval, host, at: Date.now() }, reminded_at: null },
+      "atlas",
+      `Asked to reach ${host}.`,
     );
+    saveGoal(this.h.sql, waiting);
     this.h.changed();
+    await this.#arm(waiting);
     return { ok: true, text: "The owner is asked on a card; the job waits for their answer. End your turn." };
   }
 
@@ -455,7 +554,11 @@ export class GoalDesk {
       const text = yes ? `The owner let the workspace reach ${host}.` : `The owner didn't let the workspace reach ${host}.`;
       saveGoal(
         this.h.sql,
-        this.#note({ ...g, phase: "working", site: null, mail: [...g.mail, { kind: "answer", text, at: Date.now() }] }, "owner", text),
+        this.#note(
+          { ...g, phase: "working", site: null, answered_at: Date.now(), mail: [...g.mail, { kind: "answer", text, at: Date.now() }] },
+          "owner",
+          text,
+        ),
       );
       this.h.changed();
       await this.h.watch(g.id, Date.now());
@@ -486,9 +589,14 @@ export class GoalDesk {
   }
 
   /** Changes the plan: steps added (after one, or at the end), steps that aren't started dropped. */
-  plan(id: string, o: { add?: Array<{ title: string; kind: StepKind; after?: string }>; drop?: string[] }): { ok: boolean; text: string } {
-    const job = getGoal(this.h.sql, id);
+  plan(
+    id: string,
+    o: { add?: Array<{ title: string; kind: StepKind; after?: string }>; drop?: string[]; deadline?: number | null },
+  ): { ok: boolean; text: string } {
+    let job = getGoal(this.h.sql, id);
     if (!job || ENDED.includes(job.phase)) return { ok: false, text: "That job has ended." };
+    // A new deadline (the owner moved it, or took it away) is planned to from the next look.
+    if (o.deadline !== undefined) job = { ...job, deadline: o.deadline, overdue: false };
     let plan = [...job.plan];
     for (const d of o.drop ?? []) {
       const s = plan.find((x) => x.id === d);
@@ -504,7 +612,10 @@ export class GoalDesk {
       plan = at < 0 ? [...plan, step] : [...plan.slice(0, at + 1), step, ...plan.slice(at + 1)];
     }
     if (plan.filter((s) => s.state !== "skipped").length > 40) return { ok: false, text: "A plan keeps to 40 steps." };
-    saveGoal(this.h.sql, this.#note({ ...job, plan }, "atlas", "Changed the plan."));
+    saveGoal(
+      this.h.sql,
+      this.#note({ ...job, plan }, "atlas", o.deadline !== undefined ? "Changed the plan and its deadline." : "Changed the plan."),
+    );
     this.h.changed();
     return { ok: true, text: "The plan is changed." };
   }
@@ -515,8 +626,15 @@ export class GoalDesk {
     if (!job || ENDED.includes(job.phase)) return { ok: false, text: "That job has ended." };
     const step = job.plan.find((s) => s.id === o.step);
     if (!step) return { ok: false, text: `There's no step ${o.step}.` };
-    if (step.state === "doing" && step.job) return { ok: false, text: `${o.step} is still under way.` };
-    const plan = job.plan.map((s) => (s.id === o.step ? { ...s, state: o.state, ...(o.result ? { result: o.result } : {}) } : s));
+    // A step still under way can be stopped (skipped), when the owner changed direction or it's past its time; not marked done.
+    if (step.state === "doing" && step.job && o.state === "done")
+      return { ok: false, text: `${o.step} is still under way: skip it to stop it.` };
+    if (step.state === "doing" && step.job) this.h.stopHelper(step.job);
+    const plan = job.plan.map((s) =>
+      s.id === o.step
+        ? { ...s, state: o.state, ...(o.result ? { result: o.result } : {}), ...(s.state === "doing" ? { ended_at: Date.now() } : {}) }
+        : s,
+    );
     saveGoal(this.h.sql, { ...job, plan, progress_at: Date.now() });
     this.h.changed();
     return { ok: true, text: `${o.step} is ${o.state}.` };
@@ -595,7 +713,7 @@ export class GoalDesk {
         return;
       }
       const result = o.state === "done" ? o.text : `It didn't finish: ${o.error ?? o.text}`;
-      const plan = g.plan.map((s) => (s.id === step.id ? { ...s, state: o.state, result: clip(result, 8_000) } : s));
+      const plan = g.plan.map((s) => (s.id === step.id ? { ...s, state: o.state, result: clip(result, 8_000), ended_at: Date.now() } : s));
       const next = this.#note(
         { ...g, plan, mail: [...g.mail, { kind: "step", step: step.id, text: clip(result, 8_000), at: Date.now() }] },
         "step",
@@ -619,6 +737,16 @@ export class GoalDesk {
       if (!job || ENDED.includes(job.phase)) return { ok: false, text: "That job has ended." };
       const q = job.question;
       job = this.#note(job, "owner", text);
+      // Waiting on a card for a site: their words wait with the job, and only the card lets it go on, so a "yes" meant
+      // for the card doesn't send the job off to ask for the same site again.
+      if (job.site && !q) {
+        saveGoal(this.h.sql, { ...job, mail: [...job.mail, { kind: "words", text, at: Date.now() }] });
+        this.h.changed();
+        return {
+          ok: true,
+          text: `The job is waiting on the owner's OK on a card to let the workspace reach ${job.site.host} (card ${job.site.approval}); their words go to it when it carries on. If they meant yes or no to that, settle the card now with approve, id ${job.site.approval}.`,
+        };
+      }
       if (q?.pause) {
         const brain = q.pause.brains[text];
         if (text === q.pause.wait) {
@@ -637,17 +765,20 @@ export class GoalDesk {
         job = { ...job, budget: { looks: job.spent.looks + GOAL_BUDGET.looks, steps: job.spent.steps + GOAL_BUDGET.steps } };
       }
       const plan = q?.step
-        ? job.plan.map((s) => (s.id === q.step && s.kind === "checkpoint" ? { ...s, state: "done" as const, result: text } : s))
+        ? job.plan.map((s) =>
+            s.id === q.step && s.kind === "checkpoint" ? { ...s, state: "done" as const, result: text, ended_at: Date.now() } : s,
+          )
         : job.plan;
       const mail = [
         ...job.mail,
         { kind: q ? ("answer" as const) : ("words" as const), text, ...(q?.step ? { step: q.step } : {}), at: Date.now() },
       ];
-      saveGoal(this.h.sql, { ...job, plan, mail, question: null, phase: "working", until: null });
+      saveGoal(this.h.sql, { ...job, plan, mail, question: null, phase: "working", until: null, answered_at: Date.now() });
       if (q) inboxDone(this.h.sql, q.log);
       this.h.changed();
-      if (!plan.some((s) => s.state === "doing")) await this.h.watch(id, Date.now() + 1_000);
-      return { ok: true, text: q ? "Thanks: the job carries on with that." : "The job takes that into its next step." };
+      // The owner's words are looked at now, even with a step out: a change of direction can't wait for it to finish.
+      await this.h.watch(id, Date.now() + 1_000);
+      return { ok: true, text: q ? "Thanks: the job carries on with that." : "The job looks at that now." };
     });
   }
 
@@ -681,11 +812,18 @@ export class GoalDesk {
       folder: g.folder,
       plan: g.plan.filter((s) => s.state !== "skipped").map((s) => `${s.id} [${s.state}] ${s.title}`),
       ...(g.question ? { waiting_on_owner: g.question.text } : {}),
+      ...(g.site
+        ? {
+            waiting_on_owner: `Their OK on the card to let the workspace reach ${g.site.host} (card ${g.site.approval}): settle it with approve when they answer.`,
+          }
+        : {}),
       // What the question asks them to look at, so it can be shown or sent where they are.
       ...(g.question?.content ? { what_to_look_at: clip(g.question.content, 12_000) } : {}),
       ...(g.question?.options.length ? { options: g.question.options } : {}),
       results: g.plan.filter((s) => s.result).map((s) => `${s.id} ${s.title}: ${clip(s.result!, 1_500)}`),
       used: `${g.spent.looks} looks, ${g.spent.steps} steps`,
+      running_for: ago(Date.now() - g.started_at),
+      ...(g.deadline ? { deadline: new Date(g.deadline).toISOString() } : {}),
       last: g.log.at(-1)?.text ?? null,
       ...(g.result ? { result: g.result } : {}),
     }));
@@ -701,7 +839,9 @@ export function goalLines(sql: Sql): string[] {
       const done = g.plan.filter((s) => s.state === "done").length;
       const where =
         g.phase === "waiting"
-          ? `waiting on the owner: ${clip(g.question?.text ?? "", 120)}`
+          ? g.site
+            ? `waiting on the owner's OK to reach ${g.site.host} (card ${g.site.approval})`
+            : `waiting on the owner: ${clip(g.question?.text ?? "", 120)}`
           : g.phase === "paused"
             ? "paused"
             : now
@@ -717,13 +857,46 @@ function inboxDone(sql: Sql, id: string): void {
   if (!list.includes(id)) setState(sql, "inbox_done", [...list, id].slice(-500));
 }
 
+/**
+ * What a look knows of time (§8.3): how long the job has run, when a step last
+ * finished, and its deadline, with what each means for the next move. The look
+ * decides how to fit the work to the time; this only puts the clock in front of it.
+ */
+export function timeNote(job: GoalJob, now: number): string {
+  const lastDone = Math.max(job.started_at, job.answered_at ?? 0, ...job.plan.map((s) => (s.state === "done" ? (s.ended_at ?? 0) : 0)));
+  const failedSince = job.plan.filter((s) => s.state === "failed" && (s.ended_at ?? 0) >= lastDone).length;
+  const left = job.plan.filter((s) => s.state === "todo" || s.state === "doing");
+  const lines = [
+    `Time: started ${ago(now - job.started_at)} ago; ${lastDone > job.started_at ? `it last moved forward (a step finished, or the owner answered) ${ago(now - lastDone)} ago` : "nothing has finished yet"}.`,
+  ];
+  if (job.deadline) {
+    if (now < job.deadline)
+      lines.push(
+        `Deadline: in ${ago(job.deadline - now)}, with ${left.length} step${left.length === 1 ? "" : "s"} left (${left.filter((s) => s.kind === "checkpoint").length} of them checkpoints, which wait on the owner). Fit the work to it: give each step a time with job_step's \`minutes\`, take the quicker way when time is short, cut what isn't essential, and if it can't be met, tell the owner now with job_checkpoint (what you'd cut, or how much longer it needs), not once it has passed.`,
+      );
+    else
+      lines.push(
+        `The deadline passed ${ago(now - job.deadline)} ago. Finish with what you have (job_finish, saying what's left out), or ask the owner with job_checkpoint whether it's still worth going on and by when.`,
+      );
+  }
+  if (job.phase === "working" && !left.some((s) => s.state === "doing") && now - lastDone >= STALL_MS)
+    lines.push(
+      `Nothing has finished in ${ago(now - lastDone)}${failedSince ? ` and ${failedSince} step${failedSince === 1 ? "" : "s"} came back without it` : ""}. Don't try the same way again: change the approach, or bring the owner what you have with job_checkpoint (the options you found, what's in the way, what you'd suggest).`,
+    );
+  return lines.join(" ");
+}
+
 /** What a look reads: the goal, the plan with each step's state and result, and what came in since the last look. */
-export function lookNote(job: GoalJob, mail: GoalJob["mail"]): string {
+export function lookNote(job: GoalJob, mail: GoalJob["mail"], now = Date.now()): string {
   const steps = job.plan
     .filter((s) => s.state !== "skipped")
     .map(
       (s) =>
-        `- ${s.id} [${s.state}] ${s.kind === "checkpoint" ? "(checkpoint) " : s.kind === "research" ? "(research) " : ""}${s.title}${s.result ? `\n  Result: ${clip(s.result, 1_500)}` : ""}`,
+        `- ${s.id} [${s.state}] ${s.kind === "checkpoint" ? "(checkpoint) " : s.kind === "research" ? "(research) " : ""}${s.title}${
+          s.started_at && s.kind !== "checkpoint"
+            ? ` (${s.ended_at ? `took ${ago(s.ended_at - s.started_at)}` : `running ${ago(now - s.started_at)}${s.minutes ? ` of its ${s.minutes} min` : ""}`})`
+            : ""
+        }${s.result ? `\n  Result: ${clip(s.result, 1_500)}` : ""}`,
     )
     .join("\n");
   const news = mail.length
@@ -741,6 +914,7 @@ export function lookNote(job: GoalJob, mail: GoalJob["mail"]): string {
     `[Atlas's clock, not the owner] A look at the job you own: "${job.title}" (${job.id}).`,
     `The goal: ${job.goal}`,
     `Its folder in the workspace: ${job.folder}. Its steps run on the ${job.brain} brain. Used: ${job.spent.looks} of ${job.budget.looks} looks, ${job.spent.steps} of ${job.budget.steps} steps.`,
+    timeNote(job, now),
     `The plan:\n${steps}`,
     `Since the last look:\n${news}`,
     job.unsure && job.stalled
@@ -754,6 +928,7 @@ export function lookNote(job: GoalJob, mail: GoalJob["mail"]): string {
       "change the plan with job_plan when what came back changes it; mark a step done or skipped with job_mark;",
       "when the goal is met, job_finish with what to keep for the owner; if it can't be met, job_fail with why.",
       "Answer what you can yourself, as a good assistant would; bring the owner only what only they can give (a choice that's theirs, their OK, a sign-in), never a question of what to do next. The owner's edits at a checkpoint are what the job goes on with.",
+      JOB_LIMITS,
     ].join(" "),
   ]
     .filter(Boolean)
@@ -768,7 +943,9 @@ function view(g: GoalJob): JobView {
     state: g.phase === "done" ? "done" : g.phase === "failed" ? "failed" : g.phase === "cancelled" ? "cancelled" : "running",
     status:
       g.phase === "waiting"
-        ? "Waiting for you."
+        ? g.site
+          ? `Waiting for your OK to reach ${g.site.host}.`
+          : "Waiting for you."
         : g.phase === "paused"
           ? g.until
             ? "Paused; trying again soon."
@@ -795,6 +972,7 @@ function view(g: GoalJob): JobView {
       spent: g.spent,
       budget: g.budget,
       files: g.files,
+      ...(g.deadline ? { deadline: g.deadline } : {}),
     },
   };
 }

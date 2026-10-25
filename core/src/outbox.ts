@@ -277,8 +277,12 @@ export interface Channels {
   ): Promise<
     { ok: true; id: string; thread?: string; link?: string; message_id?: string; via: string } | { ok: false; error: string; via: string }
   >;
-  /** Sends a message to the owner on a chat channel they've linked (§16.1); false when it isn't linked. */
-  chat?(ext: string, text: string): Promise<boolean>;
+  /**
+   * Sends a message to the owner on a chat channel they've linked (§16.1); false when it isn't linked.
+   * An approval card goes with its Approve and Decline buttons (or a link to the app, when it needs a hold),
+   * so a tap decides it and nothing rests on reading a typed "yes".
+   */
+  chat?(ext: string, text: string, card?: { approval: string; hold: boolean }): Promise<boolean>;
   /** Calls the owner to say it (§16.1), when they've allowed calls; throws with why it couldn't. */
   call?(text: string): Promise<boolean>;
   /** Sends a face's answer in the owner's name, once they've OK'd it (§7.2). */
@@ -436,7 +440,9 @@ export class Outbox {
     }
     if (!this.channels.chat) return false;
     let error = "";
-    const ok = await this.channels.chat(place, text).catch((err: unknown) => {
+    const approval = typeof extra?.approval === "string" ? extra.approval : null;
+    const card = approval && rows.length === 1 ? { approval, hold: extra?.hold === true } : undefined;
+    const ok = await this.channels.chat(place, text, card).catch((err: unknown) => {
       error = err instanceof Error ? err.message : String(err);
       return false;
     });

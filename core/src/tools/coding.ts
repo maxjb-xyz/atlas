@@ -84,8 +84,11 @@ export const jobAnswer = defineTool({
   name: "job_answer",
   kind: "change_own",
   status: "Passing that on to the job.",
-  description:
-    "Pass the owner's words to a coding job: the answer to a question it's waiting on, or a change of direction while it works ('use the existing date helper instead'). Use the job's id from the jobs in context or jobs_look. Pass their words as they meant them, in a sentence or two.",
+  description: [
+    "Pass the owner's words to a job (a coding job, or one you own): the answer to a question it's waiting on, or a change of direction while it works ('use the existing date helper instead'). Use the job's id from the jobs in context or jobs_look. Pass their words as they meant them, in a sentence or two, adding no demands of your own that a job can't meet: no step can hear audio, watch video or judge taste, so the owner judges those from options the job brings.",
+    "A job waiting on a card (a site it asked to reach) goes on only when the card is settled: when the owner says yes or no to it, settle it with approve.",
+    "Then tell the owner what you passed on. The job decides what it does next, so don't promise for it ('I'll bring you the link next'); if they ask, jobs_look says where it stands.",
+  ].join(" "),
   input: z.object({
     id: z.string().min(3).max(64).describe("The coding job's id."),
     text: z.string().min(1).max(4_000).describe("What the owner said, for the job."),

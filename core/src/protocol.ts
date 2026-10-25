@@ -188,6 +188,8 @@ export interface GoalView {
   budget: { looks: number; steps: number };
   /** Files it kept in Library. */
   files: string[];
+  /** When it must be done by, if the owner said. */
+  deadline?: number;
 }
 
 export interface CodingView {

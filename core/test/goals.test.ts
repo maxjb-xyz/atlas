@@ -1,7 +1,19 @@
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
-import { folderFor, GoalDesk, type GoalHost, type GoalJob, getGoal, lookNote, ranOut } from "../src/agent/goals";
+import {
+  folderFor,
+  GoalDesk,
+  type GoalHost,
+  type GoalJob,
+  getGoal,
+  lookNote,
+  ranOut,
+  REMIND_FIRST_MS,
+  saveGoal,
+  STALL_MS,
+  timeNote,
+} from "../src/agent/goals";
 import { getItem } from "../src/store/agenda";
 import { migrate, type Sql } from "../src/store/db";
 import { call, env, fakeCalendar, fakeEmbedder, say, scripted } from "./helpers";
@@ -27,6 +39,7 @@ function testDesk(sql: Sql, looks: Look[], o: { brains?: string[]; helperFails?:
     kept: [] as string[],
     notes: [] as string[],
     stopped: [] as string[],
+    reminded: [] as string[],
     coders: [] as Array<{ step: string; brief: string; agent?: string; model?: string; effort?: string }>,
   };
   let n = 0;
@@ -49,6 +62,7 @@ function testDesk(sql: Sql, looks: Look[], o: { brains?: string[]; helperFails?:
       st.coders.push({ step: step.id, brief, agent, model, effort });
       return { id: `coding_${++n}`, name: "Claude Code" };
     },
+    remind: async ({ text, approval }) => void st.reminded.push(`${text}${approval ? ` [${approval}]` : ""}`),
     site: async ({ host }) => (host === "pixabay.com" ? { allowed: true } : { approval: `appr_${host}` }),
     stopHelper: (id) => void st.stopped.push(id),
     folder: async () => {},
@@ -216,6 +230,76 @@ describe("jobs Atlas owns (§8.3)", () => {
         what_to_look_at: "0:00 The diamond.\n0:03 Meet Atlas.",
       });
     }));
+
+  it("keep waiting on a card through the owner's words, remind them, and go on only when the card is settled", () =>
+    withSql(async (sql) => {
+      const { desk, st } = testDesk(sql, [
+        async (d, j) => (await d.site(j.id, { host: "freemusicarchive.org", why: "Songs." })).text,
+        () => "Looked.",
+      ]);
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      // A "yes" passed on as words doesn't send the job off again: it says the card decides, and how.
+      const out = await desk.answer(job.id, "Yes");
+      expect(out.text).toContain("settle the card now with approve, id appr_freemusicarchive.org");
+      expect(getGoal(sql, job.id)).toMatchObject({ phase: "waiting", site: { host: "freemusicarchive.org" } });
+      await desk.wake(job.id);
+      expect(st.notes).toHaveLength(1);
+      expect(desk.look(job.id)[0]).toMatchObject({ waiting_on_owner: expect.stringContaining("reach freemusicarchive.org") });
+      // Hours later, the owner is reminded, with the card.
+      const g = getGoal(sql, job.id)!;
+      saveGoal(sql, { ...g, site: { ...g.site!, at: Date.now() - REMIND_FIRST_MS - 1_000 } });
+      await desk.wake(job.id);
+      expect(st.reminded[0]).toMatch(
+        /^Launch video is still waiting for your OK to let the workspace reach freemusicarchive\.org \(asked 3 h ago\)\. \[appr_freemusicarchive\.org\]$/,
+      );
+      await desk.wake(job.id);
+      expect(st.reminded).toHaveLength(1);
+      // The card settles it, and the owner's words go with it.
+      await desk.settled("appr_freemusicarchive.org", true);
+      await desk.wake(job.id);
+      expect(st.notes[1]).toContain("The owner let the workspace reach freemusicarchive.org.");
+      expect(st.notes[1]).toContain("The owner said: Yes");
+    }));
+
+  it("plan to a deadline, give steps their minutes, stop a step when told, and hear when the deadline passes", () =>
+    withSql(async (sql) => {
+      const { desk, st } = testDesk(sql, [
+        async (d, j, note) => {
+          expect(note).toMatch(/Deadline: in (1 h 59 min|2 h), with 3 steps left \(1 of them checkpoints/);
+          return (await d.startStep(j.id, { step: "s1", brief: "Write it.", minutes: 20 })).text;
+        },
+        async (d, j, note) => {
+          expect(note).toContain("The owner said: Make it shorter.");
+          expect(note).toMatch(/s1 \[doing\] Write the script \(running 1 min of its 20 min\)/);
+          return d.mark(j.id, { step: "s1", state: "skipped", result: "Stopped: the owner wants it shorter." }).text;
+        },
+        async (_d, _j, note) => {
+          expect(note).toContain("The deadline passed");
+          return "Looked.";
+        },
+      ]);
+      const job = await desk.start({ ...video, deadline: Date.now() + 2 * 3600_000 });
+      await desk.wake(job.id);
+      expect(getGoal(sql, job.id)!.plan[0]).toMatchObject({ state: "doing", minutes: 20 });
+      // Words while a step is out are looked at now, and the look can stop the step.
+      await desk.answer(job.id, "Make it shorter.");
+      await desk.wake(job.id);
+      expect(st.stopped).toEqual(["helper_1"]);
+      expect(getGoal(sql, job.id)!.plan[0]).toMatchObject({ state: "skipped" });
+      // The deadline passes: a look hears it.
+      saveGoal(sql, { ...getGoal(sql, job.id)!, deadline: Date.now() - 60_000 });
+      await desk.wake(job.id);
+      expect(getGoal(sql, job.id)!.overdue).toBe(true);
+    }));
+
+  it("tell a look that hasn't moved in a while to change approach, not counting time spent waiting on the owner", () => {
+    const now = Date.now();
+    const base = { started_at: now - 3 * 3600_000, phase: "working", deadline: null, plan: [] } as unknown as GoalJob;
+    expect(timeNote(base, now)).toContain("Nothing has finished in 3 h. Don't try the same way again");
+    expect(timeNote({ ...base, answered_at: now - 10 * 60_000 }, now)).not.toContain("Don't try the same way again");
+    expect(STALL_MS).toBe(90 * 60_000);
+  });
 
   it("pause when a brain runs out partway, and go on with another one only when the owner says", () =>
     withSql(async (sql) => {

@@ -293,7 +293,7 @@ describe("held notifications on the clock", () => {
 describe("where a message goes (§14)", () => {
   /** An outbox with a Telegram the owner linked, and a follow-up clock. */
   function reaching(sql: Sql, f: typeof fetch, o: { linked?: string[] } = {}) {
-    const chats: Array<{ ext: string; text: string }> = [];
+    const chats: Array<{ ext: string; text: string; card?: { approval: string; hold: boolean } }> = [];
     const follow: Array<{ at: Date; rest: string[] }> = [];
     const shown: LogRow[] = [];
     const channels: Channels = {
@@ -305,9 +305,9 @@ describe("where a message goes (§14)", () => {
       fetch: f,
       browser: () => null,
       mcp: () => null,
-      chat: async (ext, text) => {
+      chat: async (ext, text, card) => {
         if (!(o.linked ?? ["telegram"]).includes(ext)) return false;
-        chats.push({ ext, text });
+        chats.push({ ext, text, ...(card ? { card } : {}) });
         return true;
       },
     };
@@ -357,6 +357,23 @@ describe("where a message goes (§14)", () => {
       });
       expect(askedOn(sql, `job:${job.id}`)).toBe("telegram");
       expect(askedOn(sql, "device:mac")).toBeNull();
+    }));
+
+  it("sends a card to a chat with its buttons, so a tap decides it", () =>
+    withSql(async (sql) => {
+      writeSettings(sql, { notifications: lists(["telegram"], ["telegram"]) });
+      const { box, chats } = reaching(sql, fakeNet().f);
+      await box.notify({ id: "ag_card", run_id: null, text: "Waiting for your OK: Let the workspace reach freemusicarchive.org" }, "soon", {
+        approval: "ag_card",
+        hold: false,
+      });
+      expect(chats).toEqual([
+        {
+          ext: "telegram",
+          text: "Waiting for your OK: Let the workspace reach freemusicarchive.org",
+          card: { approval: "ag_card", hold: false },
+        },
+      ]);
     }));
 
   it("sends to the place an automation names, and the usual way when that place can't take it", () =>

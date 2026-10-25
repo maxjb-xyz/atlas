@@ -7,6 +7,8 @@
 // - a step's helper works in the job's folder, with a shell there.
 
 import { z } from "zod";
+import { parseWhen } from "../time";
+import { browserAct, browserClose, browserOpen } from "./browser";
 import { EFFORTS } from "./coding";
 import { defineTool, fail, type Tool } from "./types";
 
@@ -42,11 +44,26 @@ export const jobOwn = defineTool({
       .max(24)
       .optional()
       .describe("A named brain for its steps, when the owner asked for one. Default: theirs for a job's work."),
+    deadline: z
+      .string()
+      .max(40)
+      .optional()
+      .describe(
+        "When it must be done by, when the owner said ('by Friday 5pm'), as a local date-time: YYYY-MM-DDTHH:mm. The job plans its steps to it.",
+      ),
   }),
   async run(input, ctx) {
     if (!ctx.goals) return fail("Jobs can't be started from here.");
     try {
-      const job = await ctx.goals.start({ ...input, asked_in: ctx.run_id });
+      const { deadline: when, ...rest } = input;
+      let deadline: number | undefined;
+      if (when?.trim()) {
+        const at = parseWhen(when, ctx.tz);
+        if (!at) return fail(`Couldn't read the deadline "${when}". Use YYYY-MM-DDTHH:mm.`);
+        if (at.getTime() <= ctx.now.getTime()) return fail(`${when} has already passed.`);
+        deadline = at.getTime();
+      }
+      const job = await ctx.goals.start({ ...rest, ...(deadline ? { deadline } : {}), asked_in: ctx.run_id });
       return {
         ok: true,
         output: {
@@ -83,6 +100,15 @@ export const jobStep = defineTool({
     agent: z.string().max(40).optional().describe("A coding agent for this step: 'claude-code' or 'codex'."),
     model: z.string().max(80).optional().describe("The coding agent's model, when the owner named one: 'claude-opus-5-5'."),
     effort: z.enum(EFFORTS).optional().describe("How hard the coding agent thinks, when the owner said."),
+    minutes: z
+      .number()
+      .int()
+      .min(5)
+      .max(24 * 60)
+      .optional()
+      .describe(
+        "How long the step has, in minutes, so the job keeps to its time: a helper wraps up and hands back what it has when it's up.",
+      ),
   }),
   async run(input, ctx) {
     if (!ctx.goalLook) return fail("This only works in a job's look.");
@@ -122,17 +148,27 @@ export const jobPlan = defineTool({
   kind: "change_own",
   status: "Planning the job.",
   description:
-    "Change the job's plan when what came back changes it: add steps (after one, or at the end) and drop steps that haven't started. The owner sees the plan in Jobs.",
+    "Change the job's plan when what came back changes it: add steps (after one, or at the end) and drop steps that haven't started. Set `deadline` when the owner gives the job one or moves it (an empty string takes it away). The owner sees the plan in Jobs.",
   input: z.object({
     add: z
       .array(z.object({ title: z.string().min(1).max(160), kind: Kind, after: z.string().max(8).optional() }))
       .max(10)
       .optional(),
     drop: z.array(z.string().max(8)).max(10).optional(),
+    deadline: z
+      .string()
+      .max(40)
+      .optional()
+      .describe("When it must be done by, as a local date-time: YYYY-MM-DDTHH:mm. Empty to take it away."),
   }),
   async run(input, ctx) {
     if (!ctx.goalLook) return fail("This only works in a job's look.");
-    return done(ctx.goalLook.plan(input));
+    const { deadline, ...rest } = input;
+    if (deadline === undefined) return done(ctx.goalLook.plan(rest));
+    if (!deadline.trim()) return done(ctx.goalLook.plan({ ...rest, deadline: null }));
+    const at = parseWhen(deadline, ctx.tz);
+    if (!at) return fail(`Couldn't read the deadline "${deadline}". Use YYYY-MM-DDTHH:mm.`);
+    return done(ctx.goalLook.plan({ ...rest, deadline: at.getTime() }));
   },
 });
 
@@ -141,7 +177,7 @@ export const jobMark = defineTool({
   kind: "change_own",
   status: "Updating the job.",
   description:
-    "Mark a step done (what it needed is already there, or you did it yourself in this look) or skipped (no longer needed), with a line on what came of it.",
+    "Mark a step done (what it needed is already there, or you did it yourself in this look) or skipped (no longer needed), with a line on what came of it. Skipping a step that's under way stops it: for when the owner changed direction, or it's gone past its time.",
   input: z.object({
     step: z.string().min(1).max(8),
     state: z.enum(["done", "skipped"]),
@@ -250,4 +286,5 @@ export const folderRun = defineTool({
 });
 
 /** What a step's helper gets beyond its lookups. */
-export const STEP_TOOLS: Tool[] = [folderRun];
+/** A job's step's own tools (§8.3): its folder, and the browser to read sites that need one (it can't submit or send). */
+export const STEP_TOOLS: Tool[] = [folderRun, browserOpen, browserAct, browserClose];

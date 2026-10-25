@@ -259,6 +259,7 @@ export interface GoalsApi {
     goal: string;
     steps: Array<{ title: string; kind: "work" | "research" | "checkpoint" }>;
     brain?: string;
+    deadline?: number;
     asked_in: string;
   }): Promise<{ id: string; folder: string }>;
 }
@@ -272,10 +273,15 @@ export interface GoalLookApi {
     agent?: string;
     model?: string;
     effort?: string;
+    minutes?: number;
   }): Promise<{ ok: boolean; text: string }>;
   site(o: { host: string; why: string }): Promise<{ ok: boolean; text: string }>;
   checkpoint(o: { step?: string; text: string; content?: string; options?: string[] }): Promise<{ ok: boolean; text: string }>;
-  plan(o: { add?: Array<{ title: string; kind: "work" | "research" | "checkpoint"; after?: string }>; drop?: string[] }): {
+  plan(o: {
+    add?: Array<{ title: string; kind: "work" | "research" | "checkpoint"; after?: string }>;
+    drop?: string[];
+    deadline?: number | null;
+  }): {
     ok: boolean;
     text: string;
   };
