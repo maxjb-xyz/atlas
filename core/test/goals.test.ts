@@ -378,6 +378,33 @@ describe("jobs Atlas owns (§8.3)", () => {
       expect(desk.look(job.id)[0]).toMatchObject({ now: "cancelled" });
     }));
 
+  it('show the next look what an answer answers, so a pick like "1" is a decision, not a reason to ask again', () =>
+    withSql(async (sql) => {
+      const { desk } = testDesk(sql, [
+        async (d, j) =>
+          (
+            await d.checkpoint(j.id, {
+              step: "s2",
+              text: "Pick the track.",
+              content: "1. Neon Rush (fast, vocal)\n2. Slow Bloom\n3. Tide",
+              options: ["1 — No Copyright Music", "2", "3"],
+            })
+          ).text,
+        async (_d, _j, note) => {
+          expect(note).toContain("You asked the owner at s2: Pick the track.");
+          expect(note).toContain('The choices: "1 — No Copyright Music", "2", "3"');
+          expect(note).toContain("1. Neon Rush (fast, vocal)");
+          expect(note).toContain("The owner answered at s2: 1 — No Copyright Music");
+          expect(note).toContain("it's decided, so don't ask it again");
+          return "Going on with Neon Rush.";
+        },
+      ]);
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      await desk.answer(job.id, "1 — No Copyright Music");
+      await desk.wake(job.id);
+    }));
+
   it("take the owner's words and Stop at once, even in the middle of a look", () =>
     withSql(async (sql) => {
       let landed: { ok: boolean; text: string } | undefined;
