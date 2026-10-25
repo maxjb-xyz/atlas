@@ -4,13 +4,13 @@
 // beside the thread (over it on a narrow screen) and closes back to it.
 
 import { InlineText } from "../Markdown";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { JobView, LogRow } from "../../../core/src/protocol";
 import { jobNow, liveJobs } from "../jobs";
 import type { StageView } from "../../../core/src/stage";
 import type { Atlas } from "../connection";
 import { type Shown, shownFrom, StageSheet, titleOf } from "../StageViews";
-import { Conversation, type Opens } from "../Thread";
+import { Conversation, diamondState, type Opens } from "../Thread";
 import { JobDetail, JobGone } from "../JobViews";
 import { MapCanvas, whereLine } from "../SenseViews";
 import { sky, temp } from "../../../core/src/weather";
@@ -24,13 +24,13 @@ import {
   AsciiDiamond,
   clock,
   dayName,
-  type DiamondState,
   Icon,
   Sheet,
   shortDay,
   Stage,
   startOfDay,
   StateDot,
+  useMorphIn,
   useNow,
 } from "../ui";
 import { CalendarNote, eventArea, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
@@ -250,7 +250,7 @@ export function Home({ atlas, detail, go, place }: { atlas: Atlas; detail: strin
       <div className={`home-split ${tab ? "open" : ""}`}>
         <Conversation atlas={atlas} opens={opens} focus={focus} onFocused={() => setFocus(null)} />
         {tab && (
-          <div className="home-stage" key={tab}>
+          <StageArea key={tab} at={tab}>
             <button className="btn sm home-back" onClick={close}>
               <Icon name="left" size={13} /> Conversation
             </button>
@@ -274,25 +274,27 @@ export function Home({ atlas, detail, go, place }: { atlas: Atlas; detail: strin
                   onOpen={(view: StageView, title: string) => openView({ id: `local:${JSON.stringify(view)}`, view, title })}
                 />
               ))}
-          </div>
+          </StageArea>
         )}
       </div>
     </Stage>
   );
 }
 
+/** Where the stage opens beside the thread; it grows out of the card, receipt or line that opened it (§21.8). */
+function StageArea({ at, children }: { at: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useMorphIn(ref, at);
+  return (
+    <div className="home-stage" ref={ref}>
+      {children}
+    </div>
+  );
+}
+
 function greeting(d: Date): string {
   const h = d.getHours();
   return h < 5 ? "Late night" : h < 12 ? "Morning" : h < 17 ? "Afternoon" : "Evening";
-}
-
-/** What the diamond is doing: listening, thinking or speaking in a call, thinking while a run is under way, idle otherwise. */
-function diamondState(atlas: Atlas): DiamondState {
-  if (atlas.inCall) {
-    const v = atlas.voice.status;
-    return v === "listening" || v === "thinking" || v === "speaking" ? v : "idle";
-  }
-  return Object.values(atlas.state.live).some((l) => l.surface !== "voice") ? "thinking" : "idle";
 }
 
 /**

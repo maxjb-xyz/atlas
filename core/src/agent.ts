@@ -3628,10 +3628,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return this.#coding.answer(id, text, "app");
   }
 
-  /** Every job the app shows: coding jobs and helpers', newest first. */
+  /** Every job the app shows: coding jobs, jobs Atlas owns with the helpers working for them, and helpers', newest first. */
   #jobs(): JobView[] {
+    const helping = this.#helpers.workingFor();
+    const owned = this.#owned.list().map((j) => (helping.has(j.id) ? { ...j, helpers: helping.get(j.id)! } : j));
     return (
-      [...this.#coding.list(), ...this.#owned.list(), ...this.#helpers.list()]
+      [...this.#coding.list(), ...owned, ...this.#helpers.list()]
         // A helper is at work for as long as it runs.
         .map((j): JobView => (j.state === "running" && !j.activity ? { ...j, activity: "working" } : j))
         .sort((a, b) => b.started_at - a.started_at)

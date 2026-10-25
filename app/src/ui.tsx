@@ -3,7 +3,7 @@
 // segmented choices, pickers), real logos, area chips and avatars in their
 // area's color, and the living ASCII diamond.
 
-import { createContext, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AreaView } from "../../core/src/protocol";
 import { LOGOS } from "./logos";
 import { stillMotion } from "./theme";
@@ -582,6 +582,172 @@ export function Diamond({ size = 16 }: { size?: number }) {
 }
 
 export type DiamondState = "idle" | "listening" | "thinking" | "speaking";
+
+const MARK_FACETS = [
+  "512,128.96 290.84,418.52 512,505.16",
+  "512,128.96 512,505.16 733.16,418.52",
+  "512,895.04 290.84,418.52 512,505.16",
+  "512,895.04 512,505.16 733.16,418.52",
+];
+
+/**
+ * The mark at the size of a glyph, alive with what Atlas is doing (§21.8):
+ * still, a sweep of light now and then while idle, a shimmer while thinking,
+ * a pulse while speaking, a ripple while listening. The light is the mark's
+ * own facets in ember, faded in and out: only opacity and transforms, never a
+ * glow. Reduced motion keeps it still.
+ */
+export function LiveMark({ size = 16, state }: { size?: number; state?: DiamondState | "still" }) {
+  const live = state && state !== "still";
+  return (
+    <svg
+      viewBox="290 128 444 768"
+      width={(size * 444) / 768}
+      height={size}
+      aria-hidden
+      className={`live-mark ${live ? state : ""}`}
+      style={{ flex: "none", overflow: "visible" }}
+    >
+      {MARK_FACETS.map((p, i) => (
+        <polygon key={i} points={p} style={{ fill: `var(--m${i + 1})` }} />
+      ))}
+      {live &&
+        MARK_FACETS.map((p, i) => <polygon key={`l${i}`} className={`lit f${i + 1}`} points={p} style={{ fill: `var(--d${i + 1})` }} />)}
+      {state === "listening" && <polygon className="ripple" points="512,128.96 290.84,418.52 512,895.04 733.16,418.52" />}
+    </svg>
+  );
+}
+
+/** A number that counts up to its value when it first shows (§21.8), and moves to a new value when it changes. */
+export function CountUp({ value, ms = 650 }: { value: number; ms?: number }) {
+  const [shown, setShown] = useState(() => (stillMotion() ? value : 0));
+  const from = useRef(shown);
+  useEffect(() => {
+    if (stillMotion()) return setShown(value);
+    const start = performance.now();
+    const a = from.current;
+    let raf = 0;
+    const step = (t: number) => {
+      const k = Math.min(1, (t - start) / ms);
+      const v = Math.round(a + (value - a) * (1 - Math.pow(1 - k, 3)));
+      from.current = v;
+      setShown(v);
+      if (k < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  return <>{shown}</>;
+}
+
+/**
+ * Atlas's selection (§21.8, docs/ui §5): an ember outline with square
+ * handles and a mono tag, around what needs the owner. Once it doesn't, the
+ * outline lets go and what's inside stays.
+ */
+export function Selected({
+  on,
+  tag,
+  handles = true,
+  className,
+  children,
+}: {
+  on: boolean;
+  tag: ReactNode;
+  handles?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  // Answered, the outline lets go: it fades for a moment rather than vanishing.
+  const [leaving, setLeaving] = useState(false);
+  const was = useRef(on);
+  useEffect(() => {
+    if (was.current && !on && !stillMotion()) {
+      setLeaving(true);
+      const t = setTimeout(() => setLeaving(false), 520);
+      was.current = on;
+      return () => clearTimeout(t);
+    }
+    was.current = on;
+  }, [on]);
+  const shown = on || leaving;
+  return (
+    <div className={`selected ${on ? "on" : ""} ${leaving && !on ? "leaving" : ""} ${handles ? "handles" : ""} ${className ?? ""}`}>
+      {shown && (
+        <span className="sel-frame" aria-hidden>
+          {handles && (
+            <>
+              <i />
+              <i />
+              <i />
+              <i />
+            </>
+          )}
+        </span>
+      )}
+      {shown && (
+        <span className="sel-tag" aria-hidden={!on}>
+          {tag}
+        </span>
+      )}
+      {children}
+    </div>
+  );
+}
+
+let morphFrom: Element | null = null;
+/** Remembers what is opening on the stage (a card, a receipt), so the stage grows out of it (§21.8). */
+export const morphOrigin = (el: Element | null | undefined) => {
+  morphFrom = el ?? null;
+};
+/**
+ * The stage growing out of what was tapped: from the card's place and width
+ * to its own, fading in, with transforms and opacity only. Opened any other
+ * way, or with reduced motion, it comes in as it always does.
+ */
+export function useMorphIn(ref: React.RefObject<HTMLElement | null>, key: unknown) {
+  useLayoutEffect(() => {
+    const source = morphFrom;
+    morphFrom = null;
+    const el = ref.current;
+    if (!el || !source?.isConnected || stillMotion()) return;
+    // Where the card is now that the thread has made room for the stage.
+    const from = source.getBoundingClientRect();
+    const to = el.getBoundingClientRect();
+    if (!to.width || !to.height || !from.width) return;
+    const k = Math.min(1, from.width / to.width);
+    el.style.animation = "none";
+    const a = el.animate(
+      [
+        { transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${k})`, opacity: 0 },
+        { transform: "none", opacity: 1 },
+      ],
+      { duration: 480, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+    );
+    el.style.transformOrigin = "0 0";
+    a.onfinish = () => {
+      el.style.transformOrigin = "";
+    };
+  }, [key]);
+}
+
+/** How long, as a clock that ticks: "0:42", "12:05", "1:04:12". */
+export const elapsed = (ms: number) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+};
+
+/** How long, in words for a mono label: "40 SEC", "18 MIN", "2 H 10 MIN", "3 DAYS". */
+export const took = (ms: number) => {
+  const m = Math.round(ms / 60_000);
+  if (m < 1) return `${Math.max(1, Math.round(ms / 1000))} sec`;
+  if (m < 60) return `${m} min`;
+  if (m < 48 * 60) return `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`;
+  return `${Math.round(m / 1440)} days`;
+};
 
 // The mark's geometry, from brand/atlas-mark.svg: top (512,176), left (318,430), right (706,430), bottom (512,848),
 // and where the facets meet (512,506), as fractions of its box.

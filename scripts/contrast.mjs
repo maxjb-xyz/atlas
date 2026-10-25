@@ -39,6 +39,8 @@ for (const name of names) {
   const pairs = [
     ...TEXT.flatMap((fg) => SURFACES.map((bg) => [fg, bg, text])),
     ["btntx", "btn", text],
+    // Atlas's selection tag: mono text on ember.
+    ["actx", "ac", 4.5],
     ["ac", "win", 3],
     ["ac", "bg", 3],
     ["ok", "win", 3],

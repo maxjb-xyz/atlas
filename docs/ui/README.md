@@ -225,7 +225,7 @@ Hermes-style profiles split memory and settings, and you switch between them. At
 - **Checks chains:** outlined mono tags joined by dashes, for checks, paths, steps and fallbacks.
 - **Flows:** outlined boxes, dashed connectors and nodes, for automations, helpers and brains.
 - **Meters:** ASCII and segment meters for load, progress, runs and limits.
-- **The ASCII diamond:** four facet layers that breathe. It appears only on Now and in voice.
+- **The ASCII diamond:** four facet layers that breathe. It appears only on Now, in Atlas's presence opening each day of the conversation, and in voice (§9).
 
 **Rules**
 - **Ember is rare.** It marks only what needs you, Atlas's changes and suggestions, and "now". Success is a quiet green ✓.
@@ -317,22 +317,51 @@ Hermes-style profiles split memory and settings, and you switch between them. At
 
 The builders are `p_abilities.py`, `p_people.py` and `p_settings.py` in [`source/builder/`](source/builder/); the screenshots were taken with its stand-in renderer (`preview.cjs`). Model names, prices and the example world's details are illustrative.
 
-## 9. Home is the conversation (stage 6b, built 2026-10-25)
+## 9. Home is the conversation (stage 6b, built 2026-10-25; design pass the same day)
 
 Built from [VISION §21.1, §21.2 and §21.4](../../VISION.md#211-the-shell-the-conversation-with-the-stage-it-opens) after the first real job, in the same look: the stage frame, one sheet, receipts, ember only for what needs you. It replaces the console docked under the stage and the ⌘J transcript.
 
-- **The thread is the sheet.** Atlas's words read large in a centered column, with the receipts for what it did small under them; the owner's words are bubbles, with their area chip; the days are marked on a dashed rule. Times show on hover.
-- **The stage opens from it,** beside the thread on a wide screen and over it on a narrow one, with a way back. Now and Week are pills at the right of the head; while the stage is open, what else is open on it sits beside them.
-- **A job is a card** under the message that asked for it: its title and state, what Atlas is doing on it only while it is (with the spinner), its latest words, its files, and Stop. At Detailed it adds turns, tokens, cost and the coding agent. Tapping it opens its own thread on the stage, with a composer that goes straight to the job.
-- **A question is a message** with what to look at or listen to (tracks play in place) and a button per option, or Reply in your words. Once answered it shows the answer. Inbox shows the same message, and "Show it in the conversation" lights it where it was asked.
-- **Needs you** is one slim line above the composer, and opens Inbox.
+The first build was right in structure and flat in feel: plain lines of text in a dotted frame, jobs as bordered boxes, a generic card for a view, nothing alive. The owner called it underwhelming. The design pass brings the rule of cool ([VISION §21.8](../../VISION.md#218-look-and-motion-the-rule-of-cool)) into the thread, so the most important screen feels like Atlas is there and at work, while staying calm: motion only says what's happening, and nothing waits on an animation to be read.
+
+**Atlas's presence.** Each day opens with it, in place of the day's marker: the living diamond (the same `AsciiDiamond` as Now, alive with what Atlas is doing), "Morning, Max.", one line of what matters ("Standup with Keyframes at 10:30 AM. 2 things need you."), and three cells between dashed rules with square nodes: Next, Needs you, At work, each opening where it lives. With nothing said yet today it's the newest thing in the thread, just above the composer, so arriving in the morning starts with it; as the day's conversation grows, it scrolls up like any message. Its counts count up.
+
+**Atlas's words are the hero.** Inter at 16 px on 1.66, a measure of about 680 px, more room before each of the owner's turns than inside Atlas's reply. Markdown is set, not left to the browser: square bullets, mono numbers, tables with mono headers and hairline rows, links in the text color. The owner's words are quiet bubbles on the right, with their area chip; a sent message lifts into place. Days are marked in mono on a dashed rule.
+
+**The mark, alive only where Atlas is working.** Every message of Atlas's carries the small flat mark. While it works on a reply, that mark is lit: its four facets shimmer in ember (opacity only, never a glow), a mono status line says what it's doing ("CHECKING YOUR CALENDAR", with the braille spinner and the seconds it has taken), and its words stream in with an ember caret. The composer's mark sweeps now and then while idle, shimmers while a turn is under way, and ripples while listening.
+
+**Receipts** are mono chips: a check that ticks in, the text, and Undo or Review set off by a hairline. Tapped, a receipt opens its full view on the stage.
+
+**A view Atlas showed** is a card with its kind in mono, its real title, and a glimpse of what's in it: the page and its address for the browser (from the receipt, which now carries the address), a list's first items, a table's first rows, a chart's shape, the first lines of code. Tapped, the stage grows out of the card into the full view (transforms and opacity, from the card's place and width).
+
+**A job's card is live work.** Its title and a mono state with a clock: WORKING · 21:57 ticking, YOUR TURN · 6 MIN, DONE · 3 H 12 MIN. While something is at work, what Atlas is doing on it is a mono line with the spinner. Helpers it started fan out as parallel lines, each with a marching ember track and what it has read, and fold back into one line ("3 helpers done") when they finish; a coding agent working for it is one of those lines. Then its latest words, and what it has made as real previews: images, a track's shape with play, a video's first frame, documents as chips. Waiting on the owner, its edge is Atlas's selection in ember with a tag ("NEEDS YOU · 3 TRACKS TO HEAR"); done, it's calm; stopped, it's muted. It updates in place. At Detailed the foot shows turns, tokens and cost. Its own thread on the stage shows the same lines.
+
+**A question is the moment the owner acts.** Atlas's full selection surrounds it, ember outline, square handles and the tag "NEEDS YOU · LAUNCH VIDEO", with the question in Atlas's words, tracks as full players (the played part in ember), images large, and a button per option with its number, "Reply in your words" beside them. Answered, the outline lets go and the choice stays filled, the others faded. Inbox shows the same question without the selection, since everything there waits on the owner.
+
+**The composer** floats at the foot with its live mark, the area chip, voice and send; while a turn runs, ticks travel its edge and Send becomes Stop. Needs you is one slim line above it.
+
+Everything works in every theme from tokens (one new: `--actx`, the text on ember, checked by the contrast check), at 390 px, and with reduced motion, which keeps one still frame of each.
+
+**What changed in core for it:** a job Atlas owns now lists the helpers it started (`JobView.helpers`, from `HelperDesk.workingFor`), so its card can draw them; and a page read or opened carries its address on the receipt (`Receipt.link`), so a view's card can show the host.
 
 | | |
 |---|---|
-| ![The conversation](screenshots/m7/home-conversation-dark.png) | ![A job's own thread](screenshots/m7/home-job-thread-dark.png) |
-| ![The conversation, light](screenshots/m7/home-conversation-light.png) | ![A job's own thread, light](screenshots/m7/home-job-thread-light.png) |
-| ![Now, opened from the conversation](screenshots/m7/home-now-open-dark.png) | ![A question, answered](screenshots/m7/home-question-answered-dark.png) |
-| ![A job at work, Detailed](screenshots/m7/home-job-working-detailed-dark.png) | ![Empty](screenshots/m7/home-empty-dark.png) |
-| ![The question in Inbox](screenshots/m7/inbox-question-dark.png) | ![Phone](screenshots/m7/home-conversation-phone.png) |
+| ![The conversation, Midnight](screenshots/m7/conversation-midnight.png) | ![Atlas's presence, opening the day](screenshots/m7/conversation-presence-midnight.png) |
+| ![Helpers as parallel lines on a job's card](screenshots/m7/conversation-jobs-midnight.png) | ![A job waiting on you](screenshots/m7/conversation-waiting-midnight.png) |
+| ![A view's card and a reply with a list](screenshots/m7/conversation-reply-midnight.png) | ![A table in a reply](screenshots/m7/conversation-table-midnight.png) |
+| ![A job's own thread](screenshots/m7/conversation-job-thread-midnight.png) | ![Now, opened beside the thread](screenshots/m7/conversation-now-open-midnight.png) |
+| ![Detailed](screenshots/m7/conversation-detailed-midnight.png) | ![Empty: the presence alone](screenshots/m7/conversation-empty-midnight.png) |
+| ![Graphite](screenshots/m7/conversation-graphite.png) | ![Graphite, the question](screenshots/m7/conversation-graphite-question.png) |
+| ![Daylight](screenshots/m7/conversation-daylight.png) | ![Daylight, a job at work](screenshots/m7/conversation-daylight-jobs.png) |
+| ![Daylight, the question](screenshots/m7/conversation-daylight-question.png) | ![High contrast](screenshots/m7/conversation-high-contrast.png) |
+| ![The question in Inbox](screenshots/m7/conversation-inbox-midnight.png) | |
 
-The phone's job thread is [`home-job-thread-phone.png`](screenshots/m7/home-job-thread-phone.png). These were taken from the app on a local server, with sample jobs, questions and files put in over its socket; the tracks and images are stand-ins.
+On the phone, at 390 px: [the presence](screenshots/m7/conversation-phone-midnight.png), [the question](screenshots/m7/conversation-phone-question-midnight.png), [a job at work](screenshots/m7/conversation-phone-jobs-midnight.png) and [Daylight](screenshots/m7/conversation-phone-daylight.png).
+
+The motion, as frames in order (left to right, then down):
+
+- [A reply](screenshots/m7/conversation-motion-reply.png): sent, thinking, checking the calendar, looking up the route, writing with the caret, then the receipt ticking in.
+- [Helpers](screenshots/m7/conversation-motion-helpers.png): three lines at work, one done, all done and folding, folded into one.
+- [Answering](screenshots/m7/conversation-motion-answer.png): the question, a track playing, the pick, settled.
+- [A card into the stage](screenshots/m7/conversation-motion-morph.png): the list's card, the stage growing out of it, in place.
+
+These were taken from the app on a local server, with a sample morning put in over its socket; the tracks, covers and video are stand-ins. The app is judged in motion: run it and send something.

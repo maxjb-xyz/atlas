@@ -367,6 +367,39 @@ export class HelperDesk {
       });
   }
 
+  /**
+   * The helpers each job Atlas owns has started (§8.3), by job: going, and ended within the hour. Its card in the
+   * thread shows them as parallel lines that fold back into one when they're done (§21.8).
+   */
+  workingFor(): Map<string, NonNullable<JobView["helpers"]>> {
+    const out = new Map<string, NonNullable<JobView["helpers"]>>();
+    const rows = this.host.sql
+      .exec<{ id: string; title: string; state: string; created_at: number; updated_at: number; source: string }>(
+        `SELECT id, title, state, created_at, updated_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.step_of') IS NOT NULL AND (state = 'running' OR updated_at > ?) ORDER BY created_at`,
+        Date.now() - 60 * 60_000,
+      )
+      .toArray();
+    for (const r of rows) {
+      const detail = (JSON.parse(r.source) as { detail?: { step_of?: string; helper_run?: string; research?: boolean } }).detail;
+      if (!detail?.step_of) continue;
+      const running = r.state === "running" || r.state === "scheduled";
+      const run = detail.helper_run;
+      const read = run ? lookedAt(this.host.sql, run) : null;
+      out.set(detail.step_of, [
+        ...(out.get(detail.step_of) ?? []),
+        {
+          id: r.id,
+          title: r.title,
+          state: running ? "running" : (r.state as JobView["state"]),
+          status: running ? ((detail.research ? read : null) ?? this.#status.get(r.id) ?? null) : read,
+          started_at: r.created_at,
+          ...(running ? {} : { ended_at: r.updated_at }),
+        },
+      ]);
+    }
+    return out;
+  }
+
   #outcomeOf(id: string): JobOutcome | null {
     const row = this.host.sql
       .exec<{ body: string }>(`SELECT body FROM log WHERE kind = 'job.result' AND json_extract(body, '$.item_id') = ? LIMIT 1`, id)

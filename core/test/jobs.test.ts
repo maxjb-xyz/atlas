@@ -390,4 +390,29 @@ describe("helpers", () => {
       );
     });
   });
+
+  it("working for a job Atlas owns show on that job's card: going, and ended within the hour", async () => {
+    await runInDurableObject(fresh(), async (_agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      const desk = testDesk(sql);
+      const helper = (title: string, detail: Record<string, string>) =>
+        createItem(sql, { kind: "job", title, due_at: Date.now(), state: "running", source: { via: "chat", detail } });
+      helper("Laptops: Reviews", { step_of: "job-1", brief: "Read the reviews." });
+      const prices = helper("Laptops: Prices", { step_of: "job-1", brief: "Read the prices." });
+      helper("Video: Tracks", { step_of: "job-2", brief: "Find tracks." });
+      helper("Riverside notes", { brief: "The owner's own helper." });
+      const old = helper("Laptops: Last week", { step_of: "job-1", brief: "Long done." });
+      sql.exec(`UPDATE agenda SET state = 'done' WHERE id = ?`, prices.id);
+      sql.exec(`UPDATE agenda SET state = 'done', updated_at = ? WHERE id = ?`, Date.now() - 2 * 3600_000, old.id);
+
+      const by = desk.workingFor();
+      expect([...by.keys()].sort()).toEqual(["job-1", "job-2"]);
+      const lines = by.get("job-1")!.map((h) => [h.title, h.state, h.ended_at != null]);
+      expect(lines.sort()).toEqual([
+        ["Laptops: Prices", "done", true],
+        ["Laptops: Reviews", "running", false],
+      ]);
+    });
+  });
 });

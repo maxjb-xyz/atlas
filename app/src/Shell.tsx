@@ -8,7 +8,20 @@ import type { Atlas } from "./connection";
 import { jobNow, liveJobs } from "./jobs";
 import { Markdown } from "./Markdown";
 import { openOnStage, type Shown, shownFrom, StageCard } from "./StageViews";
-import { AreaChip, AreaDot, areaColor, AsciiDiamond, Diamond, Icon, type IconName, initials, type Place, shortDay, useDismiss } from "./ui";
+import {
+  AreaChip,
+  AreaDot,
+  areaColor,
+  AsciiDiamond,
+  Diamond,
+  Icon,
+  LiveMark,
+  type IconName,
+  initials,
+  type Place,
+  shortDay,
+  useDismiss,
+} from "./ui";
 
 /** The eight places, in three groups: what's yours today, what Atlas knows and can do, and what it did. */
 export const PLACES: Array<{ id: Place; label: string; icon: IconName; gap?: boolean }> = [
@@ -365,8 +378,19 @@ export function Composer({
     >
       {/* On its own, the field is the box; with an exchange above it, the console's edge shows it. */}
       {busy && !sent && <BusyEdge />}
-      <span className="lead">
-        <Diamond size={16} />
+      <span className="lead mark-lead">
+        <LiveMark
+          size={18}
+          state={
+            atlas.inCall
+              ? atlas.voice.status === "listening" || atlas.voice.status === "thinking" || atlas.voice.status === "speaking"
+                ? atlas.voice.status
+                : "idle"
+              : busy
+                ? "thinking"
+                : "idle"
+          }
+        />
       </span>
       <label className="sr" htmlFor="say">
         Message {s.view?.settings.assistant_name ?? "Atlas"}
@@ -565,36 +589,62 @@ function Exchange({ atlas, runId, asked, onClose }: { atlas: Atlas; runId: strin
   );
 }
 
-export function Receipt({ row, atlas, undone, onOpen }: { row: LogRow; atlas: Atlas; undone: boolean; onOpen?: () => void }) {
-  const receipt = row.body.receipt as { text: string; undo?: unknown } | undefined;
+/**
+ * A receipt for one thing Atlas did (§21.1): a mono chip whose check ticks in,
+ * with Undo or Review inline. Tapped, it unfolds into its full view on the stage.
+ */
+export function Receipt({
+  row,
+  atlas,
+  undone,
+  onOpen,
+}: {
+  row: LogRow;
+  atlas: Atlas;
+  undone: boolean;
+  onOpen?: (e?: React.MouseEvent<HTMLElement>) => void;
+}) {
+  const receipt = row.body.receipt as { text: string; undo?: unknown; approval?: string; link?: string } | undefined;
   if (!receipt) return null;
   const bad = row.body.ok === false;
+  const waiting = receipt.approval != null && atlas.state.inbox?.some((i) => i.id === receipt.approval);
   return (
-    <span className={`receipt ${bad ? "bad" : ""}`}>
+    <span className={`receipt ${bad ? "bad" : ""} ${waiting ? "waiting" : ""} ${undone ? "undone" : ""}`}>
       <span className="tick" aria-hidden>
-        {bad ? "×" : "✓"}
+        {bad ? (
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <path d="M2 2l6 6M8 2l-6 6" />
+          </svg>
+        ) : waiting ? (
+          <i className="sq-ac" />
+        ) : (
+          <svg width="11" height="10" viewBox="0 0 11 10">
+            <path d="M1.5 5.2 4.3 8 9.6 1.8" />
+          </svg>
+        )}
       </span>
       {onOpen ? (
-        <button className="open" onClick={onOpen} title="Open on the stage">
+        <button className="open" onClick={(e) => onOpen(e)} title={receipt.text}>
           {receipt.text}
         </button>
       ) : (
-        <span>{receipt.text}</span>
+        <span className="open" title={receipt.text}>
+          {receipt.text}
+        </span>
       )}
-      {undone && <span className="lab">Undone</span>}
-      {(receipt as { approval?: string }).approval &&
-        atlas.state.inbox?.some((i) => i.id === (receipt as { approval?: string }).approval) &&
+      {undone && <span className="r-act off">Undone</span>}
+      {waiting &&
         (onOpen ? (
-          <button className="link" onClick={onOpen}>
+          <button className="r-act" onClick={(e) => onOpen(e)}>
             Review
           </button>
         ) : (
-          <a className="link" href="#/inbox">
+          <a className="r-act" href="#/inbox">
             Review
           </a>
         ))}
       {receipt.undo != null && !undone && (
-        <button className="link" onClick={() => atlas.send({ type: "atlas.undo", log_id: row.id })}>
+        <button className="r-act" onClick={() => atlas.send({ type: "atlas.undo", log_id: row.id })}>
           Undo
         </button>
       )}

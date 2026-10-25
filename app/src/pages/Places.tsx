@@ -188,7 +188,7 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
 function JobQuestion({ atlas, item }: { atlas: Atlas; item: InboxItem }) {
   return (
     <div className="rise inbox-question" onClick={(e) => e.stopPropagation()}>
-      <QuestionBody atlas={atlas} q={questionFromItem(item)} open title={false} />
+      <QuestionBody atlas={atlas} q={questionFromItem(item)} open title={false} selection={false} />
     </div>
   );
 }

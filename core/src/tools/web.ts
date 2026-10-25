@@ -74,7 +74,7 @@ export const webFetch = defineTool({
         ...(p.links ? { links: p.links } : {}),
         untrusted: UNTRUSTED,
       },
-      receipt: { text: `Read · ${p.title || hostOf(p.url)}`.slice(0, 120) },
+      receipt: { text: `Read · ${p.title || hostOf(p.url)}`.slice(0, 120), link: p.url },
     };
   },
 });

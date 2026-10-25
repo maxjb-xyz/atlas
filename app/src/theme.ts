@@ -34,6 +34,7 @@ export const TOKENS = [
   "tx2",
   "tx3",
   "ac",
+  "actx",
   "acs",
   "dot",
   "btn",

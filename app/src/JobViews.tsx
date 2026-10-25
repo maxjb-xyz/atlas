@@ -8,8 +8,8 @@ import type { FileRef, InboxItem, JobView, LogRow } from "../../core/src/protoco
 import type { Atlas } from "./connection";
 import { jobNow } from "./jobs";
 import { Markdown } from "./Markdown";
-import { useDetail } from "./theme";
-import { clock, Diamond, Empty, Icon, Sheet, shortDay, stopClick, useNow } from "./ui";
+import { stillMotion, useDetail } from "./theme";
+import { clock, Diamond, elapsed, Empty, Icon, morphOrigin, Selected, Sheet, shortDay, stopClick, took, useNow } from "./ui";
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
@@ -56,59 +56,108 @@ export function filesOf(v: unknown): Shown[] {
 const sizeOf = (n?: number) =>
   n == null ? "" : n < 1_000 ? `${n} B` : n < 1_000_000 ? `${Math.round(n / 1_000)} KB` : `${(n / 1_000_000).toFixed(1)} MB`;
 
+const kindOf = (f: Shown) =>
+  f.url == null
+    ? "doc"
+    : f.type.startsWith("audio/")
+      ? "audio"
+      : f.type.startsWith("image/")
+        ? "image"
+        : f.type.startsWith("video/")
+          ? "video"
+          : "doc";
+
 /** Files as they're best taken in: tracks to play, images and video to look at, the rest as chips that open. */
 export function Files({ files }: { files: Shown[] }) {
   if (!files.length) return null;
-  const playable = (f: Shown) =>
-    f.url != null && (f.type.startsWith("audio/") || f.type.startsWith("image/") || f.type.startsWith("video/"));
-  const media = files.filter(playable);
-  const rest = files.filter((f) => !playable(f));
-  const images = media.filter((f) => f.type.startsWith("image/"));
+  const tracks = files.filter((f) => kindOf(f) === "audio");
+  const images = files.filter((f) => kindOf(f) === "image");
+  const videos = files.filter((f) => kindOf(f) === "video");
+  const rest = files.filter((f) => kindOf(f) === "doc");
   return (
     <div className="files">
-      {media
-        .filter((f) => f.type.startsWith("audio/"))
-        .map((f, i) => (
-          <AudioPlayer key={f.id} file={f} n={i + 1} />
-        ))}
+      {tracks.length > 0 && (
+        <div className="tracks">
+          {tracks.map((f, i) => (
+            <AudioPlayer key={f.id} file={f} n={tracks.length > 1 ? i + 1 : undefined} />
+          ))}
+        </div>
+      )}
       {images.length > 0 && (
         <div className={`file-images n${Math.min(images.length, 3)}`}>
           {images.map((f) => (
-            <a key={f.id} href={f.url!} target="_blank" rel="noreferrer" className="file-image" title={f.name}>
+            <a key={f.id} href={f.url!} target="_blank" rel="noreferrer" className="file-image" title={f.name} onClick={stopClick}>
               <img src={f.url!} alt={f.name} loading="lazy" />
+              <span className="fi-name mono">{f.name}</span>
             </a>
           ))}
         </div>
       )}
-      {media
-        .filter((f) => f.type.startsWith("video/"))
-        .map((f) => (
-          <video key={f.id} className="file-video" src={f.url!} controls preload="metadata" />
-        ))}
+      {videos.map((f) => (
+        <figure key={f.id} className="file-video">
+          <video src={f.url!} controls preload="metadata" playsInline />
+          <figcaption className="mono">
+            <span className="clip">{f.name}</span>
+            {f.size != null && <span>{sizeOf(f.size)}</span>}
+          </figcaption>
+        </figure>
+      ))}
       {rest.length > 0 && <FileChips files={rest} />}
     </div>
   );
 }
 
+const docMark = (f: Shown) => (f.name.split(".").pop() ?? "").slice(0, 4).toUpperCase() || "FILE";
+
 export function FileChips({ files, max }: { files: Shown[]; max?: number }) {
   const shown = max ? files.slice(0, max) : files;
   return (
     <div className="file-chips">
-      {shown.map((f) =>
-        f.url ? (
-          <a key={f.id} className="file-chip" href={f.url} target="_blank" rel="noreferrer" title={f.name} onClick={stopClick}>
-            <Icon name={f.type.startsWith("audio/") ? "play" : "file"} size={12} />
-            <span className="clip">{f.name}</span>
-            {f.size != null && <span className="faint">{sizeOf(f.size)}</span>}
+      {shown.map((f) => (
+        <a
+          key={f.id}
+          className="file-chip"
+          href={f.url ?? "#/library"}
+          target={f.url ? "_blank" : undefined}
+          rel="noreferrer"
+          title={f.url ? f.name : `${f.name}, in Library`}
+          onClick={stopClick}
+        >
+          <span className="fc-ext mono">{docMark(f)}</span>
+          <span className="clip">{f.name}</span>
+          {f.size != null && <span className="faint mono fc-size">{sizeOf(f.size)}</span>}
+        </a>
+      ))}
+      {max && files.length > max && <span className="file-chip more">+{files.length - max}</span>}
+    </div>
+  );
+}
+
+/** What a job has made, as small previews on its card: images, tracks with their shape, a video's first frame, documents. */
+function MadeSoFar({ files }: { files: Shown[] }) {
+  const media = files.filter((f) => kindOf(f) !== "doc").slice(0, 6);
+  const docs = files.filter((f) => kindOf(f) === "doc");
+  return (
+    <div className="made" onClick={stopClick}>
+      {media.map((f) =>
+        kindOf(f) === "audio" ? (
+          <AudioPlayer key={f.id} file={f} mini />
+        ) : kindOf(f) === "image" ? (
+          <a key={f.id} className="made-img" href={f.url!} target="_blank" rel="noreferrer" title={f.name}>
+            <img src={f.url!} alt={f.name} loading="lazy" />
           </a>
         ) : (
-          <a key={f.id} className="file-chip" href="#/library" title={`${f.name}, in Library`} onClick={stopClick}>
-            <Icon name="file" size={12} />
-            <span className="clip">{f.name}</span>
+          <a key={f.id} className="made-vid" href={f.url!} target="_blank" rel="noreferrer" title={f.name}>
+            <video src={`${f.url!}#t=0.5`} preload="metadata" muted playsInline />
+            <span className="made-play" aria-hidden>
+              <svg width="10" height="10" viewBox="0 0 12 12">
+                <path d="M3 1.6v8.8a.5.5 0 0 0 .76.43l7.1-4.4a.5.5 0 0 0 0-.86l-7.1-4.4A.5.5 0 0 0 3 1.6z" fill="currentColor" />
+              </svg>
+            </span>
           </a>
         ),
       )}
-      {max && files.length > max && <span className="file-chip more">+{files.length - max}</span>}
+      {docs.length > 0 && <FileChips files={docs} max={media.length ? 2 : 4} />}
     </div>
   );
 }
@@ -127,13 +176,13 @@ function bars(id: string, n: number): number[] {
 
 const mmss = (s: number) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00");
 
-/** A track to listen to, played in place. One plays at a time. */
-export function AudioPlayer({ file, n }: { file: Shown; n?: number }) {
+/** A track to listen to, played in place; `mini` is the small one on a job's card. One plays at a time. */
+export function AudioPlayer({ file, n, mini }: { file: Shown; n?: number; mini?: boolean }) {
   const el = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [t, setT] = useState(0);
   const [d, setD] = useState(0);
-  const shape = bars(file.id, 56);
+  const shape = bars(file.id, mini ? 22 : 72);
   useEffect(() => {
     const other = (e: Event) => {
       if ((e as CustomEvent).detail !== el.current) el.current?.pause();
@@ -158,7 +207,7 @@ export function AudioPlayer({ file, n }: { file: Shown; n?: number }) {
   };
   const at = d ? t / d : 0;
   return (
-    <div className={`player ${playing ? "on" : ""}`} onClick={stopClick}>
+    <div className={`player ${mini ? "mini" : ""} ${playing ? "on" : ""}`} onClick={stopClick} title={mini ? file.name : undefined}>
       <button className="play" onClick={toggle} aria-label={playing ? `Pause ${file.name}` : `Play ${file.name}`}>
         {playing ? (
           <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
@@ -172,17 +221,20 @@ export function AudioPlayer({ file, n }: { file: Shown; n?: number }) {
         )}
       </button>
       <div className="pl-body">
-        <span className="pl-name">
-          {n != null && <span className="mono faint">{String(n).padStart(2, "0")}</span>}
-          <span className="clip">{file.name}</span>
-        </span>
+        {!mini && (
+          <span className="pl-name">
+            {n != null && <span className="mono faint">{String(n).padStart(2, "0")}</span>}
+            <span className="clip">{file.name.replace(/\.[a-z0-9]{2,4}$/i, "")}</span>
+            <span className="mono faint pl-ext">{file.name.split(".").pop()}</span>
+          </span>
+        )}
         <div className="pl-bars" onClick={seek} role="slider" aria-label="Position" aria-valuenow={Math.round(at * 100)} tabIndex={-1}>
           {shape.map((h, i) => (
             <i key={i} className={i / shape.length < at ? "past" : ""} style={{ transform: `scaleY(${h})` }} />
           ))}
         </div>
       </div>
-      <span className="mono pl-time">{mmss(playing || t ? t : d)}</span>
+      {!mini && <span className="mono pl-time">{mmss(playing || t ? t : d)}</span>}
       <audio
         ref={el}
         src={file.url ?? undefined}
@@ -251,8 +303,26 @@ export function answerTo(atlas: Atlas, id: string): string | null {
 /** Whether a question still waits on the owner: it's in Inbox. */
 export const isOpen = (atlas: Atlas, id: string) => (atlas.state.inbox ?? []).some((i) => i.id === id);
 
-/** The question's body and its answers: the buttons, and Reply for the owner's own words. Inbox shows the same. */
-export function QuestionBody({ atlas, q, open, title = true }: { atlas: Atlas; q: QuestionData; open: boolean; title?: boolean }) {
+/**
+ * The question's body and its answers (§8.3, §21.4): Atlas's selection
+ * around it while it waits, what to look at or listen to, a button per
+ * option, and Reply for the owner's own words. Once answered, it settles and
+ * shows the choice. Inbox shows the same, without the selection: there,
+ * everything waits on the owner.
+ */
+export function QuestionBody({
+  atlas,
+  q,
+  open,
+  title = true,
+  selection = true,
+}: {
+  atlas: Atlas;
+  q: QuestionData;
+  open: boolean;
+  title?: boolean;
+  selection?: boolean;
+}) {
   const [replying, setReplying] = useState(false);
   const [text, setText] = useState("");
   const answer = answerTo(atlas, q.id);
@@ -262,58 +332,80 @@ export function QuestionBody({ atlas, q, open, title = true }: { atlas: Atlas; q
     setText("");
   };
   const waiting = open && !answer;
+  const picked = answer != null ? q.options.find((o) => o.trim().toLowerCase() === answer.trim().toLowerCase()) : undefined;
   return (
-    <div className="question">
-      {title && (
-        <span className="q-for">
-          {waiting && <span className="sq-ac" aria-hidden />}
-          {q.title}
-          {waiting ? " needs you" : ""}
-        </span>
-      )}
-      <Markdown className="said" text={q.text} />
-      {q.content && <Markdown className="q-content" text={q.content} />}
-      <Files files={q.files} />
-      {q.why && <p className="muted small">{q.why}</p>}
-      {waiting && (
-        <div className="q-options">
-          {q.options.map((o) => (
-            <button key={o} className="btn opt" onClick={() => send(o)}>
-              {o}
+    <Selected on={waiting && selection} tag={`Needs you${q.title ? ` · ${q.title}` : ""}`} className={selection ? "q-sel" : ""}>
+      <div className={`question ${waiting ? "waiting" : "settled"}`}>
+        {title && !waiting && (
+          <span className="q-for lab">
+            {q.title}
+            {answer ? " · answered" : ""}
+          </span>
+        )}
+        <Markdown className="said" text={q.text} />
+        {q.content && <Markdown className="q-content" text={q.content} />}
+        <Files files={q.files} />
+        {q.why && <p className="muted small">{q.why}</p>}
+        {q.options.length > 0 && (waiting || picked) && (
+          <div className="q-options" role="group" aria-label="Answers">
+            {q.options.map((o, i) => (
+              <button
+                key={o}
+                className={`btn opt ${picked === o ? "chosen" : ""}`}
+                onClick={() => send(o)}
+                disabled={!waiting}
+                aria-pressed={picked === o}
+              >
+                {picked === o ? (
+                  <svg className="opt-tick" width="11" height="10" viewBox="0 0 11 10" aria-hidden>
+                    <path d="M1.5 5.2 4.3 8 9.6 1.8" />
+                  </svg>
+                ) : (
+                  <span className="mono opt-n">{i + 1}</span>
+                )}
+                {o}
+              </button>
+            ))}
+            {waiting && !replying && (
+              <button className="link small q-own" onClick={() => setReplying(true)}>
+                Reply in your words
+              </button>
+            )}
+          </div>
+        )}
+        {waiting && !q.options.length && !replying && (
+          <div className="q-options">
+            <button className="btn opt" onClick={() => setReplying(true)}>
+              Reply
             </button>
-          ))}
-          {!replying && (
-            <button className="link small" onClick={() => setReplying(true)}>
-              {q.options.length ? "Reply in your words" : "Reply"}
+          </div>
+        )}
+        {waiting && replying && (
+          <form
+            className="q-reply rise"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (text.trim()) send(text.trim());
+            }}
+          >
+            <input autoFocus value={text} placeholder="Your answer" onChange={(e) => setText(e.target.value)} />
+            <button className="btn primary" type="submit" disabled={!text.trim()}>
+              Send
             </button>
-          )}
-        </div>
-      )}
-      {waiting && replying && (
-        <form
-          className="q-reply rise"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (text.trim()) send(text.trim());
-          }}
-        >
-          <input autoFocus value={text} placeholder="Your answer" onChange={(e) => setText(e.target.value)} />
-          <button className="btn primary" type="submit" disabled={!text.trim()}>
-            Send
-          </button>
-          <button className="btn" type="button" onClick={() => setReplying(false)}>
-            Cancel
-          </button>
-        </form>
-      )}
-      {answer && (
-        <div className="q-answer">
-          <span className="faint small">You answered</span>
-          <span className="bubble">{answer}</span>
-        </div>
-      )}
-      {!open && !answer && atlas.state.inbox != null && <p className="faint small">This doesn't need you any more.</p>}
-    </div>
+            <button className="btn" type="button" onClick={() => setReplying(false)}>
+              Cancel
+            </button>
+          </form>
+        )}
+        {answer && !picked && (
+          <div className="q-answer">
+            <span className="lab">You answered</span>
+            <span className="bubble">{answer}</span>
+          </div>
+        )}
+        {!open && !answer && atlas.state.inbox != null && <p className="faint small">This doesn't need you any more.</p>}
+      </div>
+    </Selected>
   );
 }
 
@@ -322,10 +414,9 @@ export function ResultBody({ row }: { row: LogRow }) {
   const b = row.body;
   const failed = b.state === "failed";
   return (
-    <div className="question">
-      <span className="q-for">
-        {str(b.title) || "A job"}
-        {failed ? " didn't finish" : " is done"}
+    <div className={`question result ${failed ? "failed" : "done"}`}>
+      <span className={`q-for lab ${failed ? "err" : "ok"}`}>
+        {failed ? "×" : "✓"} {str(b.title) || "A job"} · {failed ? "didn't finish" : "done"}
       </span>
       <Markdown className="said" text={str(b.text) || str(b.error) || (failed ? "It didn't finish." : "Done.")} />
       <Files files={filesOf(b.files)} />
@@ -335,8 +426,11 @@ export function ResultBody({ row }: { row: LogRow }) {
 
 // --- a job's card in the thread ------------------------------------------------------------------
 
-/** The state word's color: ember only when it waits on the owner (ember is rare); done is a quiet green. */
-const stateClass = (n: ReturnType<typeof jobNow>) => (n.label === "Waiting on you" ? "needs" : n.tone === "ac" ? "" : n.tone);
+/** The jobs that get a card of their own: a coding agent working for a job Atlas owns shows on that job's card. */
+export function topJobs(jobs: JobView[]): JobView[] {
+  const under = new Set(jobs.map((j) => j.owned?.coding).filter((x): x is string => x != null));
+  return jobs.filter((j) => !under.has(j.id));
+}
 
 /** What a job's card says it's doing, its latest words and its files, whatever kind of job it is. */
 function cardOf(j: JobView): { now: string | null; latest: string | null; files: Shown[] } {
@@ -353,76 +447,222 @@ function cardOf(j: JobView): { now: string | null; latest: string | null; files:
   return { now: j.status, latest: j.state !== "running" ? j.result : null, files: [] };
 }
 
+/** One of the parallel lines on a job's card: a helper reading for it, or the coding agent building for it. */
+interface Line {
+  id: string;
+  title: string;
+  running: boolean;
+  failed: boolean;
+  status: string | null;
+}
+
+function linesOf(job: JobView, jobs: JobView[]): Line[] {
+  const helpers = (job.helpers ?? []).map((h): Line => ({
+    id: h.id,
+    title: h.title.startsWith(`${job.title}: `) ? h.title.slice(job.title.length + 2) : h.title,
+    running: h.state === "running",
+    failed: h.state === "failed",
+    status: h.status,
+  }));
+  const coding = job.owned?.coding ? jobs.find((j) => j.id === job.owned!.coding) : undefined;
+  if (coding?.coding)
+    helpers.push({
+      id: coding.id,
+      title: `${coding.coding.agent} · ${coding.coding.repo}`,
+      running: coding.state === "running",
+      failed: coding.state === "failed",
+      status: coding.status,
+    });
+  return helpers;
+}
+
+/**
+ * Helpers fanning out as parallel progress lines (§21.8), each with what it's
+ * reading, then folding back into one line once they're all done.
+ */
+function Lines({ lines }: { lines: Line[] }) {
+  const done = lines.every((l) => !l.running);
+  const [folding, setFolding] = useState(false);
+  const was = useRef(done);
+  useEffect(() => {
+    if (done && !was.current && !stillMotion()) {
+      setFolding(true);
+      const t = setTimeout(() => setFolding(false), 620);
+      was.current = done;
+      return () => clearTimeout(t);
+    }
+    was.current = done;
+  }, [done]);
+  if (done && !folding) {
+    const failed = lines.filter((l) => l.failed).length;
+    return (
+      <p className="jc-fold mono rise">
+        <span className={failed ? "err" : "ok"}>{failed ? "×" : "✓"}</span>
+        <span className="clip">
+          {lines.length === 1 ? `${lines[0]!.title} is done` : `${lines.length} helpers done`}
+          {failed ? `, ${failed} didn't finish` : ""}
+        </span>
+      </p>
+    );
+  }
+  return (
+    <div className={`jc-lines ${folding ? "folding" : ""}`}>
+      {lines.map((l, i) => (
+        <div key={l.id} className={`jl ${l.running ? "on" : l.failed ? "bad" : "done"}`} style={{ "--i": i } as React.CSSProperties}>
+          <span className="jl-mark mono" aria-hidden>
+            {l.running ? <span className="spin" /> : l.failed ? "×" : "✓"}
+          </span>
+          <span className="jl-name clip">{l.title}</span>
+          <span className="jl-track" aria-hidden>
+            <i />
+          </span>
+          <span className="jl-status mono clip">{l.status ?? (l.running ? "Starting" : l.failed ? "Didn't finish" : "Done")}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const helpersWord = (lines: Line[]) => {
+  const on = lines.filter((l) => l.running).length;
+  return on ? `${on} of ${lines.length} helpers at work` : "";
+};
+
+/** "Needs you · 3 tracks": what the question brings, in a word, for the tag on its job's card. */
+function bringsWord(item: InboxItem | undefined): string {
+  const files = filesOf(item?.job?.files);
+  const n = (k: string) => files.filter((f) => kindOf(f) === k).length;
+  if (n("audio") > 1) return `${n("audio")} tracks to hear`;
+  if (n("image") > 1) return `${n("image")} images to see`;
+  if (n("video")) return "a cut to watch";
+  const o = item?.job?.options.length ?? 0;
+  return o > 1 ? `${o} options` : "a question";
+}
+
+/**
+ * A job's card (§21.4): its title and state, what Atlas is doing on it in
+ * mono only while something is, how long it has been at it, its helpers as
+ * parallel lines, its latest words, and what it has made as real previews.
+ * Waiting on the owner it carries Atlas's selection in ember; done, it's calm;
+ * stopped, it's muted. It updates in place.
+ */
 export function JobCard({ atlas, job, onOpen }: { atlas: Atlas; job: JobView; onOpen: () => void }) {
-  const now = useNow(30_000);
+  const now = useNow(1000);
   const { at } = useDetail();
   const shown = jobNow(job, now);
   const card = cardOf(job);
   const o = job.owned;
   const working = o ? job.activity === "working" && shown.live : shown.live;
   const needs = shown.label === "Waiting on you";
+  const running = job.state === "running";
+  const lines = linesOf(job, atlas.state.jobs);
   const spent = o?.spent;
+  const question = o?.question ? (atlas.state.inbox ?? []).find((i) => i.id === o.question) : undefined;
+  const moved = job.moved_at ?? job.started_at;
+  const state =
+    job.state === "done"
+      ? "done"
+      : job.state === "failed"
+        ? "failed"
+        : job.state === "cancelled"
+          ? "stopped"
+          : needs
+            ? "needs"
+            : working
+              ? "working"
+              : shown.label === "Stalled"
+                ? "stalled"
+                : "paused";
+  const time =
+    state === "working"
+      ? elapsed(now - job.started_at)
+      : state === "needs" || state === "stalled" || state === "paused"
+        ? took(now - moved)
+        : state === "done"
+          ? took(moved - job.started_at)
+          : "";
+  const meta = at("detailed")
+    ? [
+        spent && `${spent.turns} ${spent.turns === 1 ? "turn" : "turns"}`,
+        spent && spent.tokens > 0 && `${spent.tokens >= 1000 ? `${Math.round(spent.tokens / 1000)}k` : spent.tokens} tokens`,
+        spent?.dollars != null && `$${spent.dollars.toFixed(2)}`,
+        job.coding && `${job.coding.agent} · ${job.coding.repo}`,
+        job.coding?.cost != null && `$${job.coding.cost.toFixed(2)}`,
+        o?.deadline && `due ${shortDay(o.deadline)}`,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
+  const open = (e: React.MouseEvent<HTMLElement>) => {
+    e.stopPropagation();
+    morphOrigin(e.currentTarget.closest(".job-card"));
+    onOpen();
+  };
   return (
-    <div
-      className={`job-card ${needs ? "needs" : ""} ${job.state !== "running" ? "ended" : ""}`}
-      // The whole card opens it; its title is the button for the keyboard and screen readers, so Stop isn't inside one.
-      onClick={onOpen}
-    >
-      <div className="jc-head">
-        <button
-          className="jc-title"
-          title={`Open ${job.title}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpen();
-          }}
-        >
-          {job.title}
-        </button>
-        <span className={`jc-state ${stateClass(shown)}`}>
-          {needs && <span className="sq-ac" aria-hidden />}
-          {shown.label}
-        </span>
-        <span className="grow" />
-        {job.state === "running" && (
-          <button
-            className="btn sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              atlas.send({ type: "atlas.job.stop", id: job.id });
-            }}
-          >
-            Stop
+    <Selected on={needs} handles={false} tag={`Needs you · ${bringsWord(question)}`} className="jc-sel">
+      <div
+        className={`job-card s-${state}`}
+        // The whole card opens it; its title is the button for the keyboard and screen readers, so Stop isn't inside one.
+        onClick={open}
+      >
+        <div className="jc-head">
+          <button className="jc-title" title={`Open ${job.title}`} onClick={open}>
+            {job.title}
           </button>
+          <span className="jc-state mono">
+            {state === "done" && <span className="ok">✓</span>}
+            {state === "needs" && <span className="sq-ac" aria-hidden />}
+            <span>{state === "working" ? "Working" : state === "needs" ? "Your turn" : state === "done" ? "Done" : shown.label}</span>
+            {time && <span className="jc-time">{time}</span>}
+          </span>
+        </div>
+        {working && card.now && (
+          <p className="jc-now mono" key={card.now}>
+            <span className="spin" aria-hidden />
+            <span className="clip">{card.now}</span>
+          </p>
         )}
+        {state === "stalled" && <p className="jc-now mono err">{shown.status}</p>}
+        {lines.length > 0 && running && <Lines lines={lines} />}
+        {card.latest && (
+          <p className="jc-latest clamp" key={card.latest}>
+            {card.latest}
+          </p>
+        )}
+        {card.files.length > 0 && <MadeSoFar files={card.files} />}
+        <div className="jc-foot">
+          <span className="jc-meta mono">
+            {meta ||
+              (card.files.length
+                ? `${card.files.length} ${card.files.length === 1 ? "file" : "files"}`
+                : lines.length
+                  ? helpersWord(lines)
+                  : "")}
+          </span>
+          <span className="grow" />
+          {running && (
+            <button
+              className="jc-act"
+              onClick={(e) => {
+                e.stopPropagation();
+                atlas.send({ type: "atlas.job.stop", id: job.id });
+              }}
+            >
+              Stop
+            </button>
+          )}
+          <span className="jc-act jc-open" aria-hidden>
+            Open
+            <Icon name="right" size={12} />
+          </span>
+        </div>
       </div>
-      {working && card.now && (
-        <p className="jc-now">
-          <span className="mono spin" aria-hidden />
-          <span className="clip">{card.now}</span>
-        </p>
-      )}
-      {shown.label === "Stalled" && <p className="jc-now err">{shown.status}</p>}
-      {card.latest && <p className="jc-latest clamp">{card.latest}</p>}
-      {card.files.length > 0 && <FileChips files={card.files} max={4} />}
-      {at("detailed") && (o || job.coding) && (
-        <p className="jc-meta mono">
-          {[
-            spent && `${spent.turns} ${spent.turns === 1 ? "turn" : "turns"}`,
-            spent && spent.tokens > 0 && `${spent.tokens >= 1000 ? `${Math.round(spent.tokens / 1000)}k` : spent.tokens} tokens`,
-            spent?.dollars != null && `$${spent.dollars.toFixed(2)}`,
-            o?.coding && `${o.coding} is building`,
-            job.coding && `${job.coding.agent} · ${job.coding.repo}`,
-            job.coding?.cost != null && `$${job.coding.cost.toFixed(2)}`,
-            o?.deadline && `due ${shortDay(o.deadline)}`,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-        </p>
-      )}
-    </div>
+    </Selected>
   );
 }
+
+/** The state word's color in a job's own thread: ember only when it waits on the owner (ember is rare); done is a quiet green. */
+const stateClass = (n: ReturnType<typeof jobNow>) => (n.label === "Waiting on you" ? "needs" : n.tone === "ac" ? "" : n.tone);
 
 // --- a job's own thread, on the stage --------------------------------------------------------------
 
@@ -466,10 +706,15 @@ export function JobThread({ atlas, job }: { atlas: Atlas; job: JobView }) {
           )}
         </div>
         {working && o?.now && (
-          <p className="jc-now" style={{ marginTop: -8, marginBottom: 14 }}>
-            <span className="mono spin" aria-hidden />
+          <p className="jc-now mono" style={{ marginTop: -8, marginBottom: 14 }}>
+            <span className="spin" aria-hidden />
             <span>{o.now}</span>
           </p>
+        )}
+        {job.state === "running" && linesOf(job, atlas.state.jobs).length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <Lines lines={linesOf(job, atlas.state.jobs)} />
+          </div>
         )}
         {at("detailed") && o && (
           <details className="jt-notes">
@@ -560,7 +805,7 @@ function JobRow({ atlas, row }: { atlas: Atlas; row: LogRow }) {
     );
   if (row.kind === "job.question")
     return (
-      <div className="msg atlas">
+      <div className="msg atlas asks">
         <span className="mark">
           <Diamond size={13} />
         </span>
