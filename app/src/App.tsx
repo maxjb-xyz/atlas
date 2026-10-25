@@ -11,7 +11,7 @@ import { Abilities } from "./pages/Abilities";
 import { People } from "./pages/People";
 import { MOVED, SettingsPage } from "./settings";
 import { Setup } from "./Setup";
-import { Palette, Sidebar, TabBar, Toolbar, Transcript } from "./Shell";
+import { openConversation, Palette, Sidebar, TabBar, Toolbar } from "./Shell";
 import { areaColor, AsciiDiamond, Diamond, ScopeColor, useRoute } from "./ui";
 
 type Session = {
@@ -196,21 +196,11 @@ function Signed({ agent }: { agent: string }) {
 
 function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
   const [place, detail, go] = useRoute();
-  const [transcript, setTranscript] = useState(false);
   const [palette, setPalette] = useState(false);
 
   useEffect(() => {
     if (atlas.voice.connected) atlas.send({ type: "atlas.inbox" });
   }, [atlas.voice.connected]);
-
-  // Going somewhere, such as opening a view on the stage from the transcript, closes the transcript.
-  useEffect(() => setTranscript(false), [place, detail]);
-
-  useEffect(() => {
-    const open = () => setTranscript(true);
-    window.addEventListener("atlas:transcript", open);
-    return () => window.removeEventListener("atlas:transcript", open);
-  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -220,15 +210,13 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
         setPalette((p) => !p);
         return;
       }
+      // ⌘J: the conversation, from anywhere, ready to type.
       if (mod && e.key.toLowerCase() === "j") {
         e.preventDefault();
-        setTranscript((t) => !t);
+        openConversation();
         return;
       }
-      if (e.key === "Escape") {
-        setPalette(false);
-        setTranscript(false);
-      }
+      if (e.key === "Escape") setPalette(false);
       if (e.code !== "Space" || e.repeat) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.closest("input, textarea, select, button, [contenteditable]") || t.isContentEditable)) return;
@@ -270,7 +258,7 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
               </button>
             </div>
           )}
-          {place === "home" && <Home atlas={atlas} detail={detail} go={sub} onTranscript={() => setTranscript(true)} />}
+          {place === "home" && <Home atlas={atlas} detail={detail} go={sub} place={(p) => go(p)} />}
           {place === "inbox" && <Inbox atlas={atlas} />}
           {place === "agenda" && <Agenda atlas={atlas} />}
           {place === "automations" && <Automations atlas={atlas} detail={detail} go={sub} />}
@@ -282,7 +270,6 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
           {place === "pair" && <Pair atlas={atlas} code={detail} />}
         </div>
         <TabBar atlas={atlas} place={place} />
-        {transcript && <Transcript atlas={atlas} onClose={() => setTranscript(false)} />}
         {palette && <Palette atlas={atlas} go={go} onClose={() => setPalette(false)} />}
       </div>
     </ScopeColor.Provider>

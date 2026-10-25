@@ -1,6 +1,6 @@
 // The shell (§21.1): the sidebar with the eight places (§21.2), the toolbar
-// (scope switcher, jobs, Talk, search), one stage, and the console on Home or
-// the composer on every other page. No side panes.
+// (scope switcher, jobs, Talk, search), and the composer. Home is the
+// conversation; every other page has the composer at its foot. No side panes.
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { LogRow, RecordView } from "../../core/src/protocol";
@@ -8,21 +8,7 @@ import type { Atlas } from "./connection";
 import { jobNow, liveJobs } from "./jobs";
 import { Markdown } from "./Markdown";
 import { openOnStage, type Shown, shownFrom, StageCard } from "./StageViews";
-import { Thread } from "./Thread";
-import {
-  AreaChip,
-  AreaDot,
-  areaColor,
-  AsciiDiamond,
-  Diamond,
-  Icon,
-  type IconName,
-  initials,
-  type Place,
-  shortDay,
-  useDismiss,
-  useNow,
-} from "./ui";
+import { AreaChip, AreaDot, areaColor, AsciiDiamond, Diamond, Icon, type IconName, initials, type Place, shortDay, useDismiss } from "./ui";
 
 /** The eight places, in three groups: what's yours today, what Atlas knows and can do, and what it did. */
 export const PLACES: Array<{ id: Place; label: string; icon: IconName; gap?: boolean }> = [
@@ -271,19 +257,25 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
                   className="item"
                   style={{ flexDirection: "column", alignItems: "stretch", gap: 3 }}
                   onClick={() => {
-                    go("home", `jobs:${j.id}`);
+                    go("home", `job:${j.id}`);
                     setJobsOpen(false);
                   }}
                 >
                   <span style={{ fontWeight: 500 }}>{j.title}</span>
                   <span className="row small" style={{ gap: 10 }}>
                     <span className={`${jobNow(j).tone} mono`}>{jobNow(j).label}</span>
-                    <span className="muted grow">{j.state === "running" ? jobNow(j).status : (j.status ?? `${j.steps} lookups`)}</span>
+                    <span className="muted grow clip">
+                      {j.owned && j.activity === "working" && j.owned.now
+                        ? j.owned.now
+                        : j.state === "running"
+                          ? jobNow(j).status
+                          : (j.status ?? `${j.steps} lookups`)}
+                    </span>
                     <span className="mono faint">{shortDay(j.started_at)}</span>
                   </span>
                 </button>
               ))}
-              <div className="foot">Click one to watch it on the stage. Finished work lands in Inbox.</div>
+              <div className="foot">Open one for everything I've said and done on it.</div>
             </div>
           )}
         </div>
@@ -303,12 +295,15 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
 
 // --- talking to Atlas -----------------------------------------------------------------
 
-/** Opens the full transcript from anywhere (⌘J does the same). */
-export const openTranscript = () => window.dispatchEvent(new CustomEvent("atlas:transcript"));
+/** Goes to the conversation on Home, from anywhere (⌘J does the same). */
+export const openConversation = () => {
+  location.hash = "/home";
+  setTimeout(() => document.getElementById("say")?.focus(), 50);
+};
 
 /**
- * The composer. Off Home, where the console shows the latest exchange, it
- * shows the one sent from it (`reply`), so what you asked and Atlas's
+ * The composer. Off Home, where the conversation isn't in view, it shows
+ * the exchange sent from it (`reply`), so what you asked and Atlas's
  * answer stay in view on the page you asked from.
  */
 export function Composer({
@@ -368,8 +363,8 @@ export function Composer({
         submit();
       }}
     >
-      {/* On its own, the field is the box; inside a console, the console's edge shows it. */}
-      {busy && reply && !sent && <BusyEdge />}
+      {/* On its own, the field is the box; with an exchange above it, the console's edge shows it. */}
+      {busy && !sent && <BusyEdge />}
       <span className="lead">
         <Diamond size={16} />
       </span>
@@ -419,7 +414,7 @@ export function Composer({
   return (
     <div className="console">
       {busy && <BusyEdge />}
-      <Exchange atlas={atlas} runId={sent.run_id} asked={sent.text} onTranscript={openTranscript} onClose={() => setSent(null)} />
+      <Exchange atlas={atlas} runId={sent.run_id} asked={sent.text} onClose={() => setSent(null)} />
       {form}
     </div>
   );
@@ -501,85 +496,24 @@ export const compose = (text: string) => window.dispatchEvent(new CustomEvent("a
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
 /**
- * The console on Home (§21.1): the last exchange, the receipts for what
- * Atlas just did, and the composer. ⌘J opens the full transcript.
- */
-export function Console({ atlas, onTranscript, onReceipt }: { atlas: Atlas; onTranscript: () => void; onReceipt: (row: LogRow) => void }) {
-  const s = atlas.state;
-  const name = s.view?.settings.assistant_name ?? "Atlas";
-  const liveRun = Object.entries(s.live).at(-1);
-  const lastIn = [...s.rows].reverse().find((r) => r.kind === "message.in");
-  const pending = s.pending.at(-1);
-  const runId = liveRun?.[0] ?? lastIn?.run_id ?? null;
-  const asked =
-    pending && !pending.run_id ? pending.text : str(s.rows.find((r) => r.kind === "message.in" && r.run_id === runId)?.body.text);
-  const { busy } = useTurn(atlas);
-  const nowMs = useNow();
-  const [closed, setClosed] = useState<string | null>(null);
-  // An exchange from more than an hour ago, or one closed, leaves Home's stage clear; the transcript keeps it.
-  const lastAt = [...s.rows].reverse().find((r) => r.kind === "message.out" || r.kind === "message.in")?.at ?? 0;
-  const key = runId ?? String(lastAt);
-  const show = busy || liveRun != null || pending != null || (nowMs - lastAt < 60 * 60_000 && closed !== key);
-  return (
-    <div className="console">
-      {busy && <BusyEdge />}
-      {show && (
-        <Exchange
-          atlas={atlas}
-          runId={runId}
-          asked={asked}
-          onTranscript={onTranscript}
-          onReceipt={onReceipt}
-          onClose={() => setClosed(key)}
-          latest
-        />
-      )}
-      <Composer atlas={atlas} placeholder={`Message ${name}`} reply={false} />
-    </div>
-  );
-}
-
-/**
  * One exchange: what the owner asked, Atlas's answer as it streams, and the
- * receipts for what it did. Home's console shows the latest; other pages show
- * the one sent from their composer, so a message never just disappears.
+ * receipts for what it did. Pages other than Home show the one sent from
+ * their composer, so a message never just disappears.
  */
-function Exchange({
-  atlas,
-  runId,
-  asked,
-  onTranscript,
-  onReceipt,
-  onClose,
-  latest = false,
-}: {
-  atlas: Atlas;
-  runId: string | null;
-  asked: string;
-  onTranscript: () => void;
-  onReceipt?: (row: LogRow) => void;
-  onClose?: () => void;
-  /** With no run yet, show the latest answer (Home); otherwise wait for this one. */
-  latest?: boolean;
-}) {
+function Exchange({ atlas, runId, asked, onClose }: { atlas: Atlas; runId: string | null; asked: string; onClose?: () => void }) {
   const s = atlas.state;
   const name = s.view?.settings.assistant_name ?? "Atlas";
-  const lastIn = [...s.rows].reverse().find((r) => r.kind === "message.in");
   const liveRun = runId ? ([runId, s.live[runId]] as const) : undefined;
-  const out = runId
-    ? s.rows.find((r) => r.kind === "message.out" && r.run_id === runId)
-    : latest
-      ? [...s.rows].reverse().find((r) => r.kind === "message.out")
-      : undefined;
+  const out = runId ? s.rows.find((r) => r.kind === "message.out" && r.run_id === runId) : undefined;
   const receipts = runId ? s.rows.filter((r) => r.run_id === runId && r.kind === "tool.result" && r.body.receipt) : [];
   const undone = new Set(s.rows.filter((r) => r.body.undo_of).map((r) => String(r.body.undo_of)));
   const shown = receipts.map(shownFrom).filter((v): v is Shown => v != null);
   const live = liveRun?.[1];
   const failed = !live && !out && runId ? s.rows.find((r) => r.kind === "run.end" && r.run_id === runId) : undefined;
   const said = live ? live.text : str(out?.body.text);
-  const at = out?.at ?? (latest ? lastIn?.at : undefined);
+  const at = out?.at;
   // Sent, and nothing back yet: say Atlas is on it.
-  const waiting = !latest && !said && !failed;
+  const waiting = !said && !failed;
 
   if (!(asked || said || live)) return null;
   return (
@@ -590,8 +524,8 @@ function Exchange({
           {at ? ` · ${shortDay(at)}` : ""}
         </span>
         <span className="grow" />
-        <button className="chip" onClick={onTranscript}>
-          Transcript <span className="kbd">⌘J</span>
+        <button className="chip" onClick={openConversation}>
+          In the conversation <span className="kbd">⌘J</span>
         </button>
         {onClose && (
           <button className="icon" aria-label="Close" onClick={onClose}>
@@ -619,12 +553,14 @@ function Exchange({
       {receipts.length > 0 && (
         <div className="receipts">
           {receipts.map((r) => (
-            <Receipt key={r.id} row={r} atlas={atlas} undone={undone.has(r.id)} onOpen={onReceipt ? () => onReceipt(r) : undefined} />
+            <Receipt key={r.id} row={r} atlas={atlas} undone={undone.has(r.id)} />
           ))}
         </div>
       )}
-      {/* Away from Home's stage, a view Atlas showed arrives as a card that opens it there (§21.6). */}
-      {!onReceipt && shown.map((v) => <StageCard key={v.id} atlas={atlas} shown={v} onOpen={() => openOnStage(v.id)} />)}
+      {/* Away from Home, a view Atlas showed arrives as a card that opens it on the stage there (§21.6). */}
+      {shown.map((v) => (
+        <StageCard key={v.id} atlas={atlas} shown={v} onOpen={() => openOnStage(v.id)} />
+      ))}
     </div>
   );
 }
@@ -694,24 +630,7 @@ export function VoiceStrip({ atlas }: { atlas: Atlas }) {
   );
 }
 
-// --- ⌘J and ⌘K ------------------------------------------------------------------------------
-
-export function Transcript({ atlas, onClose }: { atlas: Atlas; onClose: () => void }) {
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className="sheet rise" onClick={(e) => e.stopPropagation()}>
-        <div className="overlay-head">
-          <span className="lab">Transcript</span>
-          <span className="grow" />
-          <button className="icon" aria-label="Close" onClick={onClose}>
-            <Icon name="x" />
-          </button>
-        </div>
-        <Thread atlas={atlas} name={atlas.state.view?.settings.assistant_name ?? "Atlas"} />
-      </div>
-    </div>
-  );
-}
+// --- ⌘K ------------------------------------------------------------------------------
 
 /** ⌘K: jump to a place, find a record, or ask Atlas. */
 export function Palette({ atlas, go, onClose }: { atlas: Atlas; go: (p: Place, d?: string) => void; onClose: () => void }) {
@@ -735,14 +654,14 @@ export function Palette({ atlas, go, onClose }: { atlas: Atlas; go: (p: Place, d
       ),
       run: () => (r.type === "person" ? go("people", `person:${r.id}`) : go("library", `memory:${r.id}`)),
     })),
-    // Asked from search: the transcript opens, so the answer is in view wherever this was asked.
+    // Asked from search: the conversation opens, so the answer is in view wherever this was asked.
     ...(q.trim()
       ? [
           {
             label: <>Ask: “{q.trim()}”</>,
             run: () => {
               atlas.say(q.trim());
-              openTranscript();
+              openConversation();
             },
           },
         ]

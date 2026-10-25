@@ -129,6 +129,10 @@ export interface State {
   /** Pairing codes looked up (null: not waiting), and the answer to Pair (the device's name, or null), by code. */
   pairing: Record<string, { name: string; kind: string; platform?: string; expires: number } | null>;
   paired: Record<string, string | null>;
+  /** A job's own thread (§21.4), once asked for: its updates, questions, result and the owner's words to it, oldest first. */
+  jobThreads: Record<string, LogRow[]>;
+  /** The owner's answers sent from this app, by the question row they answer, so the question shows its answer at once. */
+  answered: Record<string, string>;
 }
 
 const initial: State = {
@@ -179,6 +183,8 @@ const initial: State = {
   senseHook: null,
   pairing: {},
   paired: {},
+  jobThreads: {},
+  answered: {},
 };
 
 type Action =
@@ -186,6 +192,7 @@ type Action =
   | { type: "look" }
   | { type: "say"; pending: Pending }
   | { type: "test"; what: string; key: string }
+  | { type: "answered"; question: string; text: string }
   | { type: "dismiss" };
 
 const TERMINAL = new Set(["replied", "deferred", "failed"]);
@@ -195,6 +202,14 @@ function mergeRows(a: LogRow[], b: LogRow[]): LogRow[] {
   for (const r of a) byId.set(r.id, r);
   for (const r of b) byId.set(r.id, r);
   return [...byId.values()].sort((x, y) => x.seq - y.seq);
+}
+
+/** The job a log row belongs to, when it's one of a job's own rows (§21.4). */
+export function jobOf(r: LogRow): string | null {
+  if (r.kind === "job.result") return typeof r.body.item_id === "string" ? r.body.item_id : null;
+  if (["job.update", "job.question", "message.in", "message.out", "settings.change"].includes(r.kind))
+    return typeof r.body.job === "string" ? r.body.job : null;
+  return null;
 }
 
 function without<T>(rec: Record<string, T>, key: string): Record<string, T> {
@@ -212,6 +227,8 @@ function reduce(s: State, a: Action): State {
       return { ...s, testKeys: { ...s.testKeys, [a.what]: a.key }, tests: without(s.tests, a.key) };
     case "dismiss":
       return { ...s, error: null };
+    case "answered":
+      return { ...s, answered: { ...s.answered, [a.question]: a.text } };
     case "look":
       return { ...s, look: "pending" };
     case "server":
@@ -258,7 +275,13 @@ function reduce(s: State, a: Action): State {
         if (r.kind === "message.in") pending = pending.filter((p) => p.run_id !== r.run_id);
       }
       const noOlder = m.older && (m.has_more === false || m.rows.length === 0) ? true : s.noOlder;
-      return { ...s, rows: mergeRows(s.rows, m.rows), live, pending, noOlder, recordsVersion };
+      // A job's own thread, once open, keeps up with what's said on it.
+      let { jobThreads } = s;
+      for (const r of m.rows) {
+        const job = jobOf(r);
+        if (job && jobThreads[job]) jobThreads = { ...jobThreads, [job]: mergeRows(jobThreads[job], [r]) };
+      }
+      return { ...s, rows: mergeRows(s.rows, m.rows), live, pending, noOlder, recordsVersion, jobThreads };
     }
     case "atlas.delta": {
       const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app" };
@@ -279,6 +302,8 @@ function reduce(s: State, a: Action): State {
       }
       return { ...s, pending, live };
     }
+    case "atlas.job.thread":
+      return { ...s, jobThreads: { ...s.jobThreads, [m.id]: mergeRows([], m.rows) } };
     case "atlas.agenda":
       return { ...s, agenda: m.agenda };
     case "atlas.view":
@@ -526,12 +551,21 @@ export function useAtlas(agent = "owner") {
     setVoice((v) => ({ ...v, error: null }));
   }, []);
 
+  /** The owner's words for a job (§21.4): an answer to one of its questions when `answers` names it, or words on its card. */
+  const jobSay = useCallback(
+    (id: string, text: string, answers?: string) => {
+      if (answers) dispatch({ type: "answered", question: answers, text });
+      send({ type: "atlas.job.say", id, text, ...(answers ? { answers } : {}) });
+    },
+    [send],
+  );
+
   const firstLook = useCallback(() => {
     dispatch({ type: "look" });
     send({ type: "atlas.setup.look" });
   }, [send]);
 
-  return { state, voice, inCall, send, say, test, toggleCall, dismiss, firstLook };
+  return { state, voice, inCall, send, say, test, toggleCall, dismiss, firstLook, jobSay };
 }
 
 export type Atlas = ReturnType<typeof useAtlas>;

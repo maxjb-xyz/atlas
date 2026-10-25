@@ -6,6 +6,7 @@ import type { Atlas } from "../connection";
 import { ApprovalCard } from "../Approval";
 import { Markdown } from "../Markdown";
 import { Composer, compose } from "../Shell";
+import { questionFromItem, QuestionBody } from "../JobViews";
 import { addDays, AreaChip, clock, dayName, Empty, pressable, Sheet, shortDay, Stage, startOfDay } from "../ui";
 import { CalendarNote, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
@@ -138,6 +139,18 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                   )}
                   {on && i.face && <FaceHandoff atlas={atlas} item={i} />}
                   {on && i.job && <JobQuestion atlas={atlas} item={i} />}
+                  {on && (i.job || i.approval || s.rows.some((r) => r.id === i.id)) && (
+                    <span className="row small" style={{ gap: 18 }}>
+                      <a className="link" href={`#/home/${encodeURIComponent(`at:${i.id}`)}`}>
+                        Show it in the conversation
+                      </a>
+                      {i.job && (
+                        <a className="link" href={`#/home/${encodeURIComponent(`job:${i.job.id}`)}`}>
+                          Open {i.job.title}
+                        </a>
+                      )}
+                    </span>
+                  )}
                   {on && !i.approval && !i.question && !i.face && !i.job && (
                     <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       <div className="panel">{i.text ? <Markdown text={i.text} /> : "No details."}</div>
@@ -168,49 +181,14 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
   );
 }
 
-/** A job's question (§8.2, §8.3): pick one of its choices, or answer in your own words (a checkpoint's edits too); the answer goes back to the job. */
+/**
+ * A job's question (§8.2, §8.3, §21.4): the same message as in the conversation, with its files and buttons, or
+ * the owner's own words. It's one thing: answered here, it's answered there.
+ */
 function JobQuestion({ atlas, item }: { atlas: Atlas; item: InboxItem }) {
-  const q = item.job!;
-  const [text, setText] = useState("");
-  const answer = (t: string) => atlas.send({ type: "atlas.job.say", id: q.id, text: t });
   return (
-    <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }} onClick={(e) => e.stopPropagation()}>
-      <p style={{ fontSize: 15 }}>{q.question}</p>
-      {q.why && <p className="muted">{q.why}</p>}
-      {q.content && (
-        <div className="card2 pad" style={{ whiteSpace: "pre-wrap", maxHeight: 360, overflow: "auto" }}>
-          {q.content}
-        </div>
-      )}
-      {q.options.length > 0 && (
-        <div className="row">
-          {q.options.map((o, n) => (
-            <button key={o} className={`btn ${n === 0 ? "primary" : ""}`} onClick={() => answer(o)}>
-              {o}
-            </button>
-          ))}
-        </div>
-      )}
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (text.trim()) answer(text.trim());
-        }}
-      >
-        <input
-          className="grow"
-          placeholder={q.options.length ? "Or say it in your words" : "Your answer, for the job"}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-        <button className="btn" type="submit" disabled={!text.trim()}>
-          Answer
-        </button>
-        <a className="btn" href={`#/home/${encodeURIComponent(`jobs:${q.id}`)}`}>
-          Open the job
-        </a>
-      </form>
+    <div className="rise inbox-question" onClick={(e) => e.stopPropagation()}>
+      <QuestionBody atlas={atlas} q={questionFromItem(item)} open title={false} />
     </div>
   );
 }

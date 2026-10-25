@@ -307,3 +307,23 @@ Hermes-style profiles split memory and settings, and you switch between them. At
 | ![Account](screenshots/m7/settings-account.png) | ![Library](screenshots/m7/library.png) |
 
 The builders are `p_abilities.py`, `p_people.py` and `p_settings.py` in [`source/builder/`](source/builder/); the screenshots were taken with its stand-in renderer (`preview.cjs`). Model names, prices and the example world's details are illustrative.
+
+## 9. Home is the conversation (stage 6b, built 2026-10-25)
+
+Built from [VISION §21.1, §21.2 and §21.4](../../VISION.md#211-the-shell-the-conversation-with-the-stage-it-opens) after the first real job, in the same look: the stage frame, one sheet, receipts, ember only for what needs you. It replaces the console docked under the stage and the ⌘J transcript.
+
+- **The thread is the sheet.** Atlas's words read large in a centered column, with the receipts for what it did small under them; the owner's words are bubbles, with their area chip; the days are marked on a dashed rule. Times show on hover.
+- **The stage opens from it,** beside the thread on a wide screen and over it on a narrow one, with a way back. Now and Week are pills at the right of the head; while the stage is open, what else is open on it sits beside them.
+- **A job is a card** under the message that asked for it: its title and state, what Atlas is doing on it only while it is (with the spinner), its latest words, its files, and Stop. At Detailed it adds turns, tokens, cost and the coding agent. Tapping it opens its own thread on the stage, with a composer that goes straight to the job.
+- **A question is a message** with what to look at or listen to (tracks play in place) and a button per option, or Reply in your words. Once answered it shows the answer. Inbox shows the same message, and "Show it in the conversation" lights it where it was asked.
+- **Needs you** is one slim line above the composer, and opens Inbox.
+
+| | |
+|---|---|
+| ![The conversation](screenshots/m7/home-conversation-dark.png) | ![A job's own thread](screenshots/m7/home-job-thread-dark.png) |
+| ![The conversation, light](screenshots/m7/home-conversation-light.png) | ![A job's own thread, light](screenshots/m7/home-job-thread-light.png) |
+| ![Now, opened from the conversation](screenshots/m7/home-now-open-dark.png) | ![A question, answered](screenshots/m7/home-question-answered-dark.png) |
+| ![A job at work, Detailed](screenshots/m7/home-job-working-detailed-dark.png) | ![Empty](screenshots/m7/home-empty-dark.png) |
+| ![The question in Inbox](screenshots/m7/inbox-question-dark.png) | ![Phone](screenshots/m7/home-conversation-phone.png) |
+
+The phone's job thread is [`home-job-thread-phone.png`](screenshots/m7/home-job-thread-phone.png). These were taken from the app on a local server, with sample jobs, questions and files put in over its socket; the tracks and images are stand-ins.

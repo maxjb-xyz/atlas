@@ -1,6 +1,6 @@
 // The stage's views (§21.6): area, person, list and table, each drawn from
 // the contract the agent saved (core/src/stage.ts). Expanded is the view on
-// a sheet; compact is the card an exchange or the transcript shows, which
+// a sheet; compact is the card the conversation or an exchange shows, which
 // opens it on Home's stage. Library's area and person pages are these same
 // views (§21.2).
 
@@ -1398,7 +1398,7 @@ function PageView({
   );
 }
 
-// --- compact: the card in an exchange or the transcript --------------------------------------
+// --- compact: the card in the conversation or an exchange --------------------------------------
 
 const KIND: Record<StageView["kind"], string> = {
   area: "Area",
