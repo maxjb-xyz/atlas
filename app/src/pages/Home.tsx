@@ -4,6 +4,7 @@
 import { InlineText } from "../Markdown";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { JobView, LogRow } from "../../../core/src/protocol";
+import { jobNow, liveJobs } from "../jobs";
 import type { StageView } from "../../../core/src/stage";
 import type { Atlas } from "../connection";
 import { Console, VoiceStrip } from "../Shell";
@@ -184,8 +185,8 @@ export function Home({
     if (asking) openApproval(asking);
   }, [s.rows, s.loaded]);
 
-  const running = s.jobs.filter((j) => j.state === "running").length;
   const now = useNow();
+  const running = liveJobs(s.jobs, now).length;
   const tz = s.view?.settings.timezone;
   const shownTab = views.find((v) => tab === `view:${v.id}`);
   const meta =
@@ -296,7 +297,8 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
   const reminder = s.agenda.find((a) => (a.kind === "reminder" || a.kind === "promise") && a.state === "scheduled");
   const owner = s.view?.settings.owner_name?.split(" ")[0];
   const inbox = s.inbox ?? [];
-  const running = s.jobs.filter((j) => j.state === "running");
+  const running = liveJobs(s.jobs);
+  const stuck = s.jobs.filter((j) => jobNow(j).label === "Stalled");
   const scoped = s.areas.find((a) => a.id === s.scope);
   // Each day's events, so its bar stacks in the colors of their areas.
   const days = Array.from({ length: 7 }, (_, i) => {
@@ -523,6 +525,12 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
               ) : (
                 "No jobs running."
               )}
+              {stuck.length > 0 && (
+                <span className="err">
+                  {" "}
+                  · {stuck.length} stalled: {stuck.map((j) => j.title).join(", ")}
+                </span>
+              )}
             </span>
           </div>
         </div>
@@ -604,6 +612,8 @@ function WeekTab({ atlas }: { atlas: Atlas }) {
 function Jobs({ atlas, selected, onSelect }: { atlas: Atlas; selected: string | null; onSelect: (id: string) => void }) {
   const jobs = atlas.state.jobs;
   const job = jobs.find((j) => j.id === selected) ?? jobs[0];
+  // A job between moves turns stalled by the clock, with no news to say so.
+  const now = useNow(30_000);
   useEffect(() => {
     if (job?.run_id) atlas.send({ type: "atlas.run.detail", run_id: job.run_id });
   }, [job?.id, job?.steps, job?.state]);
@@ -620,20 +630,21 @@ function Jobs({ atlas, selected, onSelect }: { atlas: Atlas; selected: string | 
   const lookups = (detail?.rows ?? []).filter((r) => r.kind === "tool.call");
   if (job.coding) return <CodingJob atlas={atlas} jobs={jobs} job={job} onSelect={onSelect} />;
   const goal = job.goal;
+  const shown = jobNow(job, now);
   return (
     <Sheet>
       <div className="sheet-in">
         <div className="tabs" style={{ marginBottom: 16 }}>
           {jobs.map((j) => (
             <button key={j.id} className={j.id === job.id ? "on" : ""} onClick={() => onSelect(j.id)}>
-              {j.state === "running" && <span className="mono spin" aria-hidden />}
+              {jobNow(j).live && <span className="mono spin" aria-hidden />}
               {j.title}
             </button>
           ))}
         </div>
         <div className="sheet-title">
           <h1 className="disp">{job.title}</h1>
-          <span className={`tag ${job.state === "running" ? "ac" : job.state === "done" ? "ok" : ""}`}>{job.state}</span>
+          <span className={`tag ${shown.tone === "ac" || shown.tone === "ok" ? shown.tone : ""}`}>{shown.label}</span>
           <span className="grow" />
           {job.state === "running" && (
             <button className="btn" onClick={() => atlas.send({ type: "atlas.job.stop", id: job.id })}>
@@ -647,15 +658,7 @@ function Jobs({ atlas, selected, onSelect }: { atlas: Atlas; selected: string | 
           <span className="lab">Started</span>
           <span>{shortDay(job.started_at)}</span>
           <span className="lab">Now</span>
-          <span>
-            {job.state === "running"
-              ? (job.status ?? "Working")
-              : job.state === "done"
-                ? "Finished"
-                : job.state === "failed"
-                  ? "Didn't finish"
-                  : "Stopped"}
-          </span>
+          <span className={shown.label === "Stalled" ? "err" : undefined}>{shown.status}</span>
         </div>
         {goal && <GoalPlan atlas={atlas} job={job} />}
         {lookups.length > 0 && (
@@ -824,7 +827,7 @@ export function CodingJob({ atlas, jobs, job, onSelect }: { atlas: Atlas; jobs: 
           <div className="tabs grow">
             {jobs.map((j) => (
               <button key={j.id} className={j.id === job.id ? "on" : ""} onClick={() => onSelect(j.id)}>
-                {j.state === "running" && <span className="mono spin" aria-hidden />}
+                {jobNow(j).live && <span className="mono spin" aria-hidden />}
                 {j.title}
               </button>
             ))}

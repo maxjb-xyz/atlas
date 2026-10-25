@@ -1761,6 +1761,10 @@ Now: ${d.now}.`;
       id: j.id,
       title: j.title,
       state: j.phase === "done" ? "done" : j.phase === "failed" ? "failed" : j.phase === "cancelled" ? "cancelled" : "running",
+      ...(["done", "failed", "cancelled"].includes(j.phase)
+        ? {}
+        : { activity: j.phase === "waiting" ? ("waiting" as const) : ("working" as const) }),
+      moved_at: j.progress_at,
       status: jobState(this.h.sql, j).now,
       steps: j.turns,
       started_at: j.started_at,

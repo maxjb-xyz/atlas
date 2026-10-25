@@ -6,6 +6,7 @@
 
 import type { ReactNode } from "react";
 import type { Atlas } from "../connection";
+import { liveJobs } from "../jobs";
 import { useDetail } from "../theme";
 import { clock, Diamond, Icon, logoFor, LogoMark, type Place, StateDot } from "../ui";
 import { type Card, type CardId, cards, jobState } from "./tree";
@@ -37,7 +38,7 @@ export function AbilitiesMap({
   const all = gs.flatMap((g) => g.jobs.map(jobState));
   const onCount = all.filter((x) => x === "on").length;
   const needs = all.filter((x) => x === "needs").length;
-  const running = s.jobs.filter((j) => j.state === "running").length;
+  const running = liveJobs(s.jobs).length;
   const next = s.agenda.filter((a) => a.state === "scheduled" && a.due_at > Date.now()).sort((a, b) => a.due_at - b.due_at)[0];
   const box = (g: Card) => (
     <button

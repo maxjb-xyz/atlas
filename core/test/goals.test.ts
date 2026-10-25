@@ -71,7 +71,6 @@ function testDesk(
     site: async ({ host }) => (host === "pixabay.com" ? { allowed: true } : { approval: `appr_${host}` }),
     stopHelper: (id) => void st.stopped.push(id),
     alive: (id) => !st.dead.includes(id) && !st.stopped.includes(id),
-    folder: async () => {},
     keep: async ({ path, name }) => {
       const kept = name ?? path.split("/").pop()!;
       st.kept.push(kept);
@@ -340,6 +339,66 @@ describe("jobs Atlas owns (§8.3)", () => {
       st.dead.push("helper_2");
       await desk.wake(job.id);
       expect(getGoal(sql, job.id)!.plan[0]!.state).toBe("failed");
+    }));
+
+  it("show as running only while something is at work on it: a look or a live step, never a stall", () =>
+    withSql(async (sql) => {
+      let seen: ReturnType<GoalDesk["list"]>[number] | undefined;
+      const { desk, st } = testDesk(sql, [
+        async (d, j) => {
+          // Mid-look, it's at work.
+          seen = d.list().find((x) => x.id === j.id);
+          return (await d.startStep(j.id, { step: "s1", brief: "Write the script." })).text;
+        },
+      ]);
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      expect(seen).toMatchObject({ state: "running", activity: "working" });
+      expect(seen!.quiet_until).toBeUndefined();
+      // A step out with its helper alive: working, however long it takes.
+      const age = (ms: number) => saveGoal(sql, { ...getGoal(sql, job.id)!, progress_at: Date.now() - ms });
+      age(60 * 60_000);
+      expect(desk.list()[0]).toMatchObject({ activity: "working", status: "On Write the script." });
+      // Its helper gone, nothing is at work: stalled, saying since when and what happened last.
+      st.dead.push("helper_1");
+      const stalled = desk.list()[0]!;
+      expect(stalled).toMatchObject({ state: "running", activity: "stalled" });
+      expect(stalled.status).toMatch(/^Not moving: nothing has happened in 1 h\. Last: Started s1\./);
+      // Just after a move, a moment from its next look, it's working until then.
+      age(5_000);
+      const between = desk.list()[0]!;
+      expect(between.activity).toBe("working");
+      expect(between.quiet_until).toBeGreaterThan(Date.now());
+      // Waiting on the owner is waiting, and ended is no activity at all.
+      saveGoal(sql, { ...getGoal(sql, job.id)!, phase: "waiting" });
+      expect(desk.list()[0]!.activity).toBe("waiting");
+      await desk.stop(job.id);
+      expect(desk.list()[0]!.activity).toBeUndefined();
+      // What jobs_look tells Atlas says it too.
+      expect(desk.look(job.id)[0]).toMatchObject({ now: "cancelled" });
+    }));
+
+  it("take the owner's words and Stop at once, even in the middle of a look", () =>
+    withSql(async (sql) => {
+      let landed: { ok: boolean; text: string } | undefined;
+      const { desk, st } = testDesk(sql, [
+        async (d, j) => {
+          // The owner says something while the look is at work: it lands now, not after the look.
+          landed = await d.answer(j.id, "Make it 30 seconds instead.");
+          return "Thinking.";
+        },
+        async (_d, _j, note) => {
+          expect(note).toContain("Make it 30 seconds instead.");
+          return "Heard.";
+        },
+      ]);
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      expect(landed).toMatchObject({ ok: true });
+      // The look's end wakes the job for the words that came in during it.
+      expect(st.watches.at(-1)!.at).toBeLessThanOrEqual(Date.now() + 2_000);
+      await desk.wake(job.id);
+      expect(st.notes).toHaveLength(2);
     }));
 
   it("pause when a brain runs out partway, and go on with another one only when the owner says", () =>

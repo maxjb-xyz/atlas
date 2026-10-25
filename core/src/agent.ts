@@ -549,7 +549,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #mail!: MailDesk;
   #channels!: ChannelDesk;
   #faces!: FaceDesk;
-  /** Runs go one at a time, so each one sees the last one's answer. */
+  /** Runs go one at a time, so each one sees the last one's answer. A job's looks keep their own line (goals.ts). */
   #line: Promise<unknown> = Promise.resolve();
 
   get #sql(): Sql {
@@ -3505,9 +3505,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** Every job the app shows: coding jobs and helpers', newest first. */
   #jobs(): JobView[] {
-    return [...this.#coding.list(), ...this.#goals.list(), ...this.#helpers.list()]
-      .sort((a, b) => b.started_at - a.started_at)
-      .slice(0, 30);
+    return (
+      [...this.#coding.list(), ...this.#goals.list(), ...this.#helpers.list()]
+        // A helper is at work for as long as it runs.
+        .map((j): JobView => (j.state === "running" && !j.activity ? { ...j, activity: "working" } : j))
+        .sort((a, b) => b.started_at - a.started_at)
+        .slice(0, 30)
+    );
   }
 
   // --- phone calls (§16.1) ---------------------------------------------------------
@@ -3588,7 +3592,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         const s = await this.schedule(new Date(at), "onAgendaDue", { id });
         setScheduleId(sql, id, s.id);
       },
-      look: (job, note) => this.#inLine(() => this.#goalLook(job, note)),
+      // A job's looks go one at a time on its own line (goals.ts), not in line with the owner's runs: a message
+      // never waits behind a job checking on itself.
+      look: (job, note) => this.#goalLook(job, note),
       helper: async ({ job, step, brief, brain, minutes }) => {
         const settings = readSettings(sql);
         const chain = brain === "Main" ? settings.brains.main : chainFor(settings, "job_work", brain).chain;
@@ -3641,9 +3647,6 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
       },
       // A helper or coding job is an agenda item that's running until it ends, however it ends.
       alive: (id) => getItem(sql, id)?.state === "running",
-      folder: async (path) => {
-        await this.#workspaceApi.run(`mkdir -p '${path.replace(/'/g, `'\''`)}'`, { run_id: "goal", timeout_s: 30 });
-      },
       keep: async ({ job, path, name, note }) => {
         const files = this.#toolContext(readSettings(sql), new Date(), "clock", null).files;
         if (!files) throw new Error("Files can't be kept here.");

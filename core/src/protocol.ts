@@ -157,6 +157,16 @@ export interface JobView {
   id: string;
   title: string;
   state: "running" | "done" | "failed" | "cancelled";
+  /**
+   * While it hasn't ended, whether anything is at work on it right now: a look or a step's helper or coding agent
+   * (working), or nothing, because it waits on the owner, is paused, or has stopped moving (stalled). Only working
+   * shows as running.
+   */
+  activity?: "working" | "waiting" | "paused" | "stalled";
+  /** When it last moved: a step, a look, the owner's words. */
+  moved_at?: number;
+  /** Working only until then, unless news comes: it's between one move and its next look, with nothing at work yet. */
+  quiet_until?: number;
   /** What the helper is doing right now, such as "Thinking back." */
   status: string | null;
   steps: number;

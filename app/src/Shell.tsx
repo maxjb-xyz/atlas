@@ -5,6 +5,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { LogRow, RecordView } from "../../core/src/protocol";
 import type { Atlas } from "./connection";
+import { jobNow, liveJobs } from "./jobs";
 import { Markdown } from "./Markdown";
 import { openOnStage, type Shown, shownFrom, StageCard } from "./StageViews";
 import { Thread } from "./Thread";
@@ -191,7 +192,7 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
   const [jobsOpen, setJobsOpen] = useState(false);
   const scoped = s.areas.find((a) => a.id === s.scope);
   const live = s.areas.filter((a) => a.state !== "archived");
-  const running = s.jobs.filter((j) => j.state === "running");
+  const running = liveJobs(s.jobs);
   const scopeRef = useDismiss<HTMLDivElement>(scopeOpen, () => setScopeOpen(false));
   const jobsRef = useDismiss<HTMLDivElement>(jobsOpen, () => setJobsOpen(false));
 
@@ -276,10 +277,8 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
                 >
                   <span style={{ fontWeight: 500 }}>{j.title}</span>
                   <span className="row small" style={{ gap: 10 }}>
-                    <span className={j.state === "running" ? "ac mono" : j.state === "done" ? "ok mono" : "err mono"}>
-                      {j.state === "running" ? "Running" : j.state === "done" ? "Done" : j.state === "failed" ? "Failed" : "Stopped"}
-                    </span>
-                    <span className="muted grow">{j.status ?? `${j.steps} lookups`}</span>
+                    <span className={`${jobNow(j).tone} mono`}>{jobNow(j).label}</span>
+                    <span className="muted grow">{j.state === "running" ? jobNow(j).status : (j.status ?? `${j.steps} lookups`)}</span>
                     <span className="mono faint">{shortDay(j.started_at)}</span>
                   </span>
                 </button>

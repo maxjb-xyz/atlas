@@ -139,6 +139,8 @@ export const REMIND_FIRST_MS = 3 * 3600_000;
 export const REMIND_AGAIN_MS = 24 * 3600_000;
 /** Working this long without a step finishing, a look is told to change approach or bring the owner what it has. */
 export const STALL_MS = 90 * 60_000;
+/** How long a job with nothing at work on it still shows as working: the moment between one move and its next look. */
+export const QUIET_MS = 2 * 60_000;
 
 const key = (id: string) => `goal:${id}` as const;
 const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
@@ -218,8 +220,6 @@ export interface GoalHost {
   stopHelper(id: string): void;
   /** Whether a step's helper or coding agent is still running. */
   alive(id: string): boolean;
-  /** Makes sure the folder is there before a step works in it. */
-  folder(path: string): Promise<void>;
   /** Keeps a file from the folder for the owner, in Library. Its name. */
   keep(o: { job: GoalJob; path: string; name?: string; note?: string }): Promise<string>;
   /** Brings the owner a question: a push, or the chat with buttons. */
@@ -246,6 +246,8 @@ export interface GoalHost {
 
 export class GoalDesk {
   #lines = new Map<string, Promise<unknown>>();
+  /** The jobs a look is at work on right now. */
+  #looking = new Set<string>();
 
   constructor(private readonly h: GoalHost) {}
 
@@ -413,7 +415,12 @@ export class GoalDesk {
     job = { ...job, mail: [], phase: "working", spent: { ...job.spent, looks: job.spent.looks + 1 } };
     saveGoal(this.h.sql, job);
     const before = JSON.stringify([job.plan, job.phase, job.question]);
-    const out = await this.h.look(job, lookNote(job, mail));
+    this.#looking.add(id);
+    this.h.changed();
+    const out = await this.h.look(job, lookNote(job, mail)).finally(() => {
+      this.#looking.delete(id);
+      this.h.changed();
+    });
     const after = getGoal(this.h.sql, id);
     if (!after || ENDED.includes(after.phase)) return;
     if (out.error) {
@@ -465,6 +472,8 @@ export class GoalDesk {
     if (job.deadline && !job.overdue && job.phase !== "waiting") at.push(job.deadline);
     if (job.plan.some((s) => s.state === "doing")) at.push(job.progress_at + STEP_LOST_MS);
     if (job.phase === "paused" && job.until) at.push(job.until);
+    // The owner's words that came in during a look: the next look is now.
+    if (job.phase === "working" && job.mail.length) at.push(Date.now());
     if (at.length) await this.h.watch(job.id, Math.max(Date.now() + 1_000, Math.min(...at)));
   }
 
@@ -560,7 +569,7 @@ export class GoalDesk {
     let brain = o.brain ?? job.brain;
     if (!coding && brain !== "Main" && !names.some((n) => n.toLowerCase() === brain.toLowerCase()))
       return { ok: false, text: `There's no brain called "${brain}". The brains are: ${["Main", ...names].join(", ")}.` };
-    await this.h.folder(job.folder);
+    // No waiting on the workspace here: a step's first command makes its folder, as its own user.
     let helper: string;
     try {
       if (coding) {
@@ -840,7 +849,8 @@ export class GoalDesk {
    * next look takes them.
    */
   async answer(id: string, text: string): Promise<{ ok: boolean; text: string }> {
-    return this.#line(id, async () => {
+    // Not on the job's line: the owner's words land at once, even mid-look, and the look's end wakes the job for them.
+    return (async () => {
       let job = getGoal(this.h.sql, id);
       if (!job || ENDED.includes(job.phase)) return { ok: false, text: "That job has ended." };
       const q = job.question;
@@ -889,14 +899,15 @@ export class GoalDesk {
       // The owner's words are looked at now, even with a step out: a change of direction can't wait for it to finish.
       await this.h.watch(id, Date.now() + 1_000);
       return { ok: true, text: q ? "Thanks: the job carries on with that." : "The job looks at that now." };
-    });
+    })();
   }
 
   /** The owner pressed Stop. */
   async stop(id: string): Promise<boolean> {
     const job = getGoal(this.h.sql, id);
     if (!job || ENDED.includes(job.phase)) return false;
-    await this.#line(id, () => this.#end(job, "cancelled", "Stopped by the owner."));
+    // At once, even mid-look: the look's moves and its end see the job has ended.
+    await this.#end(job, "cancelled", "Stopped by the owner.");
     return true;
   }
 
@@ -908,7 +919,25 @@ export class GoalDesk {
   }
 
   list(): JobView[] {
-    return goals(this.h.sql, Date.now() - 24 * 3600_000).map((g) => view(g));
+    return goals(this.h.sql, Date.now() - 24 * 3600_000).map((g) => view(g, this.#activity(g), this.#live(g)));
+  }
+
+  /**
+   * Whether anything is at work on a job right now (§8.3): a look, or a step whose helper or coding agent runs.
+   * A job with neither is waiting, paused, or stalled, never shown as running: just after a move it's a moment
+   * from its next look, but past that nothing is coming unless its clock wakes it.
+   */
+  #activity(g: GoalJob, now = Date.now()): NonNullable<JobView["activity"]> | undefined {
+    if (ENDED.includes(g.phase)) return undefined;
+    if (g.phase === "waiting") return "waiting";
+    if (g.phase === "paused") return "paused";
+    if (this.#live(g)) return "working";
+    return now - g.progress_at < QUIET_MS ? "working" : "stalled";
+  }
+
+  /** A look or a step's helper or coding agent is at work on it. */
+  #live(g: GoalJob): boolean {
+    return this.#looking.has(g.id) || g.plan.some((s) => s.state === "doing" && !!s.job && this.h.alive(s.job));
   }
 
   /** How jobs are doing, for jobs_look: each one's plan, what it waits on, and what it came to. */
@@ -938,6 +967,9 @@ export class GoalDesk {
       results: g.plan.filter((s) => s.result).map((s) => `${s.id} ${s.title}: ${clip(s.result!, 1_500)}`),
       used: `${g.spent.looks} looks, ${g.spent.steps} steps`,
       running_for: ago(Date.now() - g.started_at),
+      // Whether anything is at work on it now; stalled means nothing is, and nothing moved in a while.
+      now: this.#activity(g) ?? g.phase,
+      last_moved: `${ago(Date.now() - g.progress_at)} ago`,
       ...(g.deadline ? { deadline: new Date(g.deadline).toISOString() } : {}),
       last: g.log.at(-1)?.text ?? null,
       ...(g.result ? { result: g.result } : {}),
@@ -947,6 +979,11 @@ export class GoalDesk {
 
 /** Jobs Atlas owns that are going, as its context shows them: one line each. */
 export function goalLines(sql: Sql): string[] {
+  // Nothing at work on it, seen from outside its desk: no step whose helper or coding agent runs, and no move for
+  // longer than a look takes.
+  const stuck = (g: GoalJob) =>
+    !g.plan.some((s) => s.state === "doing" && !!s.job && getItem(sql, s.job)?.state === "running") &&
+    Date.now() - g.progress_at > 10 * 60_000;
   return goals(sql)
     .filter((g) => !ENDED.includes(g.phase))
     .map((g) => {
@@ -959,9 +996,11 @@ export function goalLines(sql: Sql): string[] {
             : `waiting on the owner: ${clip(g.question?.text ?? "", 120)}`
           : g.phase === "paused"
             ? "paused"
-            : now
-              ? `on "${now.title}"`
-              : "working";
+            : stuck(g)
+              ? `not moving: nothing is at work on it, and it last moved ${ago(Date.now() - g.progress_at)} ago`
+              : now
+                ? `on "${now.title}"`
+                : "working";
       return `- ${g.title} (job id ${g.id}): ${where}; ${done} of ${g.plan.filter((s) => s.state !== "skipped").length} steps done`;
     });
 }
@@ -1050,24 +1089,30 @@ export function lookNote(job: GoalJob, mail: GoalJob["mail"], now = Date.now()):
     .join("\n\n");
 }
 
-function view(g: GoalJob): JobView {
+function view(g: GoalJob, activity?: JobView["activity"], live = false): JobView {
   const now = g.plan.find((s) => s.state === "doing");
   return {
     id: g.id,
     title: g.title,
     state: g.phase === "done" ? "done" : g.phase === "failed" ? "failed" : g.phase === "cancelled" ? "cancelled" : "running",
+    ...(activity ? { activity } : {}),
+    moved_at: g.progress_at,
+    // Between one move and its next look, nothing is at work yet: past this, with no news, it has stalled.
+    ...(activity === "working" && !live ? { quiet_until: g.progress_at + QUIET_MS } : {}),
     status:
-      g.phase === "waiting"
-        ? g.site
-          ? `Waiting for your OK to reach ${g.site.host}.`
-          : "Waiting for you."
-        : g.phase === "paused"
-          ? g.until
-            ? "Paused; trying again soon."
-            : "Paused: waiting for you."
-          : now
-            ? `On ${now.title}.`
-            : "Working out the next step.",
+      activity === "stalled"
+        ? `Not moving: nothing has happened in ${ago(Date.now() - g.progress_at)}.${g.log.at(-1) ? ` Last: ${clip(g.log.at(-1)!.text, 160)}` : ""}`
+        : g.phase === "waiting"
+          ? g.site
+            ? `Waiting for your OK to reach ${g.site.host}.`
+            : "Waiting for you."
+          : g.phase === "paused"
+            ? g.until
+              ? "Paused; trying again soon."
+              : "Paused: waiting for you."
+            : now
+              ? `On ${now.title}.`
+              : "Working out the next step.",
     steps: g.spent.steps,
     started_at: g.started_at,
     brief: g.goal,
