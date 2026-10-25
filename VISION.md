@@ -1102,12 +1102,13 @@ Atlas makes things you keep: a shoot plan, a trip itinerary, a quote, a study gu
 
 Atlas should feel like the future: alive, fast, a little magical.
 
-- **Atlas's mark.** The diamond, drawn in characters, lives on Now and in voice mode (decided 2026-10-24, for M7; the prototype is [docs/ui/source/diamond.html](docs/ui/source/diamond.html)):
+- **Atlas's mark.** The diamond, drawn in characters, lives on Now, in Atlas's presence opening each day of the conversation (added 2026-10-25), and in voice mode (decided 2026-10-24, for M7; the prototype is [docs/ui/source/diamond.html](docs/ui/source/diamond.html)):
   - **The mark itself,** from `brand/atlas-mark.svg`: its four facets and the seams between them, drawn finely in small characters.
   - **In ember:** the facets keep the mark's shading, lightest at the top left to darkest at the bottom right, in orange to deep red (changed 2026-10-24 from the area colors, at the owner's review).
   - **Lit:** a light circles it slowly, moving the shading a little through a ramp of characters.
   - **Alive with what Atlas is doing:** a sweep of light now and then while idle, ripples with your voice while listening, a shimmer while thinking, a pulse with its own voice while speaking. It moves with the actual audio.
   - It is never an orb, a glow or a gradient: only characters and their color. Reduced motion shows one still frame.
+  - **At the size of a glyph** (added 2026-10-25) it's the flat mark, lit the same way by its facets in ember, by opacity alone: beside Atlas's words only on the message being written, and in the composer as the large one is (a sweep while idle, a shimmer while a turn runs, a ripple while listening).
 - **Visual language** (details in [docs/ui/README.md](docs/ui/README.md#5-visual-language)):
   - **The frame:** a dotted stage grid between dashed rails, with square nodes at intersections.
   - **Atlas's selection:** an ember outline with square handles and a mono tag (for example "MOVED · WAS WED 3 PM") marks what Atlas just changed.
