@@ -1,4 +1,4 @@
-import { getGoal } from "../src/agent/goals";
+import { getOwned } from "../src/agent/jobs";
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams, type WorkspaceStub } from "../src/agent";
@@ -653,17 +653,7 @@ describe("coding jobs", { timeout: 30_000 }, () => {
     const { ws, st } = fakeWorkspace([{ say: "Built the Remotion project and rendered out/launch.mp4." }]);
     seams.workspace = ws;
     const b = brain(
-      [
-        call("job_own", {
-          title: "Launch video",
-          goal: "A 30-second launch video for X.",
-          steps: [
-            { title: "Find a song", kind: "work" },
-            { title: "Build the video", kind: "work" },
-          ],
-        }),
-        say("Started."),
-      ],
+      [call("job_own", { title: "Launch video", goal: "A 30-second launch video for X." }), say("Started.")],
       [
         call("job_run", { command: "git diff --stat" }, "c_diff"),
         call("job_ready", { title: "The launch video, rendered", body: "out/launch.mp4, 30 seconds, with the song under it." }, "c_ready"),
@@ -674,17 +664,17 @@ describe("coding jobs", { timeout: 30_000 }, () => {
       const sql = state.storage.sql;
       setUp(sql);
       await agent.apiTurn("make a launch video");
-      const goal = sql.exec<{ key: string }>(`SELECT key FROM state WHERE key LIKE 'goal:%'`).one().key.slice(5);
-      const started = await agent.apiGoalStep(goal, {
-        step: "s2",
+      const goal = sql.exec<{ key: string }>(`SELECT key FROM state WHERE key LIKE 'owned:%'`).one().key.slice(6);
+      // The job's turn hands building to the coding agent, as its job_build would.
+      const started = await agent.apiOwnedBuild(goal, {
         brief: "Build a 30-second launch video in Remotion, with ../song.mp3 under it.",
         agent: "claude-code",
         model: "claude-opus-5-5",
         effort: "low",
       });
       expect(started).toMatchObject({ ok: true });
-      const id = getGoal(sql, goal)!.plan[1]!.job!;
-      expect(getGoal(sql, goal)!.plan[1]!.brain).toBe("Claude Code, claude-opus-5-5, low effort");
+      const id = getOwned(sql, goal)!.work[0]!.id;
+      expect(getOwned(sql, goal)!.work[0]).toMatchObject({ kind: "coding", title: "Claude Code" });
 
       await stepTo(agent, id, "working");
       // Its repo is made in the job's folder, as the job's user; nothing is cloned.
@@ -699,15 +689,16 @@ describe("coding jobs", { timeout: 30_000 }, () => {
       expect(done.pr).toBeNull();
       expect(st.pushes).toEqual([]);
       expect(b.looks.requests[0]!.system).toContain("one step of a longer job you own");
-      // The result is the job's, for its next look; the owner isn't told of the step on its own.
-      const step = getGoal(sql, goal)!.plan[1]!;
-      expect(step.state).toBe("done");
-      expect(step.result).toContain("The launch video, rendered");
-      expect(step.result).toContain("3 files changed");
+      // The result is the job's, for its next turn; the owner isn't told of it on its own.
+      const job = getOwned(sql, goal)!;
+      expect(job.work).toEqual([]);
+      const back = job.news.find((n) => n.kind === "result")!;
+      expect(back.text).toContain("The launch video, rendered");
+      expect(back.text).toContain("3 files changed");
       expect(rows(sql, "job.result").filter((r) => r.coding)).toEqual([]);
-      // The job is stopped, so its looks on the clock do nothing after this test. (Last in the file: a look already
+      // The job is stopped, so its turns on the clock do nothing after this test. (Last in the file: a turn already
       // under way when it ends would take the next test's scripted brain.)
-      await agent.apiGoalStop(goal);
+      await agent.apiOwnedStop(goal);
       // Its repo was there all along, so nothing had to come back.
       expect(getJob(sql, id)!.log.some((e) => e.text.includes("container was new"))).toBe(false);
     });

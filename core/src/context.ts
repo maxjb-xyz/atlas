@@ -6,7 +6,7 @@
 
 import { accountsLine } from "./accounts";
 import { codingLines } from "./agent/coding";
-import { goalLines } from "./agent/goals";
+import { ownedLines } from "./agent/jobs";
 import { lookedAt } from "./agent/helpers";
 import { type McpServer, serversLine } from "./mcp";
 import { listPages } from "./pages";
@@ -408,16 +408,17 @@ function exitsContext(sql: Sql, tz: string, now: Date): string {
 function jobsLine(sql: Sql, now: Date): string {
   const running = sql
     .exec<{ id: string; title: string; created_at: number; source: string }>(
-      `SELECT id, title, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND json_extract(source, '$.detail.goal') IS NULL AND json_extract(source, '$.detail.step_of') IS NULL AND state IN ('scheduled', 'running') ORDER BY created_at LIMIT 10`,
+      `SELECT id, title, created_at, source FROM agenda WHERE kind = 'job' AND json_extract(source, '$.detail.coding') IS NULL AND json_extract(source, '$.detail.goal') IS NULL AND json_extract(source, '$.detail.owned') IS NULL AND json_extract(source, '$.detail.step_of') IS NULL AND state IN ('scheduled', 'running') ORDER BY created_at LIMIT 10`,
     )
     .toArray();
   const coding = codingLines(sql, now);
   const codingText = coding.length
     ? `Coding jobs (answer "how's the job?" from these; jobs_look has more, job_answer passes the owner's words on):\n${coding.join("\n")}`
     : "";
-  const owned = goalLines(sql);
+  // Something is at work on one while a turn runs (it says what) or work it handed off is running.
+  const owned = ownedLines(sql, (j) => j.now != null || j.work.some((w) => getItem(sql, w.id)?.state === "running"));
   const ownedText = owned.length
-    ? `Jobs you own (answer "how's the job?" from these; jobs_look has more, job_answer passes the owner's words on):\n${owned.join("\n")}`
+    ? `Long work you're doing in the background (when the owner asks how it's going, answer from these as yourself, in the first person; jobs_look has more, and what they say about one goes to it with job_answer, in their words):\n${owned.join("\n")}`
     : "";
   if (!running.length) return [codingText, ownedText].filter(Boolean).join("\n\n");
   const lines = running.map((j) => {

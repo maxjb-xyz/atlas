@@ -132,6 +132,8 @@ export interface LoopResult {
   interrupted: boolean;
   usage: Usage;
   error?: string;
+  /** The conversation as the run left it: what it was given, each step's tools and results, and its last words. */
+  messages?: Message[];
 }
 
 class NoBrainError extends Error {}
@@ -146,6 +148,8 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
   let steps = spec.resume?.steps ?? 0;
   let lastBrain: LoopResult["brain"] = null;
   let fellBack = false;
+  /** The last step's words, which end the conversation the run hands back. */
+  let last = "";
   // What this turn can call now: what it started with, and each group it has loaded since.
   const active: Tool[] = [...spec.tools];
   const groups = spec.groups ?? [];
@@ -186,6 +190,7 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
     fallback: fellBack,
     interrupted: false,
     usage,
+    messages: last ? [...messages, { role: "assistant", content: last }] : [...messages],
     ...extra,
   });
 
@@ -209,7 +214,10 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
       usage.output += step.usage?.output ?? 0;
       usage.cached = (usage.cached ?? 0) + (step.usage?.cached ?? 0);
 
-      if (over || step.calls.length === 0) break;
+      if (over || step.calls.length === 0) {
+        last = step.text;
+        break;
+      }
 
       // Close what Atlas just said before the tools run, so voice speaks it now:
       // a sentence only counts as finished once the space after it arrives.

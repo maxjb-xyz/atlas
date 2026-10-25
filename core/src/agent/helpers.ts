@@ -14,11 +14,11 @@ import { getState, setState } from "../store/state";
 import { endRun, getRun, startRun } from "../store/runs";
 import type { JobView } from "../protocol";
 import type { BrainChoice } from "../store/settings";
-import { STEP_TOOLS } from "../tools/goals";
+import { folderRun, READ_TOOLS } from "../tools/jobs";
 import { fail, type ToolContext, type ToolResult } from "../tools/types";
 
 /** Every tool a helper can be given: its lookups, and a shell in its folder for a job's step (§8.3). */
-const ALL_TOOLS = [...HELPER_TOOLS, ...STEP_TOOLS];
+const ALL_TOOLS = [...HELPER_TOOLS, ...READ_TOOLS, folderRun];
 
 /** A helper's budget: room for real work, still bounded (§4.1, §8.1). */
 export const HELPER_BUDGET: Budget = { steps: 40, ms: 10 * 60_000 };

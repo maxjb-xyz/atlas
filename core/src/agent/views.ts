@@ -3,7 +3,7 @@
 // for its page; nothing here changes anything except marking Inbox items done.
 
 import { codingJobs } from "./coding";
-import { goals } from "./goals";
+import { ownedJobs } from "./jobs";
 import { getPage, pageVersion, pageVersions, segments } from "../pages";
 import type { ApprovalView, HistoryFilter, HistoryStats, InboxItem, RecordView } from "../protocol";
 import { FIELDS, findEntry } from "../vault";
@@ -490,14 +490,22 @@ export function inbox(sql: Sql): InboxItem[] {
   const waiting = new Set(
     [
       ...codingJobs(sql).map((j) => (j.phase === "waiting" && !j.question?.site ? j.question?.log : null)),
-      ...goals(sql).map((g) => (g.phase === "waiting" || g.phase === "paused" ? g.question?.log : null)),
+      ...ownedJobs(sql).map((j) => (j.phase === "waiting" || j.phase === "paused" ? j.question?.log : null)),
     ].filter((x): x is string => !!x),
   );
   const jobQuestions = [...waiting]
     .map((id) => getRow(sql, id))
     .filter((r): r is LogRow => r != null)
     .map((r): InboxItem => {
-      const b = r.body as { job: string; title: string; text: string; options?: string[]; why?: string; content?: string };
+      const b = r.body as unknown as {
+        job: string;
+        title: string;
+        text: string;
+        options?: string[];
+        why?: string;
+        content?: string;
+        files?: import("../protocol").FileRef[];
+      };
       return {
         id: r.id,
         kind: "question",
@@ -513,6 +521,7 @@ export function inbox(sql: Sql): InboxItem[] {
           options: b.options ?? [],
           ...(b.why ? { why: b.why } : {}),
           ...(b.content ? { content: b.content } : {}),
+          ...(b.files?.length ? { files: b.files } : {}),
         },
       };
     });

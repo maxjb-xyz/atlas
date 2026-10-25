@@ -7,7 +7,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
-import { getGoal } from "../src/agent/goals";
+import { getOwned } from "../src/agent/jobs";
 import type { Spend } from "../src/brains/catalog";
 import type { Health } from "../src/brains/router";
 import { type Brain, BrainError } from "../src/brains/types";
@@ -174,61 +174,29 @@ describe("stage 4: brains, end to end", () => {
   });
 
   it(
-    "smoke 14: a job whose plan runs out partway pauses at a clean step, with when it resets and what Deep would cost so far",
+    "smoke 14: a job whose plan runs out partway pauses and asks, with when it resets and what Deep would cost so far",
     { timeout: 30_000 },
     async () => {
       const reset = Date.now() + 3 * 3600_000;
-      const used = (input: number, output: number) => ({ type: "done" as const, finish: "stop" as const, usage: { input, output } });
-      const ask = scripted([
-        call("job_own", {
-          title: "Launch video",
-          goal: "A 60-second launch video.",
-          steps: [
-            { title: "Write the script", kind: "work" },
-            { title: "Approve the script", kind: "checkpoint" },
-          ],
-        }),
-        say("I've started the launch video."),
-      ]);
-      // The first look: one move, on the main brain, which counts its tokens to the job.
-      const look = scripted([
-        [
-          { type: "tool_start", name: "job_step" },
-          { type: "tool_call", call: { id: "c1", name: "job_step", input: { step: "s1", brief: "Write a 60-second script." } } },
-          { type: "done", finish: "tool_calls", usage: { input: 200_000, output: 10_000 } },
-        ],
-        [{ type: "text", text: "The script is being written." }, used(20_000, 500)],
-      ]);
-      // All on the main brain: the owner's turn, the job's looks, and the step's helper, which finds the plan's limit
-      // used up, with when it resets. Atlas's own background runs get a quiet answer.
+      const ask = scripted([call("job_own", { title: "Launch video", goal: "A 60-second launch video." }), say("On it.")]);
+      // The job's first turn, on the main brain: one step that counts its tokens to the job, then the plan's limit.
+      let turnCalls = 0;
       const plan: Brain = {
         provider: "chatgpt",
         model: "gpt-5.6-terra",
         async *stream(req) {
-          if (req.system.includes("You are a helper"))
-            throw new BrainError("Your ChatGPT plan's limit for Atlas is used up for now.", false, 429, reset);
-          if (req.tools.some((t) => t.name === "job_step")) yield* look.brain.stream(req);
-          else if (JSON.stringify(req.messages).includes("make a 60-second launch video")) yield* ask.brain.stream(req);
+          if (req.tools.some((t) => t.name === "job_ask")) {
+            turnCalls++;
+            if (turnCalls > 1) throw new BrainError("Your ChatGPT plan's limit for Atlas is used up for now.", false, 429, reset);
+            yield { type: "tool_start", name: "job_notes" };
+            yield { type: "tool_call", call: { id: "c1", name: "job_notes", input: { notes: "- Script first." } } };
+            yield { type: "done", finish: "tool_calls", usage: { input: 200_000, output: 10_000 } };
+          } else if (JSON.stringify(req.messages).includes("make a 60-second launch video")) yield* ask.brain.stream(req);
           else yield* say("Nothing to add.");
         },
       };
       const deep = scripted([], "anthropic", "claude-opus-5-5");
       seams.makeBrain = (c) => (c.provider === "anthropic" ? deep.brain : c.provider === "chatgpt" ? plan : null);
-      // A workspace that makes the job's folder and nothing else.
-      seams.workspace = {
-        run: async () =>
-          new ReadableStream({
-            start(c) {
-              c.enqueue(new TextEncoder().encode(`${JSON.stringify({ done: { exit: 0, ms: 1, blocked: [], kept: "" } })}\n`));
-              c.close();
-            },
-          }),
-        read: async () => ({ ok: false, error: "none" }),
-        list: async () => [],
-        preview: async () => ({ token: "", expires: 0 }),
-        status: async () => ({ running: true, ready: true }),
-        restart: async () => {},
-      };
       await runInDurableObject(fresh(), async (agent: PersonAgent, state) => {
         const sql: Sql = state.storage.sql;
         migrate(sql);
@@ -242,13 +210,13 @@ describe("stage 4: brains, end to end", () => {
         });
         await agent.apiTurn("make a 60-second launch video for Atlas");
         const id = (
-          await until(() => sql.exec<{ key: string }>(`SELECT key FROM state WHERE key LIKE 'goal:%'`).toArray()[0], "the job")
-        ).key.slice(5);
+          await until(() => sql.exec<{ key: string }>(`SELECT key FROM state WHERE key LIKE 'owned:%'`).toArray()[0], "the job")
+        ).key.slice(6);
         expect(getItem(sql, id)?.kind).toBe("job");
-        // Its first look is on the clock now (the job watches itself), then the step goes to a helper.
+        // Its first turn is on the clock now (the job watches itself), and the brain runs out partway.
         const paused = await until(
           () => {
-            const g = getGoal(sql, id);
+            const g = getOwned(sql, id);
             return g?.phase === "paused" && g.question ? g : null;
           },
           "the pause",
@@ -258,14 +226,15 @@ describe("stage 4: brains, end to end", () => {
         const at = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", hour: "numeric", minute: "2-digit" }).format(new Date(reset));
         const sameDay = new Date(reset).toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10);
         expect(paused.question!.options[0]).toEqual(sameDay ? `Wait until ${at}` : expect.stringContaining("Wait until"));
-        // 220,000 in at $4 and 10,500 out at $20 a million on Claude Opus 5.5.
-        expect(paused.question!.options[1]).toBe("Go on with Deep (about $1.09 for the job so far)");
+        // 200,000 in at $4 and 10,000 out at $20 a million on Claude Opus 5.5.
+        expect(paused.question!.options[1]).toBe("Go on with Deep (about $1.00 so far)");
         expect(paused.question!.text).toContain("It resets");
-        expect(paused.plan[0]).toMatchObject({ id: "s1", state: "todo" });
+        // What it did before the limit is kept: its notes, and the transcript it carries on from.
+        expect(paused.notes).toBe("- Script first.");
         // Unanswered, nothing runs.
         await agent.onAgendaDue({ id });
         expect(deep.requests).toHaveLength(0);
-        expect(getGoal(sql, id)!.phase).toBe("paused");
+        expect(getOwned(sql, id)!.phase).toBe("paused");
       });
     },
   );

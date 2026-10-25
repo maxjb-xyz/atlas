@@ -69,8 +69,8 @@ export interface ToolContext {
     change(patch: import("../store/settings").SettingsPatch): { ok: boolean; text: string };
     readWeb(): boolean;
   } | null;
-  /** A job's look (§8.3): its moves, bound to that job. Null elsewhere. */
-  goalLook?: GoalLookApi | null;
+  /** A job's turn (§8.3): its moves, bound to that job. Null elsewhere. */
+  ownedJob?: OwnedJobApi | null;
   /**
    * The way out for actions that may need the owner's OK (§12): the outbox
    * does it now when the kind allows, or it waits as an approval card. Null
@@ -274,37 +274,28 @@ export interface GoalsApi {
   start(o: {
     title: string;
     goal: string;
-    steps: Array<{ title: string; kind: "work" | "research" | "checkpoint" }>;
     brain?: string;
     deadline?: number;
     asked_in: string;
+    asked_by: string | null;
   }): Promise<{ id: string; folder: string }>;
 }
 
-/** A job's look: one move, on the job it's looking at. */
-export interface GoalLookApi {
-  step(o: {
-    step: string;
-    brief: string;
-    brain?: string;
-    agent?: string;
-    model?: string;
-    effort?: string;
-    minutes?: number;
-  }): Promise<{ ok: boolean; text: string }>;
-  site(o: { host: string; why: string }): Promise<{ ok: boolean; text: string }>;
-  checkpoint(o: { step?: string; text: string; content?: string; options?: string[] }): Promise<{ ok: boolean; text: string }>;
-  plan(o: {
-    add?: Array<{ title: string; kind: "work" | "research" | "checkpoint"; after?: string }>;
-    drop?: string[];
-    deadline?: number | null;
-  }): {
-    ok: boolean;
-    text: string;
-  };
-  mark(o: { step: string; state: "done" | "skipped"; result?: string }): { ok: boolean; text: string };
-  finish(o: { summary: string; files?: Array<{ path: string; name?: string; note?: string }> }): Promise<{ ok: boolean; text: string }>;
-  fail(why: string): Promise<{ ok: boolean; text: string }>;
+type Done = Promise<{ ok: boolean; text: string }>;
+
+/** A job's turn (§8.3): its moves, bound to the job it's working on. */
+export interface OwnedJobApi {
+  id: string;
+  notes(text: string): { ok: boolean; text: string };
+  update(o: { text: string; files?: Array<{ path: string; name?: string }> }): Done;
+  ask(o: { text: string; options?: string[]; content?: string; files?: Array<{ path: string; name?: string }> }): Done;
+  build(o: { brief: string; agent?: string; model?: string; effort?: string; minutes?: number }): Done;
+  helpers(o: { tasks: Array<{ title: string; brief: string }>; research?: boolean }): Done;
+  wait(o: { minutes: number; why: string }): Done;
+  site(o: { host: string; why: string }): Done;
+  deadline(at: number | null): { ok: boolean; text: string };
+  finish(o: { summary: string; files?: Array<{ path: string; name?: string; note?: string }> }): Done;
+  fail(why: string): Done;
 }
 
 export interface ToolResult {
