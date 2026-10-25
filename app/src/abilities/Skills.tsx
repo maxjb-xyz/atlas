@@ -1,12 +1,15 @@
 // Abilities → Skills (§9.3, docs/ui §8): what Atlas knows how to do, written
 // down so it does it the same way next time. Each shows how often it's used,
 // who made it and its check, with reuse counted at the top. A row opens in
-// place: what it says, every version, edit, download and archive.
+// place: what it says, every version, where it came from, edit, download
+// (the whole folder, for a skill with files) and archive. Get skills opens
+// the catalog's skill hubs.
 
 import { useEffect, useState } from "react";
 import type { SkillView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Markdown } from "../Markdown";
+import { GetSkills } from "./GetSkills";
 import { useDetail } from "../theme";
 import { dayName, Empty, pressable, shortDay } from "../ui";
 
@@ -33,6 +36,7 @@ export function Skills({ atlas }: { atlas: Atlas }) {
   }, [atlas.voice.connected, s.rows.length]);
   const [open, setOpen] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string | null; md: string } | null>(null);
+  const [getting, setGetting] = useState<{ hub: string; name: string } | boolean>(false);
   const skills = s.skills;
   const active = (skills ?? []).filter((k) => k.state === "active");
   const archived = (skills ?? []).filter((k) => k.state === "archived");
@@ -77,9 +81,10 @@ export function Skills({ atlas }: { atlas: Atlas }) {
             <span className="mono small muted">{meter(k.uses, max)}</span>
             <span className="mono aside">{k.uses}×</span>
           </span>
-          <span className="small muted">
-            {k.made_by === "owner" ? "You" : "Atlas"}
+          <span className="small muted clip">
+            {k.from ? k.from.name : k.made_by === "owner" ? "You" : "Atlas"}
             {k.made_by === "atlas" || at("detailed") ? ` · v${k.version}` : ""}
+            {k.from?.update ? " · update" : ""}
           </span>
           <span className={`small ${check.cls}`}>{check.text}</span>
         </div>
@@ -94,6 +99,16 @@ export function Skills({ atlas }: { atlas: Atlas }) {
               </p>
             )}
             {k.checked && !k.checked.ok && <pre className="code-block mono">{k.checked.output}</pre>}
+            {k.from && (
+              <p className="small">
+                From {k.from.name}'s skill hub,{" "}
+                <a href={k.from.url} target="_blank" rel="noreferrer">
+                  {k.from.repo}
+                </a>{" "}
+                at <span className="mono">{k.from.commit.slice(0, 7)}</span>. Its scripts run only in the workspace.
+                {k.from.update && " The hub has a newer version."}
+              </p>
+            )}
             {k.files.length > 0 && (
               <p className="aside">
                 {k.files.length} {k.files.length === 1 ? "file" : "files"} in its folder: {k.files.map((x) => x.path).join(", ")}
@@ -124,9 +139,20 @@ export function Skills({ atlas }: { atlas: Atlas }) {
               <button className="btn s" onClick={() => setEditing({ id: k.id, md: k.md })}>
                 Edit
               </button>
-              <button className="btn s" onClick={() => download(k.name, k.md)}>
-                Download
-              </button>
+              {k.from?.update && (
+                <button className="btnp s" onClick={() => setGetting({ hub: k.from!.hub, name: k.name })}>
+                  Update
+                </button>
+              )}
+              {k.files.length > 0 || k.from ? (
+                <a className="btn s" href={`/api/skills/${encodeURIComponent(k.id)}/folder`} download={`${k.name}.zip`}>
+                  Download
+                </a>
+              ) : (
+                <button className="btn s" onClick={() => download(k.name, k.md)}>
+                  Download
+                </button>
+              )}
               <button
                 className="btn s"
                 onClick={() => atlas.send({ type: "atlas.skill.state", id: k.id, state: k.state === "active" ? "archived" : "active" })}
@@ -164,8 +190,11 @@ export function Skills({ atlas }: { atlas: Atlas }) {
         >
           Paste a SKILL.md
         </button>
-        {/* TODO(stage 5): "Get skills" from the catalog's skill hubs. */}
+        <button className={getting ? "btnp" : "btn"} onClick={() => setGetting(!getting)} aria-expanded={Boolean(getting)}>
+          Get skills
+        </button>
       </div>
+      {getting && <GetSkills atlas={atlas} start={typeof getting === "object" ? getting : null} onClose={() => setGetting(false)} />}
       {editing && (
         <form
           className="card2 pad rise"

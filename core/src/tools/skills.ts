@@ -27,7 +27,10 @@ import {
   type Skill,
   type SkillFile,
   skillFileKey,
+  skillMdBytes,
+  skillSources,
 } from "../skills";
+import type { Sql } from "../store/db";
 import { defineTool, fail, type ToolContext, type WorkspaceApi } from "./types";
 
 /** The most a skill's file may hold, as text. */
@@ -45,28 +48,49 @@ async function remember(ctx: ToolContext, s: Skill): Promise<void> {
 }
 
 /**
- * Puts a skill's folder in the workspace, at /workspace/skills/<name>, so
- * its scripts can run there: before its check, and when Atlas asks.
+ * Puts a skill's folder in the workspace, at /workspace/skills/<name>, as
+ * the standard lays it out (its SKILL.md and every file), so its scripts can
+ * run there: before its check, and when Atlas asks. Small files go a few to
+ * a command; a big one goes in pieces.
  */
-export async function unpackSkill(ws: WorkspaceApi, files: R2Bucket | null, s: Skill, runId: string): Promise<string> {
+export async function unpackSkill(ws: WorkspaceApi, sql: Sql, files: R2Bucket | null, s: Skill, runId: string): Promise<string> {
   const dir = `/workspace/skills/${s.name}`;
   const run = async (command: string) => {
     const r = await ws.run(command, { run_id: runId, timeout_s: 60 });
     if (r.exit !== 0) throw new Error(`Couldn't put ${s.name}'s folder in the workspace: ${r.output.slice(-500)}`);
   };
-  await run(`rm -rf ${dir} && mkdir -p ${dir}`);
+  let batch: string[] = [`rm -rf ${dir} && mkdir -p ${dir}`];
+  let size = 0;
+  const flush = async () => {
+    if (batch.length) await run(batch.join(" && "));
+    batch = [];
+    size = 0;
+  };
+  const put = async (path: string, bytes: Uint8Array) => {
+    const b64 = toBase64(bytes);
+    const slash = path.lastIndexOf("/");
+    const mkdir = slash > 0 ? `mkdir -p ${dir}/${path.slice(0, slash)} && ` : "";
+    const done = `base64 -d ${dir}/${path}.b64 > ${dir}/${path} && rm ${dir}/${path}.b64${path.startsWith("scripts/") ? ` && chmod +x ${dir}/${path}` : ""}`;
+    // One shell argument can't be longer than 128 KB, and a command is one argument: a batch stays under half that.
+    if (b64.length <= UNPACK_CHUNK) {
+      const cmd = `${mkdir}printf %s '${b64}' > ${dir}/${path}.b64 && ${done}`;
+      if (size + cmd.length > UNPACK_CHUNK) await flush();
+      batch.push(cmd);
+      size += cmd.length;
+      return;
+    }
+    await flush();
+    await run(`${mkdir}: > ${dir}/${path}.b64`);
+    for (let i = 0; i < b64.length; i += UNPACK_CHUNK) await run(`printf %s '${b64.slice(i, i + UNPACK_CHUNK)}' >> ${dir}/${path}.b64`);
+    await run(done);
+  };
+  await put("SKILL.md", await skillMdBytes(sql, files, s));
   for (const f of s.files) {
     const obj = files ? await files.get(skillFileKey(s.id, f.path)) : null;
     if (!obj) throw new Error(`${s.name}'s file ${f.path} isn't in storage.`);
-    const b64 = toBase64(new Uint8Array(await obj.arrayBuffer()));
-    const sub = f.path.slice(0, f.path.lastIndexOf("/"));
-    // In pieces: one shell argument can't be longer than 128 KB.
-    await run(`mkdir -p ${dir}/${sub} && : > ${dir}/${f.path}.b64`);
-    for (let i = 0; i < b64.length; i += UNPACK_CHUNK) await run(`printf %s '${b64.slice(i, i + UNPACK_CHUNK)}' >> ${dir}/${f.path}.b64`);
-    await run(
-      `base64 -d ${dir}/${f.path}.b64 > ${dir}/${f.path} && rm ${dir}/${f.path}.b64${f.path.startsWith("scripts/") ? ` && chmod +x ${dir}/${f.path}` : ""}`,
-    );
+    await put(f.path, new Uint8Array(await obj.arrayBuffer()));
   }
+  await flush();
   return dir;
 }
 
@@ -97,6 +121,7 @@ export const skillRead = defineTool({
     noteUse(ctx.sql, s.id);
     // An archived skill comes back into the index when it's used again (§9.3: archived, never deleted).
     if (s.state === "archived") setSkillState(ctx.sql, s.id, "active", "atlas", "Used again.");
+    const src = skillSources(ctx.sql)[s.id];
     return {
       ok: true,
       output: {
@@ -105,6 +130,7 @@ export const skillRead = defineTool({
         version: s.version,
         instructions: s.body,
         ...(s.files.length ? { files: s.files.map((f) => f.path) } : {}),
+        ...(src ? { from: `${src.hub_name}'s skill hub (${src.repo}), installed by the owner; run its scripts in the workspace` } : {}),
         ...(s.check ? { check: s.check } : {}),
         ...(s.checked && !s.checked.ok ? { broken: `Its last check failed: ${s.checked.output.slice(-500)}` } : {}),
       },
@@ -125,7 +151,7 @@ export const skillFile = defineTool({
     if (input.unpack) {
       if (!ctx.workspace) return fail("The workspace can't be used from here.");
       try {
-        return { ok: true, output: { folder: await unpackSkill(ctx.workspace, ctx.files, s, ctx.run_id) } };
+        return { ok: true, output: { folder: await unpackSkill(ctx.workspace, ctx.sql, ctx.files, s, ctx.run_id) } };
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
@@ -288,7 +314,7 @@ export const skillCheck = defineTool({
     if (!s.check) return fail(`${s.name} has no check. Add one with skill_save.`);
     if (!ctx.workspace) return fail("The workspace can't be used from here.");
     try {
-      const cwd = s.files.length ? await unpackSkill(ctx.workspace, ctx.files, s, ctx.run_id) : undefined;
+      const cwd = s.files.length ? await unpackSkill(ctx.workspace, ctx.sql, ctx.files, s, ctx.run_id) : undefined;
       const r = await ctx.workspace.run(s.check, { run_id: ctx.run_id, timeout_s: 120, ...(cwd ? { cwd } : {}) });
       noteCheck(ctx.sql, s.id, { ok: r.exit === 0, output: r.output });
       return { ok: true, output: { name: s.name, passed: r.exit === 0, exit: r.exit, output: r.output.slice(-3_000) } };
@@ -298,6 +324,77 @@ export const skillCheck = defineTool({
   },
 });
 
+export const skillFind = defineTool({
+  name: "skill_find",
+  kind: "look",
+  status: "Looking for a skill.",
+  timeoutMs: 2 * 60_000,
+  description:
+    "Search the skill hubs in the catalog (folders of SKILL.md skills that others publish, such as Anthropic's) for a skill to install, when the owner asks you to get one. Search by what it's for, in a word or two ('slides', 'pdf forms', 'spreadsheet'); an empty query lists them all. Each result says what it's for, which hub it's in, and whether it's installed. Install one with skill_install.",
+  input: z.object({ query: z.string().max(200) }),
+  async run(input, ctx) {
+    if (!ctx.hubs) return fail("Skill hubs can only be searched in a conversation with the owner.");
+    try {
+      const { skills, unread } = await ctx.hubs.find(input.query);
+      return {
+        ok: true,
+        output: {
+          skills: skills.map((k) => ({
+            hub: k.hub,
+            name: k.name,
+            for: k.description.slice(0, 400),
+            from: k.hub_name,
+            ...(k.installed ? { installed: true, ...(k.installed.update ? { update: "the hub has a newer version" } : {}) } : {}),
+            ...(k.taken ? { taken: "you have a skill of that name that isn't from this hub" } : {}),
+            ...(k.problem ? { cant_install: k.problem } : {}),
+          })),
+          ...(unread.length ? { unread } : {}),
+          ...(skills.length ? {} : { note: "Nothing matched. Try other words for what it's for, or an empty query for every skill." }),
+        },
+      };
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+  },
+});
+
+export const skillInstall = defineTool({
+  name: "skill_install",
+  kind: "change_own",
+  status: "Installing that skill.",
+  timeoutMs: 3 * 60_000,
+  description:
+    "Install a skill from a skill hub, by the hub and name skill_find gave, when the owner asked you to get it (or to update one skill_find says has a newer version). It's someone else's instructions, kept with its folder unchanged; its scripts run only in the workspace (skill_file with unpack). The owner sees it with Undo. Then use it with skill_read. Not from a run that has read the web: say so, and that they can install it from Abilities, then Skills, then Get skills.",
+  input: z.object({ hub: z.string().min(1).max(40), name: z.string().min(1).max(80) }),
+  async run(input, ctx) {
+    if (!ctx.hubs) return fail("Skills can only be installed in a conversation with the owner.");
+    if (ctx.hubs.readWeb())
+      return fail(
+        "This run has read the web, which could be steering it, so it doesn't install skills. The owner can ask again in a new message, or install it from Abilities, then Skills, then Get skills.",
+      );
+    try {
+      const r = await ctx.hubs.install(input.hub, input.name, { run_id: ctx.run_id });
+      if (r.change === "same") return { ok: true, output: { installed: r.skill.name, note: r.text } };
+      const src = skillSources(ctx.sql)[r.skill.id];
+      return {
+        ok: true,
+        output: { installed: r.skill.name, version: r.skill.version, files: r.skill.files.map((f) => f.path), note: r.text },
+        receipt: {
+          text: `${r.change === "updated" ? "Updated" : "Installed"} a skill · ${r.skill.name}${src ? ` from ${src.hub_name}` : ""}`,
+          undo:
+            r.change === "updated"
+              ? { kind: "skill.undo", id: r.skill.id, version: r.skill.version }
+              : { kind: "skill.uninstall", id: r.skill.id },
+        },
+      };
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+  },
+});
+
 export const skillTools = [skillRead, skillFile, skillSave, skillCheck];
+/** Getting skills from the catalog's skill hubs (§17): only in the owner's own runs. */
+export const hubTools = [skillFind, skillInstall];
 /** What the review that looks back over a conversation may use (§9.3): skills, and nothing else. */
 export const reviewTools = [skillRead, skillFile, skillSave, skillMerge];

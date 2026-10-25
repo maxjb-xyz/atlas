@@ -5,7 +5,7 @@ export const SNAPSHOT: unknown = {
   "atlas_index": 1,
   "name": "Atlas",
   "about": "The services Atlas knows, reviewed in the Atlas repo. A listing is a reviewed change to this file.",
-  "updated": "2026-10-24",
+  "updated": "2026-10-25",
   "services": [
     {
       "id": "linear",
@@ -331,6 +331,16 @@ export const SNAPSHOT: unknown = {
         "bundled": "codex"
       },
       "skills": []
+    }
+  ],
+  "hubs": [
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "about": "Anthropic's own skills: Word documents, slides, spreadsheets, PDFs, design, testing web apps and more. Some are source-available rather than open source; each folder's LICENSE.txt says which.",
+      "repo": "anthropics/skills",
+      "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+      "path": "skills"
     }
   ]
 };

@@ -20,6 +20,10 @@ export type StateName =
   | "skill_review_seq"
   /** Pairs of skills already offered to the review to merge, as "a|b", so each is offered once. */
   | "skill_pairs_offered"
+  /** Where each skill installed from a skill hub came from (§17): the hub, the folder, the commit and each file's hash. */
+  | "skill_sources"
+  /** What each skill hub holds at its pinned commit (§17), as Atlas last read it, or why it couldn't. */
+  | "skill_hub_lists"
   /** When the owner last opened Atlas or a push from it (§14: something urgent seen since needs no follow-up). */
   | "owner_seen_at"
   /** The last reason each MCP server gave for not connecting, by address: the SDK forgets it on a reconnect. */

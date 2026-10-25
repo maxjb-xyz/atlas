@@ -14,6 +14,7 @@
 import { newId, parse, type Sql } from "./store/db";
 import { append, type LogRow } from "./store/log";
 import { type AgendaItem, createItem } from "./store/agenda";
+import { getState, setState } from "./store/state";
 
 export interface Skill {
   id: string;
@@ -317,14 +318,45 @@ export function tidySkills(sql: Sql, now = Date.now()): string[] {
 
 // --- SKILL.md ------------------------------------------------------------------------------
 
-/** The frontmatter's simple values: `key: value` lines, with quotes allowed. Nested blocks are kept as text. */
-function frontmatter(text: string): Record<string, string> {
+/**
+ * The frontmatter's simple values: `key: value` lines, quoted or not, and the
+ * YAML that skills from other agents use for a long description: a block
+ * (`>` folds its lines into one, `|` keeps them) or a value that goes on over
+ * indented lines. Nested blocks (metadata) are left out.
+ */
+export function frontmatter(text: string): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const line of text.split("\n")) {
-    const m = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+  const lines = text.split("\n");
+  const under = (i: number) => i < lines.length && (/^\s+\S/.test(lines[i]!) || !lines[i]!.trim());
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^([A-Za-z0-9_-]+):\s*(.*?)\s*$/.exec(lines[i]!);
     if (!m) continue;
-    let v = m[2]!.trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    let v = m[2]!;
+    const block = /^([>|])[+-]?\d*$/.exec(v);
+    if (block || v) {
+      const more: string[] = [];
+      while (under(i + 1)) more.push(lines[++i]!);
+      while (more.length && !more.at(-1)!.trim()) more.pop();
+      if (block) {
+        const indent = Math.min(...more.filter((l) => l.trim()).map((l) => l.length - l.trimStart().length));
+        const kept = more.map((l) => l.slice(Number.isFinite(indent) ? indent : 0).trimEnd());
+        v =
+          block[1] === "|"
+            ? kept.join("\n")
+            : kept
+                .join("\n")
+                .split(/\n\s*\n/)
+                .map((p) => p.split("\n").join(" "))
+                .join("\n");
+      } else if (more.length) v = [v, ...more.map((l) => l.trim())].join(" ");
+    }
+    if (v.startsWith('"') && v.endsWith('"') && v.length > 1) {
+      try {
+        v = JSON.parse(v) as string;
+      } catch {
+        v = v.slice(1, -1);
+      }
+    } else if (v.startsWith("'") && v.endsWith("'") && v.length > 1) v = v.slice(1, -1).replace(/''/g, "'");
     out[m[1]!] = v;
   }
   // metadata: { atlas-check: ... } is written as an indented block.
@@ -335,7 +367,7 @@ function frontmatter(text: string): Record<string, string> {
 
 /** Reads a SKILL.md: its name, description and body, and Atlas's check if it has one. */
 export function parseSkillMd(md: string): { name: string; description: string; body: string; check: string } {
-  const m = /^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/.exec(md.replace(/^﻿/, "").trimStart());
+  const m = /^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/.exec(md.replace(/^﻿/, "").replace(/\r\n/g, "\n").trimStart());
   if (!m) throw new Error("A SKILL.md starts with frontmatter between --- lines, with at least name and description.");
   const fm = frontmatter(m[1]!);
   if (!fm.name || !fm.description) throw new Error("The SKILL.md's frontmatter needs a name and a description.");
@@ -355,6 +387,46 @@ export function skillMd(s: Pick<Skill, "name" | "description" | "body" | "check"
     s.body,
     "",
   ].join("\n");
+}
+
+// --- where a skill came from -----------------------------------------------------------------
+
+/**
+ * A skill installed from a skill hub (§17): the hub, its repo, the folder
+ * and the commit it was installed at, git's hash for each file then (its
+ * SKILL.md too), and the skill's version as installed. The hub's own SKILL.md
+ * is kept in R2 beside the folder's files, so while the skill is as
+ * installed, its folder goes back out unchanged.
+ */
+export interface SkillSource {
+  hub: string;
+  hub_name: string;
+  index: string;
+  repo: string;
+  folder: string;
+  commit: string;
+  version: number;
+  files: Record<string, string>;
+  at: number;
+}
+
+export const skillSources = (sql: Sql): Record<string, SkillSource> => getState<Record<string, SkillSource>>(sql, "skill_sources") ?? {};
+
+export function setSkillSource(sql: Sql, id: string, src: SkillSource | null): void {
+  const all = skillSources(sql);
+  if (src) all[id] = src;
+  else delete all[id];
+  setState(sql, "skill_sources", all);
+}
+
+/** A skill's SKILL.md as it stands: the hub's own file while the skill is as it was installed, else written from what it says now. */
+export async function skillMdBytes(sql: Sql, bucket: R2Bucket | null, s: Skill): Promise<Uint8Array> {
+  const src = skillSources(sql)[s.id];
+  if (src && src.version === s.version && bucket) {
+    const obj = await bucket.get(skillFileKey(s.id, "SKILL.md"));
+    if (obj) return new Uint8Array(await obj.arrayBuffer());
+  }
+  return new TextEncoder().encode(skillMd(s));
 }
 
 /** How often skills' checks run. */

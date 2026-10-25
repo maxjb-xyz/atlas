@@ -146,6 +146,33 @@ export const Service = z
   .strict()
   .refine((s) => s.extension || s.mcp || s.skills.length, "a service needs at least one part");
 
+/**
+ * A skill hub (§17: skills, including from skill hubs that use SKILL.md): a
+ * public GitHub repo of skill folders, such as Anthropic's, pinned to a
+ * commit. Every folder under `path` with a SKILL.md in it is a skill, and
+ * each of its files is checked against git's own hash for it at that commit
+ * (agent/hubs.ts). A listing that pins a newer commit is how a hub's skills
+ * get updates.
+ */
+export const Hub = z
+  .object({
+    id: Id,
+    name: Line(60),
+    about: Line(300).optional(),
+    /** On GitHub, as owner/name. */
+    repo: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/, "a GitHub repo, as owner/name"),
+    commit: z.string().regex(COMMIT, "a full 40-character commit hash"),
+    /** The folder in the repo that holds the skill folders ("skills"), or "" for its root. */
+    path: z
+      .string()
+      .max(200)
+      .regex(/^(?:[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)?$/, "a folder in the repo, like skills, or empty for its root")
+      .refine((p) => !p.split("/").some((x) => x === "." || x === ".."), "a folder inside the repo")
+      .default(""),
+  })
+  .strict();
+
+export type Hub = z.infer<typeof Hub>;
 export type Service = z.infer<typeof Service>;
 export type ExtensionPart = z.infer<typeof ExtensionPart>;
 export type PinnedExtension = Extract<ExtensionPart, { code: string }>;
@@ -158,6 +185,7 @@ const IndexHead = z.object({
   /** When it last changed, YYYY-MM-DD: the newer of the snapshot and the fetched copy wins. */
   updated: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   services: z.array(z.unknown()).max(500),
+  hubs: z.array(z.unknown()).max(50).default([]),
 });
 
 export interface ServiceIndex {
@@ -165,6 +193,8 @@ export interface ServiceIndex {
   about: string | null;
   updated: string;
   services: Service[];
+  /** Skill hubs it lists (§17). */
+  hubs: Hub[];
 }
 
 /**
@@ -194,8 +224,17 @@ export function readIndex(raw: unknown): { index: ServiceIndex; problems: string
     seen.add(p.data.id);
     services.push(p.data);
   }
+  const hubs: Hub[] = [];
+  for (const [n, h] of head.data.hubs.entries()) {
+    const p = Hub.safeParse(h);
+    const id = (h as { id?: unknown } | null)?.id;
+    const who = `hub ${typeof id === "string" ? id : n + 1}`;
+    if (!p.success) problems.push(`${who}: ${p.error.issues.map((i) => `${i.path.join(".") || "entry"}: ${i.message}`).join("; ")}`);
+    else if (hubs.some((x) => x.id === p.data.id)) problems.push(`${who}: listed twice; the first is kept.`);
+    else hubs.push(p.data);
+  }
   return {
-    index: { name: head.data.name, about: head.data.about ?? null, updated: head.data.updated, services },
+    index: { name: head.data.name, about: head.data.about ?? null, updated: head.data.updated, services, hubs },
     problems,
   };
 }
@@ -268,9 +307,7 @@ export interface Listed extends Service {
  */
 export function catalog(sql: Sql): Listed[] {
   const looks = indexLooks(sql);
-  const own = looks[DEFAULT_INDEX]?.index;
-  const snap = snapshot();
-  const base = own && own.updated >= snap.updated ? { index: own, snapshot: false } : { index: snap, snapshot: true };
+  const base = ownIndex(looks);
   const out = new Map<string, Listed>();
   for (const s of base.index.services) out.set(s.id, { ...s, index: DEFAULT_INDEX, snapshot: base.snapshot });
   for (const url of indexSources(sql).slice(1)) {
@@ -279,6 +316,31 @@ export function catalog(sql: Sql): Listed[] {
       out.set(s.id, { ...s, index: url, snapshot: false });
     }
   }
+  return [...out.values()];
+}
+
+/** Atlas's own index as the catalog reads it: the fetched copy, or this release's snapshot when that's newer or nothing was fetched. */
+function ownIndex(looks: Record<string, IndexLook>): { index: ServiceIndex; snapshot: boolean } {
+  const own = looks[DEFAULT_INDEX]?.index;
+  const snap = snapshot();
+  return own && own.updated >= snap.updated ? { index: own, snapshot: false } : { index: snap, snapshot: true };
+}
+
+/** A skill hub as the catalog has it: its listing, and which index it came from. */
+export interface ListedHub extends Hub {
+  index: string;
+  snapshot: boolean;
+}
+
+/** The skill hubs (§17), from the same indexes in the same order as the services; a hub's id is taken by the first index that lists it. */
+export function hubCatalog(sql: Sql): ListedHub[] {
+  const looks = indexLooks(sql);
+  const base = ownIndex(looks);
+  const out = new Map<string, ListedHub>();
+  // A copy kept before indexes had hubs reads as having none.
+  for (const h of base.index.hubs ?? []) out.set(h.id, { ...h, index: DEFAULT_INDEX, snapshot: base.snapshot });
+  for (const url of indexSources(sql).slice(1))
+    for (const h of looks[url]?.index?.hubs ?? []) if (!out.has(h.id)) out.set(h.id, { ...h, index: url, snapshot: false });
   return [...out.values()];
 }
 

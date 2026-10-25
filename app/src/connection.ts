@@ -103,6 +103,12 @@ export interface State {
   services: import("../../core/src/protocol").ServiceView[] | null;
   /** The last thing a service's install, key, removal or update said. */
   serviceNote: { id: string; ok: boolean; text: string } | null;
+  /** Get skills (§17): the catalog's skill hubs and what each holds, once asked for. */
+  hubs: import("../../core/src/protocol").HubView[] | null;
+  /** The hub skill opened in full before it's installed, or why it couldn't be fetched. */
+  hubPreview: { hub: string; name: string; preview?: import("../../core/src/protocol").HubPreview; error?: string } | null;
+  /** The last thing installing or removing a hub's skill said. */
+  hubNote: { hub: string; name: string; ok: boolean; text: string } | null;
   /** The page Keep just made, so the view can say where it went. */
   kept: { id: string; name: string } | null;
   /** Bumped when the situation changes, so Now and the situation, weather and place views ask again. */
@@ -160,6 +166,9 @@ const initial: State = {
   mcpServers: null,
   services: null,
   serviceNote: null,
+  hubs: null,
+  hubPreview: null,
+  hubNote: null,
   kept: null,
   situationVersion: 0,
   extSetup: {},
@@ -335,6 +344,15 @@ function reduce(s: State, a: Action): State {
       return { ...s, services: m.services };
     case "atlas.service.done":
       return { ...s, serviceNote: { id: m.id, ok: m.ok, text: m.text } };
+    case "atlas.hubs":
+      return { ...s, hubs: m.hubs };
+    case "atlas.hub.preview":
+      return {
+        ...s,
+        hubPreview: { hub: m.hub, name: m.name, ...(m.preview ? { preview: m.preview } : {}), ...(m.error ? { error: m.error } : {}) },
+      };
+    case "atlas.hub.done":
+      return { ...s, hubNote: { hub: m.hub, name: m.name, ok: m.ok, text: m.text } };
     case "atlas.workspace.out": {
       const prev = s.workspaceOut?.run_id === m.run_id ? s.workspaceOut.text : "";
       return { ...s, workspaceOut: { run_id: m.run_id, text: (prev + m.text).slice(-40_000) } };

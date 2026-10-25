@@ -40,6 +40,24 @@ describe("SKILL.md", () => {
     expect(() => parseSkillMd("no frontmatter here")).toThrow("starts with frontmatter");
   });
 
+  it("reads the YAML skill hubs use for long descriptions: folded, literal, over indented lines, and quoted", () => {
+    const md = (fm: string) => `---\nname: deck\n${fm}\nlicense: Proprietary. LICENSE.txt has complete terms\n---\n\nSteps.\n`;
+    expect(parseSkillMd(md("description: >\n  Make decks from notes.\n  Use for slides.\n")).description).toBe(
+      "Make decks from notes. Use for slides.",
+    );
+    expect(parseSkillMd(md("description: |-\n  First line.\n  Second line.")).description).toBe("First line.\nSecond line.");
+    expect(parseSkillMd(md("description: Make decks\n  from notes, over two lines.")).description).toBe(
+      "Make decks from notes, over two lines.",
+    );
+    expect(parseSkillMd(md('description: "Say \\"deck,\\" and it starts."')).description).toBe('Say "deck," and it starts.');
+    expect(parseSkillMd(md("description: 'It''s for decks.'")).description).toBe("It's for decks.");
+    expect(parseSkillMd(md("description: For decks.").replace(/\n/g, "\r\n"))).toMatchObject({
+      name: "deck",
+      description: "For decks.",
+      body: "Steps.",
+    });
+  });
+
   it("archives skills nobody used for months, and never deletes them", async () => {
     await runInDurableObject(env.PersonAgent.get(env.PersonAgent.idFromName("skills-tidy")), async (_a, state) => {
       const sql = state.storage.sql;

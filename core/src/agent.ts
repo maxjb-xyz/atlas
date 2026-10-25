@@ -130,7 +130,9 @@ import { vaultFill } from "./tools/vault";
 import { fileRead, fileTools } from "./tools/files";
 import { workspaceTools } from "./tools/workspace";
 import { codeRun } from "./tools/code";
-import { reviewTools, skillRead, skillTools, unpackSkill } from "./tools/skills";
+import { hubTools, reviewTools, skillRead, skillTools, unpackSkill } from "./tools/skills";
+import { HubDesk } from "./agent/hubs";
+import { zip } from "./zip";
 import { mcpCall, mcpToolset, mcpTools, UNTRUSTED } from "./tools/mcp";
 import {
   APP_MIME,
@@ -151,6 +153,7 @@ import {
 import {
   ensureSkillChecks,
   findSkill,
+  getSkill,
   listSkills,
   meaningOf,
   noteCheck,
@@ -160,7 +163,9 @@ import {
   saveSkill,
   setSkillState,
   setSkillVec,
+  skillFileKey,
   skillMd,
+  skillMdBytes,
   skillsWithoutVec,
   skillVersions,
   tidySkills,
@@ -300,6 +305,7 @@ const TOOLS: Record<Actor, Tool[]> = {
     ...workspaceTools,
     codeRun,
     ...skillTools,
+    ...hubTools,
     ...mcpToolset,
     ...placeTools,
     ...taskTools,
@@ -406,6 +412,9 @@ const OWNER_ONLY = new Set<string>([
   "atlas.service.key",
   "atlas.service.remove",
   "atlas.service.update",
+  "atlas.hub.preview",
+  "atlas.hub.install",
+  "atlas.hub.remove",
   "atlas.index.add",
   "atlas.index.remove",
   "atlas.index.refresh",
@@ -524,6 +533,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #extensions!: ExtensionDesk;
   /** Services, one catalog (§17): the cards, installing from the index, its daily look. */
   #services!: ServiceDesk;
+  /** Skill hubs (§17): Get skills, installing a hub's skill folder unchanged, and its updates. */
+  #hubs!: HubDesk;
   /** Updates (§23.2): the daily look at releases, Update and Roll back through Cloudflare's API. */
   #updates!: UpdateDesk;
   /** Your data (§23.4): take a copy of everything, go back in time, delete everything. */
@@ -780,6 +791,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       mcp: () => this.#mcpClient(),
       files: () => this.#bucket(),
       clock: this.#clock,
+    });
+    this.#hubs = new HubDesk({
+      sql: this.#sql,
+      fetch:
+        () =>
+        (...args) =>
+          (seams.fetch ?? fetch)(...args),
+      files: () => this.#bucket(),
     });
     this.#updates = new UpdateDesk({
       sql: this.#sql,
@@ -1858,6 +1877,41 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       case "atlas.skills":
         this.#send(connection, { type: "atlas.skills", skills: this.#skillViews() });
         return;
+      case "atlas.hubs":
+        // What's been read shows at once; a hub not read yet (or one that failed, with `again`) is read, then sent again.
+        this.#send(connection, { type: "atlas.hubs", hubs: this.#hubs.views() });
+        if (msg.again || this.#hubs.unread()) {
+          await this.keepAliveWhile(() => this.#hubs.read({ again: msg.again ?? false }));
+          this.#broadcast({ type: "atlas.hubs", hubs: this.#hubs.views() });
+          this.#broadcast({ type: "atlas.skills", skills: this.#skillViews() });
+        }
+        return;
+      case "atlas.hub.preview":
+        try {
+          const preview = await this.keepAliveWhile(() => this.#hubs.preview(msg.hub, msg.name));
+          this.#send(connection, { type: "atlas.hub.preview", hub: msg.hub, name: msg.name, preview });
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err);
+          console.error(JSON.stringify({ at: "hubs.preview", hub: msg.hub, name: msg.name, error }));
+          this.#send(connection, { type: "atlas.hub.preview", hub: msg.hub, name: msg.name, error });
+        }
+        return;
+      case "atlas.hub.install":
+      case "atlas.hub.remove":
+        try {
+          const text =
+            msg.type === "atlas.hub.install"
+              ? (await this.keepAliveWhile(() => this.#hubs.install(msg.hub, msg.name))).text
+              : this.#hubs.remove(msg.hub, msg.name);
+          this.#send(connection, { type: "atlas.hub.done", hub: msg.hub, name: msg.name, ok: true, text });
+        } catch (err) {
+          const text = err instanceof Error ? err.message : String(err);
+          console.error(JSON.stringify({ at: `hubs.${msg.type.slice(10)}`, hub: msg.hub, name: msg.name, error: text }));
+          this.#send(connection, { type: "atlas.hub.done", hub: msg.hub, name: msg.name, ok: false, text });
+        }
+        this.#broadcast({ type: "atlas.hubs", hubs: this.#hubs.views() });
+        this.#broadcast({ type: "atlas.skills", skills: this.#skillViews() });
+        return;
       case "atlas.mcp":
         await this.#mcpServers(3_000);
         this.#send(connection, { type: "atlas.mcp.servers", servers: this.#mcpView() });
@@ -2764,8 +2818,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       return;
     }
     if (item.kind === "index") {
-      await this.keepAliveWhile(() => this.#services.look(item));
+      await this.keepAliveWhile(async () => {
+        await this.#services.look(item);
+        // A hub the index now pins to a newer commit: skills whose folder didn't change move to it as they are.
+        await this.#hubs.look();
+      });
       this.#servicesChanged();
+      this.#broadcast({ type: "atlas.skills", skills: this.#skillViews() });
       return;
     }
     if (item.kind === "updates") {
@@ -3093,6 +3152,20 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           // Only a run the owner started changes Atlas's own settings, and not to loosen their rules once it has read the web.
           ...(o.actor === "owner"
             ? { settingsEdit: { change: (patch) => this.#updateSettings(patch, "atlas"), readWeb: () => this.#readTheWeb(o.runId) } }
+            : {}),
+          // Getting skills from the catalog's hubs (§17): a run the owner started, in the owner's own Atlas.
+          ...(o.actor === "owner" && !this.#member
+            ? {
+                hubs: {
+                  find: (q: string) => this.#hubs.find(q),
+                  install: async (hub: string, name: string, x: { run_id: string }) => {
+                    const r = await this.#hubs.install(hub, name, x);
+                    this.#broadcast({ type: "atlas.skills", skills: this.#skillViews() });
+                    return r;
+                  },
+                  readWeb: () => this.#readTheWeb(o.runId),
+                },
+              }
             : {}),
           ...(o.context ?? {}),
           // Code Mode (§9.1): a program calls this run's own tools, and each call is a row of this run, with its receipt.
@@ -4259,6 +4332,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
     this.#broadcast({ type: "atlas.rows", rows: [out.row] });
     if (out.agenda) this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
     if (out.row.kind === "page.change") this.#broadcast({ type: "atlas.pages", pages: pageSummaries(this.#sql) });
+    if (out.row.kind === "skill.change") this.#broadcast({ type: "atlas.skills", skills: this.#skillViews() });
     if (out.row.kind === "settings.change") {
       this.#broadcast({ type: "atlas.view", view: this.#view() });
     }
@@ -4647,6 +4721,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
       versions: skillVersions(this.#sql, s.id).map((v) => ({ n: v.n, at: v.at, by: v.by, note: v.note })),
       md: skillMd(s),
       files: s.files,
+      from: this.#hubs.from(s.id),
     }));
   }
 
@@ -4772,7 +4847,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
     for (const s of listSkills(this.#sql).filter((x) => x.check)) {
       let r: { ok: boolean; output: string };
       try {
-        const cwd = s.files.length ? await unpackSkill(this.#workspaceApi, this.#bucket(), s, item.id) : undefined;
+        const cwd = s.files.length ? await unpackSkill(this.#workspaceApi, this.#sql, this.#bucket(), s, item.id) : undefined;
         const out = await this.#workspaceApi.run(s.check, { run_id: item.id, timeout_s: 120, ...(cwd ? { cwd } : {}) });
         r = { ok: out.exit === 0, output: out.output };
       } catch (err) {
@@ -5694,6 +5769,20 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
   }
 
   /** What the Worker needs to send a file: where its bytes are, its name and type. */
+  /** A skill's folder as a zip (§9.3: Download gives the folder back): its SKILL.md as it stands and every file, under its name. */
+  async apiSkillFolder(id: string): Promise<{ name: string; zip: Uint8Array } | null> {
+    const s = getSkill(this.#sql, id);
+    if (!s) return null;
+    const bucket = this.#bucket();
+    const files = [{ path: `${s.name}/SKILL.md`, bytes: await skillMdBytes(this.#sql, bucket, s) }];
+    for (const f of s.files) {
+      const obj = bucket ? await bucket.get(skillFileKey(s.id, f.path)) : null;
+      if (!obj) throw new Error(`${s.name}'s file ${f.path} isn't in storage.`);
+      files.push({ path: `${s.name}/${f.path}`, bytes: new Uint8Array(await obj.arrayBuffer()) });
+    }
+    return { name: s.name, zip: zip(files) };
+  }
+
   async apiFile(id: string): Promise<{ key: string; name: string; type: string } | null> {
     const f = getFile(this.#sql, id);
     return f ? { key: keyOf(f), name: f.name, type: f.type } : null;

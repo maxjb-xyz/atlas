@@ -268,6 +268,7 @@ export class ServiceDesk {
         error: l?.error ?? null,
         problems: l?.problems ?? [],
         services: l?.index?.services.length ?? 0,
+        hubs: l?.index?.hubs?.length ?? 0,
       };
     });
   }
