@@ -153,7 +153,7 @@ export const jobHelpers = defineTool({
   status: "Starting a few helpers.",
   timeoutMs: 60_000,
   description:
-    "Start helpers that read for you in parallel, each from its own brief: comparing many options at once, or reading pages that shouldn't be able to steer you. They can only look; each hands back what it found. Write each brief in full, with exactly what to hand back (a short list with links, a table). Your turn ends; what they found starts your next one. Set `research` for reading widely over hours.",
+    "Start helpers that read for you in parallel, each from its own brief: comparing many options at once, or reading pages that shouldn't be able to steer you. They can only look, on the web and in the owner's files; your folder and its shell are yours alone, so work there yourself. Each hands back what it found. Write each brief in full, with exactly what to hand back (a short list with links, a table). Your turn ends; what they found starts your next one. Set `research` for reading widely over hours.",
   input: z.object({
     tasks: z
       .array(z.object({ title: z.string().min(1).max(80), brief: z.string().min(1).max(4_000) }))

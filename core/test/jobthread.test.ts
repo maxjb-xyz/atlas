@@ -3,9 +3,11 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { seams } from "../src/agent";
+import { folderFor, getOwned, JOB_BUDGET, type Job, saveOwned } from "../src/agent/jobs";
+import { createItem } from "../src/store/agenda";
 import { append, isThreadRow, thread } from "../src/store/log";
-import { fakeCalendar, fakeEmbedder } from "./helpers";
-import { connect, inOwner } from "./owner";
+import { fakeCalendar, fakeEmbedder, say } from "./helpers";
+import { brain, connect, inOwner } from "./owner";
 
 beforeEach(() => {
   seams.calendar = fakeCalendar([]);
@@ -14,9 +16,71 @@ beforeEach(() => {
 afterEach(() => {
   seams.calendar = undefined;
   seams.embed = undefined;
+  seams.makeBrain = null;
 });
 
 describe("a job's thread", () => {
+  it("takes the owner's words while a question is open as its answer, so the question shows them", async () => {
+    brain([say("Sending both cuts now.")]);
+    const { id, log } = await inOwner((_a, sql) => {
+      const now = Date.now();
+      const item = createItem(sql, {
+        kind: "job",
+        title: "Launch video",
+        due_at: now,
+        state: "running",
+        source: { via: "chat", detail: { owned: true } },
+      });
+      const q = append(sql, {
+        actor: "atlas",
+        kind: "job.question",
+        body: { job: item.id, title: "Launch video", text: "Watch the cut and tell me what to change.", options: [] },
+      });
+      const job: Job = {
+        id: item.id,
+        title: "Launch video",
+        goal: "A 30-second launch video",
+        asked_in: null,
+        asked_by: null,
+        folder: folderFor(item.id),
+        brain: "Main",
+        phase: "waiting",
+        transcript: [],
+        notes: "",
+        news: [],
+        question: { text: "Watch the cut and tell me what to change.", options: [], files: [], log: q.id, at: now },
+        site: null,
+        work: [],
+        until: null,
+        now: null,
+        latest: null,
+        files: [],
+        read_web: false,
+        deadline: null,
+        overdue: false,
+        reminded_at: null,
+        answered_at: null,
+        budget: { ...JOB_BUDGET },
+        spent: { turns: 0, tokens: { input: 0, output: 0, cached: 0 }, by: {} },
+        went_on_from: [],
+        unsure: 0,
+        moved_at: now,
+        result: null,
+        started_at: now,
+        progress_at: now,
+      };
+      saveOwned(sql, job);
+      return { id: item.id, log: q.id };
+    });
+    const s = await connect();
+    s.send({ type: "atlas.job.say", id, text: "Send me the video here" });
+    const rows = await s.next("atlas.rows", (m) => m.rows.some((r) => r.kind === "message.in"));
+    expect(rows.rows.find((r) => r.kind === "message.in")!.body).toMatchObject({ text: "Send me the video here", job: id, answers: log });
+    const job = await inOwner((_a, sql) => getOwned(sql, id)!);
+    expect(job.question).toBeNull();
+    expect(job.news.at(-1)).toMatchObject({ kind: "answer", text: "Send me the video here" });
+  });
+
   it("answers atlas.job.thread with that job's rows only, oldest first", async () => {
     const job = `job-${crypto.randomUUID()}`;
     const ids = await inOwner((_a, sql) => {

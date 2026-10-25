@@ -537,7 +537,11 @@ export class JobDesk {
                   n.asked.content ? `\nWhat you showed them:\n${clip(n.asked.content, 4_000)}` : ""
                 }`
               : "",
-            `The owner answered: ${n.text}${n.asked ? "\nGo on with what they said: when it's one of the choices, it's decided, so don't ask it again." : ""}`,
+            `The owner answered: ${n.text}${
+              n.asked
+                ? "\nGo on with what they said: when it's one of the choices, it's decided, so don't ask it again. When their words ask for something instead (to see a file, a question of their own), do that, then ask again with job_ask, with what they need to decide."
+                : ""
+            }`,
           ]
             .filter(Boolean)
             .join("\n");
