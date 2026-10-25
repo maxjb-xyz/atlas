@@ -175,7 +175,7 @@ import {
   tidySkills,
 } from "./skills";
 import type { RunEvent } from "./workspace";
-import { cleanName, deleteFile, filePage, getFile, keyOf, listFiles, saveFile, typeOf } from "./files";
+import { cleanName, deleteFile, filePage, findFile, getFile, keyOf, listFiles, saveFile, typeOf } from "./files";
 import { keptPhoto, photoKey } from "./photos";
 import { type BrowserDriver, type BrowserPage, BrowserRunDriver } from "./browser";
 import { fillsOn, findEntry, hiddenValues, removeEntry, saveEntry, siteFor, touchEntry, vault } from "./vault";
@@ -273,6 +273,8 @@ export interface WorkspaceStub extends Partial<JobWorkspace> {
   restart(): Promise<void>;
   /** Delete everything (§23.4): the container stops, and /workspace's kept copy and jobs' saved work go from R2. Says what it couldn't. */
   wipe?(): Promise<string[]>;
+  /** One of the owner's files (Library), into a job's folder. */
+  folderPut?(id: string, path: string, fileId: string): Promise<{ ok: boolean; note: string }>;
 }
 
 /** The one owner in M0. Members get their own agents in M5. */
@@ -3787,6 +3789,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       },
       // A helper or coding job is an agenda item that's running until it ends, however it ends.
       alive: (id) => getItem(sql, id)?.state === "running",
+      bring: async ({ job, file, path }) => {
+        const f = findFile(sql, file);
+        if (!f) return { ok: false, text: `There's no file called "${file}" in Library.` };
+        const ws = this.#ws();
+        if (!ws?.folderPut) return { ok: false, text: "There's no workspace to put it in." };
+        const where = path?.trim() || f.name;
+        const r = await ws.folderPut(job.id, where, f.id);
+        return r.ok ? { ok: true, text: `${f.name} is in your folder at ${where}.` } : { ok: false, text: r.note };
+      },
       keep: async ({ job, path, name, note }) => {
         const files = this.#toolContext(readSettings(sql), new Date(), "clock", null).files;
         if (!files) throw new Error("Files can't be kept here.");
@@ -3919,6 +3930,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             deadline: (at) => d.deadline(id, at),
             finish: (x) => d.finish(id, x),
             fail: (why) => d.fail(id, why),
+            bring: (x) => d.bring(id, x),
+            stopWork: async (why) => d.stopWork(id, why),
           },
         },
       },
@@ -6256,7 +6269,7 @@ function jobSystem(settings: Settings, job: Job): string {
   return [
     `You're working on something you took on for ${owner}, in the background: "${job.title}". What done looks like, in ${owner}'s words: ${job.goal}`,
     `This is your own working conversation about it; ${owner} doesn't see it. They see what you tell them in the thread, as yourself: what you show them (job_update), what you ask them (job_ask), and your result (job_finish). Talk to them the way you always do, in the first person and briefly, and never mention jobs, steps, turns, helpers, tools or this conversation.`,
-    `Do the work yourself, a piece at a time: your folder in the workspace (${job.folder}) has a shell (folder_run) with Python, ffmpeg, Chromium and the rest, and keeps what you make between turns; you have the web, a browser for sites built by script, and the owner's files. Building something in code (a video project, a site) goes to their coding agent with job_build; research across many options (laptops, tracks, venues, quotes) goes to helpers in parallel with job_helpers, one brief each, so it's done in minutes and your own conversation stays clear; then you compare what they bring back.`,
+    `Do the work yourself, a piece at a time: your folder in the workspace (${job.folder}) has a shell (folder_run) with Python, ffmpeg, Chromium and the rest, and keeps what you make between turns, even while the workspace sleeps; it's your own computer, so install what you need there. What you've kept in the owner's Library is listed each turn, and job_get puts it back in your folder, so you never make something twice. When work you handed off isn't needed any more, or ${owner} says stop, stop it at once with job_stop_work; you have the web, a browser for sites built by script, and the owner's files. Building something in code (a video project, a site) goes to their coding agent with job_build; research across many options (laptops, tracks, venues, quotes) goes to helpers in parallel with job_helpers, one brief each, so it's done in minutes and your own conversation stays clear; then you compare what they bring back.`,
     `Your last words in each turn are what ${owner} sees on this work's card, so write them to ${owner} as yourself, about the work itself ("Claude Code is cutting it to the track you picked"), never about turns, tools or what you'll do next in this conversation.`,
     `Keep notes as you go with job_notes: what you decided and why, ${owner}'s answers and wishes in their words, what failed and why, what's next. You read them at the start of every turn, and they stay when older parts of this conversation are summarized.`,
     `Keep moving. End a turn only by asking ${owner} something only they can give (job_ask), handing work off (job_build, job_helpers), waiting until a time (job_wait), asking for a website (job_site), or finishing (job_finish, or job_fail when it truly can't be done). Decide what you can as ${owner} would, and say what you chose; don't ask what to do next. When a choice is about something to see or hear, bring the things themselves in job_ask's files. Waiting on their say is always job_ask: an update that says you're waiting leaves them nothing to answer. Without a deadline, never give a time estimate.`,

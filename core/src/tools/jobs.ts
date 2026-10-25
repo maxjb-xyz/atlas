@@ -187,6 +187,35 @@ export const jobWait = defineTool({
   },
 });
 
+export const jobGet = defineTool({
+  name: "job_get",
+  kind: "change_own",
+  status: "Getting that back.",
+  description:
+    "Put one of the owner's files from Library into your folder: something you kept earlier (it's listed in your notes on what you've kept), or a file the owner gave you. Use it before making something again: what you kept is still there.",
+  input: z.object({
+    file: z.string().min(1).max(200).describe("The file's id, or its name in Library."),
+    path: z.string().max(300).optional().describe("Where in your folder; default its name, at the top."),
+  }),
+  async run(input, ctx) {
+    if (!ctx.ownedJob) return fail("This only works on work you own.");
+    return done(await ctx.ownedJob.bring(input));
+  },
+});
+
+export const jobStopWork = defineTool({
+  name: "job_stop_work",
+  kind: "change_own",
+  status: "Stopping that.",
+  description:
+    "Stop the work you handed off for this job (the coding agent, helpers) at once, when it's no longer needed or the owner says to stop. What it made so far stays in your folder. The job goes on; to end it, use job_finish or job_fail.",
+  input: z.object({ why: z.string().min(1).max(300) }),
+  async run(input, ctx) {
+    if (!ctx.ownedJob) return fail("This only works on work you own.");
+    return done(await ctx.ownedJob.stopWork(input.why));
+  },
+});
+
 export const jobSite = defineTool({
   name: "job_site",
   kind: "change_own",
@@ -268,7 +297,7 @@ export const folderRun = defineTool({
   status: "Working on it.",
   timeoutMs: 16 * 60_000,
   description: [
-    "Run a shell command in your folder in the workspace: a Linux computer with bash, Python 3 (pandas, openpyxl, python-docx, reportlab, matplotlib, requests), Node, ffmpeg, Chromium (/usr/bin/chromium), git, curl, jq and sqlite3. It starts in your folder, which keeps its files between turns.",
+    "Run a shell command in your folder in the workspace: a Linux computer with bash, Python 3 (pandas, openpyxl, python-docx, reportlab, matplotlib, requests), Node, ffmpeg, Chromium (/usr/bin/chromium), git, curl, jq and sqlite3. It starts in your folder, which keeps its files between turns and while the workspace sleeps (it comes back as you left it, caches aside). It's your own computer: install what you need there (pip install --user, npm, a binary you download).",
     "Make what you make there. Only websites the owner allowed are reachable; a blocked one is listed, and job_site asks for it.",
   ].join(" "),
   input: z.object({
@@ -295,6 +324,19 @@ export const folderRun = defineTool({
 });
 
 /** A job's turn's own moves (§8.3). */
-export const MOVES: Tool[] = [jobNotes, jobUpdate, jobAsk, jobBuild, jobHelpers, jobWait, jobSite, jobDeadline, jobFinish, jobFail];
+export const MOVES: Tool[] = [
+  jobNotes,
+  jobUpdate,
+  jobAsk,
+  jobBuild,
+  jobHelpers,
+  jobWait,
+  jobSite,
+  jobDeadline,
+  jobGet,
+  jobStopWork,
+  jobFinish,
+  jobFail,
+];
 /** What a helper reading for a job may use beyond its lookups: the browser, to read sites built by script. */
 export const READ_TOOLS: Tool[] = [browserOpen, browserAct, browserClose];

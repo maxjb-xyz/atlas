@@ -143,7 +143,7 @@ export const TRANSCRIPT_TOKENS = 60_000;
 
 /** What no turn can do, so a job never sets itself a task it can't meet and loops on it. */
 export const JOB_LIMITS =
-  "You can't hear audio or watch video (you can read about them, and measure them with ffmpeg), get past a site's bot check or a sign-in wall, or judge taste for the owner (punchy, on brand, funny). When one of those decides something, bring the owner a few options to judge for themselves at once (the files themselves in job_ask, or links), with why each, rather than trying again.";
+  "You can't hear audio or watch video (you can read about them, and measure them with ffmpeg), or judge taste for the owner (punchy, on brand, funny): when one of those decides something, bring the owner a few options to judge for themselves at once (the files themselves in job_ask, or links), with why each, rather than trying again. A site's bot check or sign-in wall you can't pass alone: when it matters, open the page in your browser, hand it over with browser_take_over, and ask the owner in job_ask to get you past it; or find another way (another source, the site's API, another format).";
 
 const key = (id: string) => `owned:${id}` as const;
 export const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
@@ -235,6 +235,8 @@ export interface JobHost {
   helper(o: { job: Job; title: string; brief: string; research: boolean }): Promise<string>;
   /** Stops handed-off work. */
   stopWork(id: string): void;
+  /** Puts one of the owner's files (Library, by id or name) into the job's folder. */
+  bring(o: { job: Job; file: string; path?: string }): Promise<{ ok: boolean; text: string }>;
   /** Whether handed-off work is still running. */
   alive(id: string): boolean;
   /** Keeps a file from the folder in Library, for the owner to play, look at or download. */
@@ -557,8 +559,16 @@ export class JobDesk {
       job.notes.trim()
         ? `Your notes on it:\n${clip(job.notes, 8_000)}`
         : "You have no notes on it yet: keep them with job_notes as you go.",
+      job.files.length
+        ? `What you've kept so far, in the owner's Library (job_get puts one back in your folder; never make it again):\n${job.files
+            .slice(-20)
+            .map((f) => `- ${f.name} (${f.id})`)
+            .join("\n")}`
+        : "",
       `What's new:\n${news.map((n) => `- ${n}`).join("\n")}`,
-    ].join("\n\n");
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   async #turn(job: Job): Promise<void> {
@@ -1034,6 +1044,29 @@ export class JobDesk {
   }
 
   /** Waits until a time, for something outside (a reply, a release), then carries on. */
+  /** One of the owner's files, back into the folder: what it kept earlier, or what they gave it. */
+  async bring(id: string, o: { file: string; path?: string }): Promise<{ ok: boolean; text: string }> {
+    const job = this.#live(id);
+    if ("ok" in job) return job;
+    return this.h.bring({ job, file: o.file, path: o.path });
+  }
+
+  /** Stops the work it handed off, at once; the job goes on, and what that work made stays in the folder. */
+  stopWork(id: string, why: string): { ok: boolean; text: string } {
+    const job = this.#live(id);
+    if ("ok" in job) return job;
+    const going = job.work.filter((w) => this.h.alive(w.id));
+    for (const w of job.work) this.h.stopWork(w.id);
+    this.#save({ ...job, work: [], notes: job.notes });
+    console.log(JSON.stringify({ at: "jobs.stop_work", job: id, why, stopped: going.map((w) => w.id) }));
+    return {
+      ok: true,
+      text: going.length
+        ? `Stopped: ${going.map((w) => w.title).join("; ")}. What it made so far is in your folder.`
+        : "Nothing you handed off was still running.",
+    };
+  }
+
   async wait(id: string, o: { minutes: number; why: string }): Promise<{ ok: boolean; text: string }> {
     const job = this.#live(id);
     if ("ok" in job) return job;

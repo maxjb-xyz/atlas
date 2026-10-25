@@ -296,6 +296,10 @@ export interface OwnedJobApi {
   deadline(at: number | null): { ok: boolean; text: string };
   finish(o: { summary: string; files?: Array<{ path: string; name?: string; note?: string }> }): Done;
   fail(why: string): Done;
+  /** One of the owner's files, back into the job's folder. */
+  bring(o: { file: string; path?: string }): Done;
+  /** Stops the work the job handed off, at once. */
+  stopWork(why: string): Done;
 }
 
 export interface ToolResult {

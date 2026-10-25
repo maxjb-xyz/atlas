@@ -9,7 +9,8 @@
 // `WorkspaceEgress`, which lets through only approved sites and adds a
 // vault key to a site's requests outside the container (§15). /workspace
 // is kept in R2 after each command and put back when a new container
-// starts, so files outlive the container.
+// starts, and so is each job's folder (put back the first time a new
+// container uses it), so files outlive the container.
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { BRIDGE_JS, BRIDGE_KEY_HEADER, BRIDGE_PATH, BRIDGE_PORT, BRIDGE_VERSION } from "./bridge";
@@ -65,7 +66,17 @@ const jobDir = (id: string) => `${JOBS}/${id}`;
 const PUSH = "/srv/push";
 /** A job's user: its own name and ids, made the first time it's needed in a container. */
 const userOf = (id: string) => `aj${id.replace(/[^a-z0-9]/g, "").slice(-12)}`;
-const JOB_SAVE = (ws: string, id: string, what: "repo.bundle" | "home.tgz") => `jobs/${ws}/${id}/${what}`;
+const JOB_SAVE = (ws: string, id: string, what: "repo.bundle" | "home.tgz" | "folder.tgz") => `jobs/${ws}/${id}/${what}`;
+/**
+ * A job's whole folder (what it made, its coding agent's repo and renders, what it installed for itself) is kept in R2
+ * after its commands, and put back the first time a new container uses it: the container's disk goes when it sleeps.
+ * Caches aren't kept. A folder bigger than this isn't kept (it says so).
+ */
+const FOLDER_LIMIT = 4_000_000_000;
+/** R2 takes a big copy in parts of one size (at least 5 MiB), so a folder streams in without being held whole. */
+const PART = 16 * 1024 * 1024;
+/** What's never kept of a folder: caches that come back by themselves, and the marks of when it was kept. */
+const NOT_KEPT = ["--exclude=.cache", "--exclude=.npm", "--exclude=./.atlas-kept", "--exclude=./.atlas-keeping"];
 /** A job's saved home bigger than this isn't kept (it says so). */
 const HOME_LIMIT = 50_000_000;
 /** Where coding agents are installed: outside /workspace, so they don't count against its copy. */
@@ -305,6 +316,49 @@ interface Preview {
 /** How long a preview link works. Anyone with the link can open it, like Cloudflare's own preview URLs. */
 const PREVIEW_MS = 24 * 3600_000;
 
+/** Streams bytes into R2 in equal parts, and keeps them only if `ok` says the stream ended well. */
+export async function streamToR2(
+  bucket: R2Bucket,
+  key: string,
+  body: ReadableStream<Uint8Array>,
+  ok: () => Promise<boolean>,
+  part = PART,
+): Promise<boolean> {
+  const up = await bucket.createMultipartUpload(key);
+  const parts: R2UploadedPart[] = [];
+  let buf = new Uint8Array(part);
+  let n = 0;
+  try {
+    const reader = body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      let at = 0;
+      while (at < value.length) {
+        const take = Math.min(part - n, value.length - at);
+        buf.set(value.subarray(at, at + take), n);
+        n += take;
+        at += take;
+        if (n === part) {
+          parts.push(await up.uploadPart(parts.length + 1, buf));
+          buf = new Uint8Array(part);
+          n = 0;
+        }
+      }
+    }
+    if (n || !parts.length) parts.push(await up.uploadPart(parts.length + 1, buf.slice(0, n)));
+    if (!(await ok())) {
+      await up.abort();
+      return false;
+    }
+    await up.complete(parts);
+    return true;
+  } catch (err) {
+    await up.abort().catch(() => {});
+    throw err;
+  }
+}
+
 /** Quotes a string for bash. */
 const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
@@ -313,6 +367,13 @@ export class Workspace extends DurableObject<Env> {
   #starting: Promise<void> | null = null;
   /** The running container got all the way through setting up (see READY). */
   #ready = false;
+  /** Jobs' folders this container has: put back from their copy ("kept"), already here, or made new. */
+  #here = new Map<string, "kept" | "here" | "new">();
+  /** A copy of a job's folder being made, and whether another is wanted when it's done. */
+  #keeping = new Map<string, Promise<void>>();
+  #again = new Set<string>();
+  /** What the last copy of a job's folder said when it couldn't keep it (too big, or an error), for its next command. */
+  #folderNotes = new Map<string, string>();
 
   /** Stops the container, so the next command starts it fresh. /workspace and the setup snapshot are kept. */
   async restart(): Promise<void> {
@@ -482,6 +543,8 @@ export class Workspace extends DurableObject<Env> {
       await this.#stop(marked === "no" ? "left half set up" : "didn't answer");
     }
     this.#starting ??= (async () => {
+      // A new container has none of the jobs' folders until they're put back.
+      this.#here.clear();
       const saved = await this.#saved();
       const fromSnapshot = saved.snapshot?.base === BASE ? saved.snapshot : null;
       const start = async (snap: { id: string } | null) => {
@@ -609,6 +672,7 @@ export class Workspace extends DurableObject<Env> {
         if (o.as && !cwd.startsWith(`${jobDir(safeId(o.as))}`)) throw new Error("A job's commands run in its own folder.");
         // What's in a command's own environment (a nonce) never goes to a job's user.
         if (o.as && o.env && Object.keys(o.env).length) throw new Error("A job's commands don't take an environment of their own.");
+        if (o.as) await this.#folderBack(o.as, (note) => send({ note }));
         await this.#setBase({ allow: o.allow, inject: o.inject });
         // A job's command (`as`) runs with the owner's vault keys off the gate, as a job's agent does.
         if (o.rules?.length || o.as)
@@ -646,7 +710,8 @@ export class Workspace extends DurableObject<Env> {
         const exit = await p.exitCode;
         // A key behind a nonce is for this command only.
         if (this.#extra.delete(key)) await this.#gate();
-        const kept = await this.#keep();
+        const kept = o.as ? (this.#folderNotes.get(o.as) ?? "") : await this.#keep();
+        if (o.as) this.#keepSoon(o.as);
         if (this.#keysOff) await send({ note: "Your vault keys aren't added to the workspace's requests while a coding job runs." });
         await send({ done: { exit, ms: Date.now() - t0, blocked: [...this.#blocked], kept } });
       } catch (err) {
@@ -897,6 +962,9 @@ export class Workspace extends DurableObject<Env> {
     if (home.exit !== 0)
       return { ok: true, note: `The agent's home wasn't kept this time: ${home.err.slice(-200) || `exit ${home.exit}`}` };
     await this.env.FILES.put(JOB_SAVE(this.#name, id, "home.tgz"), home.bytes);
+    // A job Atlas owns keeps its whole folder too, with what its agent made that git doesn't keep (renders, downloads).
+    // A coding job on one of the owner's repos comes back from its clone and branch instead.
+    if (o.full) this.#keepSoon(id);
     return { ok: true, note: "" };
   }
 
@@ -911,6 +979,9 @@ export class Workspace extends DurableObject<Env> {
     if (!/^[A-Za-z0-9._/-]{1,120}$/.test(o.branch)) throw new Error(`"${o.branch}" isn't a branch name.`);
     await this.#up(async () => {});
     const dir = jobDir(id);
+    // The whole folder came back from its copy: its repo with it, newer than the bundle.
+    if ((await this.#folderBack(id, async () => {})) === "kept" && (await this.#exec(`test -d ${sh(`${dir}/repo/.git`)}`)).exit === 0)
+      return { restored: true, note: "" };
     const bundle = await this.env.FILES.get(JOB_SAVE(this.#name, id, "repo.bundle"));
     if (!bundle) return { restored: false, note: "Nothing of this job was kept yet." };
     // Its folder is the job's user's; what was kept is put back as that user, never as root.
@@ -1072,9 +1143,119 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /** Whether the job's folder is in the running container, so it doesn't need putting back. */
+  /**
+   * Makes sure this container has the job's folder: made for its user the first time, or put back from its copy when
+   * the container is new. Says when it's putting it back. Once per folder per container.
+   */
+  async #folderBack(id: string, say: (note: string) => Promise<unknown>): Promise<"kept" | "here" | "new"> {
+    const known = this.#here.get(safeId(id));
+    if (known) return known;
+    const dir = jobDir(id);
+    const user = await this.#jobUser(id);
+    let state: "kept" | "here" | "new" = "here";
+    if ((await this.#exec(`test -d ${sh(dir)}`)).exit !== 0) {
+      const mk = await this.#exec(`install -d -o ${user.uid} -g ${user.gid} -m 700 ${sh(dir)} ${sh(`${dir}/home`)}`);
+      if (mk.exit !== 0) throw new Error(`The workspace couldn't make the job's folder: ${mk.out.slice(-300)}`);
+      const copy = await this.env.FILES.get(JOB_SAVE(this.#name, id, "folder.tgz"));
+      state = "new";
+      if (copy) {
+        await say(`Your folder is coming back as you left it (${Math.round(copy.size / 1e6)} MB).`);
+        // Put back as the job's user, never as root: what's in it is the job's.
+        const r = await this.#exec(`tar xzf - -C ${sh(dir)} && touch ${sh(`${dir}/.atlas-kept`)}`, {
+          stdin: copy.body,
+          timeoutS: 900,
+          as: id,
+        });
+        if (r.exit !== 0) await say(`Your folder didn't all come back: ${r.out.slice(-300)}`);
+        state = "kept";
+      }
+    }
+    this.#here.set(id, state);
+    return state;
+  }
+
+  /** Keeps a job's folder soon, in the background: one copy at a time per folder, and one more if it changed meanwhile. */
+  #keepSoon(id: string): void {
+    if (this.#keeping.has(id)) {
+      this.#again.add(id);
+      return;
+    }
+    const run = (async () => {
+      do {
+        this.#again.delete(id);
+        const note = await this.folderKeep(id).catch(
+          (err: unknown) => `Couldn't keep your folder: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        if (note) {
+          this.#folderNotes.set(id, note);
+          console.error(JSON.stringify({ at: "workspace.folder_keep", job: id, note }));
+        } else this.#folderNotes.delete(id);
+      } while (this.#again.has(id));
+    })().finally(() => this.#keeping.delete(id));
+    this.#keeping.set(id, run);
+  }
+
+  /**
+   * Keeps a job's folder in R2 as it is now (not its caches), streamed in parts so it's never held whole, when anything
+   * in it changed since the last copy. Says why when it couldn't.
+   */
+  async folderKeep(id: string): Promise<string> {
+    safeId(id);
+    if (!this.ctx.container?.running) return "";
+    // After a restart of this object the container may still have the folder: it says so, rather than being skipped.
+    await this.#folderBack(id, async () => {});
+    const dir = jobDir(id);
+    const kept = `${dir}/.atlas-kept`;
+    const same = await this.#exec(
+      `test -e ${sh(kept)} && [ -z "$(find ${sh(dir)} -newer ${sh(kept)} -not -path '*/.cache/*' -not -path '*/.npm/*' -print -quit 2>/dev/null)" ]`,
+      { as: id },
+    );
+    if (same.exit === 0) return "";
+    const size = Number((await this.#exec(`du -sb --exclude=.cache --exclude=.npm ${sh(dir)} | cut -f1`, { as: id })).out.trim()) || 0;
+    if (size > FOLDER_LIMIT)
+      return `Your folder is ${(size / 1e9).toFixed(1)} GB, over the ${FOLDER_LIMIT / 1e9} GB that's kept while the workspace sleeps, so it isn't kept now; keep it smaller (delete renders you don't need).`;
+    const user = await this.#jobUser(id);
+    // Marked before it's read, so what changes while it's copied counts as changed next time.
+    const tar = `touch ${sh(`${dir}/.atlas-keeping`)} && tar czf - --warning=no-file-changed ${NOT_KEPT.join(" ")} -C ${sh(dir)} .; [ $? -le 1 ]`;
+    const p = await this.#c.exec(["bash", "-lc", `runuser -u ${user.name} -- bash -lc ${sh(tar)}`], {
+      env: { ...ENV, HOME: `${dir}/home` },
+      cwd: "/",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const errors = p.stderr ? new Response(p.stderr).text() : Promise.resolve("");
+    const stored = await streamToR2(
+      this.env.FILES,
+      JOB_SAVE(this.#name, id, "folder.tgz"),
+      p.stdout!,
+      async () => (await p.exitCode) === 0,
+    );
+    if (!stored) return `Couldn't keep your folder: ${(await errors).slice(-300) || "tar failed"}`;
+    await this.#exec(`mv -f ${sh(`${dir}/.atlas-keeping`)} ${sh(kept)}`, { as: id });
+    return "";
+  }
+
+  /** Puts one of the owner's files (from Library) into a job's folder, at `path` in it, as the job's user. */
+  async folderPut(id: string, path: string, fileId: string): Promise<{ ok: boolean; note: string }> {
+    safeId(id);
+    if (!/^[A-Za-z0-9_-]{3,64}$/.test(fileId)) throw new Error(`"${fileId}" isn't a file id.`);
+    const rel = path.replace(/^\.?\/+/, "");
+    if (!rel || rel.split("/").some((p) => p === ".." || p === "")) return { ok: false, note: `${path} isn't a place in your folder.` };
+    const obj = await this.env.FILES.get(`files/${fileId}`);
+    if (!obj) return { ok: false, note: "That file isn't in Library any more." };
+    await this.#up(async () => {});
+    await this.#folderBack(id, async () => {});
+    const full = `${jobDir(id)}/${rel}`;
+    const r = await this.#exec(`mkdir -p "$(dirname ${sh(full)})" && cat > ${sh(full)}`, { stdin: obj.body, timeoutS: 300, as: id });
+    if (r.exit !== 0) return { ok: false, note: `Couldn't put it there: ${r.out.slice(-300)}` };
+    this.#keepSoon(id);
+    return { ok: true, note: "" };
+  }
+
   async jobHere(id: string): Promise<boolean> {
     safeId(id);
     if (!this.ctx.container?.running) return false;
+    await this.#folderBack(id, async () => {});
     return (await this.#exec(`test -d ${sh(`${jobDir(id)}/repo/.git`)}`)).exit === 0;
   }
 
@@ -1083,7 +1264,12 @@ export class Workspace extends DurableObject<Env> {
     safeId(id);
     await this.jobStop(id);
     if (this.ctx.container?.running) await this.#exec(`rm -rf ${sh(jobDir(id))}`);
-    await this.env.FILES.delete([JOB_SAVE(this.#name, id, "repo.bundle"), JOB_SAVE(this.#name, id, "home.tgz")]);
+    this.#here.delete(id);
+    await this.env.FILES.delete([
+      JOB_SAVE(this.#name, id, "repo.bundle"),
+      JOB_SAVE(this.#name, id, "home.tgz"),
+      JOB_SAVE(this.#name, id, "folder.tgz"),
+    ]);
   }
 
   async #setJobGate(id: string, gate: JobGate | null): Promise<void> {

@@ -2,7 +2,7 @@ import { SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { seams, type WorkspaceStub } from "../src/agent";
 import { saveEntry } from "../src/vault";
-import { carrying, throughGate } from "../src/workspace";
+import { carrying, streamToR2, throughGate } from "../src/workspace";
 import { call, env, fakeCalendar, fakeEmbedder, say, SECRET } from "./helpers";
 import { brain, connect, inOwner, out, turn } from "./owner";
 
@@ -217,5 +217,26 @@ describe("the workspace's gate", () => {
     // Even with the nonce, the token reaches only this repo's git address: not another repo, not the API.
     expect(pass("https://github.com/mallory/loot.git/git-receive-pack", { "x-atlas-key": "n0nce" }).get("authorization")).toBeNull();
     expect(pass("https://api.github.com/user", { "x-atlas-key": "n0nce" }).get("authorization")).toBeNull();
+  });
+
+  it("keeps a job's folder in R2 in equal parts as it streams, and keeps nothing when the copy didn't end well", async () => {
+    const MiB = 1024 * 1024;
+    const bytes = new Uint8Array(11 * MiB + 123).map((_, i) => i % 251);
+    // In uneven pieces, as a command's output comes.
+    const stream = () =>
+      new ReadableStream<Uint8Array>({
+        start(c) {
+          for (let at = 0; at < bytes.length; at += 777_777) c.enqueue(bytes.subarray(at, Math.min(at + 777_777, bytes.length)));
+          c.close();
+        },
+      });
+    expect(await streamToR2(env.FILES, "jobs/test/ag_x/folder.tgz", stream(), async () => true, 5 * MiB)).toBe(true);
+    const kept = await env.FILES.get("jobs/test/ag_x/folder.tgz");
+    const digest = async (b: ArrayBuffer | Uint8Array) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", b))].join(",");
+    expect(kept!.size).toBe(bytes.length);
+    expect(await digest(await kept!.arrayBuffer())).toBe(await digest(bytes));
+    // A copy whose command failed leaves the last good one in place.
+    expect(await streamToR2(env.FILES, "jobs/test/ag_x/folder.tgz", new Response("half").body!, async () => false, 5 * MiB)).toBe(false);
+    expect((await env.FILES.get("jobs/test/ag_x/folder.tgz"))!.size).toBe(bytes.length);
   });
 });

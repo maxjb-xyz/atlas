@@ -57,6 +57,7 @@ function testDesk(sql: Sql, turns: Turn[], o: { goOn?: boolean } = {}) {
     reminded: [] as string[],
     summaries: 0,
     done: [] as string[],
+    brought: [] as Array<{ file: string; path?: string }>,
   };
   let n = 0;
   const host: JobHost = {
@@ -108,6 +109,10 @@ function testDesk(sql: Sql, turns: Turn[], o: { goOn?: boolean } = {}) {
       return `helper_${++n}`;
     },
     stopWork: (id) => void st.stopped.push(id),
+    bring: async ({ file, path }) => {
+      st.brought.push({ file, ...(path ? { path } : {}) });
+      return { ok: true, text: `${file} is in your folder.` };
+    },
     alive: (id) => !st.dead.includes(id) && !st.stopped.includes(id) && !st.done.includes(id),
     keep: async ({ path, name }) => {
       const id = `f_${path.replace(/\W/g, "")}`;
@@ -267,6 +272,35 @@ describe("work Atlas owns (§8.3)", () => {
       await second;
       expect(getOwned(sql, job.id)!.phase).toBe("cancelled");
       expect(rowsOf(sql, "job.result")).toEqual([]);
+    }));
+
+  it("sees what it kept each turn, gets a kept file back instead of making it again, and stops its handed-off work at once", () =>
+    withSql(async (sql) => {
+      const { desk, st } = testDesk(sql, [
+        async (d, j) => {
+          expect(await d.build(j.id, { brief: "Render the final cut." })).toMatchObject({ ok: true });
+          return "Claude Code is rendering the final cut.";
+        },
+        async (d, j, input) => {
+          expect(input).toContain("What you've kept so far, in the owner's Library");
+          expect(input).toContain("- Launch cut.mp4 (file_cut)");
+          expect(await d.bring(j.id, { file: "file_cut" })).toMatchObject({ ok: true });
+          expect(d.stopWork(j.id, "The owner has the video.")).toMatchObject({ ok: true, text: expect.stringContaining("Stopped") });
+          return "Stopped; you have the video.";
+        },
+      ]);
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      const coder = getOwned(sql, job.id)!.work[0]!.id;
+      saveOwned(sql, {
+        ...getOwned(sql, job.id)!,
+        files: [{ id: "file_cut", name: "Launch cut.mp4", type: "video/mp4", url: "/api/files/file_cut" }],
+      });
+      expect(await desk.answer(job.id, "No, stop, I have the video.")).toMatchObject({ ok: true });
+      await desk.wake(job.id);
+      expect(st.brought).toEqual([{ file: "file_cut" }]);
+      expect(st.stopped).toContain(coder);
+      expect(getOwned(sql, job.id)!.work).toEqual([]);
     }));
 
   it("stops a turn when the owner speaks, keeping its work and leaving no call without its result, and answers them next", () =>
