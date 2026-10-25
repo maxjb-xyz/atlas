@@ -147,4 +147,25 @@ export const workspacePreview = defineTool({
   },
 });
 
-export const workspaceTools = [workspaceRun, workspaceAllow, workspaceKeep, workspacePreview];
+export const packagesInstall = defineTool({
+  name: "packages_install",
+  kind: "change_own",
+  status: "Installing that.",
+  timeoutMs: 16 * 60_000,
+  description: [
+    'Install system tools in the workspace from Debian, by package name ("sox", "imagemagick", "yt-dlp", "libreoffice-writer"): what your shell can\'t install for itself without root.',
+    "Atlas installs them as root and puts them back whenever the workspace starts again, so install once. For Python or Node libraries, pip install --user or npm in your folder instead.",
+  ].join(" "),
+  input: z.object({
+    packages: z.array(z.string().min(1).max(63)).min(1).max(20).describe("Debian package names."),
+  }),
+  async run(input, ctx) {
+    if (!ctx.workspace) return fail("There's no workspace here.");
+    const r = await ctx.workspace.install(input.packages);
+    return r.ok
+      ? { ok: true, output: { installed: input.packages }, receipt: { text: `Installed · ${input.packages.join(", ")}` } }
+      : fail(r.note);
+  },
+});
+
+export const workspaceTools = [workspaceRun, workspaceAllow, workspaceKeep, workspacePreview, packagesInstall];

@@ -158,6 +158,8 @@ export interface BrowserApi {
   takeOver(why: string): Promise<void>;
   close(): Promise<void>;
   where(): { open: boolean; url: string; title: string };
+  /** A file as the browser gets it (its cookies, past a check it cleared): `url`, or the page open now. */
+  download(url: string | null, o: { run_id: string }): Promise<import("../browser").Download>;
 }
 
 /**
@@ -225,6 +227,10 @@ export interface WorkspaceApi {
     },
   ): Promise<RunResult>;
   read(path: string): Promise<{ ok: true; bytes: ArrayBuffer } | { ok: false; error: string }>;
+  /** Installs Debian packages as root, remembered for every new container. */
+  install(packages: string[]): Promise<{ ok: boolean; note: string }>;
+  /** Writes a file: in /workspace (a path in it, or under it), or in a job's folder for a job's runs. */
+  write(path: string, bytes: Uint8Array): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
   /** A link to a server on `port` in the workspace, for a day. */
   preview(port: number): Promise<{ url: string; expires: number }>;
   /** Websites the workspace may reach. */

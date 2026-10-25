@@ -179,6 +179,37 @@ export const browserTakeOver = defineTool({
   },
 });
 
+export const browserSave = defineTool({
+  name: "browser_save",
+  kind: "change_own",
+  status: "Saving that.",
+  timeoutMs: 180_000,
+  description: [
+    "Save a file the browser can get into your workspace (your folder, on a job): a download link on the page, or the page open now.",
+    "It's got the way the page would, with its cookies, so a file behind a site's check the browser already passed (or a sign-in the owner did when you handed them the browser) comes through. Then work on it with your shell.",
+  ].join(" "),
+  input: z.object({
+    url: z.string().max(2_000).optional().describe("The file's address, or a link's href from the page; default the page open now."),
+    path: z.string().min(1).max(300).describe("Where to save it: a path in your folder, or in /workspace."),
+  }),
+  async run(input, ctx) {
+    if (!ctx.browser) return fail("The browser can't be used from here.");
+    if (!ctx.workspace) return fail("There's no workspace to save it in from here.");
+    try {
+      const got = await ctx.browser.download(input.url ?? null, { run_id: ctx.run_id });
+      const saved = await ctx.workspace.write(input.path, got.bytes);
+      if (!saved.ok) return fail(`Got ${got.name}, but couldn't save it: ${saved.error}`);
+      return {
+        ok: true,
+        output: { saved: saved.path, name: got.name, type: got.type, size: got.bytes.length, from: got.url },
+        receipt: { text: `Saved · ${got.name}` },
+      };
+    } catch (err) {
+      return failed(err);
+    }
+  },
+});
+
 export const browserClose = defineTool({
   name: "browser_close",
   kind: "look",
@@ -192,4 +223,4 @@ export const browserClose = defineTool({
   },
 });
 
-export const browserTools = [browserOpen, browserAct, browserSubmit, browserTakeOver, browserClose];
+export const browserTools = [browserOpen, browserAct, browserSubmit, browserTakeOver, browserSave, browserClose];

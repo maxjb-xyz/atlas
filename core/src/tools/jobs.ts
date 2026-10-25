@@ -297,7 +297,7 @@ export const folderRun = defineTool({
   status: "Working on it.",
   timeoutMs: 16 * 60_000,
   description: [
-    "Run a shell command in your folder in the workspace: a Linux computer with bash, Python 3 (pandas, openpyxl, python-docx, reportlab, matplotlib, requests), Node, ffmpeg, Chromium (/usr/bin/chromium), git, curl, jq and sqlite3. It starts in your folder, which keeps its files between turns and while the workspace sleeps (it comes back as you left it, caches aside). It's your own computer: install what you need there (pip install --user, npm, a binary you download).",
+    "Run a shell command in your folder in the workspace: a Linux computer with bash, Python 3 (pandas, openpyxl, python-docx, reportlab, matplotlib, requests), Node, ffmpeg, Chromium (/usr/bin/chromium), git, curl, jq and sqlite3. It starts in your folder, which keeps its files between turns and while the workspace sleeps (it comes back as you left it, caches aside). It's your own computer: install what you need there (pip install --user, npm, a binary you download), and system tools with packages_install.",
     "Make what you make there. Only websites the owner allowed are reachable; a blocked one is listed, and job_site asks for it.",
   ].join(" "),
   input: z.object({

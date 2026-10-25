@@ -47,8 +47,10 @@ const PACKAGES = [
 // The "2": a container that skipped setting up after the package list changed (2026-10-25) marked itself ready with the
 // new list; this mark is new to it, so it sets up again.
 const BASE = `atlas-base-2:${PACKAGES.join(",")}`;
-/** Where the setup's packages come from: allowed only while setting up. */
+/** Where the setup's packages come from: allowed only while setting up, and while Atlas installs one. */
 const SETUP_HOSTS = ["deb.debian.org", "security.debian.org"];
+/** A Debian package's name, as Atlas installs one asked for (by a job or itself): no version, no source of its own. */
+const PACKAGE = /^[a-z0-9][a-z0-9+.-]{0,62}$/;
 /** /workspace bigger than this isn't kept between containers (it says so). */
 const KEEP_LIMIT = 200_000_000;
 /** The most of a command's output that comes back. */
@@ -604,6 +606,13 @@ export class Workspace extends DurableObject<Env> {
       if (backup) {
         const r = await this.#exec("tar xzf - -C /", { stdin: backup.body });
         if (r.exit !== 0) await say(`Couldn't put /workspace back from its copy: ${r.out.slice(-300)}`);
+      }
+      // What Atlas installed later (for a job, or itself) goes back on, since a new container has only the setup's.
+      const extras = (await this.ctx.storage.get<string[]>("extra_packages")) ?? [];
+      if (extras.length) {
+        await say(`Putting back the ${extras.length === 1 ? "tool" : `${extras.length} tools`} installed earlier.`);
+        const r = await this.#aptInstall(extras);
+        if (r.exit !== 0) await say(`Some of them didn't come back: ${r.out.slice(-400)}`);
       }
       // Jobs' users can't read the owner's files, each other's folders, or where Atlas pushes from.
       const fence = await this.#exec(`chmod 700 /workspace && mkdir -p ${JOBS} ${PUSH} && chmod 711 ${JOBS} && chmod 700 ${PUSH}`);
@@ -1233,6 +1242,72 @@ export class Workspace extends DurableObject<Env> {
     if (!stored) return `Couldn't keep your folder: ${(await errors).slice(-300) || "tar failed"}`;
     await this.#exec(`mv -f ${sh(`${dir}/.atlas-keeping`)} ${sh(kept)}`, { as: id });
     return "";
+  }
+
+  /**
+   * Writes a file: under /workspace, or in a job's folder as its user (`as`). The folder or /workspace is kept after,
+   * as after a command.
+   */
+  async write(
+    path: string,
+    body: ReadableStream<Uint8Array>,
+    as?: string,
+  ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+    const under = as ? `${jobDir(safeId(as))}/` : "/workspace/";
+    if (!path.startsWith(under) || path.split("/").some((p) => p === ".."))
+      return { ok: false, error: `${path} isn't in ${as ? "the job's folder" : "/workspace"}.` };
+    try {
+      await this.#up(async () => {});
+      if (as) await this.#folderBack(as, async () => {});
+      const r = await this.#exec(`mkdir -p "$(dirname ${sh(path)})" && cat > ${sh(path)}`, {
+        stdin: body,
+        timeoutS: 300,
+        ...(as ? { as } : {}),
+      });
+      if (r.exit !== 0) return { ok: false, error: r.out.slice(-300) || `Couldn't write ${path}.` };
+      if (as) this.#keepSoon(as);
+      else await this.#keep();
+      return { ok: true, path };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Installs Debian packages as root, reaching only Debian's package sites for it. */
+  async #aptInstall(packages: string[]): Promise<{ exit: number; out: string }> {
+    const key = `apt:${crypto.randomUUID()}`;
+    this.#extra.set(key, { allow: SETUP_HOSTS, rules: [] });
+    try {
+      await this.#gate();
+      return await this.#exec(
+        `${HTTP_SOURCES} && apt-get update -qq >/tmp/apt.log 2>&1 && apt-get install -y -qq --no-install-recommends ${packages.map(sh).join(" ")} >>/tmp/apt.log 2>&1 || (tail -30 /tmp/apt.log; exit 1)`,
+        { timeoutS: 900 },
+      );
+    } finally {
+      this.#extra.delete(key);
+      await this.#gate().catch(() => {});
+    }
+  }
+
+  /**
+   * Installs Debian packages a job (or Atlas) asked for, as root, so a job gets system tools without root of its own:
+   * by name only, from Debian. They're remembered and put back on every new container.
+   */
+  async install(packages: string[]): Promise<{ ok: boolean; note: string }> {
+    const names = [...new Set(packages.map((p) => p.trim().toLowerCase()))];
+    const bad = names.filter((p) => !PACKAGE.test(p));
+    if (bad.length) return { ok: false, note: `Those aren't Debian package names: ${bad.join(", ")}.` };
+    if (!names.length || names.length > 20) return { ok: false, note: "Name between 1 and 20 packages." };
+    try {
+      await this.#up(async () => {});
+      const r = await this.#aptInstall(names);
+      if (r.exit !== 0) return { ok: false, note: `apt-get couldn't install them: ${r.out.slice(-1_200)}` };
+      const had = (await this.ctx.storage.get<string[]>("extra_packages")) ?? [];
+      await this.ctx.storage.put("extra_packages", [...new Set([...had, ...names])].slice(-100));
+      return { ok: true, note: "" };
+    } catch (err) {
+      return { ok: false, note: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   /** Puts one of the owner's files (from Library) into a job's folder, at `path` in it, as the job's user. */

@@ -62,6 +62,40 @@ export interface BrowserDriver {
   close(): Promise<void>;
   /** Whether a browser is open now, and on what. */
   where(): { open: boolean; url: string; title: string };
+  /**
+   * A file as the browser gets it, with the page's cookies (a site's check it already passed, a sign-in): `url`, or
+   * the page open now. At most `max` bytes.
+   */
+  download(url: string | null, max: number): Promise<Download>;
+}
+
+/** A file the browser got. */
+export interface Download {
+  url: string;
+  /** Its name from the site (Content-Disposition), else from its address. */
+  name: string;
+  type: string;
+  bytes: Uint8Array;
+}
+
+/** A file's name from its headers, else the last part of its address. */
+export function downloadName(url: string, headers: Record<string, string>): string {
+  const cd = Object.entries(headers).find(([k]) => k.toLowerCase() === "content-disposition")?.[1] ?? "";
+  const star = /filename\*\s*=\s*[^']*''([^;]+)/i.exec(cd)?.[1];
+  const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(cd)?.[1];
+  const fromCd = star ? decodeURIComponent(star) : plain;
+  let fromUrl = "";
+  try {
+    fromUrl = decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).pop() ?? "");
+  } catch {
+    // Not an address: no name from it.
+  }
+  return (
+    (fromCd || fromUrl || "download")
+      .replace(/[\/\\\0]/g, "_")
+      .trim()
+      .slice(0, 120) || "download"
+  );
 }
 
 /** The most of a page's text Atlas reads at once. */
@@ -335,7 +369,7 @@ export class BrowserRunDriver implements BrowserDriver {
    * tab, runs `fn`, and remembers where the tab is. A session Browser Run has
    * let go is replaced only by `open`; anything else says so.
    */
-  async #with<T extends BrowserPage | PageElement | null>(fresh: boolean, fn: (cdp: Cdp, page: string) => Promise<T>): Promise<T> {
+  async #with<T>(fresh: boolean, fn: (cdp: Cdp, page: string) => Promise<T>): Promise<T> {
     let s = this.store.get();
     let cdp = s && Date.now() - s.at < KEEP_ALIVE_MS ? await this.#connect(s.session).catch(() => null) : null;
     if (!cdp) {
@@ -361,12 +395,78 @@ export class BrowserRunDriver implements BrowserDriver {
         (await cdp.send<{ targetId: string }>("Target.createTarget", { url: "about:blank" })).targetId;
       const { sessionId: page } = await cdp.send<{ sessionId: string }>("Target.attachToTarget", { targetId: target, flatten: true });
       const out = await fn(cdp, page);
-      const where = out && "url" in out && "title" in out ? { url: out.url, title: out.title } : { url: s!.url, title: s!.title };
+      const page2 = out as { url?: unknown; title?: unknown } | null;
+      const where =
+        page2 && typeof page2 === "object" && typeof page2.url === "string" && typeof page2.title === "string" && !("bytes" in page2)
+          ? { url: page2.url, title: page2.title }
+          : { url: s!.url, title: s!.title };
       this.store.set({ session: s!.session, target, ...where, at: Date.now() });
       return out;
     } finally {
       cdp.close();
     }
+  }
+
+  /**
+   * Gets a file the way the page would (its cookies, past a check it cleared), and not blocked by the page's own
+   * rules on other sites: Chrome's own loader (Network.loadNetworkResource), read in pieces.
+   */
+  async download(url: string | null, max: number): Promise<Download> {
+    return this.#with(false, async (cdp, page) => {
+      const tree = await cdp.send<{ frameTree: { frame: { id: string; url: string } } }>("Page.getFrameTree", {}, page);
+      const here = tree.frameTree.frame.url;
+      let target: string;
+      try {
+        target = new URL(url ?? here, here).toString();
+      } catch {
+        throw new Error(`"${url}" isn't an address the browser can get.`);
+      }
+      const got = await cdp.send<{
+        resource: { success: boolean; netErrorName?: string; httpStatusCode?: number; stream?: string; headers?: Record<string, string> };
+      }>(
+        "Network.loadNetworkResource",
+        { frameId: tree.frameTree.frame.id, url: target, options: { disableCache: false, includeCredentials: true } },
+        page,
+        60_000,
+      );
+      const r = got.resource;
+      if (!r.success || !r.stream)
+        throw new Error(
+          `The browser couldn't get ${target}: ${r.httpStatusCode ? `the site answered ${r.httpStatusCode}` : (r.netErrorName ?? "it failed")}.`,
+        );
+      const parts: Uint8Array[] = [];
+      let size = 0;
+      try {
+        for (;;) {
+          const chunk = await cdp.send<{ data: string; eof: boolean; base64Encoded?: boolean }>(
+            "IO.read",
+            { handle: r.stream, size: 4 * 1024 * 1024 },
+            page,
+            60_000,
+          );
+          const bytes = chunk.base64Encoded
+            ? Uint8Array.from(atob(chunk.data), (c) => c.charCodeAt(0))
+            : new TextEncoder().encode(chunk.data);
+          size += bytes.length;
+          if (size > max) throw new Error(`${target} is over the ${Math.round(max / 1e6)} MB the browser saves.`);
+          parts.push(bytes);
+          if (chunk.eof) break;
+        }
+      } finally {
+        await cdp.send("IO.close", { handle: r.stream }, page).catch(() => {});
+      }
+      const bytes = new Uint8Array(size);
+      let at = 0;
+      for (const p of parts) {
+        bytes.set(p, at);
+        at += p.length;
+      }
+      const headers = r.headers ?? {};
+      const type = (Object.entries(headers).find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "application/octet-stream")
+        .split(";")[0]!
+        .trim();
+      return { url: target, name: downloadName(target, headers), type, bytes };
+    });
   }
 
   async #connect(session: string): Promise<Cdp> {

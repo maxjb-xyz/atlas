@@ -143,7 +143,7 @@ export const TRANSCRIPT_TOKENS = 60_000;
 
 /** What no turn can do, so a job never sets itself a task it can't meet and loops on it. */
 export const JOB_LIMITS =
-  "You can't hear audio or watch video (you can read about them, and measure them with ffmpeg), or judge taste for the owner (punchy, on brand, funny): when one of those decides something, bring the owner a few options to judge for themselves at once (the files themselves in job_ask, or links), with why each, rather than trying again. A site's bot check or sign-in wall you can't pass alone: when it matters, open the page in your browser, hand it over with browser_take_over, and ask the owner in job_ask to get you past it; or find another way (another source, the site's API, another format).";
+  "You can't hear audio or watch video (you can read about them, and measure them with ffmpeg), or judge taste for the owner (punchy, on brand, funny): when one of those decides something, bring the owner a few options to judge for themselves at once (the files themselves in job_ask, or links), with why each, rather than trying again. A site's bot check or sign-in wall you can't pass alone: when it matters, open the page in your browser, hand it over with browser_take_over, and ask the owner in job_ask to get you past it, then save the file with browser_save (it carries what they did); or find another way (another source, the site's API, another format).";
 
 const key = (id: string) => `owned:${id}` as const;
 export const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);

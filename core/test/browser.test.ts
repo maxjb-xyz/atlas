@@ -61,6 +61,11 @@ function fakeBrowser() {
       at = null;
     },
     where: () => (at ? { open: true, url: at, title: pages[at]!.title } : { open: false, url: "", title: "" }),
+    async download(url) {
+      log.push(`download ${url ?? at}`);
+      if (!at) throw new Error("The browser isn't open (it closes after ten minutes without use). Open the page again with browser_open.");
+      return { url: url ?? at, name: "track.mp3", type: "audio/mpeg", bytes: new Uint8Array([73, 68, 51, 4]) };
+    },
   };
   return driver;
 }
