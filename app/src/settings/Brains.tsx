@@ -7,10 +7,12 @@ import type { SettingsView } from "../../../core/src/protocol";
 import type { BrainChoice, Settings as SettingsT } from "../../../core/src/store/settings";
 import type { Atlas } from "../connection";
 import { useDetail } from "../theme";
-import { Icon, Logo, LogoMark, Seg, StateDot, useDismiss } from "../ui";
+import { clock, dayTime, Icon, Logo, LogoMark, Seg, StateDot, useDismiss } from "../ui";
 import type { Edit } from "./index";
 import { ChatGPTSignIn, Head, SecretField, TestMessage } from "./parts";
 import { WORK_KINDS, type NamedBrain, type WorkKind } from "../../../core/src/store/settings";
+import type { Price } from "../../../core/src/brains/catalog";
+import type { Health } from "../../../core/src/brains/limits";
 
 type Provider = BrainChoice["provider"];
 
@@ -29,9 +31,45 @@ const KIND: Record<WorkKind, { name: string; sub: string }> = {
   skill_review: { name: "Learning skills", sub: "The look back after a conversation" },
 };
 
-// TODO(core): Workers AI's catalog of models. The protocol only has ChatGPT's (SettingsView.chatgpt.models); until core
-// sends Workers AI's, these are the ones Atlas is built and tested with, plus whatever a chain already uses.
+/** The Workers AI models Atlas is built and tested with: the picker's list until the catalog comes, and if it can't. */
 const WORKERS_AI_MODELS = ["@cf/moonshotai/kimi-k2.6", "@cf/moonshotai/kimi-k2.5"];
+
+/** Dollars: "$0.42", "$18", "under a cent". */
+const usd = (n: number) => (n > 0 && n < 0.01 ? "under a cent" : n >= 10 ? `$${Math.round(n)}` : `$${n.toFixed(2)}`);
+/** Dollars per million tokens, as the providers write them. */
+const perM = (n: number) => `$${n < 0.1 ? n.toFixed(3) : n.toFixed(2)}`;
+
+/**
+ * A model's price and speed (docs/ui §8): per million tokens and measured
+ * seconds at Developer, plain words below it. Speed is what Atlas's own runs
+ * measured, so a model not used yet has none.
+ */
+function about(b: BrainChoice, price: Price | null | undefined, speed: Health["speed"], developer: boolean): string {
+  const parts: string[] = [];
+  if (developer) {
+    if (b.provider === "chatgpt") parts.push("On your plan");
+    else if (price) parts.push(`${perM(price.in)} in · ${perM(price.out)} out per M`);
+    if (speed) parts.push(`first word ${(speed.first_ms / 1000).toFixed(1)} s${speed.tps ? ` · ${speed.tps} tokens/s` : ""}`);
+  } else {
+    if (b.provider === "chatgpt") parts.push("On your plan");
+    else if (price) parts.push(price.out <= 1.5 ? "Cheap" : price.out <= 12 ? "Mid-priced" : "Costly");
+    if (speed) parts.push(speed.first_ms < 1500 ? "Quick to start" : speed.first_ms < 4000 ? "Steady" : "Slow to start");
+  }
+  if (price?.paid_plan) parts.push("Workers Paid");
+  return parts.join(" · ");
+}
+
+/** A meter of 24 steps for a share used, as Notifications draws its budget. */
+function Meter({ share }: { share: number }) {
+  const on = Math.round(Math.min(1, Math.max(0, share)) * 24);
+  return (
+    <div className="mtr" aria-hidden>
+      {Array.from({ length: 24 }, (_, i) => (
+        <i key={i} className={i < on ? "f" : ""} />
+      ))}
+    </div>
+  );
+}
 
 /** A model's name as people say it: "Kimi K2.6" for "@cf/moonshotai/kimi-k2.6"; ChatGPT's names are already plain. */
 export function modelName(b: BrainChoice): string {
@@ -50,7 +88,7 @@ function catalog(view: SettingsView, provider: Provider, chains: BrainChoice[], 
       ? view.chatgpt.state === "signed_in"
         ? view.chatgpt.models
         : []
-      : provider === "anthropic"
+      : provider === "anthropic" || live.length
         ? live
         : WORKERS_AI_MODELS;
   return [...new Set([...listed, ...used])];
@@ -96,6 +134,9 @@ export function Brains({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
               {mainNames.length > 1 ? `If ${mainNames[0]} is busy, ${mainNames[1]} takes over for that answer. ` : ""}
               Voice uses {PROVIDER[voice[0]!.provider].name}
               {voice[0]!.provider === "workers-ai" ? ", because it starts talking fastest." : "."}
+              {keyed && [...main, ...voice].some((b) => b.provider === "anthropic")
+                ? ` Claude has cost ${usd(view.brains.spend.paid)} of your ${usd(draft.spending.cap)} a month so far.`
+                : ""}
             </span>
           </div>
           <button className="btn" onClick={() => setMore(true)}>
@@ -134,6 +175,12 @@ export function Brains({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
         <span className="aside">
           {details ? "A failing one is skipped within seconds." : "Each one's state, checked as Atlas uses it."}
         </span>
+        <span className="grow" />
+        {at("developer") && (
+          <span className="mono aside">
+            {usd(view.brains.spend.paid)} this month{signedIn ? " + plan" : ""}
+          </span>
+        )}
       </div>
       <div className="prov-grid">
         {providers.map((p) => {
@@ -175,7 +222,7 @@ export function Brains({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
                         : "Free allowance each day, then a few cents."}
                 </span>
               )}
-              {/* TODO(core, stage 4): live limits (the plan's window, today's free allowance, spend against a cap) once the router reports them. */}
+              {ready && <Limits p={p} view={view} draft={draft} edit={edit} details={details} />}
               {p === "chatgpt" && <ChatGPTSignIn chatgpt={view.chatgpt} atlas={atlas} />}
               {p === "anthropic" && (
                 <SecretField
@@ -190,6 +237,7 @@ export function Brains({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
             </div>
           );
         })}
+        {details && <Gateway atlas={atlas} draft={draft} edit={edit} view={view} />}
       </div>
 
       <div className="set-sub">
@@ -219,6 +267,132 @@ export function Brains({ atlas, draft, edit, view }: { atlas: Atlas; draft: Sett
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * A provider's live limits (§18), as far as Atlas knows them: the ChatGPT
+ * plan's window from its last answer, what paid brains cost this month
+ * against the cap (which is set here), and Workers AI's free allowance today,
+ * estimated from Atlas's own thinking.
+ */
+function Limits({ p, view, draft, edit, details }: { p: Provider; view: SettingsView; draft: SettingsT; edit: Edit; details: boolean }) {
+  const { at } = useDetail();
+  const b = view.brains;
+  const now = Date.now();
+  const out = Object.entries(view.health).find(([k, h]) => k.startsWith(`${p}:`) && !h.ok && h.resets_at && h.resets_at > now)?.[1];
+  const row = (label: string, value: string, share: number | null, line: string) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "nowrap" }}>
+        <span className="small">{label}</span>
+        <span className="mono small">{value}</span>
+      </div>
+      {share != null && <Meter share={share} />}
+      <span className="aside">{line}</span>
+    </div>
+  );
+  if (p === "chatgpt") {
+    const w = b.plan?.windows[0];
+    if (out) return row("Plan", "Used up", 1, `Resets ${dayTime(out.resets_at!)}. Until then, the next brain in each chain answers.`);
+    if (!w) return <span className="aside">ChatGPT hasn't said how much of the plan is left. Its own Usage page shows it.</span>;
+    const span = w.window_minutes ? (w.window_minutes >= 1440 ? "Week" : "Plan window") : "Plan window";
+    return row(
+      span,
+      `${Math.round(w.used_percent)}% used`,
+      w.used_percent / 100,
+      w.resets_at ? `Resets ${dayTime(w.resets_at)}. Until then, all in your plan.` : "All in your plan.",
+    );
+  }
+  if (p === "anthropic") {
+    const cap = draft.spending.cap;
+    const set = (n: number) => edit({ spending: { cap: Math.max(0, Math.min(10_000, n)) } });
+    const step = cap >= 100 ? 25 : 5;
+    return (
+      <>
+        {row(
+          "This month",
+          cap ? `${usd(b.spend.paid)} of ${usd(cap)}` : usd(b.spend.paid),
+          cap ? b.spend.paid / cap : null,
+          out
+            ? `At the cap until ${dayTime(out.resets_at!)}: the next brain in each chain answers.`
+            : cap
+              ? "At the cap, it stops, and the next brain in each chain answers."
+              : "Paid brains are off: the cap is $0.",
+        )}
+        {details && (
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <span className="small">Spending cap</span>
+            <span className="stepper">
+              <button aria-label="Lower" disabled={cap <= 0} onClick={() => set(cap - (cap > 100 ? 25 : 5))}>
+                <Icon name="minus" size={12} />
+              </button>
+              <span>{cap ? `${usd(cap)} a month` : "None"}</span>
+              <button aria-label="Higher" onClick={() => set(cap + step)}>
+                <Icon name="plus" size={12} />
+              </button>
+            </span>
+          </div>
+        )}
+        {at("developer") && Object.keys(b.spend.by).some((k) => k.startsWith("anthropic:")) && (
+          <span className="mono aside">
+            {Object.entries(b.spend.by)
+              .filter(([k]) => k.startsWith("anthropic:"))
+              .map(([k, v]) => `${k.slice(10)} ${usd(v)}`)
+              .join(" · ")}
+          </span>
+        )}
+      </>
+    );
+  }
+  const share = b.free.neurons / b.free.allowance;
+  return row(
+    "Free allowance today",
+    `${Math.round(share * 100)}% used`,
+    share,
+    out
+      ? `Used up until ${dayTime(out.resets_at!)}.`
+      : `Resets ${clock(b.free.resets_at)}. Then a few cents a day. An estimate from Atlas's own thinking${at("developer") ? ` (${b.free.neurons.toLocaleString()} of ${b.free.allowance.toLocaleString()} neurons)` : ""}.`,
+  );
+}
+
+/**
+ * The owner's AI Gateway (§18): off until they name one. Anthropic and
+ * Workers AI then go through it, so its logs, caching and limits cover them.
+ * The binding knows the account, so the gateway's name is all it takes, and
+ * a token only for a gateway that asks for one.
+ */
+function Gateway({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; edit: Edit; view: SettingsView }) {
+  const id = draft.ai_gateway.id;
+  return (
+    <div className="card2 prov">
+      <div className="row" style={{ flexWrap: "nowrap" }}>
+        <Logo of="cloudflare" size={30} />
+        <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }} className="grow">
+          <span style={{ fontWeight: 600 }}>AI Gateway</span>
+          <span className="aside clip">{id ? `Through "${id}"` : "Off: straight to each provider"}</span>
+        </div>
+        <StateDot state={id ? "on" : "off"} />
+      </div>
+      <span className="small">Anthropic and Workers AI go through your own gateway, for its logs and limits. It's free.</span>
+      <label className="field">
+        <span>Its name, from AI Gateway in Cloudflare</span>
+        <input
+          className="field-in"
+          spellCheck={false}
+          placeholder="my-gateway"
+          value={id}
+          maxLength={64}
+          onChange={(e) => edit({ ai_gateway: { id: e.target.value.replace(/[^a-z0-9-]/gi, "") } })}
+        />
+      </label>
+      {id && (
+        <SecretField
+          label="Its token, only if the gateway is authenticated"
+          set={view.secrets.ai_gateway_token}
+          onSave={(value) => atlas.send({ type: "atlas.secret.set", secret: { name: "ai_gateway_token", value } })}
+        />
+      )}
+    </div>
   );
 }
 
@@ -327,8 +501,12 @@ function ModelPicker({
   const ref = useDismiss<HTMLDivElement>(open, () => setOpen(false));
   const live = atlas.state.models[provider];
   useEffect(() => {
-    if (open && provider === "anthropic" && !live && view.secrets.anthropic_api_key) atlas.send({ type: "atlas.brain.models", provider });
+    if (!open || live) return;
+    // Each provider's own catalog: Anthropic's with the key, Workers AI's through the binding.
+    if ((provider === "anthropic" && view.secrets.anthropic_api_key) || provider === "workers-ai")
+      atlas.send({ type: "atlas.brain.models", provider });
   }, [open, provider, live, view.secrets.anthropic_api_key, atlas]);
+  const info = (m: string) => live?.models.find((x) => x.id === m);
   const models = catalog(
     view,
     provider,
@@ -374,6 +552,11 @@ function ModelPicker({
                 : "Sign in to ChatGPT in Providers, below, to pick one of its models."}
             </p>
           )}
+          {provider === "workers-ai" && live?.error && (
+            <p className="aside" style={{ padding: "8px 14px" }}>
+              Workers AI's catalog didn't come: {live.error} These are the models Atlas is tested with.
+            </p>
+          )}
           {models.map((m) => {
             const b = { provider, model: m };
             const on = value.provider === provider && value.model === m;
@@ -393,7 +576,9 @@ function ModelPicker({
                   </span>
                   {at("developer") && <span className="mono aside">{m}</span>}
                 </span>
-                {/* TODO(core, stage 4): each model's speed and price per million tokens, from the provider's catalog. */}
+                <span className={`aside ${at("developer") ? "mono" : ""}`} style={{ textAlign: "right" }}>
+                  {about(b, info(m)?.price ?? view.brains.prices[`${provider}:${m}`], health(view, b)?.speed, at("developer"))}
+                </span>
               </button>
             );
           })}

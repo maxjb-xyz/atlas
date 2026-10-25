@@ -48,7 +48,7 @@ Atlas itself is free. What you pay is your Cloudflare plan and what you choose t
 | Workers AI (the default brain, voice, sorting and memory) | A free allowance each day, then a few cents for heavy use |
 | The workspace (a container) | Only while it's awake; it sleeps after ten quiet minutes |
 | ChatGPT as a brain | Your ChatGPT plan, signed in; no extra cost |
-| Anthropic as a brain | What you use, on your Anthropic API key |
+| Anthropic as a brain | What you use, on your Anthropic API key, held to a monthly cap you set in Settings → Brains ($20 to start) |
 | ElevenLabs voice | Your ElevenLabs plan |
 | Telnyx phone calls | About 1¢ a minute while you're on a call, and $1 a month for a number bought through Atlas |
 | Other services (Telegram, Gmail, iCloud, GitHub, search) | Their own plans; most are free |

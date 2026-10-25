@@ -232,6 +232,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
     secret: z.discriminatedUnion("name", [
       z.object({ name: z.literal("elevenlabs_api_key"), value: z.string().min(8).max(200).nullable() }),
       z.object({ name: z.literal("anthropic_api_key"), value: z.string().min(20).max(300).nullable() }),
+      z.object({ name: z.literal("ai_gateway_token"), value: z.string().min(20).max(300).nullable() }),
     ]),
   }),
   /** Whether this device has Atlas in view, sent on connect and whenever it changes, so a message goes to one channel (§14). */
@@ -665,12 +666,31 @@ export interface McpAppPage {
   result: Record<string, unknown>;
 }
 
+/** Brains' cost and limits (§18), for Settings → Brains. */
+export interface BrainsView {
+  /** Paid brains this month (UTC): what they've cost, by brain, against the owner's cap. */
+  spend: { month: string; paid: number; cap: number; by: Record<string, number>; resets_at: number };
+  /**
+   * Workers AI's free daily allowance: neurons used today (UTC) by Atlas's thinking, an estimate from the
+   * tokens its runs counted (sorting, remembering and speech use some too, and aren't counted).
+   */
+  free: { day: string; neurons: number; allowance: number; resets_at: number };
+  /** ChatGPT's plan, from the headers of its last answer, when it sent any. */
+  plan: import("./brains/limits").PlanLimits | null;
+  /** The price of every brain in a chain, by "provider:model", from the dated table or the catalog. */
+  prices: Record<string, import("./brains/catalog").Price>;
+  /** When the table of prices was read from the providers' pages. */
+  prices_as_of: string;
+}
+
 /** Settings as the app sees them: values, plus whether each secret is set (never the secret). */
 export interface SettingsView {
   settings: import("./store/settings").Settings;
   secrets: {
     elevenlabs_api_key: boolean;
     anthropic_api_key: boolean;
+    /** A token for an authenticated AI Gateway (§18). */
+    ai_gateway_token: boolean;
     /** Atlas's own sealing of secrets (§20): on, or why not; and a value that couldn't be opened, with the fix. */
     sealed: { state: "on" | "missing" | "short"; unreadable: string | null };
   };
@@ -712,8 +732,13 @@ export interface SettingsView {
   /** Chat channels (§16.1), and who the owner is on each. */
   channels: Array<{ ext: string; name: string; linked: { name: string; at: number } | null }>;
   chatgpt: ChatGPTView;
-  /** Provider health, by "provider:model". */
-  health: Record<string, { ok: boolean; reason?: string; checked_at: number }>;
+  /**
+   * Provider health, by "provider:model": whether it's answering, when one that ran out can be used again, its
+   * speed as measured from Atlas's own runs, and a plan's own limits from its last answer.
+   */
+  health: Record<string, Omit<import("./brains/limits").Health, "strikes">>;
+  /** What the brains cost and what's left (§18): live limits, as far as Atlas can know them. */
+  brains: BrainsView;
   /** The owner's passkeys, without their keys (Abilities → Devices). */
   passkeys: Array<{ id: string; name: string; created_at: number; last_used: number | null }>;
   /** The vault's entries, without their values (Settings → Vault). */
@@ -1053,7 +1078,7 @@ export type ServerMessage =
   | { type: "atlas.files"; files: import("./stage").FileRow[] }
   | { type: "atlas.skills"; skills: SkillView[] }
   /** A provider's models for the picker, or why they couldn't be listed. */
-  | { type: "atlas.brain.models"; provider: string; models: Array<{ id: string; name: string }>; error?: string }
+  | { type: "atlas.brain.models"; provider: string; models: import("./brains/catalog").ModelInfo[]; error?: string }
   | { type: "atlas.mcp.servers"; servers: McpServerView[] }
   /** Abilities → Services (§17): a card per service, and the indexes the catalog reads. Sent when asked and after any change. */
   | { type: "atlas.services"; services: ServiceView[]; indexes: IndexView[] }

@@ -30,7 +30,11 @@ async function withSql<T>(fn: (sql: Sql) => Promise<T> | T): Promise<T> {
 type Look = (desk: GoalDesk, job: GoalJob, note: string) => Promise<string | { error: string }> | string | { error: string };
 
 /** A desk whose looks are scripted moves, and whose helpers are only recorded. */
-function testDesk(sql: Sql, looks: Look[], o: { brains?: string[]; helperFails?: string } = {}) {
+function testDesk(
+  sql: Sql,
+  looks: Look[],
+  o: { brains?: string[]; helperFails?: string; limits?: GoalHost["limits"]; goOn?: () => boolean } = {},
+) {
   const st = {
     watches: [] as Array<{ id: string; at: number }>,
     helpers: [] as Array<{ step: string; brief: string; brain: string; folder: string }>,
@@ -74,6 +78,8 @@ function testDesk(sql: Sql, looks: Look[], o: { brains?: string[]; helperFails?:
     ask: async ({ question }) => void st.asked.push(question.text),
     report: (item, result) => void st.reports.push(`${item.title}: ${result.state}: ${result.text}`),
     brains: () => ({ names: o.brains ?? ["Quick", "Deep"], work: "Main" }),
+    ...(o.limits ? { limits: o.limits, when: (at: number) => new Date(at).toISOString().slice(11, 16) } : {}),
+    ...(o.goOn ? { goOn: o.goOn } : {}),
     changed: () => {},
   };
   const desk = new GoalDesk(host);
@@ -328,6 +334,79 @@ describe("jobs Atlas owns (§8.3)", () => {
       expect(st.helpers.at(-1)).toMatchObject({ step: "s1", brain: "Quick" });
     }));
 
+  it("say when the limit resets and what going on would cost so far, and wait until then when told", () =>
+    withSql(async (sql) => {
+      const reset = Date.now() + 2 * 3600_000;
+      const priced: Array<{ brain: string; tokens: unknown }> = [];
+      const { desk, st } = testDesk(sql, [async (d, j) => (await d.startStep(j.id, { step: "s1", brief: "Write it." })).text], {
+        limits: (brain, tokens) => {
+          priced.push({ brain, tokens });
+          return brain === "Main"
+            ? { resets_at: reset, cost: "plan" }
+            : { resets_at: null, cost: brain === "Deep" ? (tokens.input * 4 + tokens.output * 20) / 1e6 : "plan" };
+        },
+      });
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      // The look and the step's helper used tokens on the main brain.
+      desk.used(job.id, { input: 50_000, output: 2_000 });
+      desk.used("helper_1", { input: 50_000, output: 3_000, cached: 40_000 });
+      expect(getGoal(sql, job.id)!.tokens).toEqual({ input: 100_000, output: 5_000, cached: 40_000 });
+      await desk.stepDone("helper_1", {
+        state: "failed",
+        text: "",
+        error: "ChatGPT (HTTP 429): Your ChatGPT plan's limit for Atlas is used up.",
+      });
+      const paused = getGoal(sql, job.id)!;
+      const at = new Date(reset).toISOString().slice(11, 16);
+      expect(paused.question!.options).toEqual([
+        `Wait until ${at}`,
+        "Go on with Quick (on your plan)",
+        "Go on with Deep (about $0.50 for the job so far)",
+      ]);
+      expect(st.asked[0]).toContain(`It resets ${at}.`);
+      expect(priced.find((p) => p.brain === "Deep")!.tokens).toMatchObject({ input: 100_000, output: 5_000 });
+      await desk.answer(job.id, `Wait until ${at}`);
+      const waiting = getGoal(sql, job.id)!;
+      expect(waiting).toMatchObject({ phase: "paused", until: reset + 60_000 });
+      expect(st.watches.at(-1)!.at).toBe(reset + 60_000);
+    }));
+
+  it("go on with another brain by itself when the owner allows it within the cap, once each, and ask at the cap", () =>
+    withSql(async (sql) => {
+      const { desk, st } = testDesk(
+        sql,
+        [
+          async (d, j) => (await d.startStep(j.id, { step: "s1", brief: "Write it." })).text,
+          async (d, j) => (await d.startStep(j.id, { step: "s1", brief: "Write it." })).text,
+          async (d, j) => (await d.startStep(j.id, { step: "s1", brief: "Write it." })).text,
+        ],
+        { goOn: () => true },
+      );
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      await desk.stepDone("helper_1", { state: "failed", text: "", error: "rate limit reached" });
+      let g = getGoal(sql, job.id)!;
+      expect(g).toMatchObject({ phase: "working", brain: "Quick", question: null });
+      expect(g.log.at(-1)!.text).toContain("Going on with Quick, within the spending cap.");
+      expect(st.asked).toHaveLength(0);
+      await desk.wake(job.id);
+      expect(st.helpers.at(-1)).toMatchObject({ brain: "Quick" });
+      // Quick runs out too: on to Deep, never back to Main.
+      await desk.stepDone("helper_2", { state: "failed", text: "", error: "quota exceeded" });
+      expect(getGoal(sql, job.id)!.brain).toBe("Deep");
+      await desk.wake(job.id);
+      // Deep reaches the cap: that's for the owner, so it asks.
+      await desk.stepDone("helper_3", {
+        state: "failed",
+        text: "",
+        error: "This month's spending cap for paid brains ($20) is reached: $20.10 so far.",
+      });
+      g = getGoal(sql, job.id)!;
+      expect(g.phase).toBe("paused");
+      expect(st.asked).toHaveLength(1);
+    }));
+
   it("wait an hour when the owner says to wait, then try again", () =>
     withSql(async (sql) => {
       const { desk, st } = testDesk(sql, [async (d, j) => (await d.startStep(j.id, { step: "s1", brief: "Write it." })).text]);
@@ -390,6 +469,9 @@ describe("jobs Atlas owns (§8.3)", () => {
   it("tell a brain running out from the work going wrong", () => {
     expect(ranOut("ChatGPT (HTTP 429): usage limit reached for your plan")).toBe(true);
     expect(ranOut("Anthropic (HTTP 400) refused the request: Your credit balance is too low")).toBe(true);
+    // The plan route's own words, which say no status (chatgpt.ts), and Workers AI's free allowance.
+    expect(ranOut("Your ChatGPT plan's limit for Atlas is used up for now. ChatGPT settings → Usage shows when it resets.")).toBe(true);
+    expect(ranOut("Workers AI: 4006: you have used up your daily free allocation of 10,000 neurons")).toBe(true);
     expect(ranOut("ffmpeg: command not found")).toBe(false);
   });
 

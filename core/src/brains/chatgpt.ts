@@ -3,8 +3,20 @@
 // api.openai.com with the sign-in token. (chatgpt.com's own backend blocks
 // requests from Cloudflare, and OpenAI asks tools not to use it.)
 // https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference
+//
+// The plan's limits: OpenAI's errors page for plan usage (read 2026-10-25)
+// documents `subscription_sharing_usage_limit_exceeded` (429) but no reset
+// time, no `retry-after` and no usage headers, and says not to guess one from
+// the code. Codex's own client reads `x-codex-primary-used-percent`,
+// `-primary-window-minutes` and `-primary-reset-at` (Unix seconds), the same
+// for `secondary`, and other families like `x-codex-other-*`
+// (openai/codex, codex-rs/codex-api/src/rate_limits.rs, main on 2026-10-25).
+// Whether the public API sends them for plan usage isn't documented, so Atlas
+// reads them when they're there, with `retry-after`, logs which came back
+// (`chatgpt.limits` in the Worker log), and otherwise says it doesn't know.
+// https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery
 
-import { type Brain, BrainError, type BrainEvent, type BrainRequest, type Message, parseArgs, sseData } from "./types";
+import { type Brain, BrainError, type BrainEvent, type BrainRequest, type Message, type PlanLimits, parseArgs, sseData } from "./types";
 
 export const RESPONSES_URL = "https://api.openai.com/v1/responses";
 /** Plan usage needs function tools grouped in a namespace. */
@@ -124,8 +136,66 @@ function planError(code: string | undefined, message: string, status?: number): 
   return new BrainError(`ChatGPT: ${message}${code ? ` (${code})` : ""}`, false, status);
 }
 
+/**
+ * The plan's limits from a response's headers, in Codex's names: each
+ * family's primary and secondary windows. Null when none came back.
+ */
+export function planLimits(h: Headers, now = Date.now()): PlanLimits | null {
+  const families = new Set<string>();
+  h.forEach((_v, name) => {
+    const m = /^x-(.+)-primary-used-percent$/i.exec(name);
+    if (m) families.add(m[1]!.toLowerCase());
+  });
+  const windows: PlanLimits["windows"] = [];
+  for (const fam of [...families].sort()) {
+    for (const which of ["primary", "secondary"] as const) {
+      const used = Number(h.get(`x-${fam}-${which}-used-percent`));
+      if (!Number.isFinite(used) || h.get(`x-${fam}-${which}-used-percent`) == null) continue;
+      const minutes = Number(h.get(`x-${fam}-${which}-window-minutes`));
+      const reset = Number(h.get(`x-${fam}-${which}-reset-at`));
+      const label = h.get(`x-${fam}-limit-name`)?.trim();
+      windows.push({
+        name: `${fam === "codex" ? "" : `${label || fam} `}${which}`,
+        used_percent: used,
+        ...(Number.isFinite(minutes) && minutes > 0 ? { window_minutes: minutes } : {}),
+        ...(Number.isFinite(reset) && reset > 0 ? { resets_at: reset * 1000 } : {}),
+      });
+    }
+  }
+  return windows.length ? { windows, seen_at: now } : null;
+}
+
+/** When a plan that's run out can be used again: `retry-after`, else the reset of a window that's full. */
+export function resetFrom(h: Headers, limits: PlanLimits | null, now = Date.now()): number | undefined {
+  const after = Number(h.get("retry-after"));
+  if (Number.isFinite(after) && after > 0) return now + after * 1000;
+  const full = (limits?.windows ?? []).filter((w) => w.used_percent >= 100 && w.resets_at && w.resets_at > now);
+  return full.length ? Math.max(...full.map((w) => w.resets_at!)) : undefined;
+}
+
+let lastLogged = "";
+/** Which limit headers OpenAI sent, in the Worker log when they change, so what's really there can be seen. */
+function logLimits(res: Response): void {
+  const seen: Record<string, string> = {};
+  res.headers.forEach((v, k) => {
+    if (/^x-codex|ratelimit|retry-after/i.test(k)) seen[k] = v;
+  });
+  const names = Object.keys(seen).sort().join(",");
+  if (names === lastLogged && res.status !== 429) return;
+  lastLogged = names;
+  console.log(JSON.stringify({ at: "chatgpt.limits", status: res.status, headers: seen }));
+}
+
+/** The same error, with when it can be tried again. */
+const withReset = (e: BrainError, at: number | undefined) =>
+  at && e.status === 429 && !e.resetAt ? new BrainError(e.message, e.permanent, e.status, at) : e;
+
 /** A plain reason for a refused request, with the status and what OpenAI said. Exported for tests. */
 export async function refusal(res: Response): Promise<BrainError> {
+  return withReset(await refused(res), resetFrom(res.headers, planLimits(res.headers)));
+}
+
+async function refused(res: Response): Promise<BrainError> {
   const raw = await res.text().catch(() => "");
   let code: string | undefined;
   let detail = raw;
@@ -199,8 +269,15 @@ export function chatgptBrain(auth: ChatGPTAccess, model: string, f: typeof fetch
     async *stream(req: BrainRequest): AsyncIterable<BrainEvent> {
       let res = await open(req, false);
       if (res.status === 401) res = await open(req, true);
+      logLimits(res);
       if (!res.ok || !res.body) throw await refusal(res);
-      yield* readResponsesStream(res.body, req.signal);
+      const limits = planLimits(res.headers);
+      try {
+        for await (const ev of readResponsesStream(res.body, req.signal)) yield ev.type === "done" && limits ? { ...ev, limits } : ev;
+      } catch (err) {
+        // A limit can also arrive mid-stream as response.failed: the headers may still say when it resets.
+        throw err instanceof BrainError ? withReset(err, resetFrom(res.headers, limits)) : err;
+      }
     },
   };
 }

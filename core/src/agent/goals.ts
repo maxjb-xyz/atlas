@@ -12,8 +12,12 @@
 // outbox. A checkpoint, or a decision only the owner can make, is one question
 // in Inbox. A brain that runs out partway pauses the job at a clean step and
 // asks whether to wait or go on with another (§18), so it never spends what
-// the owner didn't approve.
+// the owner didn't approve: waiting until the time its provider said it
+// resets, when it said, and each other brain with what the job's tokens so
+// far would cost on it. With Permissions' "within the spending cap", it goes
+// on with another brain without asking, and the router's cap still holds.
 
+import { dollars } from "../brains/catalog";
 import { type AgendaItem, createItem, finish, getItem } from "../store/agenda";
 import type { Sql } from "../store/db";
 import { append, type LogRow } from "../store/log";
@@ -58,9 +62,15 @@ export interface GoalQuestion {
   options: string[];
   /** Its row, which Inbox shows. */
   log: string;
-  /** A pause (§18): the answers it offers, mapped to what each does. */
-  pause?: { wait: string; brains: Record<string, string> };
+  /** A pause (§18): the answers it offers, mapped to what each does, and when the brain resets, if its provider said. */
+  pause?: { wait: string; brains: Record<string, string>; until?: number | null };
   at: number;
+}
+
+export interface GoalTokens {
+  input: number;
+  output: number;
+  cached?: number;
 }
 
 export interface GoalJob {
@@ -86,6 +96,10 @@ export interface GoalJob {
   /** Its budget: looks and steps; past either, it asks before going on. */
   budget: { looks: number; steps: number };
   spent: { looks: number; steps: number; by: Record<string, number> };
+  /** The tokens its looks and steps have used, whatever brain ran them: what going on with another would cost so far. */
+  tokens?: GoalTokens;
+  /** Brains it went on from by itself, within the spending cap (Permissions), so it never goes back and forth. */
+  went_on_from?: string[];
   /** A look in a row that didn't move the job. */
   unsure: number;
   /** What that look said instead of making a move, for the next look to act on. */
@@ -173,7 +187,7 @@ export function inFolder(folder: string, path: string): string | null {
 
 /** Whether a helper's failure is its brain running out (a plan's limit, a cap, credit), not the work going wrong. */
 export function ranOut(error: string): boolean {
-  return /usage limit|rate limit|rate-limit|limit (?:was )?reached|quota|insufficient|credit|spending cap|429|too many requests/i.test(
+  return /usage limit|rate limit|rate-limit|limit (?:was |is )?reached|limit for atlas is used up|daily free allocation|quota|insufficient|credit|spending cap|429|too many requests/i.test(
     error,
   );
 }
@@ -216,6 +230,15 @@ export interface GoalHost {
   report(item: AgendaItem, result: { state: "done" | "failed"; text: string }): void;
   /** The named brains the owner has, with the one for a job's work first. */
   brains(): { names: string[]; work: string };
+  /**
+   * What the router knows about a named brain (§18): when its chain can be used again, if its provider said, and
+   * what tokens would cost on it ("plan" on a flat plan, null with no price).
+   */
+  limits?(brain: string, tokens: GoalTokens): { resets_at: number | null; cost: number | "plan" | null };
+  /** Whether the owner lets a job go on with a paid brain within the spending cap (Permissions), and it isn't reached. */
+  goOn?(): boolean;
+  /** A time in the owner's words and zone: "3:40 pm", "Sat 9:00 am". */
+  when?(at: number): string;
   changed(): void;
 }
 
@@ -444,14 +467,38 @@ export class GoalDesk {
   async #pause(job: GoalJob, why: string, step: GoalStep | null): Promise<void> {
     const { names } = this.h.brains();
     const others = names.filter((n) => n.toLowerCase() !== job.brain.toLowerCase());
-    const wait = "Wait and try again in an hour";
-    const brains = Object.fromEntries(others.slice(0, 3).map((n) => [`Go on with ${n}`, n]));
+    const tokens = job.tokens ?? { input: 0, output: 0 };
+    // Within the cap, the owner's rule lets it go on by itself, once per brain, so it never goes back and forth.
+    // A cap that's reached is for the owner to raise.
+    const from = [...(job.went_on_from ?? []), job.brain];
+    const next = others.find((n) => !from.some((f) => f.toLowerCase() === n.toLowerCase()));
+    if (next && !/spending cap/i.test(why) && this.h.goOn?.()) {
+      const going = this.#note(
+        { ...job, brain: next, went_on_from: from, phase: "working", until: null },
+        "atlas",
+        `${job.brain === "Main" ? "The main brain" : job.brain} ran out partway (${clip(why, 300)}). Going on with ${next}, within the spending cap.`,
+      );
+      saveGoal(this.h.sql, going);
+      this.h.changed();
+      await this.h.watch(job.id, Date.now() + 1_000);
+      return;
+    }
+    const until = this.h.limits?.(job.brain, tokens).resets_at ?? null;
+    const wait = until ? `Wait until ${this.h.when?.(until) ?? new Date(until).toISOString()}` : "Wait and try again in an hour";
+    const label = (n: string) => {
+      const cost = tokens.input + tokens.output > 0 ? this.h.limits?.(n, tokens).cost : null;
+      if (cost === "plan") return `Go on with ${n} (on your plan)`;
+      return typeof cost === "number" ? `Go on with ${n} (about ${dollars(cost)} for the job so far)` : `Go on with ${n}`;
+    };
+    const brains = Object.fromEntries(others.slice(0, 3).map((n) => [label(n), n]));
     const paused = this.#note({ ...job, phase: "paused", until: null }, "atlas", `Paused: ${why}`);
     await this.#ask(paused, {
       step: step?.id ?? null,
-      text: `${job.title} paused: ${job.brain === "Main" ? "the main brain" : job.brain} ran out partway (${clip(why, 300)}). Wait until it resets, or go on with another brain?`,
+      text: `${job.title} paused: ${job.brain === "Main" ? "the main brain" : job.brain} ran out partway (${clip(why, 300)}). ${
+        until ? `It resets ${this.h.when?.(until) ?? new Date(until).toISOString()}.` : "Its provider didn't say when it resets."
+      } Wait until then, or go on with another brain?`,
       options: [wait, ...Object.keys(brains)],
-      pause: { wait, brains },
+      pause: { wait, brains, until },
     });
     // Asking set it waiting; it stays paused, so nothing runs until they answer.
     const asked = getGoal(this.h.sql, job.id)!;
@@ -698,6 +745,20 @@ export class GoalDesk {
 
   // --- what comes back -----------------------------------------------------------
 
+  /**
+   * Counts a call's tokens to the job it was for: a look (by the job's id) or one of its steps (by the helper's).
+   * What going on with another brain would cost so far is priced from these.
+   */
+  used(id: string, usage: { input: number; output: number; cached?: number }): void {
+    const job = getGoal(this.h.sql, id) ?? goals(this.h.sql).find((g) => g.plan.some((s) => s.job === id));
+    if (!job || ENDED.includes(job.phase)) return;
+    const t = job.tokens ?? { input: 0, output: 0, cached: 0 };
+    saveGoal(this.h.sql, {
+      ...job,
+      tokens: { input: t.input + usage.input, output: t.output + usage.output, cached: (t.cached ?? 0) + (usage.cached ?? 0) },
+    });
+  }
+
   /** A step's helper ended: its result waits for the next look, unless its brain ran out. */
   async stepDone(helper: string, o: { state: "done" | "failed"; text: string; error?: string }): Promise<boolean> {
     const job = goals(this.h.sql).find((g) => g.plan.some((s) => s.job === helper));
@@ -750,11 +811,13 @@ export class GoalDesk {
       if (q?.pause) {
         const brain = q.pause.brains[text];
         if (text === q.pause.wait) {
-          const until = Date.now() + RETRY_AFTER_MS;
+          // Until the reset its provider gave (and a minute more), else an hour.
+          const reset = q.pause.until && q.pause.until > Date.now() ? q.pause.until + 60_000 : null;
+          const until = reset ?? Date.now() + RETRY_AFTER_MS;
           saveGoal(this.h.sql, { ...job, question: null, phase: "paused", until });
           this.h.changed();
           await this.h.watch(id, until);
-          return { ok: true, text: "It waits, and tries again in an hour." };
+          return { ok: true, text: reset ? `It waits until the limit resets, then tries again.` : "It waits, and tries again in an hour." };
         }
         if (brain) job = this.#note({ ...job, brain }, "atlas", `Going on with ${brain}.`);
       } else if (q && q.text.includes("has used its budget")) {

@@ -69,6 +69,7 @@ import { BrainRouter, type Health } from "./brains/router";
 import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
 import { anthropicBrain, anthropicModels } from "./brains/anthropic";
+import { type AiCatalog, costOf, type ModelInfo, type Spend, workersAIModels } from "./brains/catalog";
 import { runCharacterCheck, summary as characterSummary } from "./character-check";
 import { newSessionId, type Session, SESSION_DAYS, SESSION_HEADER } from "./auth";
 import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
@@ -106,7 +107,7 @@ import {
   setSecret,
   writeSettings,
 } from "./store/settings";
-import { addLocalDays, isoLocal, isValidZone, longLocal, parseWhen, shortLocal, startOfLocalDay, zoneOf } from "./time";
+import { addLocalDays, clockLocal, isoLocal, isValidZone, longLocal, parseWhen, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import { calendarAdd, calendarMove, calendarRead } from "./tools/calendar";
 import { emailSend, mailAccount } from "./tools/mail";
 import { delegate } from "./tools/delegate";
@@ -496,10 +497,16 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       (connection.state as SocketState | null)?.node ? this.#nodeRaw(connection, message) : voiced.call(this, connection, message);
   }
 
-  #router = new BrainRouter((c) => this.#makeBrain(c), {
-    load: () => getState<Record<string, Health>>(this.#sql, "brain_health"),
-    save: (all) => setState(this.#sql, "brain_health", all),
-  });
+  #router = new BrainRouter(
+    (c) => this.#makeBrain(c),
+    {
+      load: () => getState<Record<string, Health>>(this.#sql, "brain_health"),
+      save: (all) => setState(this.#sql, "brain_health", all),
+      loadSpend: () => getState<Spend>(this.#sql, "brain_spend"),
+      saveSpend: (s) => setState(this.#sql, "brain_spend", s),
+    },
+    () => readSettings(this.#sql).spending.cap,
+  );
   #outbox!: Outbox;
   #calendar!: CalendarSense;
   #chatgpt!: ChatGPTSignIn;
@@ -1116,7 +1123,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         this.#updateSettings(msg.patch);
         return;
       case "atlas.brain.models": {
-        const reply = (models: Array<{ id: string; name: string }>, error?: string) =>
+        const reply = (models: ModelInfo[], error?: string) =>
           this.#send(connection, { type: "atlas.brain.models", provider: msg.provider, models, ...(error ? { error } : {}) });
         try {
           if (msg.provider === "anthropic") {
@@ -1131,7 +1138,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
               v.state === "signed_in" ? undefined : "Sign in with ChatGPT first.",
             );
           }
-          return reply([], "Workers AI's catalog isn't listed here yet.");
+          // Workers AI's own catalog, through the binding: no token needed. Its text models that take tools.
+          if (this.env.ATLAS_TEST) return reply([], "Workers AI's catalog isn't reached from tests.");
+          return reply(await workersAIModels(this.env.AI as unknown as AiCatalog));
         } catch (err) {
           return reply([], err instanceof Error ? err.message : String(err));
         }
@@ -3120,7 +3129,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   async helperBrain(jobId: string, choice: BrainChoice, req: Omit<BrainRequest, "signal">): Promise<BrainEvent[]> {
     if (this.#coding.owns(jobId)) return this.#coding.brain(jobId, choice, req);
-    return this.#helpers.brain(jobId, choice, req);
+    const events = await this.#helpers.brain(jobId, choice, req);
+    // A step of a job Atlas owns: its tokens count to the job (§18), for what going on with another would cost.
+    const done = events.find((e) => e.type === "done");
+    if (done?.usage) this.#goals.used(jobId, done.usage);
+    return events;
   }
 
   async helperTool(jobId: string, name: string, input: unknown): Promise<ToolResult> {
@@ -3491,6 +3504,22 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
         const settings = readSettings(sql);
         return { names: settings.named_brains.brains.map((b) => b.name), work: chainFor(settings, "job_work").name };
       },
+      limits: (name, tokens) => {
+        const settings = readSettings(sql);
+        const chain = name.toLowerCase() === "main" ? settings.brains.main : chainFor(settings, "job_work", name).chain;
+        const first = this.#router.chain(chain)[0];
+        const cost = !first ? null : first.provider === "chatgpt" ? ("plan" as const) : costOf(first, tokens);
+        return { resets_at: this.#router.resetOf(chain), cost };
+      },
+      goOn: () => {
+        const settings = readSettings(sql);
+        return settings.permissions.paid_brain === "within_cap" && this.#router.spend().paid < settings.spending.cap;
+      },
+      when: (at) => {
+        const tz = zoneOf(readSettings(sql));
+        const sameDay = startOfLocalDay(new Date(at), tz).getTime() === startOfLocalDay(new Date(), tz).getTime();
+        return sameDay ? clockLocal(new Date(at), tz) : shortLocal(new Date(at), tz);
+      },
       changed: () => {
         this.#jobsChanged();
         this.#broadcast({ type: "atlas.inbox.items", items: inbox(sql) });
@@ -3546,6 +3575,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
       ...(res.brain ? { brain: brainKey(res.brain) } : {}),
       usage: res.usage as never,
     });
+    if (res.usage.input || res.usage.output) g.used(job.id, res.usage);
     return { text: res.text, ...(res.state === "failed" ? { error: res.error ?? "The look failed." } : {}) };
   }
 
@@ -4114,7 +4144,9 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
   #makeBrain(choice: BrainChoice): Brain | null {
     if (seams.makeBrain) return seams.makeBrain(choice);
     // Tests never reach a real provider (CLAUDE.md), even from background work that outlives a test's fake.
-    if (choice.provider === "workers-ai") return this.env.ATLAS_TEST ? null : workersAIBrain(this.env.AI as never, choice.model);
+    // The owner's AI Gateway, when they set one (§18): off until then.
+    const gateway = () => readSettings(this.#sql).ai_gateway.id || null;
+    if (choice.provider === "workers-ai") return this.env.ATLAS_TEST ? null : workersAIBrain(this.env.AI as never, choice.model, gateway);
     if (choice.provider === "anthropic") {
       // Without a key it's left out of the chain, like ChatGPT signed out.
       if (!getSecret<string>(this.#sql, "anthropic_api_key")) return null;
@@ -4122,6 +4154,13 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
         () => getSecret<string>(this.#sql, "anthropic_api_key"),
         choice.model,
         (...a) => (seams.fetch ?? fetch)(...a),
+        async () => {
+          const id = gateway();
+          if (!id) return null;
+          // The binding fills in the account: https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/anthropic.
+          const url = await this.env.AI.gateway(id).getUrl("anthropic");
+          return { url, token: getSecret<string>(this.#sql, "ai_gateway_token") };
+        },
       );
     }
     return this.#chatgpt.brain(choice.model);

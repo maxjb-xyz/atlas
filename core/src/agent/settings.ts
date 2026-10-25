@@ -7,7 +7,9 @@ import { openTasks, taskView } from "../tasks";
 import { zoneOf } from "../time";
 import type { BrainRouter } from "../brains/router";
 import { type Brain, brainKey } from "../brains/types";
-import type { ClientMessage, SettingsView } from "../protocol";
+import type { BrainsView, ClientMessage, SettingsView } from "../protocol";
+import { FREE_NEURONS, nextDayUtc, nextMonthUtc, PRICES_AS_OF, priceOf } from "../brains/catalog";
+import type { Usage } from "../brains/types";
 import type { Sql } from "../store/db";
 import { runCharacterCheck, summary } from "../character-check";
 import { type BrainChoice, getSecret, readSettings, type Settings } from "../store/settings";
@@ -60,6 +62,7 @@ export function settingsView(
     secrets: {
       elevenlabs_api_key: Boolean(getSecret(sql, "elevenlabs_api_key")),
       anthropic_api_key: Boolean(getSecret(sql, "anthropic_api_key")),
+      ai_gateway_token: Boolean(getSecret(sql, "ai_gateway_token")),
       sealed: dataKeyView(),
     },
     calendar: {
@@ -123,6 +126,7 @@ export function settingsView(
     focus: focusNow(sql),
     chatgpt: parts.chatgpt.view(),
     health: parts.router.snapshot(),
+    brains: brainsView(settings, parts.router),
     passkeys,
     setup: setupView(sql),
     location: locationView(sql),
@@ -143,6 +147,28 @@ export function settingsView(
       foreign: null,
       busy: false,
     },
+  };
+}
+
+/** What the brains cost and what's left (§18): spending against the cap, today's free allowance, the plan's window, prices. */
+export function brainsView(settings: Settings, router: BrainRouter, now = Date.now()): BrainsView {
+  const s = router.spend(now);
+  const plans = Object.entries(router.snapshot())
+    .filter(([k, h]) => k.startsWith("chatgpt:") && h.limits)
+    .map(([, h]) => h.limits!)
+    .sort((a, b) => b.seen_at - a.seen_at);
+  const choices = [...settings.brains.main, ...settings.brains.voice, ...settings.named_brains.brains.flatMap((b) => b.chain)];
+  const prices: BrainsView["prices"] = {};
+  for (const c of choices) {
+    const p = priceOf(c);
+    if (p) prices[brainKey(c)] = p;
+  }
+  return {
+    spend: { month: s.month, paid: s.paid, cap: settings.spending.cap, by: s.usd, resets_at: nextMonthUtc(now) },
+    free: { day: s.day, neurons: Math.round(s.neurons), allowance: FREE_NEURONS, resets_at: nextDayUtc(now) },
+    plan: plans[0] ?? null,
+    prices,
+    prices_as_of: PRICES_AS_OF,
   };
 }
 
@@ -224,6 +250,7 @@ export async function liveTest(deps: TestDeps, msg: Extract<ClientMessage, { typ
       const t0 = Date.now();
       let text = "";
       let firstMs: number | null = null;
+      let usage: Usage | undefined;
       for await (const ev of brain.stream({
         system: "You are being tested. Reply with one short sentence.",
         messages: [{ role: "user", content: "Say hello." }],
@@ -234,9 +261,9 @@ export async function liveTest(deps: TestDeps, msg: Extract<ClientMessage, { typ
         if (ev.type === "text") {
           firstMs ??= Date.now() - t0;
           text += ev.text;
-        }
+        } else if (ev.type === "done") usage = ev.usage;
       }
-      deps.router.markOk(brain);
+      deps.router.markOk(brain, { ...(usage ? { usage } : {}), first_ms: firstMs, total_ms: Date.now() - t0 });
       return {
         ok: true,
         message: `${brainKey(choice)} answered: first words in ${firstMs ?? "?"} ms, done in ${Date.now() - t0} ms.`,

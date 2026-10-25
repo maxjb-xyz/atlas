@@ -26,7 +26,10 @@ import { parse, type Sql } from "./store/db";
 import { type AtlasRecord, standingFacts } from "./store/records";
 import { get as getRow, type LogRow, type Surface } from "./store/log";
 import type { Settings } from "./store/settings";
-import { isoLocal, longLocal, shortLocal } from "./time";
+import { clockLocal, isoLocal, localDate, longLocal, shortLocal } from "./time";
+import type { Health } from "./brains/router";
+import { current, dollars, FREE_NEURONS, paidThisMonth, type Spend } from "./brains/catalog";
+import { getState } from "./store/state";
 import { situationLines } from "./situation";
 import { openTasks, taskView } from "./tasks";
 import { loopsLine } from "./loops";
@@ -104,6 +107,7 @@ export function systemPrompt(opts: {
     pagesLine(sql),
     skillsLine(sql),
     brainsLine(settings),
+    limitsLine(sql, settings, now.getTime(), tz),
     serversLine(opts.mcp ?? []),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     tasksLine(sql, tz),
@@ -240,6 +244,57 @@ function brainsLine(settings: Settings): string {
   return `Brains you can hand work to (delegate's brain, by name; leave it out for the usual one):\n${named
     .map((b) => `- ${b.name}${b.line ? `: ${b.line}` : ""}`)
     .join("\n")}`;
+}
+
+const PROVIDER_NAMES: Record<string, string> = { chatgpt: "ChatGPT", anthropic: "Anthropic", "workers-ai": "Workers AI" };
+
+/**
+ * What the brains have left (§18), from their last answers: one that ran out
+ * and when it's back, the ChatGPT plan's windows, paid brains' spending
+ * against the cap, and Workers AI's free allowance today. Only what's known.
+ */
+export function limitsLine(sql: Sql, settings: Settings, now: number, tz: string): string {
+  const health = getState<Record<string, Health>>(sql, "brain_health") ?? {};
+  const spend = getState<Spend>(sql, "brain_spend");
+  const at = (t: number) =>
+    localDate(new Date(t), tz) === localDate(new Date(now), tz) ? clockLocal(new Date(t), tz) : shortLocal(new Date(t), tz);
+  const used = new Set(
+    [...settings.brains.main, ...settings.brains.voice, ...settings.named_brains.brains.flatMap((b) => b.chain)].map(
+      (c) => `${c.provider}:${c.model}`,
+    ),
+  );
+  const lines: string[] = [];
+  for (const [key, h] of Object.entries(health)) {
+    if (!used.has(key) || h.ok || !h.resets_at || h.resets_at <= now) continue;
+    const [p, ...m] = key.split(":");
+    lines.push(`- ${PROVIDER_NAMES[p!] ?? p} ${m.join(":")} ran out; it's back ${at(h.resets_at)}.`);
+  }
+  const plan = Object.entries(health)
+    .filter(([k, h]) => k.startsWith("chatgpt:") && h.limits)
+    .map(([, h]) => h.limits!)
+    .sort((a, b) => b.seen_at - a.seen_at)[0];
+  if (plan && now - plan.seen_at < 6 * 3600_000) {
+    const windows = plan.windows.map((w) => {
+      const span = w.window_minutes
+        ? w.window_minutes >= 1440
+          ? `${Math.round(w.window_minutes / 1440)}-day`
+          : `${Math.round(w.window_minutes / 60)}-hour`
+        : w.name;
+      return `${Math.round(w.used_percent)}% of its ${span} window used${w.resets_at && w.resets_at > now ? `, resets ${at(w.resets_at)}` : ""}`;
+    });
+    lines.push(`- The ChatGPT plan, as of ${at(plan.seen_at)}: ${windows.join("; ")}.`);
+  }
+  const paid = paidThisMonth(spend, now);
+  if (paid > 0 || [...used].some((k) => k.startsWith("anthropic:"))) {
+    lines.push(`- Paid brains (Anthropic, by key) this month: ${dollars(paid)} of the owner's ${dollars(settings.spending.cap)} cap.`);
+  }
+  const neurons = current(spend, now).neurons;
+  if (neurons > 0) {
+    lines.push(
+      `- Workers AI's free allowance today: about ${Math.round((neurons / FREE_NEURONS) * 100)}% used by your thinking (an estimate from tokens; it starts again at 00:00 UTC).`,
+    );
+  }
+  return lines.length ? `What your brains have left, from their last answers:\n${lines.join("\n")}` : "";
 }
 
 /** The skills index (§9.3): every active skill's one line, most used first, so Atlas finds them again. */

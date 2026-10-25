@@ -70,7 +70,7 @@ export interface State {
   areas: AreaView[];
   scope: string | null;
   /** Each provider's live list of models (§18), once asked for. */
-  models: Record<string, { models: Array<{ id: string; name: string }>; error?: string }>;
+  models: Record<string, { models: import("../../core/src/brains/catalog").ModelInfo[]; error?: string }>;
   /** The phone's last answer (§16.1): numbers, numbers to buy, and what happened. */
   calls: Extract<ServerMessage, { type: "atlas.calls" }> | null;
   voices: { voices: Array<{ id: string; name: string; preview_url: string | null; description: string }>; error?: string } | null;

@@ -408,12 +408,24 @@ export async function helperBrain(
   chain: BrainChoice[],
 ): Promise<BrainEvent[]> {
   if (!chain.some((c) => brainKey(c) === brainKey(choice))) throw new Error(`${brainKey(choice)} isn't in this job's chain.`);
-  const brain = host.makeBrain(choice);
+  // Through the router, so a paid brain past the month's cap refuses here too.
+  const brain = host.router.chain([choice])[0];
   if (!brain) throw new Error(`${brainKey(choice)} isn't set up.`);
   const events: BrainEvent[] = [];
+  const at = Date.now();
+  let first: number | null = null;
   try {
-    for await (const e of brain.stream({ ...req, signal: AbortSignal.timeout(140_000) })) events.push(e);
-    host.router.markOk(brain);
+    for await (const e of brain.stream({ ...req, signal: AbortSignal.timeout(140_000) })) {
+      first ??= Date.now() - at;
+      events.push(e);
+    }
+    const done = events.find((e) => e.type === "done");
+    host.router.markOk(brain, {
+      ...(done?.usage ? { usage: done.usage } : {}),
+      ...(done?.limits ? { limits: done.limits } : {}),
+      first_ms: first,
+      total_ms: Date.now() - at,
+    });
     return events;
   } catch (err) {
     host.router.markFailed(brain, err);
