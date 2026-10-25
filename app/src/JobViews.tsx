@@ -796,6 +796,18 @@ export function JobThread({ atlas, job }: { atlas: Atlas; job: JobView }) {
 function JobRow({ atlas, row }: { atlas: Atlas; row: LogRow }) {
   const b = row.body;
   const when = <span className="when">{clock(row.at)}</span>;
+  // An answer shows on its question; it isn't said again under it.
+  if (row.kind === "message.in" && b.answers != null) return null;
+  // What Atlas did on the job, as its receipts: a page read, the browser opened.
+  if (row.kind === "tool.result") {
+    const r = b.receipt as { text?: string } | undefined;
+    return r?.text ? (
+      <p className="jt-did mono small faint">
+        <span aria-hidden>✓ </span>
+        {r.text}
+      </p>
+    ) : null;
+  }
   if (row.kind === "message.in" || (row.kind === "settings.change" && b.said != null))
     return (
       <div className="msg owner">

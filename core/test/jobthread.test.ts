@@ -43,6 +43,30 @@ describe("a job's thread", () => {
     expect(reply.rows.map((r) => r.id)).toEqual([ids.update, ids.question, ids.said, ids.result]);
   });
 
+  it("keeps what a job did and the owner's words to it out of the main thread, and in the job's", async () => {
+    const job = `job-${crypto.randomUUID()}`;
+    const ids = await inOwner((_a, sql) => {
+      const read = append(sql, {
+        actor: "atlas",
+        kind: "tool.result",
+        body: { name: "browser_open", ok: true, job, receipt: { text: "Read · Pixabay" } },
+      });
+      const answer = append(sql, { actor: "owner", kind: "message.in", body: { text: "The second one", job, answers: "lg_q" } });
+      const words = append(sql, { actor: "owner", kind: "message.in", body: { text: "Faster", job } });
+      const mine = append(sql, {
+        actor: "atlas",
+        kind: "tool.result",
+        body: { name: "calendar_read", ok: true, receipt: { text: "Calendar" } },
+      });
+      expect([read, answer, words, mine].map(isThreadRow)).toEqual([false, false, false, true]);
+      return { read: read.id, answer: answer.id, words: words.id };
+    });
+    const s = await connect();
+    s.send({ type: "atlas.job.thread", id: job });
+    const reply = await s.next("atlas.job.thread", (m) => m.id === job);
+    expect(reply.rows.map((r) => r.id)).toEqual([ids.read, ids.answer, ids.words]);
+  });
+
   it("puts a job's question and a result with files in the main thread, but not a step's result", async () => {
     await inOwner((_a, sql) => {
       const q = append(sql, { actor: "atlas", kind: "job.question", body: { job: "j1", title: "T", text: "Which?", options: ["A"] } });

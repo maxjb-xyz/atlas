@@ -54,6 +54,8 @@ type Item =
 
 /** Whether a row is a message in the conversation. A job's updates aren't: they're on its card and in its own thread. */
 function shows(r: LogRow): boolean {
+  // A job's own rows (the owner's words and answers to it, what its turns did) are its thread's, not the main one (§21.4).
+  if ((r.kind === "message.in" || r.kind === "tool.result") && r.body.job != null) return false;
   switch (r.kind) {
     case "message.in":
     case "message.out":

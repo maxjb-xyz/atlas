@@ -232,8 +232,11 @@ export function quietTrigger(trigger: string): boolean {
 }
 
 export function isThreadRow(row: LogRow): boolean {
-  // What the owner said in a job's own thread is that thread's (§21.4); an answer to its question is the main thread's too.
-  if (row.kind === "message.in" && row.body.job != null && row.body.answers == null) return false;
+  // What the owner said to a job, and their answer to its question, are that job's (§21.4): the question shows the
+  // answer in place, and the job's own thread has the rest. The main thread stays the conversation.
+  if (row.kind === "message.in" && row.body.job != null) return false;
+  // What a job's turns and its helpers did (a page read, the browser) is the job's too: in its thread, not here.
+  if (row.kind === "tool.result" && row.body.job != null) return false;
   if (row.kind === "message.in" || row.kind === "message.out" || row.kind === "brain.fallback" || row.kind === "voice.problem") return true;
   if (row.kind === "tool.result") return row.body.receipt != null;
   // Atlas's own upkeep (compaction, area discovery) failing isn't news for the thread; the run and the
@@ -276,9 +279,11 @@ export function jobThread(sql: Sql, job: string, limit = 200): LogRow[] {
     .exec<RawRow>(
       `SELECT * FROM log WHERE (
          (kind IN ('job.update', 'job.question', 'message.in', 'message.out') AND json_extract(body, '$.job') = ?)
+         OR (kind = 'tool.result' AND json_extract(body, '$.job') = ? AND json_extract(body, '$.receipt') IS NOT NULL)
          OR (kind = 'job.result' AND json_extract(body, '$.item_id') = ?)
          OR (kind = 'settings.change' AND json_extract(body, '$.job') = ? AND json_extract(body, '$.said') IS NOT NULL)
        ) ORDER BY seq DESC LIMIT ?`,
+      job,
       job,
       job,
       job,

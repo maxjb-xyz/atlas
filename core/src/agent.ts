@@ -3856,9 +3856,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const id = job.id;
     const d = this.#owned;
     const started = Date.now();
+    // What the turn does is the job's: its tool rows carry the job, so they show in its thread, not the main one.
+    const log = logTo(sql);
     const res: LoopResult = await runLoop(
       {
-        log: logTo(sql),
+        log: (row) => log(row.kind === "tool.call" || row.kind === "tool.result" ? { ...row, body: { ...row.body, job: id } } : row),
         router: this.#router,
         chain,
         toolContext: {
@@ -3914,8 +3916,6 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       ...(res.brain ? { brain: brainKey(res.brain) } : {}),
       usage: res.usage as never,
     });
-    const end = sql.exec<{ id: string }>(`SELECT id FROM log WHERE run_id = ? AND kind = 'run.end'`, runId).toArray()[0];
-    if (end) this.#broadcast({ type: "atlas.rows", rows: [getRow(sql, end.id)!] });
     return {
       state: res.state,
       text: res.text,
