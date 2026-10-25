@@ -96,7 +96,13 @@ export const jobStep = defineTool({
   input: z.object({
     step: z.string().min(1).max(8).describe("The step's id: 's2'."),
     brief: z.string().min(1).max(12_000).describe("The helper's or agent's complete brief."),
-    brain: z.string().max(24).optional().describe("A named brain for this step only, when another suits it better."),
+    brain: z
+      .string()
+      .max(24)
+      .optional()
+      .describe(
+        "A named brain for this step only (Main, or one the owner named, as the job's note says), when another suits it better. Not the kind of step.",
+      ),
     agent: z.string().max(40).optional().describe("A coding agent for this step: 'claude-code' or 'codex'."),
     model: z.string().max(80).optional().describe("The coding agent's model, when the owner named one: 'claude-opus-5-5'."),
     effort: z.enum(EFFORTS).optional().describe("How hard the coding agent thinks, when the owner said."),

@@ -3639,6 +3639,8 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
         if (this.#coding.owns(id)) void this.#coding.stop(id);
         else this.#helpers.stop(id);
       },
+      // A helper or coding job is an agenda item that's running until it ends, however it ends.
+      alive: (id) => getItem(sql, id)?.state === "running",
       folder: async (path) => {
         await this.#workspaceApi.run(`mkdir -p '${path.replace(/'/g, `'\''`)}'`, { run_id: "goal", timeout_s: 30 });
       },

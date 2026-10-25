@@ -216,6 +216,8 @@ export interface GoalHost {
   }): Promise<{ id: string; name: string }>;
   /** Stops a step's helper, or its coding agent. */
   stopHelper(id: string): void;
+  /** Whether a step's helper or coding agent is still running. */
+  alive(id: string): boolean;
   /** Makes sure the folder is there before a step works in it. */
   folder(path: string): Promise<void>;
   /** Keeps a file from the folder for the owner, in Library. Its name. */
@@ -323,9 +325,40 @@ export class GoalDesk {
     }
   }
 
+  /**
+   * Makes the plan say what's true: a step is under way only while its helper or coding agent runs, or, for a
+   * checkpoint, while the owner is asked about it. One left "doing" with nothing behind it (a run cut off, a step
+   * asked about after it came back) would hold the job forever, with its status saying it's at work.
+   */
+  #settle(job: GoalJob): GoalJob {
+    let changed = false;
+    const plan = job.plan.map((s) => {
+      if (s.state !== "doing") return s;
+      if (s.kind === "checkpoint" && !s.job) {
+        if (job.phase === "waiting" && job.question?.step === s.id) return s;
+        changed = true;
+        return { ...s, state: s.result ? ("done" as const) : ("todo" as const) };
+      }
+      if (s.job && this.h.alive(s.job)) return s;
+      changed = true;
+      return s.result
+        ? { ...s, state: "done" as const }
+        : { ...s, state: "failed" as const, result: "It stopped without handing anything back.", ended_at: s.ended_at ?? Date.now() };
+    });
+    if (!changed) return job;
+    const settled = this.#note(
+      { ...job, plan },
+      "atlas",
+      "A step marked under way had nothing running behind it, so its state was put right.",
+    );
+    saveGoal(this.h.sql, settled);
+    return settled;
+  }
+
   async #wake(id: string): Promise<void> {
     let job = getGoal(this.h.sql, id);
     if (!job || ENDED.includes(job.phase)) return;
+    job = this.#settle(job);
     const now = Date.now();
     if (job.phase === "paused") {
       if (!job.until || job.until > now) return;
@@ -518,6 +551,8 @@ export class GoalDesk {
     const step = job.plan.find((s) => s.id === o.step);
     if (!step) return { ok: false, text: `There's no step ${o.step}. The steps are ${job.plan.map((s) => s.id).join(", ")}.` };
     if (step.kind === "checkpoint") return { ok: false, text: `${step.id} is a checkpoint: ask the owner with checkpoint.` };
+    const live = this.#settle(job);
+    if (live !== job) return this.startStep(id, o);
     if (step.state === "doing") return { ok: false, text: `${step.id} is already under way.` };
     if (job.plan.some((s) => s.state === "doing")) return { ok: false, text: "Another step is under way; wait for it to come back." };
     const { names } = this.h.brains();
@@ -551,7 +586,17 @@ export class GoalDesk {
     }
     const plan = job.plan.map((s) =>
       s.id === step.id
-        ? { ...s, state: "doing" as const, job: helper, brain, started_at: Date.now(), ...(o.minutes ? { minutes: o.minutes } : {}) }
+        ? {
+            ...s,
+            state: "doing" as const,
+            job: helper,
+            brain,
+            started_at: Date.now(),
+            // A step run again starts clean: its last result was the last run's.
+            result: undefined,
+            ended_at: undefined,
+            ...(o.minutes ? { minutes: o.minutes } : {}),
+          }
         : s,
     );
     const by = { ...job.spent.by, [brain]: (job.spent.by[brain] ?? 0) + 1 };
@@ -627,7 +672,9 @@ export class GoalDesk {
         ok: false,
         text: `${at.id} is a checkpoint: put what the owner should look at in content, in full (the whole script or storyboard, read from the folder if a step wrote it there). They see nothing else.`,
       };
-    const plan = o.step ? job.plan.map((s) => (s.id === o.step ? { ...s, state: "doing" as const } : s)) : job.plan;
+    // A checkpoint step is under way while it waits on the owner; asking about any other step (the track a research step
+    // found) leaves it as it is, since nothing of it is running.
+    const plan = at?.kind === "checkpoint" ? job.plan.map((s) => (s.id === o.step ? { ...s, state: "doing" as const } : s)) : job.plan;
     await this.#ask(
       { ...job, plan },
       { step: o.step ?? null, text: o.text, ...(o.content ? { content: o.content } : {}), options: o.options ?? [] },
@@ -873,7 +920,12 @@ export class GoalDesk {
       phase: g.phase,
       goal: g.goal,
       folder: g.folder,
-      plan: g.plan.filter((s) => s.state !== "skipped").map((s) => `${s.id} [${s.state}] ${s.title}`),
+      plan: g.plan
+        .filter((s) => s.state !== "skipped")
+        .map(
+          (s) =>
+            `${s.id} [${s.state}] ${s.title}${s.state === "doing" && s.started_at ? ` (running ${ago(Date.now() - s.started_at)})` : ""}`,
+        ),
       ...(g.question ? { waiting_on_owner: g.question.text } : {}),
       ...(g.site
         ? {

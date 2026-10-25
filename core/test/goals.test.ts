@@ -44,6 +44,7 @@ function testDesk(
     notes: [] as string[],
     stopped: [] as string[],
     reminded: [] as string[],
+    dead: [] as string[],
     coders: [] as Array<{ step: string; brief: string; agent?: string; model?: string; effort?: string }>,
   };
   let n = 0;
@@ -69,6 +70,7 @@ function testDesk(
     remind: async ({ text, approval }) => void st.reminded.push(`${text}${approval ? ` [${approval}]` : ""}`),
     site: async ({ host }) => (host === "pixabay.com" ? { allowed: true } : { approval: `appr_${host}` }),
     stopHelper: (id) => void st.stopped.push(id),
+    alive: (id) => !st.dead.includes(id) && !st.stopped.includes(id),
     folder: async () => {},
     keep: async ({ path, name }) => {
       const kept = name ?? path.split("/").pop()!;
@@ -306,6 +308,39 @@ describe("jobs Atlas owns (§8.3)", () => {
     expect(timeNote({ ...base, answered_at: now - 10 * 60_000 }, now)).not.toContain("Don't try the same way again");
     expect(STALL_MS).toBe(90 * 60_000);
   });
+
+  it("never leave a step under way with nothing behind it: asking about a step that came back, or a helper that died", () =>
+    withSql(async (sql) => {
+      const { desk, st } = testDesk(sql, [
+        async (d, j) => (await d.startStep(j.id, { step: "s1", brief: "Find a track." })).text,
+        // The track came back: asking about it doesn't put the research step back under way.
+        async (d, j) =>
+          (await d.checkpoint(j.id, { step: "s1", text: "Use this track?", content: "Waves of Euphoria", options: ["Yes", "No"] })).text,
+        async (d, j, note) => {
+          expect(note).toContain("The owner answered at s1: No, find three more.");
+          expect(note).toMatch(/s1 \[done\]/);
+          return (await d.startStep(j.id, { step: "s1", brief: "Find three more." })).text;
+        },
+        async (_d, _j, note) => {
+          expect(note).toMatch(/s1 \[failed\]/);
+          expect(note).toContain("It stopped without handing anything back.");
+          return "Looked.";
+        },
+      ]);
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      await desk.stepDone("helper_1", { state: "done", text: "Waves of Euphoria, CC BY." });
+      await desk.wake(job.id);
+      expect(getGoal(sql, job.id)!.plan[0]!.state).toBe("done");
+      await desk.answer(job.id, "No, find three more.");
+      await desk.wake(job.id);
+      expect(st.helpers).toHaveLength(2);
+      expect(getGoal(sql, job.id)!.plan[0]).toMatchObject({ state: "doing", job: "helper_2" });
+      // The helper dies without a word (a restart it didn't come back from): the next wake puts the plan right and looks.
+      st.dead.push("helper_2");
+      await desk.wake(job.id);
+      expect(getGoal(sql, job.id)!.plan[0]!.state).toBe("failed");
+    }));
 
   it("pause when a brain runs out partway, and go on with another one only when the owner says", () =>
     withSql(async (sql) => {

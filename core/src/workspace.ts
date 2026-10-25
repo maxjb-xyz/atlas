@@ -43,7 +43,9 @@ const PACKAGES = [
   "chromium",
   "fonts-noto-core",
 ];
-const BASE = `atlas-base-1:${PACKAGES.join(",")}`;
+// The "2": a container that skipped setting up after the package list changed (2026-10-25) marked itself ready with the
+// new list; this mark is new to it, so it sets up again.
+const BASE = `atlas-base-2:${PACKAGES.join(",")}`;
 /** Where the setup's packages come from: allowed only while setting up. */
 const SETUP_HOSTS = ["deb.debian.org", "security.debian.org"];
 /** /workspace bigger than this isn't kept between containers (it says so). */
@@ -499,16 +501,22 @@ export class Workspace extends DurableObject<Env> {
       };
       await say(fromSnapshot ? "Starting the workspace." : "Setting up the workspace for the first time (a minute or two).");
       let ok = await start(fromSnapshot);
+      let fromImage = !fromSnapshot;
       if (!ok && fromSnapshot) {
         // The snapshot ran out (they last 30 days unused): set up again from the image.
         await this.#c.destroy("snapshot expired").catch(() => {});
         await this.ctx.storage.put<Saved>("saved", { snapshot: null });
         await say("The workspace's saved setup was gone, so it's setting up again.");
         ok = await start(null);
+        fromImage = true;
       }
       if (!ok) throw new Error("The workspace container didn't start.");
+      // Started from the bare image (the first start, an expired snapshot, or a saved setup made for an older package
+      // list), it sets up: installs the packages and saves a new snapshot. An old snapshot still on file doesn't count.
+      const settingUp = fromImage;
+      if (settingUp && saved.snapshot && saved.snapshot.base !== BASE)
+        await say("The workspace's tools changed, so it's setting up again (a minute or two).");
       // The gate's certificate appears once a gate is registered, so register one (setup's package sites, or nothing) first.
-      const settingUp = !(await this.#saved()).snapshot;
       // Setting up reaches Debian's package sites only, for this step.
       if (settingUp) this.#extra.set("setup", { allow: SETUP_HOSTS, rules: [] });
       await this.#gate();
