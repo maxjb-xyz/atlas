@@ -5,13 +5,20 @@
 import type { Sql } from "../store/db";
 import { getState, setState } from "../store/state";
 
-export const SETUP_STEPS = ["passkey", "meet", "brain", "connect", "look", "routines"] as const;
+export const SETUP_STEPS = ["passkey", "meet", "brain", "connect", "look", "routines", "movein"] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
+
+/**
+ * Moving in (§22 step 7) is the last step and an optional one: setup is
+ * finished without it, so an Atlas set up before it was a step doesn't open
+ * on setup again, and it's picked up any time from Library.
+ */
+const OPTIONAL: SetupStep[] = ["movein"];
 
 export interface SetupView {
   done: SetupStep[];
   skipped: SetupStep[];
-  /** True once every step is done or skipped: the app stops opening on setup. */
+  /** True once every step but the optional ones is done or skipped: the app stops opening on setup. */
   finished: boolean;
 }
 
@@ -19,7 +26,11 @@ export function setupView(sql: Sql): SetupView {
   const s = getState<{ done?: SetupStep[]; skipped?: SetupStep[] }>(sql, "setup") ?? {};
   const done = (s.done ?? []).filter((x) => SETUP_STEPS.includes(x));
   const skipped = (s.skipped ?? []).filter((x) => SETUP_STEPS.includes(x) && !done.includes(x));
-  return { done, skipped, finished: SETUP_STEPS.every((x) => done.includes(x) || skipped.includes(x)) };
+  return {
+    done,
+    skipped,
+    finished: SETUP_STEPS.every((x) => OPTIONAL.includes(x) || done.includes(x) || skipped.includes(x)),
+  };
 }
 
 export function markStep(sql: Sql, step: SetupStep, state: "done" | "skipped" | "open"): SetupView {

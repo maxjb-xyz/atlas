@@ -217,7 +217,14 @@ export function forRun(sql: Sql, runId: string): LogRow[] {
 /** Runs whose failure the thread and the Inbox don't show on their own. */
 export function quietTrigger(trigger: string): boolean {
   // An automation's failure reaches the thread as its own report ("… didn't run"), so its run's end stays quiet.
-  return trigger === "compaction" || trigger === "areas" || trigger.startsWith("helper:") || trigger.startsWith("automation");
+  // Moving in says how its reading went on its own page.
+  return (
+    trigger === "compaction" ||
+    trigger === "areas" ||
+    trigger === "movein" ||
+    trigger.startsWith("helper:") ||
+    trigger.startsWith("automation")
+  );
 }
 
 export function isThreadRow(row: LogRow): boolean {

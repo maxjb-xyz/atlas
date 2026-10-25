@@ -1,6 +1,6 @@
 // Setup (§22): a passkey, meeting Atlas, a brain, a calendar, Atlas's first
-// look, and the default routines, each off until the owner turns it on. Every step can be skipped and picked up again from
-// Atlas settings → Account.
+// look, and the default routines, each off until the owner turns it on, then moving in from another assistant. Every
+// step can be skipped and picked up again from Atlas settings → Account (moving in, from Library).
 
 import { useEffect, useState } from "react";
 import { PRESETS, type Preset } from "../../core/src/character";
@@ -10,8 +10,9 @@ import { AddPasskey, ChatGPTSignIn as ChatGPT, SecretField, TestRow } from "./se
 import { AsciiDiamond, Diamond, Icon, Toggle } from "./ui";
 import type { AutomationView } from "../../core/src/protocol";
 import { Switch, useAutomations } from "./pages/Automations";
+import { MoveIn } from "./movein/MoveIn";
 
-type Step = "passkey" | "meet" | "brain" | "connect" | "look" | "routines";
+type Step = "passkey" | "meet" | "brain" | "connect" | "look" | "routines" | "movein";
 const STEPS: Array<[Step, string]> = [
   ["passkey", "Your passkey"],
   ["meet", "Meet Atlas"],
@@ -19,6 +20,7 @@ const STEPS: Array<[Step, string]> = [
   ["connect", "Your calendar"],
   ["look", "Atlas looks"],
   ["routines", "Your routines"],
+  ["movein", "Move in"],
 ];
 
 export function Setup({ atlas, onDone }: { atlas: Atlas; onDone: () => void }) {
@@ -78,6 +80,7 @@ export function Setup({ atlas, onDone }: { atlas: Atlas; onDone: () => void }) {
           {step === "connect" && <ConnectStep atlas={atlas} onNext={next} />}
           {step === "look" && <LookStep atlas={atlas} onNext={next} />}
           {step === "routines" && <RoutinesStep atlas={atlas} onNext={next} />}
+          {step === "movein" && <MoveInStep atlas={atlas} onNext={next} />}
         </div>
       </div>
     </div>
@@ -407,7 +410,22 @@ function RoutinesStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
       ) : (
         <p className="muted small">The default routines were deleted. You can make your own in Automations.</p>
       )}
-      <Footer step="routines" label="Finish" onNext={onNext} />
+      <Footer step="routines" onNext={onNext} />
+    </>
+  );
+}
+
+/** Step 7 (§22): moving in from another assistant, the last step and an optional one, picked up any time in Library. */
+function MoveInStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
+  return (
+    <>
+      <h1 className="disp">Move in</h1>
+      <p className="muted">
+        If you've used ChatGPT, Claude, Hermes or OpenClaw, I can learn what they knew about you. You choose what I keep. You can do this
+        any time in Library, too.
+      </p>
+      <MoveIn atlas={atlas} setup />
+      <Footer step="movein" label="Finish" onNext={onNext} />
     </>
   );
 }

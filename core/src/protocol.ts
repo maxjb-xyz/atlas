@@ -42,7 +42,7 @@ export interface RecordView {
   updated_at: number;
   confidence: number;
   /** Where it came from: the message it was learned from, when there is one. */
-  source: { via: string; text?: string; at?: number; surface?: string | null };
+  source: { via: string; text?: string; at?: number; surface?: string | null; from?: string };
   corrections: number;
   /** The value before the latest correction. */
   was: { name: string; fact: string; at: number } | null;
@@ -452,6 +452,19 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.mail.test") }),
   /** Library → People → Import: from an extension that provides contacts, or a vCard file's text. */
   z.object({ type: z.literal("atlas.contacts.import"), from: z.string().max(40).optional(), vcards: z.string().max(5_000_000).optional() }),
+  /** Moving in (§23.3): what's been read and the review list; files themselves come over HTTP (/api/movein). */
+  z.object({ type: z.literal("atlas.movein") }),
+  /** Read what was sent: the extraction runs over it, and the review list fills as it goes. */
+  z.object({ type: z.literal("atlas.movein.learn") }),
+  /** Keep or drop items on the review list (`all` is every item not yet decided). Nothing is saved until it's kept. */
+  z.object({
+    type: z.literal("atlas.movein.keep"),
+    ids: z.array(z.string().max(40)).max(1000).default([]),
+    all: z.boolean().optional(),
+    keep: z.boolean(),
+  }),
+  /** Done with this move-in: what was kept stays, the rest is let go. */
+  z.object({ type: z.literal("atlas.movein.done") }),
   /** Settings → Connections → Senses: a webhook source with its own address and key, or removing one. */
   z.object({ type: z.literal("atlas.sense.hook.add"), name: z.string().min(1).max(60) }),
   z.object({ type: z.literal("atlas.sense.hook.remove"), id: z.string().max(64) }),
@@ -515,7 +528,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Setup (§22): mark a step done, skipped, or open again. */
   z.object({
     type: z.literal("atlas.setup.step"),
-    step: z.enum(["passkey", "meet", "brain", "connect", "look", "routines"]),
+    step: z.enum(["passkey", "meet", "brain", "connect", "look", "routines", "movein"]),
     state: z.enum(["done", "skipped", "open"]),
   }),
   /** Setup step 5: Atlas reads the calendar and proposes areas, people and things worth knowing. */
@@ -1283,6 +1296,8 @@ export type ServerMessage =
   /** The areas shared with this person (§6), with their records. */
   | { type: "atlas.shared"; areas: SharedArea[] }
   | { type: "atlas.contacts.imported"; ok: boolean; text: string }
+  /** Moving in (§23.3): the readers, what's been read, and the review list. */
+  | { type: "atlas.movein"; movein: MoveInView }
   /** A new webhook source's address, with its key in it, shown once. */
   | { type: "atlas.sense.hook"; id: string; name: string; url: string }
   | { type: "atlas.test.result"; what: string; ref?: string; ok: boolean; message: string; detail?: unknown }
@@ -1299,3 +1314,33 @@ export type ServerMessage =
   | { type: "atlas.error"; message: string }
   /** This socket's sign-in was ended; the app goes back to signing in. */
   | { type: "atlas.signed_out" };
+
+/** Moving in (§23.3), as the app shows it. */
+export interface MoveInView {
+  /** What Atlas can move in from: each reader with where to get its file, and the files it takes. */
+  readers: Array<{
+    id: string;
+    name: string;
+    icon: string | null;
+    icon_invert: boolean;
+    reads: import("../../extensions/sdk").ReaderSpec;
+  }>;
+  /** "reading" while files come in, "learning" while Atlas reads them, "paused" when a restart stopped it. */
+  phase: "idle" | "reading" | "learning" | "paused" | "review" | "failed";
+  sources: import("./movein").Source[];
+  /** What's waiting to be read: conversations (the newest within the budget) and notes. */
+  gathered: { talks: number; notes: number };
+  /** Chunks read of all, while learning or after, and how many couldn't be read. */
+  progress: { done: number; of: number; failed: number } | null;
+  /** What the reading covered. */
+  read: { talks: number; seen: number; notes: number } | null;
+  items: MoveInItem[];
+  /** Items Atlas already knew in the same words, so not offered. */
+  known: number;
+  error: string | null;
+  started_at: number | null;
+}
+
+export type MoveInItem = Omit<import("./movein").MoveItem, "skill" | "was"> & {
+  skill?: { folder: string; files: number; left_out: string[] };
+};

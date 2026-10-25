@@ -133,6 +133,8 @@ export interface State {
   jobThreads: Record<string, LogRow[]>;
   /** The owner's answers sent from this app, by the question row they answer, so the question shows its answer at once. */
   answered: Record<string, string>;
+  /** Moving in (§23.3): the readers, what's been read and the review list. */
+  movein: import("../../core/src/protocol").MoveInView | null;
 }
 
 const initial: State = {
@@ -185,6 +187,7 @@ const initial: State = {
   paired: {},
   jobThreads: {},
   answered: {},
+  movein: null,
 };
 
 type Action =
@@ -425,6 +428,8 @@ function reduce(s: State, a: Action): State {
       return { ...s, tests: { ...s.tests, data: { ok: m.ok, message: m.text, detail: { what: m.what, left: m.left ?? [] } } } };
     case "atlas.contacts.imported":
       return { ...s, tests: { ...s.tests, contacts: { ok: m.ok, message: m.text } } };
+    case "atlas.movein":
+      return { ...s, movein: m.movein };
     case "atlas.sense.hook":
       return { ...s, senseHook: { id: m.id, name: m.name, url: m.url } };
   }

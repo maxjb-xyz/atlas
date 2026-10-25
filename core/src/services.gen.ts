@@ -331,6 +331,62 @@ export const SNAPSHOT: unknown = {
         "bundled": "codex"
       },
       "skills": []
+    },
+    {
+      "id": "chatgpt-export",
+      "name": "ChatGPT export",
+      "category": "moving-in",
+      "about": "Moves in what ChatGPT knew about you, from the export it emails you.",
+      "does": "Reads your custom instructions, its memory and your own words in past chats, for you to keep or drop",
+      "setup": {
+        "kind": "none"
+      },
+      "extension": {
+        "bundled": "chatgpt-export"
+      },
+      "skills": []
+    },
+    {
+      "id": "claude-export",
+      "name": "Claude export",
+      "category": "moving-in",
+      "about": "Moves in what Claude knew about you, from the export it emails you.",
+      "does": "Reads its memory, your projects and your own words in past chats, for you to keep or drop",
+      "setup": {
+        "kind": "none"
+      },
+      "extension": {
+        "bundled": "claude-export"
+      },
+      "skills": []
+    },
+    {
+      "id": "hermes",
+      "name": "Hermes",
+      "category": "moving-in",
+      "about": "Moves in Hermes Agent's memory of you, and your skills as they are.",
+      "does": "Reads USER.md and MEMORY.md, for you to keep or drop, and carries your skills over",
+      "setup": {
+        "kind": "none"
+      },
+      "extension": {
+        "bundled": "hermes"
+      },
+      "skills": []
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "category": "moving-in",
+      "about": "Moves in OpenClaw's memory of you, and your skills as they are.",
+      "does": "Reads USER.md, MEMORY.md and its daily notes, for you to keep or drop, and carries your skills over",
+      "setup": {
+        "kind": "none"
+      },
+      "extension": {
+        "bundled": "openclaw"
+      },
+      "skills": []
     }
   ],
   "hubs": [

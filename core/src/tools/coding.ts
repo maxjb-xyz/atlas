@@ -83,11 +83,11 @@ export const codeJob = defineTool({
 export const jobAnswer = defineTool({
   name: "job_answer",
   kind: "change_own",
-  status: "Passing that on to the job.",
+  status: "Got it.",
   description: [
-    "Pass the owner's words to a job (a coding job, or one you own): the answer to a question it's waiting on, or a change of direction while it works ('use the existing date helper instead'). Use the job's id from the jobs in context or jobs_look. Pass their words as they meant them, in a sentence or two, adding no demands of your own that a job can't meet: no step can hear audio, watch video or judge taste, so the owner judges those from options the job brings.",
-    "A job waiting on a card (a site it asked to reach) goes on only when the card is settled: when the owner says yes or no to it, settle it with approve.",
-    "Then tell the owner what you passed on. The job decides what it does next, so don't promise for it ('I'll bring you the link next'); if they ask, jobs_look says where it stands.",
+    "What the owner says about work you're doing in the background (something you're making for them, or a coding job) goes to that work, in their words: the answer to what you asked them, or a change of direction ('make it faster', 'use the existing date helper instead'). Use its id from your context or jobs_look. Pass what they said as they meant it, adding nothing of your own.",
+    "Waiting on a card (a website the work needs) goes on only when the card is settled: when the owner says yes or no to it, settle it with approve.",
+    "Then answer them as yourself in a few words ('Got it, faster cut.'). The work hears them at once and you'll tell them how it goes, so don't promise what comes next or when.",
   ].join(" "),
   input: z.object({
     id: z.string().min(3).max(64).describe("The coding job's id."),
@@ -103,9 +103,9 @@ export const jobAnswer = defineTool({
 export const jobsLook = defineTool({
   name: "jobs_look",
   kind: "look",
-  status: "Checking on the job.",
+  status: "Checking where that's at.",
   description:
-    "How coding jobs and the jobs you own are doing, from their state: the step each is on, the last thing done, what it's waiting on (with what the owner is asked to look at, in full, and each step's result), how long it's run and what it's cost, and a coding job's pull request once there is one. Use it for 'how's the budget app job?' (answer in a sentence or two) and when the owner asks to see what a job is waiting on: show it to them as it is.",
+    "How the work you're doing in the background is going, from its state: what's at work on it now, what it's waiting on (with what the owner was shown, in full), your notes on it and what you last said, how long it's run, and a coding job's pull request once there is one. Use it for 'how's the video going?' and answer as yourself in a sentence or two ('I'm cutting it to the track you picked.'); when they ask to see what you asked them, show it as it is.",
   input: z.object({ id: z.string().max(64).optional().describe("One job's id; default all of them from the last day.") }),
   async run(input, ctx) {
     if (!ctx.coding) return fail("Coding jobs can't be reached from here.");

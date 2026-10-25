@@ -306,6 +306,15 @@ Hermes-style profiles split memory and settings, and you switch between them. At
 | ![Notifications](screenshots/m7/settings-notifications.png) | ![Permissions](screenshots/m7/settings-permissions.png) |
 | ![Account](screenshots/m7/settings-account.png) | ![Library](screenshots/m7/library.png) |
 
+**Move in** (built for M7 stage 8, from the app itself, 2026-10-25): Library → Move in and setup's last step. Four sources as cards with their own logos; the chosen one says where to get its file in a sentence or two, beside one dashed place to drop it or choose it. Opening and reading show as a bar and a row of segments, and what Atlas finds rises in as it goes, grouped (about you, how you like things, people, what you're working on, skills), each with Keep and Drop, a "Keep these" per group and Keep all. Ember stays rare: only the reading's spinner. The reading and review screenshots show the real page with a sample view, since real brains don't run locally.
+
+| | |
+|---|---|
+| ![Move in](screenshots/m7/move-in-library.png) | ![Move in, Hermes](screenshots/m7/move-in-hermes.png) |
+| ![Reading](screenshots/m7/move-in-reading.png) | ![What Atlas learned](screenshots/m7/move-in-review.png) |
+| ![Light](screenshots/m7/move-in-review-light.png) | ![Developer](screenshots/m7/move-in-review-developer.png) |
+| ![Setup's last step](screenshots/m7/move-in-setup.png) | ![Phone](screenshots/m7/move-in-phone.png) |
+
 The builders are `p_abilities.py`, `p_people.py` and `p_settings.py` in [`source/builder/`](source/builder/); the screenshots were taken with its stand-in renderer (`preview.cjs`). Model names, prices and the example world's details are illustrative.
 
 ## 9. Home is the conversation (stage 6b, built 2026-10-25)

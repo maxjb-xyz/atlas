@@ -49,7 +49,82 @@ export type Provides =
    */
   | "calls"
   /** Tools Atlas can use in a turn, for a service with no MCP server of its own (§17): `tools` in its manifest, and `tool`. */
-  | "tools";
+  | "tools"
+  /** A file format Atlas moves in from (§23.3): `reads` in its manifest says what, and `read` turns a file into what's in it. */
+  | "reader";
+
+/**
+ * What a reader reads (§23.3, moving in): an export or another assistant's
+ * memory files. The app opens the owner's file on their own device (a zip, a
+ * tar.gz, a folder or a single file) and sends only the files named here, so
+ * nothing else in it (another assistant's keys, its sign-ins) ever leaves
+ * the device. A big JSON file whose top level is a list arrives in parts,
+ * each a list of some of its items.
+ */
+export interface ReaderSpec {
+  /** What it reads, as the owner would call it: "A ChatGPT export". */
+  what: string;
+  /** Where to get it, in one or two plain sentences with the exact path. */
+  how: string;
+  /** Where they start getting it, when there's a page for that. */
+  link?: string;
+  /** What to pick in the app: an archive or file, or a folder. */
+  pick: "file" | "folder";
+  /**
+   * The files it reads, matched against the end of each path in what was picked: "conversations.json",
+   * "conversations-*.json", "memories/MEMORY.md". A "*" stands for any name inside one folder.
+   */
+  files: string[];
+  /** Files only this format has, so a file dropped anywhere finds its reader: "chat.html", "projects.json". */
+  marks?: string[];
+  /** Folders of skills, as a folder name ("skills"): each folder under one with a SKILL.md in it carries over unchanged. */
+  skills?: string[];
+}
+
+/** A file, or one part of it, for a reader. */
+export interface ReadFile {
+  /** Its path inside what was picked: "conversations.json", "memories/USER.md". */
+  path: string;
+  text: string;
+  /** Which part this is, from 1, for a big list sent in parts. */
+  part: number;
+}
+
+/**
+ * Something another assistant kept about the owner, as it wrote it: a
+ * memory, a profile line, custom instructions, a daily note. The core's
+ * extraction reads it (§5.4), so a reader passes it on as it is.
+ */
+export interface Note {
+  text: string;
+  /** Where it came from, in a few words the owner reads: "ChatGPT's memory", "Hermes's profile of you". */
+  from: string;
+  /** When it was written, ISO, when the file says. */
+  at?: string;
+}
+
+/** One past conversation, as only the owner's own words in it: what they said is what's theirs to move in. */
+export interface Talk {
+  /** The conversation's own id, so the same one in two exports counts once. */
+  id: string;
+  title: string;
+  /** When it last changed, ISO. */
+  at: string;
+  /** Their messages, oldest first, each cut short, together at most about 1,500 characters. */
+  said: string;
+  /** Where it came from: "ChatGPT", "Claude". */
+  from: string;
+}
+
+/** What a reader found in a file. */
+export interface ReadOut {
+  notes?: Note[];
+  talks?: Talk[];
+  /** Skill folders that came with the other assistant itself, by name, so they aren't offered as the owner's. */
+  builtin_skills?: string[];
+  /** Conversations in this file or part, including ones with nothing of the owner's in them. */
+  seen?: number;
+}
 
 /**
  * How a call's audio reaches Atlas (§16.1): the service connects to the
@@ -302,6 +377,8 @@ export interface Manifest {
   git?: GitHost;
   /** The tools it offers Atlas, when it provides "tools". */
   tools?: ToolSpec[];
+  /** What it reads, when it provides "reader". */
+  reads?: ReaderSpec;
 }
 
 /** What every call gets. */
@@ -634,6 +711,8 @@ export interface Extension {
   dial?(ctx: Ctx, q: { to: string; call: string }): Promise<{ id: string; state?: Json }>;
   /** Runs one of the tools its manifest declares, with input that fits that tool's schema. */
   tool?(ctx: Ctx, call: { name: string; input: Record<string, Json> }): Promise<ToolOutput>;
+  /** Reads one file (or part of one) of what it moves in from: what another assistant kept, and the owner's own words. */
+  read?(ctx: Ctx, file: ReadFile): Promise<ReadOut>;
 }
 
 /** A failure in the service's own words. `code` "auth" means the owner's sign-in or key was refused. */

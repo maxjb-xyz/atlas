@@ -31,8 +31,10 @@ export interface RecordSource {
   /** Messages that corrected it since, so forgetting it takes them out of recall too. */
   also?: string[];
   run_id?: string;
-  /** Where it came from in plain words: "setup", "chat", "calendar". */
+  /** Where it came from in plain words: "setup", "chat", "calendar", "moving in". */
   via: string;
+  /** For something moved in (§23.3), where it was: "ChatGPT's memory", "Claude · “Lisbon trip”, Mar 2025". */
+  from?: string;
 }
 
 export interface AtlasRecord {
