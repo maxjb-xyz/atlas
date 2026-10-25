@@ -48,7 +48,7 @@ export const browserOpen = defineTool({
       return {
         ok: true,
         output: seen(page, input.start),
-        receipt: { text: `Browsing · ${page.title || hostOf(page.url)}`.slice(0, 120), view: { kind: "browser" } },
+        receipt: { text: `Browsing · ${page.title || hostOf(page.url)}`.slice(0, 120), view: { kind: "browser" }, link: page.url },
       };
     } catch (err) {
       return failed(err);

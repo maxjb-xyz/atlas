@@ -183,6 +183,11 @@ export interface JobView {
   goal?: GoalView;
   /** A job Atlas owns, as it runs since 2026-10-25 (§8.3, §21.4): Atlas working in turns on its own conversation. */
   owned?: OwnedJobView;
+  /**
+   * The helpers a job Atlas owns has started, going or ended within the hour, for the parallel lines on its card
+   * (§21.8). A title starts with the job's own ("Laptop shortlist: Reviews"); status is what it's doing, or what it read.
+   */
+  helpers?: Array<{ id: string; title: string; state: JobView["state"]; status: string | null; started_at: number; ended_at?: number }>;
 }
 
 /** A file a message carries, to play, look at or open (§21.7): audio, an image, a video, a document. */

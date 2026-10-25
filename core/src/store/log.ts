@@ -64,6 +64,8 @@ export interface Receipt {
   view?: StageView;
   /** The approval this receipt waits on (§12), which Review opens. */
   approval?: string;
+  /** The address it's about, for a page read or opened: its card shows the host. */
+  link?: string;
 }
 
 /** What Undo on a receipt does. `history` names the correction to roll back. */
