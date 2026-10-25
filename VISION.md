@@ -98,6 +98,7 @@ Before the model sees anything, code sets the run's **run context**:
 How the loop behaves:
 - **Long step budgets,** set by kind of run. Starting points: 40 steps for chat and 150 for background work. Limits are soft time limits, not hard walls.
 - **Compaction.** At about 70% of the context window, a silent "save what matters" pass runs, then older context is summarized.
+- **A turn reads what it needs, not everything** (decided 2026-10-25). A chat or voice turn reads the recent conversation (about the last 10k tokens) with the summary of what came before; recall has the rest. It gets the tools most turns use, plus one line for each group of the others, which it loads by name when it needs them. A reply's first words should come within 2 seconds; a long prompt is what slows them.
 - **Parallel tool calls,** and helpers for big jobs.
 - **When a budget runs out,** one final answer with no tools: "Here's what I found. Want me to keep going?"
 - **Long work moves to the background** on its own, survives restarts, and reports back where it was asked for. Background runs execute inside durable fibers (the Agents SDK's `runFiber`): the loop saves a checkpoint after each step and picks up from it after a restart. A chat reply that a restart cuts off simply ends as failed, with the reason.
@@ -348,15 +349,17 @@ You can ask "How's the Keyframes job?" by voice from the car, or watch the live 
 
 ### 8.3 Jobs Atlas owns
 
-Coding jobs were the first long work that changes things. Any long piece of work can be a job Atlas owns (decided 2026-10-24, for M7): "make the launch video", "plan the Lisbon trip", "get three quotes for the roof". The coding job's way of working is the model.
-- **A job is a goal Atlas owns:** a goal record (§5.1), a plan of steps, a folder of its own in the workspace, a budget (time, steps and money), and the brain it runs on (§18).
-- **It runs as short looks.** Each wake takes one step or reads how one went, then saves the job's state, so a job waits for free, survives a deploy, and can change brains between steps. It's on the one clock (§4.3).
-- **Helpers do the work,** with powers scoped to the job: inside its folder they can change things, and anything that leaves Atlas goes through the outbox (§4.4) as always. A step that writes code is a coding job (§8.2). A video, for example, is a coding job on a video project plus Atlas's own voiceover.
-- **Checkpoints with you.** The plan marks what needs your OK before Atlas goes on ("approve the script", "approve the cut"), and a decision only you can make comes to Inbox as one question. Atlas answers the rest itself, as the middleman does.
-- **It keeps to time** (decided 2026-10-25). A job can have a deadline ("by Friday at 5"), and every look sees the clock: how long the job and each step have run, how long since it last moved, and the time left. Atlas fits the work to it, giving steps their minutes, taking the quicker way when time is short, cutting what isn't essential, and telling you early, with options, when it can't be met. A job that hasn't moved in a while changes approach or brings you what it has; one waiting on you reminds you, a few hours on and then once a day.
-- **It knows what it can't do.** No step can hear audio, watch video, get past a bot check or a sign-in, or judge taste for you. When one of those decides something, the job brings you options to judge rather than trying again. You redirect a job by talking to Atlas, and the job looks at your words at once; Atlas never promises what the job will do next.
-- **It lands as things you keep:** files and pages (§21.7), with a receipt, and the result in Inbox.
-- **In the app** it's a job like any other (§21.4): its steps, what it has made so far, what it's waiting on, what it has cost, with Steer and Stop.
+Any long piece of work can be a job Atlas owns: "make the launch video", "plan the Lisbon trip", "get three quotes for the roof". Rewritten 2026-10-25, after the first real job: the first design ran a job as short looks that each started helpers on steps, and every hand-off lost something (the storyboard never reached the chat, an answer lost its question, each search for music started from nothing), while Atlas spoke of the job as someone else.
+- **A job is Atlas doing the work itself,** in a conversation of its own. It's the one loop with Atlas's character, run in turns on the job's own transcript, so it remembers everything it did and was told. A turn ends when Atlas needs the owner, hands work to a coding agent, or is done; the next turn starts when that comes back. Turns are durable fibers (§4.1), so a deploy loses nothing, and between turns a job waits for free on the one clock (§4.3).
+- **Notes it keeps.** Each job keeps notes, which every turn reads first and which compaction never touches: what it decided, the owner's answers in their words, what failed and why. Its folder in the workspace holds what it makes.
+- **Helpers only where they help:** reading many pages at once, or reading for Atlas when what's read shouldn't be able to steer it (§8.1). Building something in code goes to a coding agent (§8.2), which hands back to the job.
+- **It asks for what only the owner can give,** and nothing else: a choice of taste, an OK before what can't be undone (§12.1), a sign-in. It decides the rest as the owner would. When the choice is about something to see or hear, the question brings it: the tracks to play, the images, the cut.
+- **It speaks for itself, in the thread** (§21.4). It says when it starts, when it has something to show, when it's stuck and what it would do, and when it's done, with the files. Only a question and the result notify; the rest updates the job's card. It never gives a time it can't keep: without a deadline it doesn't estimate. The owner never has to ask how it's going.
+- **It keeps to time.** A job can have a deadline ("by Friday at 5"), and every turn sees the clock: how long it has run, how long since it last moved, the time left. It fits the work to it, and says early, with options, when it can't be met. One waiting on the owner reminds them a few hours on and then once a day.
+- **It knows what it can't do.** It can't hear audio, watch video, get past a bot check or a sign-in, or judge taste for the owner; when one of those decides something, it brings the owner the options at once rather than trying again.
+- **What it read stays with it.** Once a job has read the web, everything it sends out asks first (§12.2), for the rest of the job, since what it read could be steering it.
+- **It has a budget** (time, turns and money) and the brain it runs on (§18); past the budget it asks before going on.
+- **It lands as things you keep:** files and pages (§21.7), with a receipt, and the result in the thread.
 
 ### 8.4 One Atlas, not many bots
 
@@ -922,23 +925,23 @@ UI v1 was locked on Oct 21, 2026. The screens, screenshots and source are in [`d
 
 ![UI v1](docs/ui/screenshots/00-overview.png)
 
-### 21.1 The shell: one stage, a console, no side panes
+### 21.1 The shell: the conversation, with the stage it opens
 
 ```
 ┌────────────────┬─────────────────────────────────────────────────────────────┐
-│ ◆ Atlas        │ [●●●● All areas ▾]           [⠹ 2 jobs running] [Talk] [⌘K] │
+│ ◆ Atlas        │ [●●●● All areas ▾]           [⠹ 1 job running] [Talk] [⌘K]  │
 │                ├─────────────────────────────────────────────────────────────┤
-│ ▢ Home         │ ┊ STAGE / (Now) (Week) (Draft 1) (Jobs 2)        METADATA ┊ │
-│ ▢ Inbox     5  │ ┊ ┌─────────────────────────────────────────────────────┐ ┊ │
-│ ▢ Agenda       │ ┊ │                                                     │ ┊ │
-│                │ ┊ │      the sheet: a week, a draft, a job, a list      │ ┊ │
-│ ▢ Automations  │ ┊ │                                                     │ ┊ │
-│ ▢ Library      │ ┊ │                                                     │ ┊ │
-│ ▢ People       │ ┊ └─────────────────────────────────────────────────────┘ ┊ │
-│ ▢ Abilities    │ ┊      ┌─ console (Home) / composer (other pages) ─┐      ┊ │
-│ ▢ History      │ ┊      │  last exchange · receipts · type or talk  │      ┊ │
-│ Pinned       + │ ┊      └───────────────────────────────────────────┘      ┊ │
-│ Atlas settings │ ┊                                                         ┊ │
+│ ▢ Home         │   You: Move my dentist to Thursday and tell Mom.            │
+│ ▢ Inbox     2  │   Done. Thursday at 10. ✓ Dentist → Thu 10:00 · Undo        │
+│ ▢ Agenda       │                                                             │
+│                │   You: Make a launch video for X.                           │
+│ ▢ Automations  │   ┌ Launch video ─────────────────────────────── Stop ┐     │
+│ ▢ Library      │   │ ⠹ Cutting the opening to the beat · 3 files       │     │
+│ ▢ People       │   └───────────────────────────────────────────────────┘     │
+│ ▢ Abilities    │   Atlas: Three tracks to pick from. ▶ ▶ ▶  [1] [2] [3]      │
+│ ▢ History      │                                                             │
+│ Pinned       + │   ┌ Needs you: pick the track · 1 more ─────────────────┐   │
+│ Atlas settings │   │ Message Atlas                              🎙  ↑     │   │
 └────────────────┴─────────────────────────────────────────────────────────────┘
 ```
 
@@ -951,10 +954,12 @@ UI v1 was locked on Oct 21, 2026. The screens, screenshots and source are in [`d
   - the jobs button (§21.4);
   - **Talk** (Space);
   - **Search** (⌘K).
-- **Stage:** one sheet that shows the work itself: a week, a draft, a job, a route, a table, a live browser.
+- **The conversation is Home** (decided 2026-10-25, replacing the console docked under the stage). The whole thread fills Home: every message, receipt, question and job, by text or voice, with the composer at the bottom. Talking to Atlas is the product; nothing about how Atlas works has to be learned first.
+- **Stage:** one sheet that shows the work itself: a week, a draft, a job, a route, a table, a live browser. It opens from the conversation when Atlas shows something or a message is tapped, large and beside or over the thread, and closes back to it.
   - Detail opens in place: rows expand and cards open into their flow.
   - There are no inspectors or side panes.
-- **Console (Home):** the conversation with Atlas, docked under the stage. It shows the last exchange and receipts for everything Atlas just did ("✓ Dentist → Thu 10:00 · Undo", "Text to Mom waiting · Review"). ⌘J opens the full transcript.
+- **Receipts** for everything Atlas just did sit under its message ("✓ Dentist → Thu 10:00 · Undo", "Text to Mom waiting · Review").
+- **Needs you:** a strip above the composer when something waits on the owner, which opens the list (Inbox).
   - **Promises** show as receipts too. No receipt means no reminder.
   - **`/` commands** and **`@` mentions** work in the composer.
 - **Composer (every other page):** one line, with a hint that fits the page. Anything you can click, you can also ask for.
@@ -966,7 +971,7 @@ UI v1 had six places, with faces, members, extensions, skills and devices in Atl
 | Place | What it holds |
 |---|---|
 | **Home** | The stage (Now, Week, Draft, Jobs, and whatever Atlas is showing) and the console. Most time is spent here. |
-| **Inbox** | Everything waiting on you: approvals (§12.2), questions Atlas can't answer alone, finished work to review, and what faces handed to you. The badge is the count, and empty is the goal. |
+| **Inbox** | Everything waiting on you: approvals (§12.2), questions Atlas can't answer alone, finished work to review, and what faces handed to you. The badge is the count, and empty is the goal. Each item is a message in the thread too, and one thing: answered in either place, it's answered in both, and opening it shows it where it was asked, so the answer can become a conversation (decided 2026-10-25). What has no conversation of its own, such as a face's handoff or an automation's approval, Atlas brings into the thread in its own words. |
 | **Agenda** | Everything on a clock: events, reminders, due dates, Atlas's promises (marked with the diamond), and scheduled automation runs. |
 | **Automations** | What Atlas does on its own or when asked (§13). It has Run buttons, filters by trigger, a flow view per automation, and Atlas's suggestions. It's a separate page because many automations never run on a clock. |
 | **Library** | Everything Atlas knows (§5.5): places, areas, collections, memory (journal, portrait, "Not sure about these"), files, and the pages and files Atlas makes (§21.7). Recently learned facts each have a Correct link. Every record opens on the stage. |
@@ -1003,11 +1008,12 @@ Pages and stage views are built from the same components, so asking "What's goin
 
 ### 21.4 Jobs: background work
 
-- **While it runs:** "2 jobs running" sits in the toolbar on every page. Clicking it shows a dropdown with progress.
-- **Watching a job:** clicking one opens Home's **Jobs** tab, with Steer and Stop. There you see:
-  - **for helpers** (§8.1): the helpers as a diagram converging on the result so far;
-  - **for coding jobs** (§8.2): the steps (Plan, Edit, Test, Preview, PR), the harness's terminal, and the questions Atlas answered on your behalf, each with its source.
-- **When it finishes:** the result goes to Inbox if it needs you (a PR to review, a purchase), otherwise to History.
+Changed 2026-10-25: a job lives in the conversation, not on a board.
+- **A card in the thread,** where it was asked for. It shows the job in a sentence, what Atlas is doing on it right now (only while something is), what it has made so far, and Stop. It updates in place, so a job's progress never pushes the conversation away.
+- **Its own thread,** one tap from the card: everything Atlas said on it and the owner said to it. What the owner says there goes straight to the job, and the job answers.
+- **Its questions and its result** are messages in the main thread, with their buttons and files, and in Inbox while they wait.
+- **"2 jobs running"** in the toolbar counts only jobs something is at work on, and opens the list.
+- **Detail on demand:** at Detailed and Developer levels (§21.5) the card opens into its steps, its notes, the coding agent's terminal and what it has cost.
 
 ### 21.5 Detail levels, from casual to technical
 
@@ -1199,6 +1205,7 @@ Rules for setup:
 
 Atlas gets a written character, not a list of rules: who Atlas is, how it talks, what it cares about, how it handles being wrong, and its humor. That combines with its memory of each relationship and each area's tone.
 - You edit it on the Character page (under Atlas): presets, plus your own text.
+- **It talks like a person, in the first person** (decided 2026-10-25). It says what it did and found, not how it works inside: no "the job", "the step", "the helper" or "the checkpoint". Its honesty is part of who it is, not something it narrates: it doesn't say what it isn't pretending.
 - It's checked by old Atlas's character eval ([`docs/CHARACTER.md`](https://github.com/maxjb-xyz/atlas-legacy/blob/main/docs/CHARACTER.md)), which carries over.
 
 ### 23.2 Self-improvement and updates
@@ -1234,7 +1241,7 @@ Each person has one resolved time zone, which follows travel (from location) and
 
 ### 23.7 Quality
 
-- **A day-in-the-life benchmark** runs on a test deployment with every release: scripted scenarios across text, voice, automations, faces and senses.
+- **A day-in-the-life benchmark** runs on a test deployment with every release: scripted scenarios across text, voice, automations, faces and senses. It includes the Jarvis bar (decided 2026-10-25): a job that needs the owner's taste, a vague request, "how's it going?" in the middle of a job, a site behind a bot check, each judged against what a person who's good at this would do, with how fast it answered.
 - **Bench mode** marks test runs, so they never write to memory or contact anyone.
 - **Feedback.** Thumbs up or down on any message, and your reactions, feed Atlas's learning.
 - **Tracked per release:** voice latency and setup time.
