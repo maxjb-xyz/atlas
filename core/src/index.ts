@@ -22,6 +22,7 @@ interface OwnerApi {
   apiRunsSince(seq: number): Promise<unknown[]>;
   apiLastSeq(): Promise<number>;
   apiCharacterCheck(): Promise<unknown>;
+  apiJudge(input: { yardstick: string; transcript: Array<{ who: "owner" | "atlas"; text: string; tools?: string[] }> }): Promise<unknown>;
   apiApprove(id: string): Promise<{ ok: boolean; text: string }>;
   apiFile(id: string): Promise<{ key: string; name: string; type: string } | null>;
   apiPhoto(id: string): Promise<{ key: string; type: string } | null>;
@@ -209,7 +210,7 @@ export default {
       // A member's requests go to their own Atlas (§7.1); the workspace and the log API are the owner's.
       const member = memberOf(who);
       if (member && !(await (await authStore(env)).memberInfo(member))) return json({ error: "Sign in first." }, 401);
-      if (member && (path.startsWith("/api/workspace/") || path === "/api/log" || path === "/api/character-check"))
+      if (member && (path.startsWith("/api/workspace/") || path === "/api/log" || path === "/api/character-check" || path === "/api/judge"))
         return json({ error: "That's only for the owner." }, 403);
       const agent = (await getAgentByName(env.PersonAgent, agentNameOf(member))) as unknown as OwnerApi;
 
@@ -323,6 +324,29 @@ export default {
       }
       if (path === "/api/character-check" && request.method === "POST") {
         return json(await agent.apiCharacterCheck());
+      }
+      // The Jarvis bar's judge (§23.7), for `npm run eval:jarvis`: a conversation, and what a person who's good at this would do.
+      if (path === "/api/judge" && request.method === "POST") {
+        const body = (await request.json().catch(() => ({}))) as { yardstick?: unknown; transcript?: unknown };
+        const yardstick = typeof body.yardstick === "string" ? body.yardstick.trim() : "";
+        const lines = (Array.isArray(body.transcript) ? body.transcript : []) as Array<{ who?: unknown; text?: unknown; tools?: unknown }>;
+        const lineOk = (l: { who?: unknown; text?: unknown; tools?: unknown }) =>
+          (l?.who === "owner" || l?.who === "atlas") &&
+          typeof l.text === "string" &&
+          l.text.length <= 20_000 &&
+          (l.tools === undefined || (Array.isArray(l.tools) && l.tools.length <= 200 && l.tools.every((t) => typeof t === "string")));
+        if (!yardstick || yardstick.length > 4_000 || !lines.length || lines.length > 40 || !lines.every(lineOk)) {
+          return json(
+            {
+              error:
+                'Send {"yardstick": "...", "transcript": [{"who": "owner" or "atlas", "text": "...", "tools": ["..."]}]}: a yardstick of at most 4,000 characters and 1 to 40 lines.',
+            },
+            400,
+          );
+        }
+        return json(
+          await agent.apiJudge({ yardstick, transcript: lines as Array<{ who: "owner" | "atlas"; text: string; tools?: string[] }> }),
+        );
       }
       if (path === "/api/log" && request.method === "GET") {
         const since = Number(url.searchParams.get("since") ?? "0");

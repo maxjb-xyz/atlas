@@ -73,7 +73,7 @@ import { type Brain, brainKey } from "./brains/types";
 import { workersAIBrain } from "./brains/workers-ai";
 import { anthropicBrain, anthropicModels } from "./brains/anthropic";
 import { type AiCatalog, costOf, type ModelInfo, type Spend, workersAIModels } from "./brains/catalog";
-import { runCharacterCheck, summary as characterSummary } from "./character-check";
+import { type JudgeLine, judgeTranscript, runCharacterCheck, summary as characterSummary, type Verdict } from "./character-check";
 import { newSessionId, type Session, SESSION_DAYS, SESSION_HEADER } from "./auth";
 import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
 import { compact, planCompaction } from "./compaction";
@@ -3518,6 +3518,21 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const checks = await this.keepAliveWhile(() => runCharacterCheck(brains, system, { judges: this.#judges() }));
     const ok = checks.length > 0 && checks.every((c) => !c.note && c.results.every((r) => r.verdict.passed));
     return { ok, message: `Character check: ${characterSummary(checks)}.`, detail: checks };
+  }
+
+  /**
+   * The Jarvis bar's judge over HTTP (§23.7), for `npm run eval:jarvis`: the
+   * character check's judges, which are brains outside the chains, say
+   * whether a conversation met its yardstick. The chains' own brains judge
+   * only when none of those answers.
+   */
+  async apiJudge(input: { yardstick: string; transcript: JudgeLine[] }): Promise<Verdict & { judge: string | null }> {
+    const settings = readSettings(this.#sql);
+    const judges = [
+      ...this.#judges(),
+      ...[...settings.brains.main, ...settings.brains.voice].map((c) => this.#makeBrain(c)).filter((b): b is Brain => b != null),
+    ].filter((b, i, all) => all.findIndex((x) => brainKey(x) === brainKey(b)) === i);
+    return this.keepAliveWhile(() => judgeTranscript(judges, input.yardstick, input.transcript));
   }
 
   /** For tests: the jobs as the app sees them. */
