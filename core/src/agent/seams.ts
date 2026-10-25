@@ -31,6 +31,11 @@ export const seams: {
   workspace: import("../agent").WorkspaceStub | null | undefined;
   /** Which Atlas is running (§23.2): undefined reads the app's version.json and the version metadata binding. */
   running: import("../updates").Running | undefined;
+  /**
+   * Going back in time and restarting (§23.4): undefined uses the Durable Object's own point-in-time recovery and
+   * abort. The test runtime keeps no history to go back to, and an abort would end the test's object.
+   */
+  recovery: import("./data").Recovery | undefined;
   /** Connected MCP servers: undefined uses the Agents SDK's client, null means none. */
   mcp: import("../mcp").McpClient | null | undefined;
   /**
@@ -60,6 +65,7 @@ export const seams: {
   browser: undefined,
   workspace: undefined,
   running: undefined,
+  recovery: undefined,
   mcp: undefined,
   extension: null,
 };

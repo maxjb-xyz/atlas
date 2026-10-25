@@ -372,6 +372,14 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.updates.look") }),
   z.object({ type: z.literal("atlas.updates.install"), tag: z.string().min(1).max(100) }),
   z.object({ type: z.literal("atlas.updates.rollback"), force: z.boolean().optional() }),
+  /**
+   * Your data (§23.4), the owner's own acts from Account, never a tool's: what going back to a time means, going back
+   * (or undoing the last time, with a hold), and deleting everything (with the typed phrase and a hold). The copy is
+   * a download, GET /api/export.
+   */
+  z.object({ type: z.literal("atlas.data.preview"), at: z.number().int() }),
+  z.object({ type: z.literal("atlas.data.restore"), at: z.number().int().optional(), undo: z.boolean().optional(), hold: z.boolean() }),
+  z.object({ type: z.literal("atlas.data.delete"), phrase: z.string().max(100), hold: z.boolean() }),
   /** Faces (§7.2): make or change one, remove it, talk to it as a stranger, or answer what one handed you. */
   z.object({ type: z.literal("atlas.face.save"), face: FaceInput }),
   z.object({ type: z.literal("atlas.face.remove"), id: z.string().max(40) }),
@@ -747,6 +755,17 @@ export interface SettingsView {
   tasks: import("./tasks").TaskView[];
   /** Atlas settings → Account → Updates (§23.2). */
   updates: UpdatesView;
+  /** Atlas settings → Account → Your data (§23.4). */
+  data: DataView;
+}
+
+/** Your data (§23.4): the last copy taken, the times Atlas can go back to, and what deleting everything leaves. */
+export interface DataView {
+  last_export: { at: number; bytes: number; files: number; problems: string[] } | null;
+  export_error: { at: number; text: string } | null;
+  /** Null in a member's Atlas: going back and deleting are the owner's. */
+  restore: { earliest: number; latest: number; restored: { to: number; at: number; undo: boolean } | null } | null;
+  delete: { phrase: string; members: string[]; left: string[] } | null;
 }
 
 /** One step of an update or rollback, and how it went, in Cloudflare's or GitHub's words when it didn't. */
@@ -770,6 +789,8 @@ export interface UpdateRun {
   steps: UpdateStep[];
   /** A rollback Cloudflare refused because a secret changed since: Roll back anyway sends `force`. */
   needs_force?: boolean;
+  /** Installed by Atlas on its own (§23.2, the setting), not with Update now. */
+  auto?: boolean;
 }
 
 /** The Updates card (§23.2): which Atlas runs, the newest release, and the last update or rollback step by step. */
@@ -794,6 +815,8 @@ export interface UpdatesView {
   /** A version Atlas didn't install replaced one it did (Workers Builds after a push), and what to do. */
   foreign: { at: number; text: string } | null;
   busy: boolean;
+  /** With updating on its own: the release Atlas will install, and when. */
+  planned: { tag: string; at: number } | null;
 }
 
 export interface SensesView {
@@ -1102,6 +1125,9 @@ export type ServerMessage =
   | { type: "atlas.mail"; ok: boolean; text: string }
   /** How a token, an update or a rollback went, in Cloudflare's words when it didn't. The steps are on the view. */
   | { type: "atlas.updates"; ok: boolean; text: string }
+  /** Your data (§23.4): what going back to a time means, and how going back or deleting everything went, with what's left. */
+  | { type: "atlas.data.preview"; at: number; ok: boolean; text: string; lost: string[]; kept: string[] }
+  | { type: "atlas.data"; what: "restore" | "delete"; ok: boolean; text: string; left?: string[] }
   /** A face's answer in a test conversation. */
   | { type: "atlas.face.said"; id: string; conv: string; ok: boolean; text: string }
   | { type: "atlas.channel.code"; ext: string; code: string; expires: number }

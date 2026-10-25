@@ -27,6 +27,7 @@ interface OwnerApi {
   apiPhoto(id: string): Promise<{ key: string; type: string } | null>;
   apiWorkspaceGate(): Promise<{ allow: string[]; inject: Record<string, string> }>;
   apiReaction(id: string, how: "opened" | "dismissed"): Promise<void>;
+  apiExport(): Promise<{ name: string; stream: ReadableStream<Uint8Array> }>;
 }
 
 interface SenseApi {
@@ -279,6 +280,25 @@ export default {
             "cache-control": "private, max-age=31536000, immutable",
           },
         });
+      }
+      // Take a copy of everything (§23.4): the archive, built by the person's own Atlas as it's downloaded.
+      // A sign-in cookie is SameSite=Strict, so only a link in the app itself starts it.
+      if (path === "/api/export" && request.method === "GET") {
+        try {
+          const { name, stream } = await agent.apiExport();
+          return new Response(stream, {
+            headers: {
+              "content-type": "application/gzip",
+              "content-disposition": `attachment; filename="${name}"`,
+              "x-content-type-options": "nosniff",
+              "cache-control": "private, no-store",
+            },
+          });
+        } catch (err) {
+          const error = `The copy couldn't start: ${err instanceof Error ? err.message : String(err)}`;
+          console.error(JSON.stringify({ at: "data.export", error }));
+          return json({ error }, 500);
+        }
       }
       if (path === "/api/character-check" && request.method === "POST") {
         return json(await agent.apiCharacterCheck());

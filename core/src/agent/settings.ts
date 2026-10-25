@@ -26,6 +26,7 @@ import { accountName, installed, providing } from "../extensions";
 import type { ExtensionDesk } from "./extensions";
 import type { MailDesk } from "./mail";
 import type { UpdateDesk } from "./updates";
+import type { DataDesk } from "./data";
 import { faces } from "../faces";
 import { members } from "../members";
 import { getRecord } from "../store/records";
@@ -42,6 +43,7 @@ export function settingsView(
     extensions: ExtensionDesk;
     mail?: MailDesk;
     updates?: UpdateDesk;
+    data?: DataDesk;
   },
 ): SettingsView {
   const passkeys = (getState<StoredPasskey[]>(sql, "passkeys") ?? [])
@@ -142,7 +144,9 @@ export function settingsView(
       rollback: null,
       foreign: null,
       busy: false,
+      planned: null,
     },
+    data: parts.data?.view() ?? { last_export: null, export_error: null, restore: null, delete: null },
   };
 }
 

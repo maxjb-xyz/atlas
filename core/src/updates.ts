@@ -15,6 +15,7 @@ import { fetchBytes, sha256Hex } from "./services";
 import { createItem, type AgendaItem, upcoming } from "./store/agenda";
 import { MIGRATIONS, type Sql } from "./store/db";
 import { getState, setState } from "./store/state";
+import { addLocalDays, zonedParts, zonedToUtc } from "./time";
 import type { UpdateRun } from "./protocol";
 
 /** Atlas's releases, newest first. The repo is public, so no token is needed. */
@@ -113,6 +114,8 @@ export interface UpdatesState {
   installed: { version_id: string; label: string; at: number } | null;
   /** A version Atlas didn't deploy that replaced one it did (Workers Builds after a push, or a deploy by hand). */
   foreign: { version_id: string; seen_at: number; source: string | null; replaced: string } | null;
+  /** The last update Atlas made on its own that it told the owner about, by when it started. */
+  told: number | null;
 }
 
 export const updatesState = (sql: Sql): UpdatesState => ({
@@ -125,6 +128,7 @@ export const updatesState = (sql: Sql): UpdatesState => ({
   previous: null,
   installed: null,
   foreign: null,
+  told: null,
   ...(getState<Partial<UpdatesState>>(sql, "updates") ?? {}),
 });
 
@@ -238,12 +242,38 @@ export async function fetchManifest(f: typeof fetch, r: Release): Promise<{ mani
 
 /** The look on the clock: one item, once a day; `soon` puts it a minute out (the first start). */
 export function armUpdates(sql: Sql, now = Date.now(), soon = false): AgendaItem | null {
-  const open = upcoming(sql, 300).find((i) => i.kind === "updates" && (i.state === "scheduled" || i.state === "running"));
+  const open = upcoming(sql, 300).find(
+    (i) => i.kind === "updates" && i.source.via === "updates" && (i.state === "scheduled" || i.state === "running"),
+  );
   if (open) return null;
   const last = updatesState(sql).looked_at ?? 0;
   const due = soon && !last ? now + 60_000 : Math.max(now + 60_000, last + UPDATE_EVERY_MS);
   return createItem(sql, { kind: "updates", title: "Look for a new Atlas release", due_at: due, source: { via: "updates" } });
 }
+
+// --- updating on its own ------------------------------------------------------------------------------------
+
+/** Updating on its own (§23.2) happens in the night, when nobody is using Atlas: from 3 to 5 in the morning, the owner's time. */
+export const QUIET_HOURS = { from: 3, to: 5 };
+/** While the owner is using Atlas at that hour, the install waits this long and looks again. */
+export const BUSY_WAIT_MS = 30 * 60_000;
+
+export const inQuietHours = (now: number, tz: string) => {
+  const h = zonedParts(new Date(now), tz).hour;
+  return h >= QUIET_HOURS.from && h < QUIET_HOURS.to;
+};
+
+/** The next quiet time: a minute from now inside the hours, else the next 3 in the morning. */
+export function quietTime(now: number, tz: string): number {
+  if (inQuietHours(now, tz)) return now + 60_000;
+  const p = zonedParts(new Date(now), tz);
+  const today = zonedToUtc(p.year, p.month, p.day, QUIET_HOURS.from, 0, 0, tz);
+  return today.getTime() > now ? today.getTime() : addLocalDays(today, 1, tz).getTime();
+}
+
+/** The install waiting on the clock, if one is. */
+export const plannedInstall = (sql: Sql): AgendaItem | null =>
+  upcoming(sql, 300).find((i) => i.kind === "updates" && i.source.via === "updates.install") ?? null;
 
 // --- Cloudflare: which Worker, and what it runs ---------------------------------------------------------------
 

@@ -373,6 +373,13 @@ function reduce(s: State, a: Action): State {
       return { ...s, tests: { ...s.tests, mail: { ok: m.ok, message: m.text } } };
     case "atlas.updates":
       return { ...s, tests: { ...s.tests, updates: { ok: m.ok, message: m.text } } };
+    case "atlas.data.preview":
+      return {
+        ...s,
+        tests: { ...s.tests, "data.preview": { ok: m.ok, message: m.text, detail: { at: m.at, lost: m.lost, kept: m.kept } } },
+      };
+    case "atlas.data":
+      return { ...s, tests: { ...s.tests, data: { ok: m.ok, message: m.text, detail: { what: m.what, left: m.left ?? [] } } } };
     case "atlas.contacts.imported":
       return { ...s, tests: { ...s.tests, contacts: { ok: m.ok, message: m.text } } };
     case "atlas.sense.hook":
@@ -420,6 +427,8 @@ export function useAtlas(agent = "owner") {
     document.addEventListener("visibilitychange", presence);
     c.addEventListener("custommessage", (msg) => {
       const m = msg as ServerMessage;
+      // Everything was deleted (§23.4): the page says what's left; there's no Atlas to reconnect to until it's set up again.
+      if (m?.type === "atlas.data" && m.what === "delete" && m.ok) c.disconnect();
       if (m?.type === "atlas.signed_out") {
         // This sign-in was ended (a removed passkey, or sign out everywhere): back to the sign-in page.
         c.disconnect();
