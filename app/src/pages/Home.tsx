@@ -1,14 +1,17 @@
-// Home (§21.2): the stage and the console. The stage shows Now, the Week,
-// helpers' Jobs, the views Atlas shows (§21.6), and whatever a receipt opens into.
+// Home (§21.1, §21.2): the conversation, and the stage it opens. The whole
+// thread fills Home with the composer at its foot; when Atlas shows something,
+// or a receipt, a job or Now and the week are opened, the stage opens large
+// beside the thread (over it on a narrow screen) and closes back to it.
 
 import { InlineText } from "../Markdown";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { JobView, LogRow } from "../../../core/src/protocol";
 import { jobNow, liveJobs } from "../jobs";
 import type { StageView } from "../../../core/src/stage";
 import type { Atlas } from "../connection";
-import { Console, VoiceStrip } from "../Shell";
 import { type Shown, shownFrom, StageSheet, titleOf } from "../StageViews";
+import { Conversation, type Opens } from "../Thread";
+import { JobDetail, JobGone } from "../JobViews";
 import { MapCanvas, whereLine } from "../SenseViews";
 import { sky, temp } from "../../../core/src/weather";
 import { useDetail } from "../theme";
@@ -21,9 +24,7 @@ import {
   AsciiDiamond,
   clock,
   dayName,
-  Diamond,
   type DiamondState,
-  Empty,
   Icon,
   Sheet,
   shortDay,
@@ -34,13 +35,14 @@ import {
 } from "../ui";
 import { CalendarNote, eventArea, eventEnd, eventStart, useCalendar, weekStart, WeekGrid } from "./Week";
 
-type HomeTab = "now" | "week" | "jobs" | "receipt" | "approval" | `view:${string}`;
+/** What the stage shows: Now, the week, a view Atlas showed, a job's thread, a receipt, or an approval. */
+type Tab = "now" | "week" | "receipt" | "approval" | `view:${string}` | `job:${string}`;
 
 /** The approval a receipt waits on, if it does. */
 const approvalOf = (r: LogRow) => (r.body.receipt as { approval?: string } | undefined)?.approval ?? null;
 
-/** The most views the stage keeps open as tabs; the oldest closes first. */
-const MAX_VIEWS = 4;
+/** The most views and jobs the stage keeps open at once; the oldest closes first. */
+const MAX_OPEN = 4;
 
 /** What a view shows, for views that are one thing however often they're shown; null for one-off views (a list, a chart). */
 function identity(s: Shown): string | null {
@@ -77,25 +79,27 @@ const sameThing = (a: Shown, b: Shown) => {
 };
 
 /**
- * What's on Home's stage, kept while the app is open (and through a reload,
- * in this tab), so leaving Home and coming back finds it as it was. `seen`
- * is the last log row the stage has looked at for new views.
+ * What's open on Home's stage, kept while the app is open (and through a
+ * reload, in this tab), so leaving Home and coming back finds it as it was.
+ * `tab` is null while the stage is closed. `seen` is the last log row the
+ * stage has looked at for new views.
  */
 interface Kept {
-  tab: HomeTab;
+  tab: Tab | null;
   views: Shown[];
+  jobs: string[];
   approval: string | null;
   seen: number | null;
 }
-const KEPT_KEY = "atlas.stage";
+const KEPT_KEY = "atlas.home";
 let kept: Kept = (() => {
   try {
     const v = JSON.parse(sessionStorage.getItem(KEPT_KEY) ?? "null") as Kept | null;
-    if (v && Array.isArray(v.views)) return v;
+    if (v && Array.isArray(v.views) && Array.isArray(v.jobs)) return v;
   } catch {
-    // No storage here (a private window): the stage starts empty.
+    // No storage here (a private window): the stage starts closed.
   }
-  return { tab: "now", views: [], approval: null, seen: null };
+  return { tab: null, views: [], jobs: [], approval: null, seen: null };
 })();
 function keep(next: Kept): void {
   kept = next;
@@ -106,63 +110,66 @@ function keep(next: Kept): void {
   }
 }
 
-export function Home({
-  atlas,
-  detail,
-  go,
-  onTranscript,
-}: {
-  atlas: Atlas;
-  detail: string;
-  go: (d: string) => void;
-  onTranscript: () => void;
-}) {
+export function Home({ atlas, detail, go, place }: { atlas: Atlas; detail: string; go: (d: string) => void; place: (p: "inbox") => void }) {
   const s = atlas.state;
-  // The stage outlives a visit to another page: its views and tab come back with Home.
-  const [tab, setTab] = useState<HomeTab>(() => kept.tab);
-  const [job, setJob] = useState<string | null>(null);
+  // The stage outlives a visit to another page: what was open comes back with Home.
+  const [tab, setTab] = useState<Tab | null>(() => kept.tab);
   const [receipt, setReceipt] = useState<LogRow | null>(null);
   const [views, setViews] = useState<Shown[]>(() => kept.views);
+  const [jobs, setJobs] = useState<string[]>(() => kept.jobs);
   const [approval, setApproval] = useState<string | null>(() => kept.approval);
+  const [focus, setFocus] = useState<string | null>(null);
   useEffect(() => {
-    keep({ tab: tab === "receipt" ? "now" : tab, views, approval, seen: kept.seen });
-  }, [tab, views, approval]);
-  const openApproval = (id: string) => {
-    setApproval(id);
-    setTab("approval");
-  };
+    keep({ tab: tab === "receipt" ? null : tab, views, jobs, approval, seen: kept.seen });
+  }, [tab, views, jobs, approval]);
 
-  // Showing the same thing again (the workspace, a file, an area) reuses its tab, in its place, instead of adding one.
+  // Showing the same thing again (the workspace, a file, an area) reuses its place, instead of adding one.
   const openView = (v: Shown) => {
     const matches = (x: Shown) => x.id === v.id || sameThing(x, v);
     const at = views.find(matches)?.id ?? v.id;
     setViews((list) => {
       const same = list.find(matches);
-      return same ? list.map((x) => (x === same ? { ...v, id: same.id } : x)) : [...list, v].slice(-MAX_VIEWS);
+      return same ? list.map((x) => (x === same ? { ...v, id: same.id } : x)) : [...list, v].slice(-MAX_OPEN);
     });
     setTab(`view:${at}`);
   };
-  const closeView = (id: string) => {
-    setViews((list) => list.filter((x) => x.id !== id));
-    if (tab === `view:${id}`) setTab("now");
+  const openJob = (id: string) => {
+    setJobs((list) => [...list.filter((x) => x !== id), id].slice(-MAX_OPEN));
+    setTab(`job:${id}`);
   };
+  const openReceipt = (r: LogRow) => {
+    const shown = shownFrom(r);
+    if (shown) return openView(shown);
+    const asking = approvalOf(r);
+    if (asking && s.inbox?.some((i) => i.id === asking)) {
+      setApproval(asking);
+      return setTab("approval");
+    }
+    setReceipt(r);
+    setTab("receipt");
+  };
+  const toggle = (t: Tab) => setTab((cur) => (cur === t ? null : t));
+  const close = () => setTab(null);
 
-  // A job picked from the toolbar arrives in the address as "jobs:<id>"; a view opened from elsewhere as "view:<receipt id>".
+  // From elsewhere: a job ("job:<id>", or "jobs:<id>" from older links), a view ("view:<receipt id>"), or where something was asked ("at:<row id>").
   useEffect(() => {
-    if (detail.startsWith("jobs:")) {
-      setTab("jobs");
-      setJob(detail.slice(5));
-    } else if (detail.startsWith("view:")) {
+    if (!detail) return;
+    if (detail.startsWith("job:") || detail.startsWith("jobs:")) openJob(detail.slice(detail.indexOf(":") + 1));
+    else if (detail.startsWith("view:")) {
       const id = detail.slice(5);
       const row = s.rows.find((r) => r.id === id) ?? s.history?.rows.find((r) => r.id === id);
       const shown = row && shownFrom(row);
       if (shown) openView(shown);
-      go("");
+    } else if (detail.startsWith("at:")) {
+      // Shown where it was asked: on a narrow screen the stage gives way to the thread.
+      setFocus(detail.slice(3));
+      if (window.matchMedia("(max-width: 1180px)").matches) close();
     }
+    go("");
   }, [detail]);
 
-  // A view Atlas shows goes straight onto the stage (§21.6), including one shown while another page was open.
-  // Views already in the thread when the app opened stay behind their receipts.
+  // A view Atlas shows opens the stage (§21.6), including one shown while another page was open.
+  // Views already in the thread when the app opened stay behind their cards.
   useEffect(() => {
     if (!s.loaded) return;
     const last = s.rows.at(-1)?.seq ?? 0;
@@ -177,81 +184,99 @@ export function Home({
       .filter((v): v is Shown => v != null)
       .at(-1);
     if (newest) openView(newest);
-    // A card waiting for your OK comes onto the stage too (§12.2).
-    const asking = fresh
-      .map(approvalOf)
-      .filter((a): a is string => a != null)
-      .at(-1);
-    if (asking) openApproval(asking);
   }, [s.rows, s.loaded]);
 
   const now = useNow();
-  const running = liveJobs(s.jobs, now).length;
   const tz = s.view?.settings.timezone;
-  const shownTab = views.find((v) => tab === `view:${v.id}`);
-  const meta =
-    tab === "week"
-      ? `Calendar · ${s.view?.calendar.provider ? s.view.calendar.provider.name : "not connected"}`
-      : shownTab
-        ? shownTab.view.kind === "area" || shownTab.view.kind === "person"
-          ? "Live from what Atlas knows"
-          : "Put together by Atlas"
-        : `${dayName(now)} · ${clock(now)}${tz ? ` · ${tz}` : ""}`;
+  const job = tab?.startsWith("job:") ? s.jobs.find((j) => j.id === tab.slice(4)) : undefined;
+  const opens: Opens = {
+    view: openView,
+    job: (j: JobView) => openJob(j.id),
+    receipt: openReceipt,
+    now: () => toggle("now"),
+    week: () => toggle("week"),
+    inbox: () => place("inbox"),
+  };
+  // While the stage is open, what else is open on it shows beside Now and Week, so it's one tap back.
+  const pills: Array<{ id: Tab; label: string }> = [
+    { id: "now", label: "Now" },
+    { id: "week", label: "Week" },
+    ...(tab
+      ? [
+          ...views.map((v) => ({ id: `view:${v.id}` as Tab, label: titleOf(atlas, v) })),
+          ...jobs
+            .map((id) => s.jobs.find((j) => j.id === id))
+            .filter((j): j is JobView => j != null)
+            .map((j) => ({ id: `job:${j.id}` as Tab, label: j.title })),
+          ...(approval && s.inbox?.some((i) => i.id === approval) ? [{ id: "approval" as Tab, label: "Your OK" }] : []),
+          ...(receipt ? [{ id: "receipt" as Tab, label: "Receipt" }] : []),
+        ]
+      : []),
+  ];
 
   return (
     <Stage
-      label="Stage"
+      label="Home"
       home
-      tabs={[
-        { id: "now", label: "Now" },
-        { id: "week", label: "Week" },
-        { id: "jobs", label: "Jobs", badge: running || null },
-        ...views.map((v) => ({ id: `view:${v.id}` as const, label: titleOf(atlas, v) })),
-        ...(approval ? [{ id: "approval" as const, label: "Your OK" }] : []),
-        ...(receipt ? [{ id: "receipt" as const, label: "Receipt" }] : []),
-      ]}
-      tab={tab}
-      onTab={(t) => {
-        setTab(t);
-        if (t !== "jobs") go("");
-      }}
-      meta={meta}
-      dock={
-        <div className="dock">
-          {atlas.inCall && <VoiceStrip atlas={atlas} />}
-          <Console
-            atlas={atlas}
-            onTranscript={onTranscript}
-            onReceipt={(r) => {
-              const shown = shownFrom(r);
-              if (shown) return openView(shown);
-              const asking = approvalOf(r);
-              if (asking) return openApproval(asking);
-              setReceipt(r);
-              setTab("receipt");
-            }}
-          />
+      bodyClass="home-body"
+      meta={tab ? null : `${dayName(now)} · ${clock(now)}${tz ? ` · ${tz}` : ""}`}
+      actions={
+        <div className="stage-opens">
+          <div className="tabs" role="tablist" aria-label="Open on the stage">
+            {pills.map((p) => (
+              <button
+                key={p.id}
+                role="tab"
+                aria-selected={p.id === tab}
+                className={p.id === tab ? "on" : ""}
+                onClick={() => toggle(p.id)}
+                title={p.label}
+              >
+                {p.id.startsWith("job:") && jobNow(s.jobs.find((j) => `job:${j.id}` === p.id)!).live && (
+                  <span className="mono spin" aria-hidden />
+                )}
+                <span className="tab-label">{p.label}</span>
+              </button>
+            ))}
+          </div>
+          {tab && (
+            <button className="icon" aria-label="Close the stage" title="Back to the conversation" onClick={close}>
+              <Icon name="x" />
+            </button>
+          )}
         </div>
       }
     >
-      {tab === "now" && (
-        <Now atlas={atlas} showSituation={() => openView({ id: "local:situation", view: { kind: "situation" }, title: "Situation" })} />
-      )}
-      {tab === "week" && <WeekTab atlas={atlas} />}
-      {tab === "jobs" && <Jobs atlas={atlas} selected={job} onSelect={setJob} />}
-      {tab === "receipt" && receipt && <ReceiptView atlas={atlas} row={receipt} />}
-      {tab === "approval" && approval && <ApprovalTab atlas={atlas} id={approval} />}
-      {views
-        .filter((v) => tab === `view:${v.id}`)
-        .map((v) => (
-          <StageSheet
-            key={v.id}
-            atlas={atlas}
-            shown={v}
-            onClose={() => closeView(v.id)}
-            onOpen={(view: StageView, title: string) => openView({ id: `local:${JSON.stringify(view)}`, view, title })}
-          />
-        ))}
+      <div className={`home-split ${tab ? "open" : ""}`}>
+        <Conversation atlas={atlas} opens={opens} focus={focus} onFocused={() => setFocus(null)} />
+        {tab && (
+          <div className="home-stage" key={tab}>
+            <button className="btn sm home-back" onClick={close}>
+              <Icon name="left" size={13} /> Conversation
+            </button>
+            {tab === "now" && (
+              <Now
+                atlas={atlas}
+                showSituation={() => openView({ id: "local:situation", view: { kind: "situation" }, title: "Situation" })}
+              />
+            )}
+            {tab === "week" && <WeekTab atlas={atlas} />}
+            {tab.startsWith("job:") && (job ? <JobDetail atlas={atlas} job={job} /> : <JobGone />)}
+            {tab === "receipt" && receipt && <ReceiptView atlas={atlas} row={receipt} />}
+            {tab === "approval" && approval && <ApprovalTab atlas={atlas} id={approval} />}
+            {views
+              .filter((v) => tab === `view:${v.id}`)
+              .map((v) => (
+                <StageSheet
+                  key={v.id}
+                  atlas={atlas}
+                  shown={v}
+                  onOpen={(view: StageView, title: string) => openView({ id: `local:${JSON.stringify(view)}`, view, title })}
+                />
+              ))}
+          </div>
+        )}
+      </div>
     </Stage>
   );
 }
@@ -336,14 +361,14 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
   // What comes after the next thing, so the card shows the next few days and not one line.
   const after = next ? events.filter((e) => e.id !== next.id && eventStart(e) >= eventStart(next)).slice(0, 3) : [];
   const point = sit?.where.known ? sit.where.point : null;
-  // On a phone the diamond is smaller, so what's next shows without scrolling.
+  // Now opens beside the conversation, so the diamond is smaller than on a page of its own; smaller still on a phone.
   const narrow = useMemo(() => window.matchMedia("(max-width: 760px)").matches, []);
 
   return (
     <Sheet>
       <div className="sheet-in now">
         <div className="now-head">
-          <AsciiDiamond height={narrow ? 140 : 280} level={atlas.inCall ? atlas.voice.level : 0} state={diamondState(atlas)} />
+          <AsciiDiamond height={narrow ? 120 : 180} level={atlas.inCall ? atlas.voice.level : 0} state={diamondState(atlas)} />
           <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
             <h1 className="disp now-hello">
               {scoped ? `${scoped.name}, this week.` : `${greeting(new Date())}${owner ? `, ${owner}` : ""}.`}
@@ -609,168 +634,6 @@ function WeekTab({ atlas }: { atlas: Atlas }) {
   );
 }
 
-function Jobs({ atlas, selected, onSelect }: { atlas: Atlas; selected: string | null; onSelect: (id: string) => void }) {
-  const jobs = atlas.state.jobs;
-  const job = jobs.find((j) => j.id === selected) ?? jobs[0];
-  // A job between moves turns stalled by the clock, with no news to say so.
-  const now = useNow(30_000);
-  useEffect(() => {
-    if (job?.run_id) atlas.send({ type: "atlas.run.detail", run_id: job.run_id });
-  }, [job?.id, job?.steps, job?.state]);
-  if (!job) {
-    return (
-      <Sheet>
-        <Empty title="No jobs right now">
-          When something needs a lot of looking, Atlas hands it to a helper and you can watch it here.
-        </Empty>
-      </Sheet>
-    );
-  }
-  const detail = job.run_id ? atlas.state.runDetail[job.run_id] : undefined;
-  const lookups = (detail?.rows ?? []).filter((r) => r.kind === "tool.call");
-  if (job.coding) return <CodingJob atlas={atlas} jobs={jobs} job={job} onSelect={onSelect} />;
-  const goal = job.goal;
-  const shown = jobNow(job, now);
-  return (
-    <Sheet>
-      <div className="sheet-in">
-        <div className="tabs" style={{ marginBottom: 16 }}>
-          {jobs.map((j) => (
-            <button key={j.id} className={j.id === job.id ? "on" : ""} onClick={() => onSelect(j.id)}>
-              {jobNow(j).live && <span className="mono spin" aria-hidden />}
-              {j.title}
-            </button>
-          ))}
-        </div>
-        <div className="sheet-title">
-          <h1 className="disp">{job.title}</h1>
-          <span className={`tag ${shown.tone === "ac" || shown.tone === "ok" ? shown.tone : ""}`}>{shown.label}</span>
-          <span className="grow" />
-          {job.state === "running" && (
-            <button className="btn" onClick={() => atlas.send({ type: "atlas.job.stop", id: job.id })}>
-              Stop
-            </button>
-          )}
-        </div>
-        <div className="kv">
-          <span className="lab">Asked</span>
-          <span style={{ whiteSpace: "pre-wrap" }}>{job.brief}</span>
-          <span className="lab">Started</span>
-          <span>{shortDay(job.started_at)}</span>
-          <span className="lab">Now</span>
-          <span className={shown.label === "Stalled" ? "err" : undefined}>{shown.status}</span>
-        </div>
-        {goal && <GoalPlan atlas={atlas} job={job} />}
-        {lookups.length > 0 && (
-          <>
-            <div className="section-rule">
-              <span className="lab">Lookups · {lookups.length}</span>
-            </div>
-            <div className="rows">
-              {lookups.map((r) => (
-                <div className="r small" key={r.id}>
-                  <span className="mono faint">{clock(r.at)}</span>
-                  <span className="mono">{String(r.body.name)}</span>
-                  <span className="muted" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {JSON.stringify(r.body.input)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-        {job.result && (
-          <>
-            <div className="section-rule">
-              <span className="lab">{job.state === "done" ? "Handed back" : "Why"}</span>
-            </div>
-            <p style={{ whiteSpace: "pre-wrap" }}>{job.result}</p>
-          </>
-        )}
-      </div>
-    </Sheet>
-  );
-}
-
-/**
- * A job Atlas owns (§8.3): its plan with each step's state and brain, what
- * it waits on, what it has used, the files it kept, and Steer.
- */
-function GoalPlan({ atlas, job }: { atlas: Atlas; job: JobView }) {
-  const g = job.goal!;
-  const [steer, setSteer] = useState("");
-  const mark = { todo: "·", doing: "▸", done: "✓", failed: "×", skipped: "–" } as const;
-  return (
-    <>
-      <div className="section-rule">
-        <span className="lab">The plan</span>
-        <span className="grow" />
-        <span className="aside">
-          {g.deadline ? `Due ${new Date(g.deadline).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })} · ` : ""}
-          {g.spent.steps} of {g.budget.steps} steps · {g.spent.looks} of {g.budget.looks} looks
-        </span>
-      </div>
-      <div className="rows">
-        {g.plan.map((s) => (
-          <div className="r small" key={s.id}>
-            <span className="mono faint" style={{ width: 14 }}>
-              {mark[s.state]}
-            </span>
-            <span className={s.state === "doing" ? "" : s.state === "todo" ? "muted" : ""} style={{ flex: 1 }}>
-              {s.title}
-              {s.kind === "checkpoint" && <span className="aside"> · your look</span>}
-            </span>
-            {s.brain && s.brain !== "Main" && <span className="aside">{s.brain}</span>}
-          </div>
-        ))}
-      </div>
-      {g.question && (
-        <div className="card2 pad" style={{ marginTop: 12 }}>
-          <p style={{ fontWeight: 500 }}>{g.question.text}</p>
-          {g.question.content && <p style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>{g.question.content}</p>}
-          <p className="aside" style={{ marginTop: 8 }}>
-            Answer it in Inbox, or below.
-          </p>
-        </div>
-      )}
-      {Object.keys(g.spent.by).length > 0 && (
-        <p className="aside" style={{ marginTop: 8 }}>
-          Steps by brain:{" "}
-          {Object.entries(g.spent.by)
-            .map(([b, n]) => `${b} ${n}`)
-            .join(", ")}
-        </p>
-      )}
-      {g.files.length > 0 && <p className="aside">Kept in Library: {g.files.join(", ")}</p>}
-      {job.state === "running" && (
-        <form
-          className="row"
-          style={{ marginTop: 10 }}
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!steer.trim()) return;
-            atlas.send({ type: "atlas.job.say", id: job.id, text: steer.trim() });
-            setSteer("");
-          }}
-        >
-          <input
-            className="grow"
-            placeholder={g.question ? "Your answer" : "Steer: a word for its next step"}
-            value={steer}
-            onChange={(e) => setSteer(e.target.value)}
-          />
-          <button className="btn" type="submit" disabled={!steer.trim()}>
-            {g.question ? "Answer" : "Steer"}
-          </button>
-        </form>
-      )}
-      <p className="aside mono" style={{ marginTop: 6 }}>
-        {g.folder}
-      </p>
-    </>
-  );
-}
-
 /** How far off something is, in a few words: "in 40 min", "tomorrow at 9:00 AM", "Sunday, in 2 days". */
 function until(d: Date, allDay: boolean, now: number): string {
   const ms = d.getTime() - now;
@@ -781,300 +644,6 @@ function until(d: Date, allDay: boolean, now: number): string {
   if (days <= 0) return allDay ? "Today" : `Today${at}, in ${Math.round(ms / 3_600_000)} h`;
   if (days === 1) return `Tomorrow${at}`;
   return `${dayName(d)}${at}, in ${days} days`;
-}
-
-/** One line of a coding job's stream, as its terminal shows it. */
-function streamLine(e: NonNullable<JobView["coding"]>["log"][number]): { mark: string; who: string; text: string; tone: string } {
-  const first = e.text.split("\n").find((l) => l.trim()) ?? "";
-  if (e.who === "tool")
-    return {
-      mark: e.status === "failed" ? "×" : e.status === "completed" ? "✓" : "▸",
-      who: "run",
-      text: first,
-      tone: e.status === "failed" ? "var(--ac)" : e.status === "completed" ? "var(--tx2)" : "var(--tx)",
-    };
-  if (e.who === "agent") return { mark: first.trim().endsWith("?") ? "?" : "›", who: "agent", text: first, tone: "var(--tx)" };
-  if (e.who === "atlas") return { mark: "◆", who: "atlas", text: first, tone: "var(--tx)" };
-  if (e.who === "owner") return { mark: "◆", who: "you", text: first, tone: "var(--tx)" };
-  if (e.who === "plan") return { mark: "·", who: "plan", text: first, tone: "var(--tx3)" };
-  return { mark: "·", who: "note", text: first, tone: "var(--tx3)" };
-}
-
-/**
- * A coding job (§8.2, §21.4, docs/ui 05): its steps, the agent's stream as a
- * terminal, the questions Atlas answered for the owner with their sources,
- * what waits on the owner, and Steer and Stop.
- */
-export function CodingJob({ atlas, jobs, job, onSelect }: { atlas: Atlas; jobs: JobView[]; job: JobView; onSelect: (id: string) => void }) {
-  const c = job.coding!;
-  const [steer, setSteer] = useState<string | null>(null);
-  const [answer, setAnswer] = useState("");
-  const term = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    term.current?.scrollTo({ top: term.current.scrollHeight });
-  }, [c.log.length]);
-  const now = useNow(30_000);
-  const minutes = Math.max(0, Math.round((now - job.started_at) / 60_000));
-  const running = job.state === "running";
-  const forYou = c.answers.filter((a) => a.source !== "you");
-  const askedYou = c.answers.length - forYou.length + (c.question ? 1 : 0);
-  const say = (text: string) => atlas.send({ type: "atlas.job.say", id: job.id, text });
-  const lastTool = [...c.log].reverse().find((e) => e.who === "tool" && e.out);
-  return (
-    <Sheet>
-      <div className="sheet-in">
-        <div className="row" style={{ marginBottom: 16, flexWrap: "nowrap" }}>
-          <div className="tabs grow">
-            {jobs.map((j) => (
-              <button key={j.id} className={j.id === job.id ? "on" : ""} onClick={() => onSelect(j.id)}>
-                {jobNow(j).live && <span className="mono spin" aria-hidden />}
-                {j.title}
-              </button>
-            ))}
-          </div>
-          <span className="mono faint small">
-            {c.cost != null ? `$${c.cost.toFixed(2)}${c.cap != null ? ` of $${c.cap.toFixed(0)}` : ""} · ` : ""}
-            {minutes} MIN
-          </span>
-          {running && (
-            <button className="btn" onClick={() => setSteer(steer == null ? "" : null)} aria-expanded={steer != null}>
-              Steer
-            </button>
-          )}
-          {running && (
-            <button className="btn" onClick={() => atlas.send({ type: "atlas.job.stop", id: job.id })}>
-              Stop
-            </button>
-          )}
-        </div>
-        <div className="row" style={{ alignItems: "baseline", gap: 12, marginBottom: 12 }}>
-          <h1 className="disp" style={{ fontSize: 21 }}>
-            {job.title}
-          </h1>
-          <span className="faint">
-            {c.repo} · {c.agent} does the work, Atlas runs it
-          </span>
-        </div>
-        <div className="chain" style={{ marginBottom: 14 }}>
-          {c.steps.map((st, i) => (
-            <span key={st.name} style={{ display: "contents" }}>
-              {i > 0 && <span className="dash" />}
-              <span
-                className={`tag ${st.state === "now" ? "ac" : ""}`}
-                style={st.state === "todo" ? { borderStyle: "dashed", opacity: 0.7 } : {}}
-              >
-                {st.state === "done" ? "✓ " : st.state === "now" ? "● " : "→ "}
-                {st.name === "PR" ? "PR to Inbox" : st.name}
-              </span>
-            </span>
-          ))}
-          {!running && (
-            <span className={`tag ${job.state === "done" ? "ok" : "ac"}`}>
-              {job.state === "done" ? "done" : job.state === "failed" ? "didn't finish" : "stopped"}
-            </span>
-          )}
-        </div>
-        {steer != null && (
-          <form
-            className="row"
-            style={{ marginBottom: 12 }}
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (steer.trim()) say(steer.trim());
-              setSteer(null);
-            }}
-          >
-            <input
-              autoFocus
-              className="grow"
-              placeholder="Tell the agent, such as: use the existing date helper"
-              value={steer}
-              onChange={(e) => setSteer(e.target.value)}
-            />
-            <button className="btn primary" type="submit" disabled={!steer.trim()}>
-              Send
-            </button>
-          </form>
-        )}
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(0, 1fr)", gap: 14 }}>
-          <div
-            ref={term}
-            className="mono"
-            style={{
-              background: "var(--bg)",
-              border: "1px solid var(--sep)",
-              borderRadius: 8,
-              padding: "12px 14px",
-              fontSize: 11.5,
-              lineHeight: 1.75,
-              color: "var(--tx2)",
-              maxHeight: 420,
-              overflow: "auto",
-            }}
-          >
-            <div style={{ color: "var(--tx3)" }}>
-              $ {c.agent.toLowerCase()} · {c.repo} ·{" "}
-              {c.branch_link ? (
-                <a href={c.branch_link} target="_blank" rel="noreferrer">
-                  {c.branch}
-                </a>
-              ) : (
-                c.branch
-              )}
-            </div>
-            {c.log.map((e, i) => {
-              const l = streamLine(e);
-              return (
-                <div key={i} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", color: l.tone }} title={e.text}>
-                  {l.mark} <span style={{ color: "var(--tx3)" }}>{l.who.padEnd(6, " ")}</span> {l.text}
-                </div>
-              );
-            })}
-            {lastTool?.out && running && (
-              <div
-                style={{
-                  whiteSpace: "pre-wrap",
-                  overflowWrap: "anywhere",
-                  color: "var(--tx3)",
-                  borderTop: "1px dashed var(--dash)",
-                  marginTop: 6,
-                  paddingTop: 6,
-                }}
-              >
-                {lastTool.out.trim().split("\n").slice(-8).join("\n")}
-              </div>
-            )}
-            {running && (
-              <span className="blink" style={{ color: "var(--tx)" }}>
-                {" "}
-                _
-              </span>
-            )}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {c.question && (
-              <div
-                style={{
-                  border: "1px solid var(--ac)",
-                  borderRadius: 8,
-                  padding: "12px 14px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 10,
-                }}
-              >
-                <span className="lab ac">Waiting on you</span>
-                <span>{c.question.text}</span>
-                {c.question.why && <span className="muted small">{c.question.why}</span>}
-                {c.question.site ? (
-                  <a className="btn" href="#/inbox">
-                    Answer in Inbox
-                  </a>
-                ) : (
-                  <>
-                    {c.question.options.length > 0 && (
-                      <div className="row">
-                        {c.question.options.map((o, n) => (
-                          <button key={o} className={`btn ${n === 0 ? "primary" : ""}`} onClick={() => say(o)}>
-                            {o}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <form
-                      className="row"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        if (answer.trim()) say(answer.trim());
-                        setAnswer("");
-                      }}
-                    >
-                      <input className="grow" placeholder="Your answer" value={answer} onChange={(e) => setAnswer(e.target.value)} />
-                      <button className="btn" type="submit" disabled={!answer.trim()}>
-                        Answer
-                      </button>
-                    </form>
-                  </>
-                )}
-              </div>
-            )}
-            <div
-              style={{
-                border: "1px solid var(--sep)",
-                borderRadius: 8,
-                padding: "12px 14px",
-                display: "flex",
-                flexDirection: "column",
-                gap: 10,
-              }}
-            >
-              <div className="row" style={{ flexWrap: "nowrap" }}>
-                <span className="lab grow">Atlas answered for you</span>
-                <span className="mono faint" style={{ fontSize: 11 }}>
-                  {forYou.length} · ASKED YOU {askedYou}
-                </span>
-              </div>
-              {!forYou.length && (
-                <span className="muted small">
-                  Nothing yet. Routine questions from the agent get answered here, each with where the answer came from.
-                </span>
-              )}
-              {forYou.map((a, i) => (
-                <div
-                  key={i}
-                  style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 8, borderTop: "1px dashed var(--dash)" }}
-                >
-                  <span className="small" style={{ color: "var(--tx2)" }}>
-                    {a.q}
-                  </span>
-                  <span className="row small" style={{ gap: 8, alignItems: "flex-start", flexWrap: "nowrap" }}>
-                    <Diamond size={10} />
-                    <span>{a.a}</span>
-                  </span>
-                  <span className="mono faint" style={{ fontSize: 10.5 }}>
-                    FROM {a.source.toUpperCase()}
-                  </span>
-                </div>
-              ))}
-            </div>
-            {c.pr && (
-              <div
-                style={{
-                  border: "1px solid var(--sep)",
-                  borderRadius: 8,
-                  padding: "12px 14px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 6,
-                }}
-              >
-                <span className="lab">Pull request</span>
-                <a href={c.pr.link} target="_blank" rel="noreferrer">
-                  {c.pr.title}
-                </a>
-                <span className="muted small">Nothing is merged until you do.</span>
-              </div>
-            )}
-            {c.error && (
-              <div
-                style={{
-                  border: "1px solid var(--ac)",
-                  borderRadius: 8,
-                  padding: "12px 14px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 6,
-                }}
-              >
-                <span className="lab ac">Why it stopped</span>
-                <span className="small">{c.error}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </Sheet>
-  );
 }
 
 /** A receipt opened on the stage (§21.8: a receipt unfolds into its full view). */

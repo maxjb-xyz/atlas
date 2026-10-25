@@ -97,7 +97,7 @@ import {
 import { addIndex, removeIndex } from "./services";
 import { type AgendaItem, createItem, due, finish, getItem, lease, rearm, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, newId, parse, type Sql } from "./store/db";
-import { type Actor, append, forRun, get as getRow, type LogRow, logTo, type Surface, thread } from "./store/log";
+import { type Actor, append, forRun, get as getRow, jobThread, type LogRow, logTo, type Surface, thread } from "./store/log";
 import { indexNewMessages } from "./store/memory";
 import { getState, setState } from "./store/state";
 import { endRun, getRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
@@ -2163,6 +2163,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           if (!(await this.#coding.stop(msg.id))) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
         } else if (!this.#helpers.stop(msg.id)) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
         return;
+      case "atlas.job.thread":
+        this.#send(connection, { type: "atlas.job.thread", id: msg.id, rows: jobThread(this.#sql, msg.id) });
+        return;
       case "atlas.job.say": {
         if (this.#owned.owns(msg.id)) {
           // The owner's words to work Atlas owns, on its card or its question: in that work's thread, and to it at once.
@@ -2185,20 +2188,6 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         if (out.ok) append(this.#sql, { actor: "owner", kind: "settings.change", body: { job: msg.id, said: msg.text.slice(0, 300) } });
         else this.#send(connection, { type: "atlas.error", message: out.text });
         this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
-        return;
-      }
-      case "atlas.job.thread": {
-        // A job's own thread (§21.4): what Atlas said on it and the owner said to it, oldest first.
-        const rows = this.#sql
-          .exec<{ id: string }>(
-            `SELECT id FROM (SELECT id, seq FROM log WHERE json_extract(body, '$.job') = ? OR (kind = 'job.result' AND json_extract(body, '$.item_id') = ?) ORDER BY seq DESC LIMIT 200) ORDER BY seq`,
-            msg.id,
-            msg.id,
-          )
-          .toArray()
-          .map((r) => getRow(this.#sql, r.id)!)
-          .filter(Boolean);
-        this.#send(connection, { type: "atlas.job.thread", id: msg.id, rows });
         return;
       }
     }

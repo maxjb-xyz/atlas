@@ -308,6 +308,8 @@ export function Stage<T extends string>({
   tab,
   onTab,
   meta,
+  actions,
+  bodyClass,
   children,
   dock,
 }: {
@@ -316,6 +318,10 @@ export function Stage<T extends string>({
   tab?: T;
   onTab?: (t: T) => void;
   meta?: ReactNode;
+  /** Controls at the head's right end, after the metadata (Home's Now and Week). */
+  actions?: ReactNode;
+  /** A class for the body, for a page that lays out its own (Home's conversation and the stage beside it). */
+  bodyClass?: string;
   /** Home's stage; kept for callers, the space under the body now follows the dock itself. */
   home?: boolean;
   children: ReactNode;
@@ -379,8 +385,9 @@ export function Stage<T extends string>({
         )}
         <span className="grow" />
         <span className="lab meta">{meta}</span>
+        {actions}
       </div>
-      <div className="stage-body" style={dock ? { paddingBottom: room } : undefined}>
+      <div className={`stage-body ${bodyClass ?? ""}`} style={dock ? { paddingBottom: room } : undefined}>
         {children}
       </div>
       {dock}
@@ -416,6 +423,9 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
 /** An area's color: the owner's own, or its place in the deep palette. */
 export const areaColor = (a: (Pick<AreaView, "color"> & Partial<Pick<AreaView, "custom_color">>) | undefined | null) =>
   a ? (a.custom_color ?? `var(--a${a.color % 8})`) : "var(--tx3)";
+
+/** Keeps a click inside a control from also opening what it sits on (a link on a card). */
+export const stopClick = (e: React.SyntheticEvent) => e.stopPropagation();
 
 /** Closes a popover on a tap or click outside it, or on Escape; works the same by touch, mouse and keyboard. */
 export function useDismiss<T extends HTMLElement>(open: boolean, close: () => void) {
