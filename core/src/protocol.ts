@@ -556,6 +556,15 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.index.refresh") }),
   /** Custom: an extension from a link, read in a sandbox with no way out and kept as a draft to read before Install. */
   z.object({ type: z.literal("atlas.ext.link"), url: z.string().url().max(500) }),
+  /**
+   * Abilities → Skills → Get skills (§9.3, §17): what the catalog's skill hubs hold (`again` reads a hub that
+   * failed now, rather than in ten minutes); one skill in full before it's installed; installing it (or its
+   * update); removing it (archived, so it can come back).
+   */
+  z.object({ type: z.literal("atlas.hubs"), again: z.boolean().optional() }),
+  z.object({ type: z.literal("atlas.hub.preview"), hub: z.string().max(40), name: z.string().max(80) }),
+  z.object({ type: z.literal("atlas.hub.install"), hub: z.string().max(40), name: z.string().max(80) }),
+  z.object({ type: z.literal("atlas.hub.remove"), hub: z.string().max(40), name: z.string().max(80) }),
   /** An MCP App on the stage (§21.6): its page, and what the page asks of its server. `req` is echoed back. */
   z.object({ type: z.literal("atlas.mcp.app"), req: z.string().max(64), call: z.string().max(64) }),
   z.object({
@@ -639,6 +648,56 @@ export interface SkillView {
   md: string;
   /** The files in its folder beside the SKILL.md. */
   files: Array<{ path: string; size: number }>;
+  /**
+   * Where it came from, for one installed from a skill hub (§17): the hub, its repo and the commit it was
+   * installed at, the folder there, and whether the hub's newer pin changed it (Update, with `atlas.hub.install`).
+   */
+  from: { hub: string; name: string; repo: string; commit: string; folder: string; url: string; update: boolean } | null;
+}
+
+/** A skill hub in Get skills (§17): a repo of skill folders pinned to a commit, what it holds, and how the last read went. */
+export interface HubView {
+  id: string;
+  name: string;
+  about: string | null;
+  repo: string;
+  commit: string;
+  /** Its folder of skills on GitHub, at that commit. */
+  url: string;
+  /** The index that lists it. */
+  index: string;
+  /** When Atlas last read it, and why it couldn't, in GitHub's words. */
+  at: number | null;
+  error: string | null;
+  /** Its skills, or null until it's been read. */
+  skills: HubSkillView[] | null;
+}
+
+export interface HubSkillView {
+  /** Its name, as its SKILL.md has it. */
+  name: string;
+  description: string;
+  license: string | null;
+  /** The folder in the repo, its files (with the SKILL.md) and their size in bytes. */
+  folder: string;
+  files: number;
+  bytes: number;
+  /** Why it can't be installed, when it can't (a link in its folder, too big). */
+  problem: string | null;
+  /** Installed from this hub, and whether the hub's pin changed it since (`update`). */
+  installed: { id: string; commit: string; update: boolean } | null;
+  /** A skill of the same name that didn't come from here is already there. */
+  taken: boolean;
+}
+
+/** One hub skill in full, fetched and checked, to read before installing it (§17: a community skill is shown in full first). */
+export interface HubPreview {
+  hub: string;
+  name: string;
+  md: string;
+  files: Array<{ path: string; size: number }>;
+  license: string | null;
+  url: string;
 }
 
 /** A connected MCP server as Settings shows it (§9.2): never its token. */
@@ -963,6 +1022,8 @@ export interface IndexView {
   error: string | null;
   problems: string[];
   services: number;
+  /** Skill hubs it lists. */
+  hubs: number;
 }
 
 /** What installing a service would add, fetched and checked against its pins, shown before Install (§17). */
@@ -1052,6 +1113,12 @@ export type ServerMessage =
   | { type: "atlas.pages"; pages: PageSummary[] }
   | { type: "atlas.files"; files: import("./stage").FileRow[] }
   | { type: "atlas.skills"; skills: SkillView[] }
+  /** Get skills (§17): the catalog's skill hubs and what each holds. Sent when asked and after a read or an install. */
+  | { type: "atlas.hubs"; hubs: HubView[] }
+  /** One hub skill in full, or why it couldn't be fetched (a hash that doesn't match, GitHub's own words). */
+  | { type: "atlas.hub.preview"; hub: string; name: string; preview?: HubPreview; error?: string }
+  /** How installing or removing one went. */
+  | { type: "atlas.hub.done"; hub: string; name: string; ok: boolean; text: string }
   /** A provider's models for the picker, or why they couldn't be listed. */
   | { type: "atlas.brain.models"; provider: string; models: Array<{ id: string; name: string }>; error?: string }
   | { type: "atlas.mcp.servers"; servers: McpServerView[] }

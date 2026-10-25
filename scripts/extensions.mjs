@@ -85,7 +85,8 @@ writeFileSync(
 export const SNAPSHOT: unknown = ${JSON.stringify(index, null, 2)};
 `,
 );
-console.log(`Took the index's snapshot: ${seen.size} services`);
+const hubs = (index.hubs ?? []).length;
+console.log(`Took the index's snapshot: ${seen.size} services and ${hubs} skill ${hubs === 1 ? "hub" : "hubs"}`);
 
 /** A folder's icon.svg or icon.png as a data URI. */
 function iconOf(folder) {

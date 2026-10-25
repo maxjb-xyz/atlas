@@ -24,6 +24,7 @@ interface OwnerApi {
   apiCharacterCheck(): Promise<unknown>;
   apiApprove(id: string): Promise<{ ok: boolean; text: string }>;
   apiFile(id: string): Promise<{ key: string; name: string; type: string } | null>;
+  apiSkillFolder(id: string): Promise<{ name: string; zip: Uint8Array } | null>;
   apiWorkspaceGate(): Promise<{ allow: string[]; inject: Record<string, string> }>;
   apiReaction(id: string, how: "opened" | "dismissed"): Promise<void>;
 }
@@ -263,6 +264,26 @@ export default {
             "cache-control": "private, no-store",
           },
         });
+      }
+      // A skill's folder as a zip (§9.3: Download gives the folder back), its SKILL.md and every file in it.
+      const skill = /^\/api\/skills\/([\w-]{1,64})\/folder$/.exec(path);
+      if (skill && request.method === "GET") {
+        try {
+          const got = await agent.apiSkillFolder(skill[1]!);
+          if (!got) return json({ error: "That skill isn't there any more." }, 404);
+          return new Response(got.zip, {
+            headers: {
+              "content-type": "application/zip",
+              "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`${got.name}.zip`)}`,
+              "x-content-type-options": "nosniff",
+              "cache-control": "private, no-store",
+            },
+          });
+        } catch (err) {
+          const error = `Couldn't put the skill's folder together: ${err instanceof Error ? err.message : String(err)}`;
+          console.error(JSON.stringify({ at: "skills.folder", id: skill[1], error }));
+          return json({ error }, 500);
+        }
       }
       if (path === "/api/character-check" && request.method === "POST") {
         return json(await agent.apiCharacterCheck());

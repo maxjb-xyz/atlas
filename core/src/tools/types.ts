@@ -101,6 +101,15 @@ export interface ToolContext {
   automations: AutomationsApi | null;
   /** Extensions (§17): keeps one Atlas wrote as a draft, for the owner to install. Owner runs only. */
   extensions?: { draft(code: string): Promise<{ id: string; name: string; hosts: string[] }> } | null;
+  /**
+   * Skill hubs (§17): finding a skill to install, and installing one. Only a run the owner started, in the
+   * owner's own Atlas; `readWeb` says the run has read the web, which could be steering it.
+   */
+  hubs?: {
+    find(query: string): ReturnType<import("../agent/hubs").HubDesk["find"]>;
+    install(hub: string, name: string, o: { run_id: string }): ReturnType<import("../agent/hubs").HubDesk["install"]>;
+    readWeb(): boolean;
+  } | null;
   /** Speaking up changed (`speaking_up`): the moments are put on the clock again. */
   speaking?: () => Promise<void>;
   /**

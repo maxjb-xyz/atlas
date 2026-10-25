@@ -75,6 +75,12 @@ export async function undoReceipt(
           : restoreSkill(sql, s.id, undo.version - 1, "owner", `Undid version ${undo.version}.`);
       return row ? { ok: true, row, agenda: false } : { ok: false, message: "There was nothing to undo." };
     }
+    case "skill.uninstall": {
+      const s = getSkill(sql, undo.id);
+      if (!s) return { ok: false, message: "That skill isn't there any more." };
+      const row = setSkillState(sql, s.id, "archived", "owner", "Undone: removed, so it's out of what Atlas uses. Install brings it back.");
+      return row ? { ok: true, row, agenda: false } : { ok: false, message: `${s.name} was already removed.` };
+    }
     case "skill.restore": {
       const s = getSkill(sql, undo.id);
       if (!s) return { ok: false, message: "That skill isn't there any more." };

@@ -76,6 +76,8 @@ export type Undo =
   | { kind: "skill.undo"; id: string; version: number }
   /** Brings back a skill the review merged into another (§9.3). */
   | { kind: "skill.restore"; id: string }
+  /** Removes a skill Atlas installed from a skill hub (§17): archived, so Install brings it back. */
+  | { kind: "skill.uninstall"; id: string }
   /** Moves a calendar event back to where it was. */
   | { kind: "calendar.move"; id: string; title: string; start: string; end: string }
   /** Takes off the calendar an event Atlas added. */
