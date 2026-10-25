@@ -1207,10 +1207,11 @@ export type ServerMessage =
   /** A new or older thread row. The saved truth: it replaces any streamed text for its run. */
   | { type: "atlas.rows"; rows: LogRow[]; older?: boolean; has_more?: boolean }
   /** Streamed reply text for a run in progress. A progress hint only (§4.1). */
-  | { type: "atlas.delta"; run_id: string; text: string }
+  /** `job`: the run is a turn of work Atlas owns, which streams in that job's own thread, not the main one (§21.4). */
+  | { type: "atlas.delta"; run_id: string; text: string; job?: string }
   /** What Atlas is doing right now in a run, such as "Checking your calendar". */
-  | { type: "atlas.status"; run_id: string; text: string | null }
-  | { type: "atlas.run"; run_id: string; state: RunState; surface: string; client_id?: string }
+  | { type: "atlas.status"; run_id: string; text: string | null; job?: string }
+  | { type: "atlas.run"; run_id: string; state: RunState; surface: string; client_id?: string; job?: string }
   | { type: "atlas.agenda"; agenda: AgendaItem[] }
   | { type: "atlas.areas"; areas: AreaView[]; scope: string | null }
   | { type: "atlas.records"; ref: string; records: RecordView[]; counts: Record<string, number> }

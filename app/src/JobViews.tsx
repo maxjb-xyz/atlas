@@ -8,6 +8,7 @@ import type { FileRef, InboxItem, JobView, LogRow } from "../../core/src/protoco
 import type { Atlas } from "./connection";
 import { jobNow } from "./jobs";
 import { Markdown } from "./Markdown";
+import { Receipt } from "./Shell";
 import { stillMotion, useDetail } from "./theme";
 import { clock, Diamond, elapsed, Empty, Icon, morphOrigin, Selected, Sheet, shortDay, stopClick, took, useNow } from "./ui";
 
@@ -742,16 +743,17 @@ export function JobThread({ atlas, job }: { atlas: Atlas; job: JobView }) {
           <div className="jt-rows-in" ref={inner}>
             {rows == null && <p className="faint">Looking</p>}
             {rows?.length === 0 && <p className="muted">Nothing said on it yet.</p>}
-            {rows?.map((r) => (
-              <JobRow key={r.id} atlas={atlas} row={r} />
-            ))}
+            {rows && <Turns atlas={atlas} job={job} rows={rows} />}
           </div>
         </div>
         {o?.files && o.files.length > 0 && (
-          <div className="jt-files">
-            <span className="faint small">Made so far</span>
+          // Folded by default, so what's made never crowds the conversation; one tap opens it.
+          <details className="jt-files">
+            <summary className="faint small">
+              Made so far · {o.files.length} {o.files.length === 1 ? "file" : "files"}
+            </summary>
             <FileChips files={filesOf(o.files)} />
-          </div>
+          </details>
         )}
         {job.state === "running" && (
           <form
@@ -792,22 +794,97 @@ export function JobThread({ atlas, job }: { atlas: Atlas; job: JobView }) {
   );
 }
 
+/**
+ * A job's own thread as a conversation (§21.4): the owner's words, and each of Atlas's turns as a reply with what it
+ * did as chips under it; the turn under way streams in with what it's doing now, the way a reply does in the main thread.
+ */
+function Turns({ atlas, job, rows }: { atlas: Atlas; job: JobView; rows: LogRow[] }) {
+  const live = Object.entries(atlas.state.live).find(([, l]) => l.job === job.id);
+  const byRun = new Map<string, LogRow[]>();
+  for (const r of rows) if (r.kind === "tool.result" && r.run_id) byRun.set(r.run_id, [...(byRun.get(r.run_id) ?? []), r]);
+  const told = new Set(rows.filter((r) => r.kind === "job.update" && r.body.turn).map((r) => String(r.body.turn)));
+  const shownRuns = new Set<string>();
+  const out: React.ReactNode[] = [];
+  for (const r of rows) {
+    if (r.kind === "tool.result") {
+      const run = r.run_id;
+      // A turn's chips sit under its words, or under the turn while it's under way; a turn that said nothing shows them alone.
+      if (!run || told.has(run) || run === live?.[0] || shownRuns.has(run)) continue;
+      shownRuns.add(run);
+      out.push(
+        <div key={r.id} className="msg atlas">
+          <span className="mark" />
+          <div className="body">
+            <Chips atlas={atlas} rows={byRun.get(run) ?? [r]} />
+          </div>
+        </div>,
+      );
+      continue;
+    }
+    out.push(
+      <JobRow
+        key={r.id}
+        atlas={atlas}
+        row={r}
+        chips={r.kind === "job.update" && r.body.turn ? (byRun.get(String(r.body.turn)) ?? []) : []}
+      />,
+    );
+  }
+  if (live) {
+    const [run, l] = live;
+    out.push(
+      <div key={run} className="msg atlas live">
+        <span className="mark">
+          <Diamond size={13} />
+        </span>
+        <div className="body">
+          {(l.status || !l.text) && <TurnWorking run={run} status={l.status} />}
+          {l.text && <Markdown className="said streaming" text={l.text} />}
+          <Chips atlas={atlas} rows={byRun.get(run) ?? []} />
+        </div>
+      </div>,
+    );
+  }
+  return <>{out}</>;
+}
+
+const turnSince = new Map<string, number>();
+
+/** What a turn is doing now, with how long it's been at it. */
+function TurnWorking({ run, status }: { run: string; status: string | null }) {
+  const now = useNow(1000);
+  if (!turnSince.has(run)) turnSince.set(run, now);
+  return (
+    <p className="working" aria-live="polite">
+      <span className="mono spin" aria-hidden />
+      <span className="w-text" key={status ?? "thinking"}>
+        {status ?? "Thinking"}
+      </span>
+      <span className="w-time mono">{elapsed(now - turnSince.get(run)!)}</span>
+    </p>
+  );
+}
+
+/** What Atlas did, as the receipts' chips. */
+function Chips({ atlas, rows }: { atlas: Atlas; rows: LogRow[] }) {
+  if (!rows.length) return null;
+  return (
+    <div className="receipts">
+      {rows.map((r, i) => (
+        <span key={r.id} style={{ "--i": i } as React.CSSProperties}>
+          <Receipt row={r} atlas={atlas} undone={false} />
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** One row of a job's own thread. */
-function JobRow({ atlas, row }: { atlas: Atlas; row: LogRow }) {
+function JobRow({ atlas, row, chips = [] }: { atlas: Atlas; row: LogRow; chips?: LogRow[] }) {
   const b = row.body;
   const when = <span className="when">{clock(row.at)}</span>;
   // An answer shows on its question; it isn't said again under it.
   if (row.kind === "message.in" && b.answers != null) return null;
-  // What Atlas did on the job, as its receipts: a page read, the browser opened.
-  if (row.kind === "tool.result") {
-    const r = b.receipt as { text?: string } | undefined;
-    return r?.text ? (
-      <p className="jt-did mono small faint">
-        <span aria-hidden>✓ </span>
-        {r.text}
-      </p>
-    ) : null;
-  }
   if (row.kind === "message.in" || (row.kind === "settings.change" && b.said != null))
     return (
       <div className="msg owner">
@@ -848,6 +925,7 @@ function JobRow({ atlas, row }: { atlas: Atlas; row: LogRow }) {
       <div className="body">
         <Markdown className="said" text={str(b.text)} />
         <Files files={filesOf(b.files)} />
+        <Chips atlas={atlas} rows={chips} />
         {when}
       </div>
     </div>

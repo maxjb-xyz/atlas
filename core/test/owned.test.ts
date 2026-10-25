@@ -269,6 +269,39 @@ describe("work Atlas owns (§8.3)", () => {
       expect(rowsOf(sql, "job.result")).toEqual([]);
     }));
 
+  it("stops a turn when the owner speaks, keeping its work and leaving no call without its result, and answers them next", () =>
+    withSql(async (sql) => {
+      const { desk, st } = testDesk(sql, [
+        async (d, j, _input, o) => {
+          await d.answer(j.id, "Actually, make it 15 seconds.");
+          // Cut short mid-tool: a call is in the transcript without its result.
+          expect(o.signal.aborted).toBe(true);
+          return {
+            text: "Cutting the",
+            interrupted: true,
+            messages: [
+              ...j.transcript,
+              { role: "user", content: "start" },
+              { role: "assistant", content: "Rendering.", toolCalls: [{ id: "c1", name: "folder_run", input: {} }] },
+            ],
+          };
+        },
+        (_d, j, input) => {
+          expect(input).toContain("The owner said about this: Actually, make it 15 seconds.");
+          // The call that never came back is gone, so the brain takes the transcript; what Atlas said stays.
+          expect(j.transcript.at(-1)).toEqual({ role: "assistant", content: "Rendering." });
+          return "Got it, 15 seconds.";
+        },
+      ]);
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      // Nothing half-said reaches the thread; the next turn starts now.
+      expect(rowsOf(sql, "job.update")).toEqual([]);
+      expect(st.watches.at(-1)!.at).toBeLessThanOrEqual(Date.now() + 1_000);
+      await desk.wake(job.id);
+      expect(rowsOf(sql, "job.update").at(-1)).toMatchObject({ text: "Got it, 15 seconds." });
+    }));
+
   it("keeps moving: a turn that ends without a move is told so once, then the owner hears it's stuck; a turn cut short carries on", () =>
     withSql(async (sql) => {
       const { desk, st } = testDesk(sql, [

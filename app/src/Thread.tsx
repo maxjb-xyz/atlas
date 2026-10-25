@@ -112,7 +112,8 @@ function arrange(rows: LogRow[], live: Record<string, Live>, jobs: JobView[], pe
     if (i < 0) items.push(item);
     else items.splice(i, 0, item);
   };
-  for (const [run, l] of Object.entries(live)) {
+  // A job's turn streams in its own thread (§21.4), not here.
+  for (const [run, l] of Object.entries(live).filter(([, x]) => !x.job)) {
     const item: Item = { k: "live", live: l, receipts: lastOut.has(run) ? [] : (receipts.get(run) ?? []), run, at: Date.now() };
     if (!after(run, item)) items.push(item);
   }
@@ -161,7 +162,7 @@ export function diamondState(atlas: Atlas): DiamondState {
     const v = atlas.voice.status;
     return v === "listening" || v === "thinking" || v === "speaking" ? v : "idle";
   }
-  return Object.values(atlas.state.live).some((l) => l.surface !== "voice") || atlas.state.pending.some((p) => !p.run_id)
+  return Object.values(atlas.state.live).some((l) => l.surface !== "voice" && !l.job) || atlas.state.pending.some((p) => !p.run_id)
     ? "thinking"
     : "idle";
 }

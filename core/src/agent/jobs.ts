@@ -117,6 +117,9 @@ export interface Job {
   progress_at: number;
 }
 
+/** Why a turn is cut short when the owner speaks to it mid-turn. */
+export const INTERRUPTED = "The owner said something.";
+
 /** A job's budget unless the owner raises it: enough for a real project, still bounded. */
 export const JOB_BUDGET = { turns: 40 };
 /** One turn's budget: long enough to get real work done, short enough that news is heard. */
@@ -187,6 +190,10 @@ export function ranOut(error: string): boolean {
 
 /** What a turn hands back. */
 export interface TurnResult {
+  /** The turn's run, whose receipts sit under its last words in the job's thread. */
+  run?: string;
+  /** Cut short on purpose: the owner said something, so the next turn hears it at once. */
+  interrupted?: boolean;
   state: "replied" | "failed" | "deferred";
   text: string;
   /** The transcript as the turn left it: its input, what it did, and its last words. */
@@ -622,7 +629,14 @@ export class JobDesk {
       this.h.changed();
       return;
     }
-    current = { ...current, transcript: out.messages, progress_at: Date.now() };
+    current = { ...current, transcript: tidy(out.messages), progress_at: Date.now() };
+    if (out.interrupted) {
+      // The owner spoke mid-turn: the work so far is kept, and the next turn starts now with their words.
+      saveOwned(this.h.sql, current);
+      this.h.changed();
+      await this.h.watch(job.id, Date.now() + 500);
+      return;
+    }
     if (out.state === "failed" && out.error) {
       // It stopped partway: the brain running out pauses the job and asks (§18); anything else is tried again in a while.
       if (ranOut(out.error)) {
@@ -646,7 +660,7 @@ export class JobDesk {
     const said = out.text.trim();
     if (said) {
       current = { ...current, latest: { at: Date.now(), text: said } };
-      if (current.phase === "working") this.#post(current, "job.update", { text: said });
+      if (current.phase === "working") this.#post(current, "job.update", { text: said, ...(out.run ? { turn: out.run } : {}) });
     }
     const moved = current.turn_moved === true;
     if (current.phase === "working" && !current.work.length && !current.news.length && !current.until) {
@@ -841,8 +855,11 @@ export class JobDesk {
       news: [...job.news, news],
       ...(answering ? { question: null, phase: "working" as const, until: null, answered_at: now } : {}),
     });
-    // Mid-turn, the turn's end wakes it for these; otherwise its next turn is now.
-    if (!this.#turning.has(id)) await this.h.watch(id, now + 1_000);
+    // Mid-turn, the turn stops where it is (its work kept) and the next one starts with their words, as in a chat;
+    // otherwise its next turn is now.
+    const turning = this.#turning.get(id);
+    if (turning) turning.abort(INTERRUPTED);
+    else await this.h.watch(id, now + 1_000);
     return { ok: true, text: answering ? "They answered; it carries on with that." : "It takes that in now." };
   }
 
@@ -1237,6 +1254,23 @@ export function ownedLines(sql: Sql, live: (j: Job) => boolean): string[] {
                 : "working";
       return `- ${j.title} (id ${j.id}): ${where}${j.latest ? `; you last said on it: "${clip(j.latest.text, 200)}"` : ""}`;
     });
+}
+
+/**
+ * A transcript a provider takes: a turn cut short mid-tool leaves calls without their results, which the next turn's
+ * brain refuses, so those calls (and results without a call) are left out; what Atlas said with them stays.
+ */
+export function tidy(messages: Message[]): Message[] {
+  const answered = new Set(messages.flatMap((m) => (m.role === "tool" ? [m.callId] : [])));
+  const called = new Set(messages.flatMap((m) => (m.role === "assistant" ? (m.toolCalls ?? []).map((c) => c.id) : [])));
+  return messages.flatMap((m): Message[] => {
+    if (m.role === "tool") return called.has(m.callId) ? [m] : [];
+    if (m.role !== "assistant" || !m.toolCalls?.length) return [m];
+    const calls = m.toolCalls.filter((c) => answered.has(c.id));
+    if (calls.length === m.toolCalls.length) return [m];
+    if (!calls.length) return m.content ? [{ role: "assistant", content: m.content }] : [];
+    return [{ ...m, toolCalls: calls }];
+  });
 }
 
 /** What a turn knows of time (§8.3): how long the job has run, when it last moved forward, its deadline. */

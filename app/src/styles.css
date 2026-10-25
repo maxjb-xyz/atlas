@@ -3269,8 +3269,35 @@ a.file-chip:hover {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 14px 0 4px;
+  padding: 10px 0 2px;
   border-top: 1px dashed var(--sep2);
+}
+.jt-files > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+.jt-files > summary::-webkit-details-marker {
+  display: none;
+}
+.jt-files > summary::before {
+  content: "▸";
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+.jt-files[open] > summary::before {
+  transform: rotate(90deg);
+}
+.jt-files[open] > summary {
+  margin-bottom: 8px;
+}
+/* Open, it still leaves the conversation room: a short shelf that scrolls. */
+.jt-files[open] > :not(summary) {
+  max-height: 136px;
+  overflow-y: auto;
 }
 .jt-say {
   margin-top: 14px;

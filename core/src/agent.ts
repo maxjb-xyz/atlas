@@ -23,7 +23,7 @@ import { HelperDesk, helperBrain, RESEARCH_BUDGET } from "./agent/helpers";
 import { CodingDesk, getJob, type JobWorkspace, type PullRequest } from "./agent/coding";
 import { codingTools, type Effort } from "./tools/coding";
 import { settingsTools } from "./tools/settings";
-import { getOwned, inFolder, type Job, JOB_LIMITS, type JobHost, JobDesk, TURN_BUDGET } from "./agent/jobs";
+import { getOwned, inFolder, INTERRUPTED, type Job, JOB_LIMITS, type JobHost, JobDesk, TURN_BUDGET } from "./agent/jobs";
 import { adoptOldJobs } from "./agent/adopt";
 import { CallDesk } from "./agent/calls";
 import { folderRun, jobOwn, MOVES, READ_TOOLS } from "./tools/jobs";
@@ -3868,6 +3868,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const id = job.id;
     const d = this.#owned;
     const started = Date.now();
+    // The turn shows as it goes in the job's own thread, like a reply in the conversation: its words, and what it's doing.
+    this.#broadcast({ type: "atlas.run", run_id: runId, state: "running", surface: "none", job: id });
     // What the turn does is the job's: its tool rows carry the job, so they show in its thread, not the main one.
     const log = logTo(sql);
     const res: LoopResult = await runLoop(
@@ -3910,7 +3912,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         checkpoint: (c) => o.checkpoint(c.messages),
       },
       (e) => {
-        if (e.type === "status") o.now(e.text);
+        if (e.type === "status") {
+          o.now(e.text);
+          this.#broadcast({ type: "atlas.status", run_id: runId, text: e.text, job: id });
+        } else if (e.type === "text") this.#broadcast({ type: "atlas.delta", run_id: runId, text: e.text, job: id });
         else if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });
       },
     ).catch((err: unknown): LoopResult => ({
@@ -3928,7 +3933,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       ...(res.brain ? { brain: brainKey(res.brain) } : {}),
       usage: res.usage as never,
     });
+    this.#broadcast({ type: "atlas.run", run_id: runId, state: res.state, surface: "none", job: id });
     return {
+      run: runId,
+      interrupted: res.interrupted && o.signal.reason === INTERRUPTED,
       state: res.state,
       text: res.text,
       messages: res.messages?.length ? res.messages : [],

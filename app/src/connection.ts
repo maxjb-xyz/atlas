@@ -47,6 +47,8 @@ export interface Live {
   text: string;
   status: string | null;
   surface: string;
+  /** A turn of work Atlas owns: it shows in that job's own thread, not the main one. */
+  job?: string;
 }
 
 export interface TestResult {
@@ -210,7 +212,7 @@ function mergeRows(a: LogRow[], b: LogRow[]): LogRow[] {
 /** The job a log row belongs to, when it's one of a job's own rows (§21.4). */
 export function jobOf(r: LogRow): string | null {
   if (r.kind === "job.result") return typeof r.body.item_id === "string" ? r.body.item_id : null;
-  if (["job.update", "job.question", "message.in", "message.out", "settings.change"].includes(r.kind))
+  if (["job.update", "job.question", "message.in", "message.out", "settings.change", "tool.result"].includes(r.kind))
     return typeof r.body.job === "string" ? r.body.job : null;
   return null;
 }
@@ -287,11 +289,11 @@ function reduce(s: State, a: Action): State {
       return { ...s, rows: mergeRows(s.rows, m.rows), live, pending, noOlder, recordsVersion, jobThreads };
     }
     case "atlas.delta": {
-      const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app" };
+      const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app", ...(m.job ? { job: m.job } : {}) };
       return { ...s, live: { ...s.live, [m.run_id]: { ...cur, text: cur.text + m.text, status: null } } };
     }
     case "atlas.status": {
-      const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app" };
+      const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app", ...(m.job ? { job: m.job } : {}) };
       return { ...s, live: { ...s.live, [m.run_id]: { ...cur, status: m.text } } };
     }
     case "atlas.run": {
@@ -301,7 +303,7 @@ function reduce(s: State, a: Action): State {
         live = without(live, m.run_id);
         pending = pending.filter((p) => p.run_id !== m.run_id);
       } else if (!live[m.run_id]) {
-        live = { ...live, [m.run_id]: { text: "", status: null, surface: m.surface } };
+        live = { ...live, [m.run_id]: { text: "", status: null, surface: m.surface, ...(m.job ? { job: m.job } : {}) } };
       }
       return { ...s, pending, live };
     }

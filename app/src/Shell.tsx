@@ -657,7 +657,9 @@ export function Receipt({
 export function VoiceStrip({ atlas }: { atlas: Atlas }) {
   const { status, interim, level, latencyMs } = atlas.voice;
   const label = status === "idle" ? "Starting" : status[0]!.toUpperCase() + status.slice(1);
-  const live = Object.values(atlas.state.live).at(-1);
+  const live = Object.values(atlas.state.live)
+    .filter((l) => !l.job)
+    .at(-1);
   const bars = Array.from({ length: 28 }, (_, i) =>
     Math.max(0.12, Math.min(1, level * 6 * (0.55 + 0.45 * Math.abs(Math.sin(i * 1.7 + level * 9))))),
   );
