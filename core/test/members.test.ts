@@ -70,6 +70,7 @@ describe("members", { timeout: 20_000 }, () => {
     expect((await session(cookieOf(login))).person.member).toBe(id);
     // The owner's API is the owner's.
     expect((await SELF.fetch(`${ORIGIN}/api/log`, { headers: { cookie } })).status).toBe(403);
+    expect((await post("/api/judge", { yardstick: "y", transcript: [{ who: "owner", text: "hi" }] }, cookie)).status).toBe(403);
     // The owner's Settings lists them; their passkey isn't the owner's.
     const s = await connect();
     s.send({ type: "atlas.hello" });

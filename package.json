@@ -17,6 +17,7 @@
     "bench": "npm run bench -w bench --",
     "format": "prettier --write \"core/src/**/*.ts\" \"core/test/**/*.ts\" \"app/src/**/*.{ts,tsx,css}\" \"bench/*.ts\" \"extensions/**/*.ts\"",
     "eval:character": "npm run eval:character -w bench --",
+    "eval:jarvis": "npm run eval:jarvis -w bench --",
     "extensions": "node scripts/extensions.mjs"
   },
   "engines": {
