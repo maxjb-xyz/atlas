@@ -233,6 +233,10 @@ export function isThreadRow(row: LogRow): boolean {
   if (row.kind === "agenda.change" || row.kind === "record.change") return row.body.undo_of != null;
   // Atlas starting an area is said once, in the thread (§6.3).
   if (row.kind === "area.change") return row.body.change === "started";
+  // A job's questions are messages in the thread, with their buttons (§21.4), and so is the result of a job that
+  // made files; a step's result, or a helper's that Atlas reported in its own words, isn't.
+  if (row.kind === "job.question") return true;
+  if (row.kind === "job.result") return Array.isArray(row.body.files) && row.body.of == null;
   return false;
 }
 
@@ -246,7 +250,31 @@ export const THREAD_KINDS: LogKind[] = [
   "record.change",
   "area.change",
   "voice.problem",
+  "job.question",
+  "job.result",
 ];
+
+/**
+ * A job's own thread (§21.4), oldest first: what Atlas said on it, its questions and result, and the owner's words
+ * to it (a message for the job, or the words `atlas.job.say` kept). Rows name their job in `job`; a result in `item_id`.
+ */
+export function jobThread(sql: Sql, job: string, limit = 200): LogRow[] {
+  return sql
+    .exec<RawRow>(
+      `SELECT * FROM log WHERE (
+         (kind IN ('job.update', 'job.question', 'message.in', 'message.out') AND json_extract(body, '$.job') = ?)
+         OR (kind = 'job.result' AND json_extract(body, '$.item_id') = ?)
+         OR (kind = 'settings.change' AND json_extract(body, '$.job') = ? AND json_extract(body, '$.said') IS NOT NULL)
+       ) ORDER BY seq DESC LIMIT ?`,
+      job,
+      job,
+      job,
+      limit,
+    )
+    .toArray()
+    .reverse()
+    .map(fromRaw);
+}
 
 export function thread(sql: Sql, limit: number, beforeSeq?: number): LogRow[] {
   // Some rows of these kinds aren't shown (tool results without receipts, record changes

@@ -96,7 +96,7 @@ import {
 import { addIndex, removeIndex } from "./services";
 import { type AgendaItem, createItem, due, finish, getItem, lease, rearm, setScheduleId, upcoming } from "./store/agenda";
 import { migrate, newId, parse, type Sql } from "./store/db";
-import { type Actor, append, forRun, get as getRow, type LogRow, logTo, type Surface, thread } from "./store/log";
+import { type Actor, append, forRun, get as getRow, jobThread, type LogRow, logTo, type Surface, thread } from "./store/log";
 import { indexNewMessages } from "./store/memory";
 import { getState, setState } from "./store/state";
 import { endRun, getRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
@@ -2116,6 +2116,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         } else if (getJob(this.#sql, msg.id)) {
           if (!(await this.#coding.stop(msg.id))) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
         } else if (!this.#helpers.stop(msg.id)) this.#send(connection, { type: "atlas.error", message: "That job isn't running." });
+        return;
+      case "atlas.job.thread":
+        this.#send(connection, { type: "atlas.job.thread", id: msg.id, rows: jobThread(this.#sql, msg.id) });
         return;
       case "atlas.job.say": {
         const out = this.#goals.owns(msg.id)
