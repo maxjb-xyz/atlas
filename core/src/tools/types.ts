@@ -61,6 +61,14 @@ export interface ToolContext {
   coding?: CodingApi | null;
   /** Jobs Atlas owns (§8.3): owner runs start one. */
   goals?: GoalsApi | null;
+  /**
+   * Changing Atlas's own settings (§21), only in a run the owner started: the change, through the same path as the
+   * app's, and whether this run has read the web (§20), which keeps it from loosening the owner's rules.
+   */
+  settingsEdit?: {
+    change(patch: import("../store/settings").SettingsPatch): { ok: boolean; text: string };
+    readWeb(): boolean;
+  } | null;
   /** A job's look (§8.3): its moves, bound to that job. Null elsewhere. */
   goalLook?: GoalLookApi | null;
   /**

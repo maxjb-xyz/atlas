@@ -22,6 +22,7 @@ import {
 import { HelperDesk, helperBrain, RESEARCH_BUDGET } from "./agent/helpers";
 import { CodingDesk, getJob, type JobWorkspace, type PullRequest } from "./agent/coding";
 import { codingTools, type Effort } from "./tools/coding";
+import { settingsTools } from "./tools/settings";
 import { getGoal, type GoalHost, GoalDesk, type GoalJob, inFolder, JOB_LIMITS } from "./agent/goals";
 import { CallDesk } from "./agent/calls";
 import { folderRun, jobOwn, lookTools, STEP_TOOLS } from "./tools/goals";
@@ -272,6 +273,7 @@ const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
  */
 const TOOLS: Record<Actor, Tool[]> = {
   owner: [
+    ...settingsTools,
     calendarRead,
     calendarMove,
     calendarAdd,
@@ -2993,6 +2995,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         chain: o.chain ?? settings.brains[o.role],
         toolContext: {
           ...this.#toolContext(settings, now, via, o.sourceLogId),
+          // Only a run the owner started changes Atlas's own settings, and not to loosen their rules once it has read the web.
+          ...(o.actor === "owner"
+            ? { settingsEdit: { change: (patch) => this.#updateSettings(patch, "atlas"), readWeb: () => this.#readTheWeb(o.runId) } }
+            : {}),
           ...(o.context ?? {}),
           // Code Mode (§9.1): a program calls this run's own tools, and each call is a row of this run, with its receipt.
           tools,
@@ -4062,17 +4068,16 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
 
   // --- settings, secrets and sign-in ---------------------------------------------
 
-  #updateSettings(patch: Parameters<typeof writeSettings>[1]): void {
+  /** Changes settings, from the app or from Atlas when the owner asked (`by`). Says why not, when it can't. */
+  #updateSettings(patch: Parameters<typeof writeSettings>[1], by?: "atlas"): { ok: boolean; text: string } {
     if (patch.timezone && !isValidZone(patch.timezone)) {
-      this.#broadcast({
-        type: "atlas.error",
-        message: `"${patch.timezone}" isn't a time zone Atlas knows. Try one like America/New_York.`,
-      });
-      return;
+      const message = `"${patch.timezone}" isn't a time zone Atlas knows. Try one like America/New_York.`;
+      if (!by) this.#broadcast({ type: "atlas.error", message });
+      return { ok: false, text: message };
     }
     const wasOn = readSettings(this.#sql).location.on;
     const keys = writeSettings(this.#sql, patch);
-    if (keys.length) append(this.#sql, { actor: "owner", kind: "settings.change", body: { keys } });
+    if (keys.length) append(this.#sql, { actor: "owner", kind: "settings.change", body: { keys, ...(by ? { by } : {}) } });
     const isOn = readSettings(this.#sql).location.on;
     if (wasOn !== isOn) {
       if (!isOn) forgetWhere(this.#sql);
@@ -4081,6 +4086,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
     if (keys.includes("calendar") || keys.includes("timezone")) this.#calendar.reset();
     this.#refreshVoice();
     this.#broadcast({ type: "atlas.view", view: this.#view() });
+    return { ok: true, text: keys.length ? `Changed ${keys.join(", ")}.` : "Nothing changed." };
   }
 
   /**

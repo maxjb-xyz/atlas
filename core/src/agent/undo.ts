@@ -123,6 +123,13 @@ export async function undoReceipt(
       const row = append(sql, { actor: "owner", kind: "settings.change", body: { keys: ["speaking"], ...mark } });
       return { ok: true, row, agenda: false };
     }
+    case "settings.restore": {
+      const back = SettingsPatch.safeParse(undo.before);
+      if (!back.success) return { ok: false, message: `Those settings can't be put back: ${back.error.message}` };
+      const keys = writeSettings(sql, back.data);
+      const row = append(sql, { actor: "owner", kind: "settings.change", body: { keys, ...mark } });
+      return { ok: true, row, agenda: false };
+    }
     case "account.restore": {
       if (undo.area) {
         const a = getArea(sql, undo.area);

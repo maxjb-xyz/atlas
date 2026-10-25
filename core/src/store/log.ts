@@ -82,6 +82,8 @@ export type Undo =
   | { kind: "calendar.remove"; id: string; title: string }
   /** Puts Speaking up back the way it was before Atlas changed it. */
   | { kind: "speaking.restore"; before: unknown }
+  /** Puts back settings Atlas changed when asked: each changed setting as it was. */
+  | { kind: "settings.restore"; before: Json }
   /** Puts back which account new mail goes from: the owner's default (no area) or one area's. */
   | { kind: "account.restore"; area: string | null; before: string }
   /** Takes back an extension tool's change (§17): its `undo` tool, with the input the call gave back for it. */
