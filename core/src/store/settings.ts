@@ -209,6 +209,11 @@ export const Settings = z.object({
     .default({ noticing: true, leave: true, quiet_about: [], tell_about: [] }),
   /** How Atlas says temperatures, speeds and distances. "auto" follows the time zone: US zones get °F and miles. */
   units: z.enum(["auto", "us", "metric"]).default("auto"),
+  /**
+   * Updates (§23.2): whether Atlas installs a new release on its own, at a quiet time, when it can go in as a
+   * version of the Worker, and then says what it installed. Off by default; Update now works either way.
+   */
+  updates: z.object({ auto: z.boolean().default(false) }).default({ auto: false }),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -237,6 +242,7 @@ export const SettingsPatch = z.object({
   accounts: f.accounts.unwrap().optional(),
   units: f.units.unwrap().optional(),
   speaking: f.speaking.unwrap().optional(),
+  updates: f.updates.unwrap().optional(),
 } satisfies { [K in keyof typeof f]: z.ZodType });
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
 

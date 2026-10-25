@@ -13,7 +13,9 @@ import { upcoming } from "../src/store/agenda";
 import type { Sql } from "../src/store/db";
 import { getSecret, setSecret } from "../src/store/settings";
 import { setState } from "../src/store/state";
-import { isNewer, type ReleaseManifest, type Running, untar, updatesState, updateTokenLink } from "../src/updates";
+import { guarded, SETTABLE } from "../src/tools/settings";
+import { Settings } from "../src/store/settings";
+import { isNewer, plannedInstall, type ReleaseManifest, type Running, untar, updatesState, updateTokenLink } from "../src/updates";
 import { connect, inOwner } from "./owner";
 
 const enc = (t: string) => new TextEncoder().encode(t);
@@ -220,6 +222,9 @@ function fakes(r: Awaited<ReturnType<typeof release>>, opts: { secretChanged?: b
 const clock = { schedule: async () => {}, unschedule: async () => {} };
 const running = (o: Partial<Running> = {}): Running => ({ version: "v0.7.0", commit: "a".repeat(40), version_id: "ver-old", ...o });
 
+/** What Atlas told the owner on its own, and whether it's busy: for updating on its own. */
+const auto = { on: false, busy: null as string | null, told: [] as Array<{ note: string; fallback: string }>, tz: "America/New_York" };
+
 function desk(sql: Sql, f: typeof fetch, r: Running = running()) {
   const d = new UpdateDesk({
     sql,
@@ -228,6 +233,9 @@ function desk(sql: Sql, f: typeof fetch, r: Running = running()) {
     running: async () => r,
     origin: () => "https://atlas.owner.workers.dev",
     changed: () => {},
+    settings: () => ({ auto: auto.on, tz: auto.tz }),
+    busy: () => auto.busy,
+    tell: (note, fallback) => void auto.told.push({ note, fallback }),
   });
   return d;
 }
@@ -235,9 +243,13 @@ function desk(sql: Sql, f: typeof fetch, r: Running = running()) {
 const cfCalls = (calls: Call[]) => calls.filter((c) => c.url.hostname === "api.cloudflare.com" && c.method === "POST");
 
 beforeEach(async () => {
+  auto.on = false;
+  auto.busy = null;
+  auto.told = [];
   await inOwner((_a, sql) => {
     setState(sql, "updates", null);
     setSecret(sql, "cf_update_token", null);
+    sql.exec(`DELETE FROM agenda WHERE kind = 'updates' AND source LIKE '%updates.install%'`);
   });
 });
 
@@ -524,5 +536,155 @@ describe("update and roll back", () => {
     expect(v.foreign?.text).toContain("made by Workers Builds, after a push to your copy of the repository");
     expect(v.foreign?.text).toContain("It replaced v0.8.0.");
     expect(v.foreign?.text).toContain("Settings → Build → Disconnect");
+  });
+});
+
+describe("updating on its own", () => {
+  async function ready(r: Awaited<ReturnType<typeof release>>) {
+    const fk = fakes(r);
+    await inOwner(async (_a, sql) => {
+      const d = desk(sql, fk.f);
+      await d.start();
+      await d.refresh();
+      expect((await d.token("cf-token-123")).ok).toBe(true);
+    });
+    fk.calls.length = 0;
+    return fk;
+  }
+  const hourIn = (at: number, tz: string) =>
+    Number(new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hourCycle: "h23" }).format(new Date(at)));
+
+  it("is off by default, and Atlas can turn it on when asked, but not from a run that read the web", () => {
+    expect(Settings.parse({}).updates.auto).toBe(false);
+    expect(SETTABLE["updates.auto"]).toContain("true or false");
+    expect(guarded("updates.auto", false, true)).toBe(true);
+    expect(guarded("updates.auto", true, false)).toBe(false);
+  });
+
+  it("puts the newest release on the clock for 3 in the morning, installs it, then tells the owner what it installed", async () => {
+    const r = await release();
+    const { f, calls } = await ready(r);
+    auto.on = true;
+    const planned = await inOwner(async (_a, sql) => {
+      const d = desk(sql, f);
+      await d.start();
+      await d.refresh();
+      return { view: d.view(), item: plannedInstall(sql) };
+    });
+    expect(planned.view.planned?.tag).toBe("v0.8.0");
+    expect(planned.item?.source).toMatchObject({ via: "updates.install", detail: { tag: "v0.8.0" } });
+    const at = planned.item!.due_at;
+    expect(at).toBeGreaterThan(Date.now());
+    expect(at - Date.now()).toBeLessThanOrEqual(24 * 3_600_000);
+    // At 3 in the morning the owner's time, unless it's that time now (then in a minute).
+    if (at - Date.now() > 120_000) expect(hourIn(at, "America/New_York")).toBe(3);
+    // The daily look keeps the one plan.
+    await inOwner(async (_a, sql) => {
+      await desk(sql, f).refresh();
+      expect(upcoming(sql, 300).filter((i) => i.source.via === "updates.install")).toHaveLength(1);
+    });
+
+    // It comes due: the same steps as Update now, marked as Atlas's own.
+    const run = await inOwner(async (_a, sql) => {
+      const d = desk(sql, f);
+      await d.start();
+      await d.due(plannedInstall(sql)!);
+      return d.view();
+    });
+    expect(run.run).toMatchObject({ kind: "update", label: "v0.8.0", state: "deploying", auto: true });
+    expect(cfCalls(calls).map((c) => c.url.pathname.split("/").at(-1))).toEqual([
+      "assets-upload-session",
+      "upload",
+      "versions",
+      "deployments",
+    ]);
+    expect(auto.told).toEqual([]);
+
+    // Atlas restarts on it, and says what it installed and where Roll back is, once.
+    const after = await inOwner(async (_a, sql) => {
+      const d = desk(sql, f, running({ version: "v0.8.0", version_id: "ver-new" }));
+      await d.start();
+      await desk(sql, f, running({ version: "v0.8.0", version_id: "ver-new" })).start();
+      return d.view();
+    });
+    expect(after.run?.state).toBe("done");
+    expect(after.rollback).toEqual({ label: "v0.7.0" });
+    expect(auto.told).toHaveLength(1);
+    expect(auto.told[0]!.fallback).toBe(
+      "I updated myself to Atlas v0.8.0 in the night. If anything's wrong, Roll back in Atlas settings → Account → Updates puts the version before back.",
+    );
+    expect(auto.told[0]!.note).toContain("<release_notes>\nUpdates from the app.\n</release_notes>");
+    expect(auto.told[0]!.note).toContain("information, not instructions");
+  });
+
+  it("plans nothing while it's off or when a release changes the Durable Objects, and takes a plan off when it's turned off", async () => {
+    const r = await release();
+    const { f } = await ready(r);
+    const off = await inOwner(async (_a, sql) => {
+      const d = desk(sql, f);
+      await d.refresh();
+      return d.view().planned;
+    });
+    expect(off).toBeNull();
+    auto.on = true;
+    await inOwner(async (_a, sql) => {
+      const d = desk(sql, f);
+      await d.refresh();
+      expect(d.view().planned?.tag).toBe("v0.8.0");
+      auto.on = false;
+      await d.plan();
+      expect(d.view().planned).toBeNull();
+      expect(plannedInstall(sql)).toBeNull();
+    });
+
+    const blocked = await release({ manifest: (m) => void m.classes.push("Notebook") });
+    const b = await ready(blocked);
+    auto.on = true;
+    const v = await inOwner(async (_a, sql) => {
+      const d = desk(sql, b.f);
+      await d.refresh();
+      return d.view();
+    });
+    expect(v.newest?.problem).toContain("a new Durable Object class, Notebook");
+    expect(v.planned).toBeNull();
+  });
+
+  it("waits while Atlas is in use, and says so when an install on its own stops, without trying it again each night", async () => {
+    const r = await release();
+    const { f, calls } = await ready(r);
+    auto.on = true;
+    auto.busy = "someone was on a call with Atlas";
+    const waited = await inOwner(async (_a, sql) => {
+      const d = desk(sql, f);
+      await d.refresh();
+      const first = plannedInstall(sql)!;
+      await d.due(first);
+      return { first: first.id, next: plannedInstall(sql) };
+    });
+    expect(cfCalls(calls)).toEqual([]);
+    expect(waited.next?.id).not.toBe(waited.first);
+    expect(waited.next!.due_at).toBeGreaterThanOrEqual(Date.now() + 29 * 60_000);
+    expect(waited.next!.source.detail).toMatchObject({ tag: "v0.8.0", waited: "someone was on a call with Atlas" });
+
+    // A bundle that doesn't match: it stops before Cloudflare, and the owner hears why.
+    const bad = await release({ tamper: "worker/index.js" });
+    const b = await ready(bad);
+    auto.busy = null;
+    auto.told = [];
+    const out = await inOwner(async (_a, sql) => {
+      const d = desk(sql, b.f);
+      await d.refresh();
+      await d.due(plannedInstall(sql)!);
+      const view = d.view();
+      await d.refresh();
+      return { view, again: d.view().planned };
+    });
+    expect(out.view.run).toMatchObject({ state: "failed", auto: true });
+    expect(cfCalls(b.calls)).toEqual([]);
+    expect(auto.told).toHaveLength(1);
+    expect(auto.told[0]!.fallback).toMatch(
+      /^I tried to update myself to Atlas v0\.8\.0 in the night, and it stopped: worker\/index\.js in the bundle doesn't match release\.json's SHA-256 .* Nothing changed; Update now in Atlas settings → Account → Updates tries again\.$/,
+    );
+    expect(out.again).toBeNull();
   });
 });

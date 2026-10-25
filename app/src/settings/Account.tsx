@@ -1,14 +1,16 @@
 // Atlas settings → Account (docs/ui §8): how you sign in (passkeys), your
 // passwords and cards (the vault, §15), updates, and your data: whether
-// Atlas's own key locks your secrets (§20), setup, and signing out.
+// Atlas's own key locks your secrets (§20), taking a copy of everything,
+// going back in time and deleting everything (§23.4), setup, and signing out.
 
 import { useEffect, useState } from "react";
 import type { SettingsView } from "../../../core/src/protocol";
 import { FIELDS, type VaultKind } from "../../../core/src/vault-fields";
 import type { Atlas } from "../connection";
+import { HoldButton } from "../Approval";
 import { Markdown } from "../Markdown";
 import { useDetail } from "../theme";
-import { Icon, LogoMark, Seg, shortDay } from "../ui";
+import { dayTime, Icon, LogoMark, Seg, shortDay, Toggle } from "../ui";
 import { AddPasskey, Head } from "./parts";
 
 export function Account({
@@ -26,7 +28,10 @@ export function Account({
   const [removing, setRemoving] = useState<string | null>(null);
   const [vault, setVault] = useState(false);
   const [ended, setEnded] = useState(false);
+  const [open, setOpen] = useState<"back" | "delete" | null>(null);
   const sealed = view.secrets.sealed;
+  const data = view.data;
+  const deleted = atlas.state.tests.data;
   const count = (k: VaultKind) => view.vault.filter((e) => e.kind === k).length;
   const totp = view.vault.filter((e) => e.totp).length;
   const last = view.vault.filter((e) => e.last_used).sort((a, b) => b.last_used! - a.last_used!)[0];
@@ -160,7 +165,52 @@ export function Account({
                 {sealed.unreadable ? "Can't read one" : sealed.state === "on" ? "Locked" : "Not locked"}
               </span>
             </div>
-            {/* TODO(core): "Take a copy of everything", "Go back in time" and "Delete everything" (docs/ui §8) once export and point-in-time restore exist. */}
+            <div className="line" style={{ alignItems: "flex-start", padding: "8px 0" }}>
+              <span className="grow" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontWeight: 500 }}>Take a copy of everything</span>
+                <span className="aside">
+                  {data.last_export
+                    ? `Last taken ${shortDay(data.last_export.at)}, ${size(data.last_export.bytes)}.`
+                    : "Everything Atlas keeps, in open formats. Your keys and passwords stay out."}
+                </span>
+                {data.export_error && <span className="err small">{data.export_error.text}</span>}
+                {data.last_export && data.last_export.problems.length > 0 && (
+                  <span className="small">
+                    {data.last_export.problems.length === 1 ? "One thing" : `${data.last_export.problems.length} things`} couldn't be
+                    copied: {data.last_export.problems[0]}
+                  </span>
+                )}
+              </span>
+              <a className="btn s" href="/api/export" download>
+                Download
+              </a>
+            </div>
+            {data.restore && (
+              <div className="line">
+                <span className="grow" style={{ display: "flex", flexDirection: "column" }}>
+                  <span style={{ fontWeight: 500 }}>Go back in time</span>
+                  <span className="aside">
+                    {data.restore.restored
+                      ? `Went back to ${dayTime(data.restore.restored.to)}, on ${shortDay(data.restore.restored.at)}.`
+                      : "To any moment in the last 30 days."}
+                  </span>
+                </span>
+                <button className="btn s" onClick={() => setOpen(open === "back" ? null : "back")}>
+                  {open === "back" ? "Close" : "Pick a time"}
+                </button>
+              </div>
+            )}
+            {data.delete && (
+              <div className="line">
+                <span className="grow" style={{ display: "flex", flexDirection: "column" }}>
+                  <span style={{ fontWeight: 500 }}>Delete everything</span>
+                  <span className="aside">Everything Atlas keeps, for good.</span>
+                </span>
+                <button className="btn s err" onClick={() => setOpen(open === "delete" ? null : "delete")}>
+                  {open === "delete" ? "Close" : "Delete everything"}
+                </button>
+              </div>
+            )}
             <div className="line">
               <span className="grow" style={{ display: "flex", flexDirection: "column" }}>
                 <span style={{ fontWeight: 500 }}>Setup</span>
@@ -192,7 +242,165 @@ export function Account({
           </div>
         </div>
       </div>
+      {open === "back" && data.restore && <GoBack atlas={atlas} restore={data.restore} />}
+      {open === "delete" && data.delete && <DeleteAll atlas={atlas} del={data.delete} />}
+      {deleted?.ok && (deleted.detail as { what?: string } | undefined)?.what === "delete" && (
+        <Deleted text={deleted.message} left={(deleted.detail as { left: string[] }).left} />
+      )}
     </>
+  );
+}
+
+const size = (n: number) =>
+  n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
+
+/** A time as a datetime-local input takes it, in this browser's zone. */
+const localInput = (at: number) => {
+  const d = new Date(at - new Date(at).getTimezoneOffset() * 60_000);
+  return d.toISOString().slice(0, 16);
+};
+
+/**
+ * Go back in time (§23.4): pick a moment in the last 30 days, see what it
+ * means, and hold to confirm. Atlas restarts there. Undo goes back to just
+ * before, for the last time it went back.
+ */
+function GoBack({ atlas, restore }: { atlas: Atlas; restore: NonNullable<SettingsView["data"]["restore"]> }) {
+  const [when, setWhen] = useState("");
+  const [sent, setSent] = useState(false);
+  const at = when ? new Date(when).getTime() : Number.NaN;
+  const preview = atlas.state.tests["data.preview"];
+  const shown = preview && (preview.detail as { at: number } | undefined)?.at === at ? preview : null;
+  const detail = shown?.detail as { lost: string[]; kept: string[] } | undefined;
+  const result = atlas.state.tests.data;
+  useEffect(() => {
+    if (Number.isFinite(at)) atlas.send({ type: "atlas.data.preview", at });
+  }, [at]);
+  useEffect(() => setSent(false), [result]);
+  const go = (msg: { at?: number; undo?: boolean }) => {
+    setSent(true);
+    atlas.send({ type: "atlas.data.restore", ...msg, hold: true });
+  };
+  return (
+    <div className="card2 pad rise" style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="card-head">
+        <span className="h2">Go back in time</span>
+        <span className="aside">Atlas restarts as it was then.</span>
+      </div>
+      <label className="field" style={{ maxWidth: 320 }}>
+        <span>Go back to</span>
+        <input
+          type="datetime-local"
+          value={when}
+          min={localInput(restore.earliest)}
+          max={localInput(restore.latest)}
+          onChange={(e) => setWhen(e.target.value)}
+        />
+      </label>
+      {shown && !shown.ok && <span className="err small">{shown.message}</span>}
+      {detail && shown?.ok && (
+        <div className="lines solid">
+          {detail.lost.map((t) => (
+            <span key={t} className="small line" style={{ minHeight: 0, padding: "4px 0" }}>
+              {t}
+            </span>
+          ))}
+          {detail.kept.map((t) => (
+            <span key={t} className="aside line" style={{ minHeight: 0, padding: "4px 0" }}>
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="row">
+        <HoldButton label="Hold to go back" disabled={sent || !shown?.ok} onConfirm={() => go({ at })} />
+        {restore.restored?.undo && (
+          <HoldButton
+            label={`Hold to undo going back to ${dayTime(restore.restored.to)}`}
+            disabled={sent}
+            onConfirm={() => go({ undo: true })}
+          />
+        )}
+      </div>
+      {result && (result.detail as { what?: string } | undefined)?.what === "restore" && (
+        <span className={result.ok ? "ok small" : "err small"}>{result.message}</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Delete everything (§23.4): what goes and what's left, then the phrase
+ * typed and a hold. Only the owner sees it.
+ */
+function DeleteAll({ atlas, del }: { atlas: Atlas; del: NonNullable<SettingsView["data"]["delete"]> }) {
+  const [phrase, setPhrase] = useState("");
+  const [sent, setSent] = useState(false);
+  const result = atlas.state.tests.data;
+  useEffect(() => setSent(false), [result]);
+  const typed = phrase.trim().toLowerCase() === del.phrase;
+  return (
+    <div className="card2 pad rise" style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="card-head">
+        <span className="h2">Delete everything</span>
+        <span className="aside">It can't be undone from here.</span>
+      </div>
+      <span className="small">
+        Everything Atlas keeps goes: your conversations and the log, what it knows about people and places, areas, the agenda, automations,
+        pages, skills, Library's files, settings, keys and sign-ins, the vault and your passkeys. The workspace and its copy go too.
+        {del.members.length
+          ? ` So do your members' Atlases (${del.members.join(", ")}): tell them first, so they can take a copy of theirs.`
+          : ""}
+      </span>
+      <span className="aside">Take a copy first if you want one. Afterwards:</span>
+      <div className="lines solid">
+        {del.left.map((t) => (
+          <span key={t} className="aside line" style={{ minHeight: 0, padding: "4px 0" }}>
+            {t}
+          </span>
+        ))}
+      </div>
+      <label className="field" style={{ maxWidth: 320 }}>
+        <span>To delete everything, type "{del.phrase}"</span>
+        <input value={phrase} autoComplete="off" spellCheck={false} onChange={(e) => setPhrase(e.target.value)} />
+      </label>
+      <div className="row">
+        <HoldButton
+          label="Hold to delete everything"
+          ms={2_000}
+          disabled={sent || !typed}
+          onConfirm={() => {
+            setSent(true);
+            atlas.send({ type: "atlas.data.delete", phrase, hold: true });
+          }}
+        />
+      </div>
+      {result && !result.ok && (result.detail as { what?: string } | undefined)?.what === "delete" && (
+        <span className="err small">{result.message}</span>
+      )}
+    </div>
+  );
+}
+
+/** After deleting everything: what's still on Cloudflare, and how to remove it. There's no Atlas to go back to until it's set up again. */
+function Deleted({ text, left }: { text: string; left: string[] }) {
+  return (
+    <div className="card2 pad rise" style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+      <span className="h2">Everything is deleted</span>
+      <span className="small">{text}</span>
+      <div className="lines solid">
+        {left.map((t) => (
+          <span key={t} className="small line" style={{ minHeight: 0, padding: "4px 0" }}>
+            {t}
+          </span>
+        ))}
+      </div>
+      <div className="row">
+        <button className="btn s" onClick={() => location.reload()}>
+          Done
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -253,6 +461,26 @@ function Updates({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
         </p>
       )}
       {u.look_error && <span className="err small">Couldn't look: {u.look_error}</span>}
+
+      <div className="row" style={{ flexWrap: "nowrap", alignItems: "flex-start" }}>
+        <span className="grow" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={{ fontWeight: 500 }}>Update on its own</span>
+          <span className="aside">
+            {view.settings.updates.auto
+              ? u.planned
+                ? `Installs ${u.planned.tag} around ${dayTime(u.planned.at)}, then tells you what's new.`
+                : !u.token
+                  ? "It needs the token below first."
+                  : "In the night, when a release can go in from here, and then it tells you."
+              : "Off: you choose when to update."}
+          </span>
+        </span>
+        <Toggle
+          on={view.settings.updates.auto}
+          label="Update on its own"
+          onChange={(on) => atlas.send({ type: "atlas.settings.update", patch: { updates: { auto: on } } })}
+        />
+      </div>
       {u.ready && newest?.problem && <span className="small">{newest.problem}</span>}
 
       {!u.token ? (
@@ -315,7 +543,7 @@ function Updates({ atlas, view }: { atlas: Atlas; view: SettingsView }) {
       {run && (
         <div className="lines solid">
           <span className="aside">
-            {run.kind === "update" ? `Updating to ${run.label}` : `Rolling back to ${run.label}`}
+            {run.kind === "update" ? `${run.auto ? "Updating on its own" : "Updating"} to ${run.label}` : `Rolling back to ${run.label}`}
             {run.state === "deploying" ? ": restarting on it" : run.state === "done" ? ": done" : run.state === "failed" ? ": stopped" : ""}
             {`, ${shortDay(run.started_at)}`}
           </span>

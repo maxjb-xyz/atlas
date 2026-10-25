@@ -13,6 +13,7 @@
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { BRIDGE_JS, BRIDGE_KEY_HEADER, BRIDGE_PATH, BRIDGE_PORT, BRIDGE_VERSION } from "./bridge";
+import { deletePrefix } from "./files";
 
 const IMAGE = "cloudflare/debian-trixie";
 /** How long the container stays up after the last use. Container time is billed while it waits. */
@@ -314,6 +315,27 @@ export class Workspace extends DurableObject<Env> {
   /** Stops the container, so the next command starts it fresh. /workspace and the setup snapshot are kept. */
   async restart(): Promise<void> {
     await this.#stop("restarted by the owner");
+  }
+
+  /**
+   * Delete everything (§23.4): stops the container, deletes /workspace's
+   * kept copy and every job's saved work from R2, and forgets the rest
+   * (sites, previews, the setup snapshot's id; the snapshot holds only the
+   * packages, and runs out by itself). Says what it couldn't delete.
+   */
+  async wipe(): Promise<string[]> {
+    const notes: string[] = [];
+    await this.#stop("Atlas is deleting everything");
+    try {
+      await this.env.FILES.delete(BACKUP(this.#name));
+      await deletePrefix(this.env.FILES, `jobs/${this.#name}/`);
+    } catch (err) {
+      notes.push(`The workspace's copies are still in the files store (R2 said: ${err instanceof Error ? err.message : String(err)}).`);
+    }
+    await this.ctx.storage.deleteAll();
+    this.#base = null;
+    this.#key = undefined;
+    return notes;
   }
 
   /** Stops the container and waits until it has, so the next start doesn't find it still going. */

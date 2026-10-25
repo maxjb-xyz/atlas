@@ -49,6 +49,9 @@ import { liveTest, settingsView } from "./agent/settings";
 import { undoReceipt } from "./agent/undo";
 import { ServiceDesk } from "./agent/services";
 import { UpdateDesk } from "./agent/updates";
+import { DataDesk, type Recovery } from "./agent/data";
+import { removeAtlasMail } from "./atlasmail";
+import { updatesState } from "./updates";
 import { MailDesk } from "./agent/mail";
 import { type ChatVia, ChannelDesk, links } from "./agent/channels";
 import { FaceDesk, type Where } from "./agent/faces";
@@ -258,6 +261,8 @@ export interface WorkspaceStub extends Partial<JobWorkspace> {
   status(): Promise<{ running: boolean; ready: boolean }>;
   /** Stops the container; the next command starts it fresh. */
   restart(): Promise<void>;
+  /** Delete everything (§23.4): the container stops, and /workspace's kept copy and jobs' saved work go from R2. Says what it couldn't. */
+  wipe?(): Promise<string[]>;
 }
 
 /** The one owner in M0. Members get their own agents in M5. */
@@ -410,6 +415,9 @@ const OWNER_ONLY = new Set<string>([
   "atlas.updates.look",
   "atlas.updates.install",
   "atlas.updates.rollback",
+  "atlas.data.preview",
+  "atlas.data.restore",
+  "atlas.data.delete",
   "atlas.face.save",
   "atlas.face.remove",
   "atlas.face.test",
@@ -517,6 +525,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #services!: ServiceDesk;
   /** Updates (§23.2): the daily look at releases, Update and Roll back through Cloudflare's API. */
   #updates!: UpdateDesk;
+  /** Your data (§23.4): take a copy of everything, go back in time, delete everything. */
+  #data!: DataDesk;
   #mail!: MailDesk;
   #channels!: ChannelDesk;
   #faces!: FaceDesk;
@@ -780,6 +790,56 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       running: () => this.#running(),
       origin: () => getState<string>(this.#sql, "origin"),
       changed: () => this.#broadcast({ type: "atlas.view", view: this.#view() }),
+      settings: () => {
+        const s = readSettings(this.#sql);
+        return { auto: s.updates.auto, tz: zoneOf(s) };
+      },
+      // Installing restarts Atlas, so it waits while a run is going or someone is on a call.
+      busy: () =>
+        this.#inCall.size
+          ? "someone was on a call with Atlas"
+          : runningRuns(this.#sql).length
+            ? "Atlas was in the middle of something"
+            : null,
+      tell: (note, fallback) =>
+        void this.keepAliveWhile(() => this.#inLine(() => this.#atlasSays("updates", note, fallback, "soon", 2, []))).catch(
+          (err: unknown) => console.error(JSON.stringify({ at: "updates.tell", error: err instanceof Error ? err.message : String(err) })),
+        ),
+    });
+    this.#data = new DataDesk({
+      sql: this.#sql,
+      storage: this.ctx.storage,
+      recovery: () => this.#recovery(),
+      bucket: () => this.#bucket(),
+      name: this.name,
+      member: Boolean(this.#member),
+      version: () => this.#updates.running().version,
+      mcp: () => {
+        try {
+          return this.#sql.exec<{ name: string; server_url: string }>(`SELECT name, server_url FROM cf_agents_mcp_servers`).toArray();
+        } catch {
+          return [];
+        }
+      },
+      secretNames: () =>
+        this.#sql
+          .exec<{ name: string }>(`SELECT name FROM secrets ORDER BY name`)
+          .toArray()
+          .map((r) => r.name),
+      changed: () => this.#broadcast({ type: "atlas.view", view: this.#view() }),
+      wipeMember: async (id) =>
+        (
+          await (getAgentByName(this.env.PersonAgent as never, agentNameOf(id)) as unknown as Promise<{ apiWipe(): Promise<void> }>)
+        ).apiWipe(),
+      wipeWorkspace: async () => {
+        const ws = this.#ws();
+        return ws?.wipe ? ws.wipe() : [];
+      },
+      takeDownMail: () => removeAtlasMail(this.#sql, (...args) => (seams.fetch ?? fetch)(...args)),
+      discardHelpers: async () => {
+        for (const id of getState<string[]>(this.#sql, "helper_facets") ?? []) await this.dynamicAgents.delete(HelperAgent, id);
+      },
+      script: () => updatesState(this.#sql).target?.script ?? null,
     });
     this.#faces = new FaceDesk({
       sql: this.#sql,
@@ -840,6 +900,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (!this.#member)
       void this.keepAliveWhile(() => this.#updates.start()).catch((err: unknown) =>
         console.error(JSON.stringify({ at: "updates.start", error: err instanceof Error ? err.message : String(err) })),
+      );
+    // After going back in time (§23.4), the restore's Undo, kept in R2, which isn't rewound.
+    if (!this.#member)
+      void this.keepAliveWhile(() => this.#data.start()).catch((err: unknown) =>
+        console.error(JSON.stringify({ at: "data.start", error: err instanceof Error ? err.message : String(err) })),
       );
     // The faces' digest stays on the clock while a face has one.
     void this.keepAliveWhile(() => this.#armDigest()).catch(() => {});
@@ -1265,6 +1330,31 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         });
         this.#send(connection, { type: "atlas.updates", ...out });
         this.#broadcast({ type: "atlas.view", view: this.#view() });
+        return;
+      }
+      case "atlas.data.preview":
+      case "atlas.data.restore":
+      case "atlas.data.delete": {
+        // Only the owner, from the app: never a paired device's or a phone call's socket, and never a tool.
+        const st = connection.state as SocketState | null;
+        if (st?.node || st?.call) return;
+        if (msg.type === "atlas.data.preview") {
+          this.#send(connection, { type: "atlas.data.preview", at: msg.at, ...this.#data.preview(msg.at) });
+          return;
+        }
+        if (msg.type === "atlas.data.restore") {
+          const out = await this.keepAliveWhile(() =>
+            this.#data.restore({ ...(msg.at != null ? { at: msg.at } : {}), ...(msg.undo ? { undo: true } : {}), hold: msg.hold }),
+          );
+          this.#broadcast({ type: "atlas.data", what: "restore", ...out });
+          if (out.ok) await this.#restart("Going back in time");
+          return;
+        }
+        const out = await this.keepAliveWhile(() => this.#data.deleteEverything({ phrase: msg.phrase, hold: msg.hold }));
+        this.#broadcast({ type: "atlas.data", what: "delete", ...out });
+        if (!out.ok) return;
+        for (const c of this.getConnections()) c.close(4001, "Everything was deleted.");
+        await this.#restart("Everything was deleted");
         return;
       }
       case "atlas.face.save":
@@ -2675,7 +2765,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       return;
     }
     if (item.kind === "updates") {
-      await this.keepAliveWhile(() => this.#updates.look(item));
+      // The daily look, or an install planned for the night (§23.2: updating on its own).
+      await this.keepAliveWhile(() => (item.source.via === "updates.install" ? this.#updates.due(item) : this.#updates.look(item)));
       return;
     }
     if (item.kind === "loop") {
@@ -4084,6 +4175,11 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
       this.#broadcast({ type: "atlas.rows", rows: isOn ? locationOn(this.#sql) : locationOff(this.#sql) });
     }
     if (keys.includes("calendar") || keys.includes("timezone")) this.#calendar.reset();
+    // Updating on its own turned on or off (§23.2): a release that's ready goes on the clock for the night, or comes off it.
+    if (keys.includes("updates") && !this.#member)
+      void this.keepAliveWhile(() => this.#updates.plan()).catch((err: unknown) =>
+        console.error(JSON.stringify({ at: "updates.plan", error: err instanceof Error ? err.message : String(err) })),
+      );
     this.#refreshVoice();
     this.#broadcast({ type: "atlas.view", view: this.#view() });
     return { ok: true, text: keys.length ? `Changed ${keys.join(", ")}.` : "Nothing changed." };
@@ -4135,6 +4231,7 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
       extensions: this.#extensions,
       mail: this.#mail,
       updates: this.#updates,
+      data: this.#data,
     });
   }
 
@@ -5550,6 +5647,41 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
       console.error(JSON.stringify({ at: "updates.version_json", error: err instanceof Error ? err.message : String(err) }));
     }
     return { version: app.version ?? "unknown", commit: app.commit ?? null, version_id: meta?.id || null };
+  }
+
+  /** Point-in-time recovery and restarting (§23.4): the Durable Object's own, or a fake in tests. */
+  #recovery(): Recovery {
+    if (seams.recovery) return seams.recovery;
+    const storage = this.ctx.storage;
+    return {
+      bookmarkForTime: (at) => storage.getBookmarkForTime(at),
+      restoreOnNextStart: (bookmark) => storage.onNextSessionRestoreBookmark(bookmark),
+      restart: (why) => this.ctx.abort(why),
+    };
+  }
+
+  /** Restarts the agent a moment after its last answer has gone out: after going back in time, or deleting everything. */
+  async #restart(why: string): Promise<void> {
+    await new Promise((r) => setTimeout(r, 300));
+    console.log(JSON.stringify({ at: "data.restart", why }));
+    this.#recovery().restart(why);
+  }
+
+  /** Take a copy of everything (§23.4): the archive, written as the Worker's download reads it. */
+  async apiExport(): Promise<{ name: string; stream: ReadableStream<Uint8Array> }> {
+    return this.#data.exportStream();
+  }
+
+  /**
+   * Deletes a member's Atlas, when the owner deletes everything (§23.4). The owner's agent calls it, nothing
+   * else does (the Worker has no route to it), and it does nothing in the owner's own agent.
+   */
+  async apiWipe(): Promise<void> {
+    if (!this.#member) throw new Error("Only a member's Atlas is deleted this way.");
+    const problems = await this.#data.wipeOwn();
+    if (problems.length) console.error(JSON.stringify({ at: "data.wipe", member: this.#member, problems }));
+    for (const c of this.getConnections()) c.close(4001, "This Atlas was deleted.");
+    void this.#restart("Deleted with the owner's Atlas");
   }
 
   /** Where files' bytes live (§21.7). */

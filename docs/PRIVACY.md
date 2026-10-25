@@ -69,4 +69,6 @@ A face (VISION §7.2) answers other people for you. They see what the face says,
 - **Keep `ATLAS_DATA_KEY` and your setup code** somewhere safe and apart.
 - **Sign in with passkeys.** Remove a lost device in Settings → Account, and its sign-ins end at once.
 - **Choose your brains** for what they'll see, and turn off what you don't use.
-- **Cloudflare keeps 30 days of Atlas's storage**, so it can be restored to any point in that time. Exporting everything from the app is planned for M7.
+- **Cloudflare keeps 30 days of Atlas's storage**, so it can be restored to any point in that time: Atlas settings → Account → Go back in time does it from the app. It rewinds what Atlas keeps in its own storage, not your files or what it already did outside.
+- **Take a copy of everything** (Atlas settings → Account) downloads what Atlas keeps as open files: the log, what it knows, pages, skills and your files. Your keys, passwords and sign-ins stay out, so the copy can't open your accounts; keep it as safe as you'd keep the things in it.
+- **Delete everything** (Atlas settings → Account) deletes what Atlas keeps, your members' Atlases and the workspace. The Worker, its secrets and the files bucket stay on Cloudflare until you delete them there, and Cloudflare may keep 30 days of the storage's history.
