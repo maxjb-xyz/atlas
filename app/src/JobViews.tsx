@@ -8,9 +8,9 @@ import type { FileRef, InboxItem, JobView, LogRow } from "../../core/src/protoco
 import type { Atlas } from "./connection";
 import { jobNow } from "./jobs";
 import { Markdown } from "./Markdown";
-import { Receipt } from "./Shell";
+import { BusyEdge, Receipt } from "./Shell";
 import { stillMotion, useDetail } from "./theme";
-import { clock, Diamond, elapsed, Empty, Icon, morphOrigin, Selected, Sheet, shortDay, stopClick, took, useNow } from "./ui";
+import { clock, Diamond, elapsed, Empty, Icon, LiveMark, morphOrigin, Selected, Sheet, shortDay, stopClick, took, useNow } from "./ui";
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
@@ -693,6 +693,8 @@ export function JobThread({ atlas, job }: { atlas: Atlas; job: JobView }) {
     return () => o.disconnect();
   }, [rows == null]);
   const working = job.activity === "working" && shown.live;
+  // A turn of this job under way: its composer shows it, as the main one shows a turn of the conversation.
+  const live = Object.values(atlas.state.live).some((l) => l.job === job.id);
   return (
     <Sheet className="pick job-sheet">
       <div className="sheet-in job-thread">
@@ -765,8 +767,9 @@ export function JobThread({ atlas, job }: { atlas: Atlas; job: JobView }) {
               setText("");
             }}
           >
-            <span className="lead">
-              <Diamond size={14} />
+            {live && <BusyEdge />}
+            <span className="lead mark-lead">
+              <LiveMark size={18} state={live ? "thinking" : "idle"} />
             </span>
             <label className="sr" htmlFor={`say-${job.id}`}>
               Say something about {job.title}
@@ -795,8 +798,9 @@ export function JobThread({ atlas, job }: { atlas: Atlas; job: JobView }) {
 }
 
 /**
- * A job's own thread as a conversation (§21.4): the owner's words, and each of Atlas's turns as a reply with what it
- * did as chips under it; the turn under way streams in with what it's doing now, the way a reply does in the main thread.
+ * A job's own thread as a conversation (§21.4): the owner's words, and each of Atlas's turns as a reply, with what it
+ * did as chips before its words; the turn under way streams in, each thing it does showing where it happened, in order,
+ * with what it's doing now at its foot.
  */
 function Turns({ atlas, job, rows }: { atlas: Atlas; job: JobView; rows: LogRow[] }) {
   const live = Object.entries(atlas.state.live).find(([, l]) => l.job === job.id);
@@ -808,7 +812,7 @@ function Turns({ atlas, job, rows }: { atlas: Atlas; job: JobView; rows: LogRow[
   for (const r of rows) {
     if (r.kind === "tool.result") {
       const run = r.run_id;
-      // A turn's chips sit under its words, or under the turn while it's under way; a turn that said nothing shows them alone.
+      // A turn's chips go with its words, or in the turn while it's under way; a turn that said nothing shows them alone.
       if (!run || told.has(run) || run === live?.[0] || shownRuns.has(run)) continue;
       shownRuns.add(run);
       out.push(
@@ -832,20 +836,48 @@ function Turns({ atlas, job, rows }: { atlas: Atlas; job: JobView; rows: LogRow[
   }
   if (live) {
     const [run, l] = live;
+    const parts = inOrder(l.text, byRun.get(run) ?? [], l.marks ?? []);
+    const last = parts.at(-1);
     out.push(
       <div key={run} className="msg atlas live">
         <span className="mark">
           <Diamond size={13} />
         </span>
         <div className="body">
-          {(l.status || !l.text) && <TurnWorking run={run} status={l.status} />}
-          {l.text && <Markdown className="said streaming" text={l.text} />}
-          <Chips atlas={atlas} rows={byRun.get(run) ?? []} />
+          {parts.map((p, i) =>
+            "text" in p ? (
+              <Markdown key={i} className={`said${i === parts.length - 1 ? " streaming" : ""}`} text={p.text} />
+            ) : (
+              <Chips key={i} atlas={atlas} rows={p.rows} />
+            ),
+          )}
+          {(l.status || !last || !("text" in last)) && <TurnWorking run={run} status={l.status} />}
         </div>
       </div>,
     );
   }
   return <>{out}</>;
+}
+
+/**
+ * A turn's words and what it did, in the order they happened: the words are cut where each thing it did landed.
+ * Things done before this page heard the turn (opened mid-turn) come first.
+ */
+function inOrder(text: string, rows: LogRow[], marks: Array<{ at: number; id: string }>): Array<{ text: string } | { rows: LogRow[] }> {
+  const at = new Map(marks.map((m) => [m.id, m.at]));
+  const placed = rows.map((r, i) => ({ r, pos: Math.min(at.get(r.id) ?? 0, text.length), i })).sort((a, b) => a.pos - b.pos || a.i - b.i);
+  const out: Array<{ text: string } | { rows: LogRow[] }> = [];
+  let from = 0;
+  for (const { r, pos } of placed) {
+    const words = text.slice(from, pos);
+    if (words.trim()) out.push({ text: words });
+    from = Math.max(from, pos);
+    const prev = out.at(-1);
+    if (prev && "rows" in prev) prev.rows.push(r);
+    else out.push({ rows: [r] });
+  }
+  if (text.slice(from).trim()) out.push({ text: text.slice(from) });
+  return out;
 }
 
 const turnSince = new Map<string, number>();
@@ -923,9 +955,10 @@ function JobRow({ atlas, row, chips = [] }: { atlas: Atlas; row: LogRow; chips?:
         <Diamond size={13} />
       </span>
       <div className="body">
+        {/* What it did comes first, in order, then what it says about it: the way it happened. */}
+        <Chips atlas={atlas} rows={chips} />
         <Markdown className="said" text={str(b.text)} />
         <Files files={filesOf(b.files)} />
-        <Chips atlas={atlas} rows={chips} />
         {when}
       </div>
     </div>

@@ -7,6 +7,7 @@ import { HelperAgent, type HelperJob } from "../src/helper";
 import { createItem, getItem } from "../src/store/agenda";
 import type { Sql } from "../src/store/db";
 import { migrate } from "../src/store/db";
+import { thread } from "../src/store/log";
 import { getRun, startRun, sweepStaleRuns } from "../src/store/runs";
 import { systemPrompt } from "../src/context";
 import { readSettings } from "../src/store/settings";
@@ -102,6 +103,10 @@ describe("helpers", () => {
           .filter((r) => r.run_id === helperRun)
           .map((r) => r.body.name),
       ).toEqual(["recall"]);
+      // What it did is its own card's, never the conversation's.
+      const did = rowsOf(sql, "tool.result").filter((r) => r.run_id === helperRun);
+      expect(did.map((r) => r.body.job)).toEqual([result.body.item_id]);
+      expect(thread(sql, 200).some((r) => r.run_id === helperRun && r.kind === "tool.result")).toBe(false);
       expect(sql.exec<{ state: string; trigger: string }>(`SELECT state, trigger FROM runs WHERE id = ?`, helperRun).one()).toMatchObject({
         state: "replied",
         trigger: expect.stringMatching(/^helper:ag_/),
@@ -213,6 +218,25 @@ describe("helpers", () => {
         sql,
       });
       expect(system).toMatch(/Helpers working now[^\n]*\n- Spending chart \(id ag_\w+\): started 3 min ago, 0 lookups so far/);
+    });
+  });
+
+  it("show in jobs_look, so 'how's it going?' finds the reading the owner just asked for", async () => {
+    const b = brain([call("jobs_look", {}), say("I've looked at four laptops so far.")]);
+    await runInDurableObject(fresh(), async (agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      createItem(sql, {
+        kind: "job",
+        title: "Three laptops under $1,500",
+        due_at: Date.now(),
+        state: "running",
+        source: { via: "chat", detail: { brief: "Research three laptops." } },
+      });
+      await agent.apiTurn("how's it going?");
+      const out = String(b.requests[1]!.messages.find((m) => m.role === "tool")!.content);
+      expect(out).toContain("Three laptops under $1,500");
+      expect(out).toContain("reading_for_you_since");
     });
   });
 

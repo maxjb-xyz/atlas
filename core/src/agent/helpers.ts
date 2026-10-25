@@ -199,12 +199,13 @@ export class HelperDesk {
   async log(jobId: string, row: Append): Promise<LogRow> {
     const job = this.#job(jobId);
     if (!HELPER_LOG_KINDS.includes(row.kind)) throw new Error(`A helper can't write ${row.kind} rows.`);
-    // A helper reading for a job Atlas owns writes as that job's, so what it did shows in the job's thread (§21.4).
+    // What a helper did is its job's, never the conversation's (§21.4): a helper reading for a job Atlas owns writes as
+    // that job's, so it shows in the job's thread; one Atlas sent from the conversation writes as its own card's.
     const of =
       typeof getItem(this.host.sql, jobId)?.source.detail?.step_of === "string"
         ? String(getItem(this.host.sql, jobId)!.source.detail!.step_of)
-        : null;
-    const tagged = of && (row.kind === "tool.call" || row.kind === "tool.result") ? { ...row, body: { ...row.body, job: of } } : row;
+        : jobId;
+    const tagged = row.kind === "tool.call" || row.kind === "tool.result" ? { ...row, body: { ...row.body, job: of } } : row;
     const written = append(this.host.sql, { ...tagged, actor: "atlas", run_id: job.run, surface: "none" });
     if (row.kind === "tool.result" && written.body.receipt != null) this.host.rows([written]);
     return written;

@@ -133,6 +133,16 @@ function Overview({
   const areas = s.areas.filter((a) => a.state !== "archived");
   const maxArea = Math.max(1, ...areas.map((a) => a.messages + a.records));
   const total = counts.all ?? 0;
+  useEffect(() => {
+    if (!atlas.voice.connected) return;
+    atlas.send({ type: "atlas.pages" });
+    atlas.send({ type: "atlas.files" });
+  }, [atlas.voice.connected]);
+  // What Atlas made or the owner kept, newest first: each opens where Pages & files opens it.
+  const made = [
+    ...(s.files ?? []).map((f) => ({ key: `file:${f.id}`, name: f.name, at: f.updated_at })),
+    ...(s.pages ?? []).map((p) => ({ key: `page:${p.id}`, name: p.name, at: p.updated_at })),
+  ].sort((a, b) => b.at - a.at);
 
   const List = ({ list }: { list: RecordView[] }) => (
     <>
@@ -229,9 +239,19 @@ function Overview({
           <div className="cell">
             <span className="lab">
               <Icon name="file" size={13} />
-              Files<span className="count mono">0</span>
+              Pages and files<span className="count mono">{made.length}</span>
             </span>
-            <p className="faint small">None yet.</p>
+            {made.length ? (
+              made.slice(0, 5).map((m) => (
+                <div className="li pickable" key={m.key} {...pressable(() => go(m.key))}>
+                  <span className="dot sq" />
+                  <span className="clamp">{m.name}</span>
+                  <span className="mono faint small">{shortDay(m.at)}</span>
+                </div>
+              ))
+            ) : (
+              <p className="faint small">None yet.</p>
+            )}
           </div>
         </div>
         <div className="section-rule">

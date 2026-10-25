@@ -23,7 +23,7 @@ import { HelperDesk, helperBrain, RESEARCH_BUDGET } from "./agent/helpers";
 import { CodingDesk, getJob, type JobWorkspace, type PullRequest } from "./agent/coding";
 import { codingTools, type Effort } from "./tools/coding";
 import { settingsTools } from "./tools/settings";
-import { getOwned, inFolder, INTERRUPTED, type Job, JOB_LIMITS, type JobHost, JobDesk, TURN_BUDGET } from "./agent/jobs";
+import { ago, getOwned, inFolder, INTERRUPTED, type Job, JOB_LIMITS, type JobHost, JobDesk, TURN_BUDGET } from "./agent/jobs";
 import { adoptOldJobs } from "./agent/adopt";
 import { CallDesk } from "./agent/calls";
 import { folderRun, jobOwn, MOVES, READ_TOOLS } from "./tools/jobs";
@@ -296,6 +296,8 @@ const TOOLS: Record<Actor, Tool[]> = {
     calendarMove,
     ...agendaTools,
     ...webTools,
+    // Reading a skill shouldn't cost a turn a load first (§9.3).
+    skillRead,
     ...placeLooks,
     approve,
     deviceCall,
@@ -369,7 +371,11 @@ const OWNER_GROUPS: ToolGroup[] = [
   },
   { name: "tasks", about: "the owner's tasks: add one, mark one done", tools: taskTools },
   { name: "places", about: "pin a place the owner goes to, with its name", tools: placeTools.filter((t) => !placeLooks.includes(t)) },
-  { name: "skills", about: "your skills: read, write and check them, find and install new ones", tools: [...skillTools, ...hubTools] },
+  {
+    name: "skills",
+    about: "your skills: write and check them, find and install new ones",
+    tools: [...skillTools.filter((t) => t !== skillRead), ...hubTools],
+  },
   {
     name: "services",
     about: "connected services' tools (MCP and extensions), connecting a new service, the owner's webhooks, drafting an extension",
@@ -3046,6 +3052,23 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     });
   }
 
+  /** Reading Atlas sent off from the conversation (`delegate`), going or ended within the hour, newest first, for jobs_look. */
+  #helpersLook(id?: string): unknown[] {
+    const now = Date.now();
+    return this.#helpers
+      .list()
+      .filter((h) => !id || h.id === id)
+      .map((h) => ({
+        id: h.id,
+        what: h.title,
+        reading_for_you_since: `${ago(now - h.started_at)} ago`,
+        state: h.state === "running" ? "at work" : h.state,
+        ...(h.status ? { now: h.status } : {}),
+        looked_at_so_far: `${h.steps} ${h.steps === 1 ? "thing" : "things"}`,
+        ...(h.result ? { found: h.result.slice(0, 4_000) } : {}),
+      }));
+  }
+
   /** A helper's job ended while nobody was waiting for it: tell the owner what it found. */
   async #reportJob(item: AgendaItem, result: { state: "done" | "failed"; text: string }): Promise<void> {
     const research = item.source.detail?.research === true;
@@ -3053,7 +3076,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       result.state === "done" && research
         ? `[Atlas's helper, not the owner] The research job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nLand it: show it as a research view (show, kind research, with the sources it read), and save it as a page with page_save, the answer in Markdown with the same research view in a \`view\` block, so the owner keeps it. Then tell them the finding in a sentence or two and that the page is in Library.`
         : result.state === "done"
-          ? `[Atlas's helper, not the owner] The job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nFinish what the owner asked for with it: if they wanted to see something (a chart, a table, a comparison), show it; if they wanted a file (a spreadsheet, a document), make it. Then tell them what it found, the way you'd say it, as short as it can be while complete.`
+          ? `[Atlas's helper, not the owner] The job "${item.title}" you started finished. What it handed back:\n\n${result.text}\n\nFinish what the owner asked for with it: if they wanted to see something (a chart, a table, a comparison), show it; if they wanted a file (a spreadsheet, a document), make it. Then tell them what it found, the way you'd say it, as short as it can be while complete: no tables or headers, a limit said once at most, and when they wanted to pick, a line on each choice with its link, then ask which.`
           : `[Atlas's helper, not the owner] The job "${item.title}" you started didn't finish: ${result.text}. Tell the owner in one or two sentences, with what you'd need to try again.`;
     const fallback =
       result.state === "done" ? `Finished: ${item.title}.\n\n${result.text}` : `"${item.title}" didn't finish: ${result.text}`;
@@ -3375,7 +3398,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         },
         // job_answer and jobs_look reach jobs Atlas owns (§8.3) the same way.
         answer: (id, text) => (this.#owned.owns(id) ? this.#owned.answer(id, text) : this.#coding.answer(id, text, "run")),
-        look: (id) => (id && this.#owned.owns(id) ? this.#owned.look(id) : [...this.#coding.look(id), ...(id ? [] : this.#owned.look())]),
+        look: (id) =>
+          id && this.#owned.owns(id)
+            ? this.#owned.look(id)
+            : [...this.#helpersLook(id), ...this.#coding.look(id), ...(id ? [] : this.#owned.look())],
       },
       goals: {
         start: async (o) => {

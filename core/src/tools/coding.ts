@@ -85,7 +85,7 @@ export const jobAnswer = defineTool({
   kind: "change_own",
   status: "Got it.",
   description: [
-    "What the owner says about work you're doing in the background (something you're making for them, or a coding job) goes to that work, in their words: the answer to what you asked them, or a change of direction ('make it faster', 'use the existing date helper instead'). Use its id from your context or jobs_look. Pass what they said as they meant it, adding nothing of your own.",
+    "What the owner says about work you're doing in the background (something you're making for them, or a coding job) goes to that work, in their words: the answer to what you asked them, or a change of direction ('make it faster', 'use the existing date helper instead'). Use its id from your context or jobs_look. Pass what they said as they meant it, adding nothing of your own, and only when they're talking about that work: a greeting or something about anything else isn't for it.",
     "Waiting on a card (a website the work needs) goes on only when the card is settled: when the owner says yes or no to it, settle it with approve.",
     "Then answer them as yourself in a few words ('Got it, faster cut.'). The work hears them at once and you'll tell them how it goes, so don't promise what comes next or when.",
   ].join(" "),
@@ -105,7 +105,7 @@ export const jobsLook = defineTool({
   kind: "look",
   status: "Checking where that's at.",
   description:
-    "How the work you're doing in the background is going, from its state: what's at work on it now, what it's waiting on (with what the owner was shown, in full), your notes on it and what you last said, how long it's run, and a coding job's pull request once there is one. Use it for 'how's the video going?' and answer as yourself in a sentence or two ('I'm cutting it to the track you picked.'); when they ask to see what you asked them, show it as it is.",
+    "How the work you're doing in the background is going, from its state, newest first (what you're making, and reading you sent off from the conversation): what's at work on it now, what it's waiting on (with what the owner was shown, in full), your notes on it and what you last said, how long it's run, and a coding job's pull request once there is one. Use it for 'how's the video going?' and answer as yourself in a sentence or two ('I'm cutting it to the track you picked.'); when they ask to see what you asked them, show it as it is.",
   input: z.object({ id: z.string().max(64).optional().describe("One job's id; default all of them from the last day.") }),
   async run(input, ctx) {
     if (!ctx.coding) return fail("Coding jobs can't be reached from here.");

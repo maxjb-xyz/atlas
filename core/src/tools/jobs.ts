@@ -23,8 +23,8 @@ export const jobOwn = defineTool({
   status: "Getting started.",
   timeoutMs: 60_000,
   description: [
-    "Take on a long piece of work and do it yourself in the background, over hours or days if it needs: 'make a 60-second launch video', 'plan the Lisbon trip', 'get three quotes for the roof'. You work on it in a conversation of your own, with a folder in your workspace, the web, a browser, helpers and the owner's coding agent, and you bring the owner only what only they can give.",
-    "Use it for work of many steps, not a quick answer (answer that yourself). A change to one of the owner's code repos is code_job instead.",
+    "Take on a long piece of work and do it yourself in the background, over hours or days if it needs: 'make a 60-second launch video', 'book the Lisbon trip, flights and hotel', 'get three quotes for the roof'. You work on it in a conversation of your own, with a folder in your workspace, the web, a browser, helpers and the owner's coding agent, and you bring the owner only what only they can give.",
+    "Use it for work of many steps that takes more than a few minutes: making something, or comparing many options. A plan, a pick, a recommendation or an answer you can give from what you know and a search or two is not long work: give it in your reply now, never as this. A change to one of the owner's code repos is code_job instead.",
     "Write `goal` as what done looks like, with everything the owner said about it, in their words: what they want, how they want it, which coding agent, model and effort should build what's made in code if they said, and when they need to see something before you go on.",
     "Then reply in a line, as yourself ('On it. I'll show you the script first.'): it shows under their message as a card, and you'll tell them as it goes, so don't promise times or say where to look.",
   ].join(" "),

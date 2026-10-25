@@ -450,7 +450,8 @@ export function Composer({
  */
 function useTurn(atlas: Atlas) {
   const s = atlas.state;
-  const runs = Object.entries(s.live).filter(([, l]) => l.surface !== "voice");
+  // A job's turns work in its own thread, so they show on its composer, not this one.
+  const runs = Object.entries(s.live).filter(([, l]) => l.surface !== "voice" && !l.job);
   const mine = runs.filter(([, l]) => l.surface === "app").map(([id]) => id);
   const busy = runs.length > 0 || s.pending.some((p) => !p.run_id);
   const stop = () => {
@@ -469,7 +470,7 @@ const TRAVEL = 220;
  * short run of sharp ticks travelling all the way round. Without motion,
  * only the track shows.
  */
-function BusyEdge() {
+export function BusyEdge() {
   const box = useRef<HTMLDivElement | null>(null);
   const comet = useRef<SVGRectElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });

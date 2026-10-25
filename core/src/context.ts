@@ -318,7 +318,7 @@ export function limitsLine(sql: Sql, settings: Settings, now: number, tz: string
 function skillsLine(sql: Sql): string {
   const skills = listSkills(sql).slice(0, 60);
   return skills.length
-    ? `Your skills (open one with skill_read before a task it covers; when it was wrong, patch it with skill_save):\n${skills
+    ? `Your skills (when a task is the kind one of these is for, open that one with skill_read first; a chat, a question or a quick task needs none; when one was wrong, patch it with skill_save):\n${skills
         .map((s) => `- ${s.name}: ${s.description}${s.checked && !s.checked.ok ? " (its last check failed)" : ""}`)
         .join("\n")}`
     : "";

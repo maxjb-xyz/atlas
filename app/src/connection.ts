@@ -49,6 +49,8 @@ export interface Live {
   surface: string;
   /** A turn of work Atlas owns: it shows in that job's own thread, not the main one. */
   job?: string;
+  /** Where in its words each thing it did landed (a tool result's row id at a length of `text`), so they read in order. */
+  marks?: Array<{ at: number; id: string }>;
 }
 
 export interface TestResult {
@@ -276,6 +278,9 @@ function reduce(s: State, a: Action): State {
       }
       for (const r of m.rows) {
         if (!r.run_id) continue;
+        const l = live[r.run_id];
+        if (r.kind === "tool.result" && l && !l.marks?.some((x) => x.id === r.id))
+          live = { ...live, [r.run_id]: { ...l, marks: [...(l.marks ?? []), { at: l.text.length, id: r.id }] } };
         if (r.kind === "message.out") live = without(live, r.run_id);
         if (r.kind === "message.in") pending = pending.filter((p) => p.run_id !== r.run_id);
       }
