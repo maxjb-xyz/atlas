@@ -447,6 +447,11 @@ export interface Card {
   phones: string[];
   handles: Array<{ kind: "telegram" | "github" | "linear" | "handle"; value: string }>;
   details: Record<string, string>;
+  /**
+   * The address book's photo of them: a data: URL with the image in it, or an https address on one of the
+   * extension's hosts, which the core asks its `photo` call for (only when the address is new to it).
+   */
+  photo?: string;
 }
 
 /** A position from a location app. */
@@ -595,6 +600,8 @@ export interface Extension {
   remove?(ctx: Ctx, m: { id: string }): Promise<{ event: CalendarEvent; state?: Json }>;
   /** The address book: cards, or vCard text (RFC 6350), which the core reads. */
   contacts?(ctx: Ctx): Promise<{ cards?: Card[]; vcards?: string }>;
+  /** A contact's photo from an https address its card gave, fetched with the account's sign-in: the image, base64. */
+  photo?(ctx: Ctx, url: string): Promise<{ base64: string; type: string }>;
   geocode?(ctx: Ctx, q: { q: string; near?: Point }): Promise<Found[]>;
   reverse?(ctx: Ctx, p: Point): Promise<Found>;
   route?(ctx: Ctx, r: { via: Point[]; travel: Travel }): Promise<Route>;
@@ -661,6 +668,19 @@ export async function json<T>(res: Response, who: string): Promise<T> {
   } catch {
     throw new Failure(`${who} (${host}) answered with something that isn't JSON: ${text.slice(0, 120)}`, "protocol", res.status);
   }
+}
+
+/** Reads an image answer (a contact's photo), or throws a Failure with the status, the host and what the service said. */
+export async function image(res: Response, who: string): Promise<{ base64: string; type: string }> {
+  const type = (res.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  if (!res.ok || !type.startsWith("image/")) {
+    if (res.ok) {
+      const host = asked.get(res) ?? (res.url ? new URL(res.url).host : "unknown host");
+      throw new Failure(`${who} (${host}) answered with ${type || "something"} rather than an image.`, "protocol", res.status);
+    }
+    await json(res, who);
+  }
+  return { base64: base64(await res.arrayBuffer()), type };
 }
 
 /** The host each answer came from, so a failure can name it even when the answer doesn't carry its address. */

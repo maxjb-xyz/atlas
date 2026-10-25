@@ -310,7 +310,46 @@ function Voice({ atlas, draft, edit, view }: { atlas: Atlas; draft: SettingsT; e
           />
         )}
       </Line>
-      {/* TODO(core): speed, small talk and fillers ("Talks like a person" in docs/ui §8) wait for voice settings in core/src/store/settings.ts. */}
+      <Line label="Talks like a person">
+        <div className="row" style={{ gap: 28, alignItems: "flex-start" }}>
+          <div className="ctl-col">
+            <span className="small muted">Speed</span>
+            <Seg
+              label="Speed"
+              value={v.speed}
+              options={[0.9, 1, 1.1, 1.2].map((x) => [x, `${x.toFixed(1)}×`] as const)}
+              onChange={eleven ? (speed) => setV({ speed }) : undefined}
+              locked={!eleven}
+            />
+          </div>
+          <div className="ctl-col">
+            <span className="small muted">Small talk</span>
+            <Seg
+              label="Small talk"
+              value={v.small_talk}
+              options={[
+                ["never", "Never"],
+                ["sometimes", "Sometimes"],
+                ["often", "Often"],
+              ]}
+              onChange={(small_talk) => setV({ small_talk })}
+            />
+          </div>
+          <div className="ctl-col">
+            <span className="small muted">Fillers like “um”</span>
+            <Seg
+              label="Fillers like um"
+              value={v.fillers}
+              options={[
+                ["off", "Off"],
+                ["light", "Light"],
+              ]}
+              onChange={(fillers) => setV({ fillers })}
+            />
+          </div>
+        </div>
+        {!eleven && <span className="aside">Speed is for ElevenLabs. Workers AI's voice speaks at one speed.</span>}
+      </Line>
       <Line label="Hears with" center>
         <div className="row" style={{ gap: 12 }}>
           <Seg

@@ -32,6 +32,8 @@ export type StateName =
   | `coding_mail:${string}`
   /** A job Atlas owns (§8.3): its plan, what it has done and said, what waits on the owner, and what it has used. */
   | `goal:${string}`
+  /** A person's photo from the address book, by their record's id: its type, version and where it came from (photos.ts). */
+  | `photo:${string}`
   /** The last twenty MCP tool calls whose pages (MCP Apps) were shown: their input and result, to show them again. */
   | "mcp_apps"
   /** The workspace's last twelve commands, for its view: what ran, its exit code and the end of its output. */

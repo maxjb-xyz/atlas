@@ -24,6 +24,7 @@ interface OwnerApi {
   apiCharacterCheck(): Promise<unknown>;
   apiApprove(id: string): Promise<{ ok: boolean; text: string }>;
   apiFile(id: string): Promise<{ key: string; name: string; type: string } | null>;
+  apiPhoto(id: string): Promise<{ key: string; type: string } | null>;
   apiWorkspaceGate(): Promise<{ allow: string[]; inject: Record<string, string> }>;
   apiReaction(id: string, how: "opened" | "dismissed"): Promise<void>;
 }
@@ -261,6 +262,21 @@ export default {
             ...(meta.type === "application/pdf" ? {} : { "content-security-policy": "sandbox" }),
             "x-content-type-options": "nosniff",
             "cache-control": "private, no-store",
+          },
+        });
+      }
+      // A person's photo from the address book (docs/ui §8), from R2. Its address changes with the photo, so it keeps.
+      const photo = /^\/api\/photos\/([\w-]{1,64})$/.exec(path);
+      if (photo && request.method === "GET") {
+        const meta = await agent.apiPhoto(photo[1]!);
+        const obj = meta ? await env.FILES.get(meta.key) : null;
+        if (!meta || !obj) return json({ error: "That photo isn't there any more." }, 404);
+        return new Response(obj.body, {
+          headers: {
+            "content-type": meta.type,
+            "content-security-policy": "sandbox",
+            "x-content-type-options": "nosniff",
+            "cache-control": "private, max-age=31536000, immutable",
           },
         });
       }

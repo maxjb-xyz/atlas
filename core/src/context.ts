@@ -14,7 +14,7 @@ import { listFiles } from "./files";
 import { listSkills } from "./skills";
 import { focusNow } from "./outbox";
 import type { Message } from "./brains/types";
-import { character, TEXT_PROFILE, VOICE_PROFILE } from "./character";
+import { character, TEXT_PROFILE, voiceProfile } from "./character";
 import { getItem, upcoming } from "./store/agenda";
 import { actionsOf, needsHold, waitingApprovals } from "./approvals";
 import { webhooks } from "./webhooks";
@@ -115,7 +115,7 @@ export function systemPrompt(opts: {
     reachContext(sql, settings),
     exitsContext(sql, tz, now),
     jobsLine(sql, now),
-    surface === "voice" ? VOICE_PROFILE : surface === "none" ? "" : TEXT_PROFILE,
+    surface === "voice" ? voiceProfile(settings.voice) : surface === "none" ? "" : TEXT_PROFILE,
     opts.extra ?? "",
   ]
     .filter(Boolean)

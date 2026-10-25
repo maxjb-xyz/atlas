@@ -5,6 +5,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { undoReceipt } from "../src/agent/undo";
+import { systemPrompt } from "../src/context";
 import { migrate, type Sql } from "../src/store/db";
 import { append } from "../src/store/log";
 import { readSettings, type SettingsPatch, writeSettings } from "../src/store/settings";
@@ -70,6 +71,32 @@ describe("settings by asking", () => {
       // What it can change, and as what, for the model to read.
       const seen = (await s.look()).output as { settings: Record<string, { now: unknown; about: string }> };
       expect(seen.settings["permissions.sites"]).toMatchObject({ now: "each", about: expect.stringContaining("any") });
+    }));
+
+  it("change how Atlas talks out loud, which the voice run is told; voice saved before has today's", () =>
+    withSql(async (sql) => {
+      // Voice settings saved before speed, small talk and fillers read as they always behaved.
+      sql.exec(
+        `INSERT OR REPLACE INTO settings (key, value) VALUES ('voice', ?)`,
+        JSON.stringify({ speech_in: "workers-ai-flux", speech_out: "elevenlabs", elevenlabs_voice_id: "v1", elevenlabs_model: "m" }),
+      );
+      expect(readSettings(sql).voice).toMatchObject({ elevenlabs_voice_id: "v1", speed: 1, small_talk: "sometimes", fillers: "off" });
+      const voice = () => systemPrompt({ settings: readSettings(sql), tz: "UTC", now: new Date(), surface: "voice", sql });
+      expect(voice()).not.toContain("small talk");
+      const s = asking(sql);
+      const out = await s.change([
+        { setting: "voice.speed", value: 1.2 },
+        { setting: "voice.small_talk", value: "never" },
+        { setting: "voice.fillers", value: "light" },
+      ]);
+      expect(out.ok).toBe(true);
+      expect(readSettings(sql).voice).toMatchObject({ elevenlabs_voice_id: "v1", speed: 1.2, small_talk: "never", fillers: "light" });
+      expect(voice()).toContain("Don't make small talk");
+      expect(voice()).toContain('"um"');
+      // The text thread isn't told how to talk out loud.
+      expect(systemPrompt({ settings: readSettings(sql), tz: "UTC", now: new Date(), surface: "app", sql })).not.toContain('"um"');
+      // ElevenLabs takes 0.7 to 1.2.
+      expect((await s.change([{ setting: "voice.speed", value: 2 }])).ok).toBe(false);
     }));
 
   it("refuse what isn't a setting or a value it takes, in the schema's words", () =>

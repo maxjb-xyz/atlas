@@ -3,7 +3,7 @@
 // trust level. Atlas recognizes someone across all of their channels: a
 // task for Doug, an email from Doug's address and an invite naming him all
 // find the same record. Contacts come from the owner's address book (iCloud
-// over CardDAV, or a vCard file) and from what comes in: mail from someone
+// over CardDAV, Google's People API, or a vCard file) and from what comes in: mail from someone
 // new makes a record with trust unknown. The owner's own addresses are on
 // the owner's record, so they're never someone the owner is "with".
 
@@ -257,7 +257,13 @@ export function parseVCards(text: string): Card[] {
     else if (p === "ORG" && value.trim()) card.details.organization = unescape(value).split(";")[0]!.trim();
     else if (p === "TITLE" && value.trim()) card.details.title = unescape(value).trim();
     else if (p === "BDAY" && value.trim()) card.details.birthday = value.trim();
-    else if (p === "X-SOCIALPROFILE" || p === "IMPP" || p === "URL") {
+    else if (p === "PHOTO" && value.trim()) {
+      // The image in the card (base64 in vCard 2.1 and 3.0, a data: URL in 4.0), or an address for it (iCloud's).
+      const v = value.trim();
+      const kind = /png/.test(param) ? "png" : /gif/.test(param) ? "gif" : "jpeg";
+      if (/(^|;)encoding=(b|base64)(;|$)/.test(param)) card.photo = `data:image/${kind};base64,${v.replace(/\s+/g, "")}`;
+      else if (/^data:image\//i.test(v) || /^https:\/\//i.test(v)) card.photo = v;
+    } else if (p === "X-SOCIALPROFILE" || p === "IMPP" || p === "URL") {
       const v = value.trim();
       const kind: ChannelKind | null = /telegram|t\.me/i.test(param + v)
         ? "telegram"
@@ -292,8 +298,14 @@ export function cardSeen(c: Card, via: string): Seen {
  * Brings the owner's address book in: each card merged with the person
  * Atlas already knows by a channel, or added. Cards with no way to reach
  * anyone are left out. History has each change and a line for the import.
+ * Each person whose card has a photo is put in `photos`, to be kept after.
  */
-export function importCards(sql: Sql, cards: Card[], via: string): { added: number; merged: number; same: number; skipped: number } {
+export function importCards(
+  sql: Sql,
+  cards: Card[],
+  via: string,
+  photos: Array<{ id: string; photo: string }> = [],
+): { added: number; merged: number; same: number; skipped: number } {
   const out = { added: 0, merged: 0, same: 0, skipped: 0 };
   const mine = ownerAddresses(sql);
   for (const c of cards.slice(0, 5_000)) {
@@ -310,6 +322,7 @@ export function importCards(sql: Sql, cards: Card[], via: string): { added: numb
     }
     const r = upsertPerson(sql, seen, { via });
     out[r.change] += 1;
+    if (c.photo) photos.push({ id: r.record.id, photo: c.photo });
   }
   return out;
 }

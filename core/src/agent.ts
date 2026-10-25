@@ -164,6 +164,7 @@ import {
 } from "./skills";
 import type { RunEvent } from "./workspace";
 import { cleanName, deleteFile, filePage, getFile, keyOf, listFiles, saveFile } from "./files";
+import { keptPhoto, photoKey } from "./photos";
 import { type BrowserDriver, type BrowserPage, BrowserRunDriver } from "./browser";
 import { fillsOn, findEntry, hiddenValues, removeEntry, saveEntry, siteFor, touchEntry, vault } from "./vault";
 import { scrub } from "./outbox";
@@ -753,6 +754,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       messages: async (e, msgs) => this.#channelIn(e, msgs),
       changed,
       origin: () => getState<string>(this.#sql, "origin"),
+      bucket: () => this.#bucket(),
+      background: (fn) => void this.keepAliveWhile(fn).catch(() => {}),
+      recordsChanged: () => this.#broadcast({ type: "atlas.records.changed" }),
     });
     this.#services = new ServiceDesk({
       sql: this.#sql,
@@ -5561,6 +5565,12 @@ ${research ? RESEARCH_BRIEF : stepBrief(job)}`,
   async apiFile(id: string): Promise<{ key: string; name: string; type: string } | null> {
     const f = getFile(this.#sql, id);
     return f ? { key: keyOf(f), name: f.name, type: f.type } : null;
+  }
+
+  /** Where a person's photo from the address book is in R2, and its type (photos.ts). */
+  async apiPhoto(id: string): Promise<{ key: string; type: string } | null> {
+    const k = keptPhoto(this.#sql, id);
+    return k ? { key: photoKey(id), type: k.type } : null;
   }
 
   /** Approve from a push notification's button (the service worker calls /api/approve). */

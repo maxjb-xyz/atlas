@@ -109,12 +109,21 @@ export const Settings = z.object({
       speech_out: z.enum(["elevenlabs", "workers-ai-aura"]).default("elevenlabs"),
       elevenlabs_voice_id: z.string().max(64).default("JBFqnCBsd6RMkjVDRZzb"),
       elevenlabs_model: z.string().max(64).default("eleven_v4_turbo"),
+      /** How fast Atlas speaks, as ElevenLabs' speed (it takes 0.7 to 1.2). Workers AI's Aura has no speed. */
+      speed: z.number().min(0.7).max(1.2).default(1),
+      /** Small talk in a voice conversation (docs/ui §8, "Talks like a person"): what the voice run is told. */
+      small_talk: z.enum(["never", "sometimes", "often"]).default("sometimes"),
+      /** Fillers like "um" in a voice conversation: what the voice run is told, never added to what it says. */
+      fillers: z.enum(["off", "light"]).default("off"),
     })
     .default({
       speech_in: "workers-ai-flux",
       speech_out: "elevenlabs",
       elevenlabs_voice_id: "JBFqnCBsd6RMkjVDRZzb",
       elevenlabs_model: "eleven_v4_turbo",
+      speed: 1,
+      small_talk: "sometimes",
+      fillers: "off",
     }),
   /** The character (§23.1): a preset, four scales, and the owner's own words. */
   character: z

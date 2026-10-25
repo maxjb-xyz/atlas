@@ -132,10 +132,6 @@ const TRUSTS: Array<[string, string]> = [
 ];
 const REACH: Record<string, IconName> = { email: "mail", phone: "phone", telegram: "send" };
 
-/** A person's photo, when the address book gave one. */
-const photoOf = (r: RecordView) =>
-  typeof r.details.photo === "string" && /^(data:image\/|https:\/\/)/.test(r.details.photo) ? r.details.photo : null;
-
 function Contacts({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
   const s = atlas.state;
   const { at } = useDetail();
@@ -214,8 +210,7 @@ function Contacts({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
           </div>
           {list.map((r) => (
             <div key={r.id} className="prow" {...pressable(() => go(`person:${r.id}`))}>
-              {/* TODO(core): the address book's photo for each contact (RecordView.details.photo); until then, initials. */}
-              <Avatar name={r.name} area={areaOf(r)} photo={photoOf(r)} size={28} />
+              <Avatar name={r.name} area={areaOf(r)} photo={r.photo} size={28} />
               <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                 <span style={{ fontWeight: 500 }} className="clip">
                   {r.name}

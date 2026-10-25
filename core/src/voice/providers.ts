@@ -39,6 +39,7 @@ export function makeTTS(ai: Ai, settings: Settings, elevenKey: string | null, on
       apiKey: elevenKey,
       voiceId: settings.voice.elevenlabs_voice_id,
       modelId: settings.voice.elevenlabs_model,
+      speed: settings.voice.speed,
       onProblem,
     });
     return wholeSamples(tts, `elevenlabs:${settings.voice.elevenlabs_model}`);
@@ -85,6 +86,8 @@ export function elevenLabsPcm(o: {
   apiKey: string;
   voiceId: string;
   modelId: string;
+  /** ElevenLabs' speed, 0.7 to 1.2; 1 is the voice as it is. */
+  speed?: number;
   onProblem?: OnProblem;
   fetch?: typeof fetch;
   retryDelayMs?: number;
@@ -100,7 +103,7 @@ export function elevenLabsPcm(o: {
         res = await f(url, {
           method: "POST",
           headers: { "content-type": "application/json", "xi-api-key": o.apiKey },
-          body: JSON.stringify({ text, model_id: o.modelId }),
+          body: JSON.stringify({ text, model_id: o.modelId, ...speedOf(o.speed) }),
           signal,
         });
       } catch (err) {
@@ -159,6 +162,13 @@ export function elevenLabsPcm(o: {
     },
   };
 }
+
+/**
+ * ElevenLabs' request settings for a speed. Settings sent with a request override the voice's own for that request,
+ * so only speed is sent, and nothing at 1, which leaves the voice as the owner picked it.
+ */
+export const speedOf = (speed: number | undefined): { voice_settings?: { speed: number } } =>
+  speed !== undefined && speed !== 1 ? { voice_settings: { speed } } : {};
 
 interface AiLike {
   run(model: string, inputs: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>;
@@ -298,7 +308,7 @@ export function makeNotes(ai: Ai | AiLike, settings: Settings, elevenKey: string
           {
             method: "POST",
             headers: { "content-type": "application/json", "xi-api-key": elevenKey },
-            body: JSON.stringify({ text, model_id: settings.voice.elevenlabs_model }),
+            body: JSON.stringify({ text, model_id: settings.voice.elevenlabs_model, ...speedOf(settings.voice.speed) }),
           },
         );
         if (!res.ok)

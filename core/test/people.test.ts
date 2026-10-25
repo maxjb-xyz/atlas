@@ -12,7 +12,9 @@ import { getExt, install, uninstall } from "../src/extensions";
 import { findRecords, ownerRecord } from "../src/store/records";
 import { setState } from "../src/store/state";
 import type { Extension } from "../../extensions/sdk";
-import { call, fakeCalendar, fakeEmbedder, runExtensionsHere, say } from "./helpers";
+import { cardOf } from "../../extensions/gmail/contacts";
+import { fromDataUrl } from "../src/photos";
+import { call, fakeCalendar, fakeEmbedder, runExtensionsHere, say, SECRET } from "./helpers";
 import { brain, connect, inOwner, turn } from "./owner";
 
 const VCF = `BEGIN:VCARD
@@ -194,6 +196,105 @@ describe("contacts", () => {
     const read = String(b.requests[1]!.messages.at(-1)!.content);
     expect(read).toContain("Doug Henderson <doug@acme.com>");
     expect(read.toLowerCase()).not.toContain("owner@icloud.com");
+  });
+});
+
+describe("contacts' photos", () => {
+  // The first bytes of a PNG, which is all Atlas reads to tell an image.
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+  const b64 = btoa(String.fromCharCode(...PNG));
+  const ICLOUD_URL = "https://p41-contacts.icloud.com/123/wcs/photo/abc";
+
+  it("reads a vCard's photo in each form, and Google's photo that isn't its lettered default", () => {
+    const cards = parseVCards(
+      [
+        "BEGIN:VCARD\nVERSION:3.0\nFN:Inline Three\nEMAIL:three@example.com",
+        `PHOTO;ENCODING=b;TYPE=PNG:${b64.slice(0, 8)}\n ${b64.slice(8)}\nEND:VCARD`,
+        `BEGIN:VCARD\nVERSION:4.0\nFN:Data Four\nEMAIL:four@example.com\nPHOTO:data:image/png;base64,${b64}\nEND:VCARD`,
+        `BEGIN:VCARD\nVERSION:3.0\nFN:From iCloud\nEMAIL:icloud@example.com\nPHOTO;VALUE=uri;X-ABCROP-RECTANGLE=ABClipRect_1&0&0&100&100&q1w2:${ICLOUD_URL}\nEND:VCARD`,
+        "BEGIN:VCARD\nVERSION:3.0\nFN:No Photo\nEMAIL:none@example.com\nEND:VCARD",
+      ].join("\n"),
+    );
+    expect(cards.map((c) => c.photo)).toEqual([`data:image/png;base64,${b64}`, `data:image/png;base64,${b64}`, ICLOUD_URL, undefined]);
+    expect(fromDataUrl(cards[0]!.photo!)).toEqual(PNG);
+
+    const google = cardOf({
+      names: [{ displayName: "Gia Google" }],
+      emailAddresses: [{ value: "gia@example.com" }],
+      phoneNumbers: [{ value: "+1 407 555 0100" }],
+      organizations: [{ name: "Acme", title: "Builder" }],
+      birthdays: [{ date: { month: 3, day: 9 } }],
+      photos: [
+        { url: "https://lh3.googleusercontent.com/a/default=s100", default: true, metadata: { primary: true } },
+        { url: "https://lh3.googleusercontent.com/a/hers=s100" },
+      ],
+    });
+    expect(google).toEqual({
+      name: "Gia Google",
+      emails: ["gia@example.com"],
+      phones: ["+1 407 555 0100"],
+      handles: [],
+      details: { organization: "Acme", title: "Builder", birthday: "--03-09" },
+      photo: "https://lh3.googleusercontent.com/a/hers=s100",
+    });
+    expect(cardOf({ photos: [{ url: "https://lh3.googleusercontent.com/a/x", default: true }] })).toBeNull();
+    expect(cardOf({ names: [{ displayName: "Only Default" }], photos: [{ url: "https://x/y", default: true }] })?.photo).toBeUndefined();
+  });
+
+  it("keeps each person's photo from the address book, which the app loads with the owner's session, and reads it again only when it changed", async () => {
+    let asked: string[] = [];
+    const book: Extension = {
+      manifest: { id: "book", name: "Book", version: "1.0.0", about: "Test contacts.", provides: ["contacts"], hosts: ["icloud.com"] },
+      async contacts() {
+        return {
+          vcards: [
+            `BEGIN:VCARD\nVERSION:3.0\nFN:Pat Photo\nEMAIL:pat@example.com\nPHOTO;VALUE=uri:${ICLOUD_URL}\nEND:VCARD`,
+            `BEGIN:VCARD\nVERSION:4.0\nFN:Ines Inline\nEMAIL:ines@example.com\nPHOTO:data:image/png;base64,${b64}\nEND:VCARD`,
+            `BEGIN:VCARD\nVERSION:4.0\nFN:Not Image\nEMAIL:notimage@example.com\nPHOTO:data:image/png;base64,${btoa("<svg onload=alert(1)>")}\nEND:VCARD`,
+          ].join("\n"),
+        };
+      },
+      async photo(_ctx, url) {
+        asked.push(url);
+        return { base64: b64, type: "image/png" };
+      },
+    };
+    runExtensionsHere({ postbox, book });
+    await inOwner((_a, sql) => {
+      uninstall(sql, "book");
+      install(sql, { id: "book", source: "owner", code: "// in-process", manifest: book.manifest, methods: ["contacts", "photo"] });
+    });
+    const s = await connect();
+    s.send({ type: "atlas.contacts.import", from: "book" });
+    expect((await s.next("atlas.contacts.imported")).ok).toBe(true);
+    await s.next("atlas.records.changed");
+    expect(asked).toEqual([ICLOUD_URL]);
+    const { listRecords } = await import("../src/agent/views");
+    const people = await inOwner((_a, sql) => listRecords(sql, { type: "person" }).records);
+    const pat = people.find((r) => r.name === "Pat Photo")!;
+    const ines = people.find((r) => r.name === "Ines Inline")!;
+    expect(pat.photo).toMatch(new RegExp(`^/api/photos/${pat.id}\\?v=\\w+$`));
+    expect(ines.photo).toMatch(/^\/api\/photos\//);
+    // What isn't an image isn't kept, and the extension says why.
+    expect(people.find((r) => r.name === "Not Image")!.photo).toBeUndefined();
+    expect(await inOwner((_a, sql) => getExt(sql, "book")!.error)).toContain("isn't a JPEG, PNG, GIF or WebP image");
+    // The photo isn't one of the record's details, so the model and the details list never see it.
+    expect(pat.details).not.toHaveProperty("photo");
+
+    expect((await SELF.fetch(`http://atlas.test${pat.photo}`)).status).toBe(401);
+    const res = await SELF.fetch(`http://atlas.test${pat.photo}`, { headers: { authorization: `Bearer ${SECRET}` } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("content-security-policy")).toBe("sandbox");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG);
+
+    // Brought in again, nothing new is read.
+    asked = [];
+    s.send({ type: "atlas.contacts.import", from: "book" });
+    await s.next("atlas.contacts.imported");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(asked).toEqual([]);
+    await inOwner((_a, sql) => uninstall(sql, "book"));
   });
 });
 

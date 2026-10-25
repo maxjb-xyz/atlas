@@ -7,7 +7,7 @@
 
 import { callData } from "./calls";
 import { z } from "zod";
-import type { Json, Manifest, Message, Received, Request as ExtRequest } from "../../../extensions/sdk";
+import type { Card, Json, Manifest, Message, Received, Request as ExtRequest } from "../../../extensions/sdk";
 import { BUNDLED } from "../extensions.gen";
 import {
   accountName,
@@ -30,6 +30,7 @@ import {
 } from "../extensions";
 import { noteSource, type SenseItem } from "../intake";
 import { ownerLearned, parseVCards, importCards, senderSeen } from "../contacts";
+import { fromBase64, fromDataUrl, keepPhoto, keptPhoto, photoSource } from "../photos";
 import { allowedPost, here, observations, type Observation, pins, refused } from "../location";
 import type { AgendaItem } from "../store/agenda";
 import type { Sql } from "../store/db";
@@ -54,7 +55,16 @@ export interface ExtensionDeps {
   /** What Settings shows changed. */
   changed(): void;
   origin(): string | null;
+  /** Where contacts' photos are kept (R2's FILES bucket), when there is one. */
+  bucket(): R2Bucket | null;
+  /** Work that goes on after the call that started it has answered. */
+  background(fn: () => Promise<void>): void;
+  /** Records changed outside a run (contacts' photos came in): the app reads them again. */
+  recordsChanged(): void;
 }
+
+/** The most photos one import of an address book reads. */
+const MAX_PHOTOS = 1_000;
 
 /** What the manifest of an extension that doesn't ship with Atlas (a draft, a link, an index's) must look like before it's kept. */
 export const ManifestShape = z
@@ -401,39 +411,31 @@ export class ExtensionDesk {
 
   /** Brings the address book in from an extension that provides contacts, or from a vCard file's text. */
   async importContacts(o: { from: string } | { vcards: string }): Promise<{ ok: boolean; text: string }> {
-    let text: string;
+    let cards: Card[];
     let via: string;
+    let e: Installed | null = null;
     if ("vcards" in o) {
-      text = o.vcards;
+      cards = parseVCards(o.vcards);
       via = "a vCard file";
     } else {
-      const e = getExt(this.d.sql, o.from);
+      e = getExt(this.d.sql, o.from);
       if (!e) return { ok: false, text: "That extension isn't installed." };
       try {
-        const r = await this.d.host.call<{
-          vcards?: string;
-          cards?: Array<{
-            name: string;
-            emails: string[];
-            phones: string[];
-            handles: Array<{ kind: "telegram" | "github" | "linear" | "handle"; value: string }>;
-            details: Record<string, string>;
-          }>;
-        }>(o.from, "contacts", [], { ms: 60_000 });
+        const r = await this.d.host.call<{ vcards?: string; cards?: Card[] }>(o.from, "contacts", [], { ms: 60_000 });
         noteExt(this.d.sql, o.from);
         via = `${e.name} contacts`;
-        if (r.cards) {
-          const out = importCards(this.d.sql, r.cards, via);
-          return this.#imported(out, via);
-        }
-        text = r.vcards ?? "";
+        cards = r.cards ?? parseVCards(r.vcards ?? "");
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         noteExt(this.d.sql, o.from, message);
         return { ok: false, text: message };
       }
     }
-    return this.#imported(importCards(this.d.sql, parseVCards(text), via), via);
+    const photos: Array<{ id: string; photo: string }> = [];
+    const out = this.#imported(importCards(this.d.sql, cards, via, photos), via);
+    // Photos come after the people, so the import answers at once; only ones that changed are read.
+    if (photos.length) this.d.background(() => this.#keepPhotos(photos, e));
+    return out;
   }
 
   #imported(out: { added: number; merged: number; same: number; skipped: number }, via: string): { ok: boolean; text: string } {
@@ -443,6 +445,47 @@ export class ExtensionDesk {
       ok: true,
       text: `From ${via}: ${out.added} added, ${out.merged} merged with people Atlas knew, ${out.same} already known${out.skipped ? `, ${out.skipped} with no way to reach them left out` : ""}.`,
     };
+  }
+
+  /**
+   * Keeps the address book's photos (docs/ui §8): one in the card as it is,
+   * one at an address from the extension that gave the card, a few at a
+   * time. One that can't be kept is noted on the extension, in its words.
+   */
+  async #keepPhotos(list: Array<{ id: string; photo: string }>, e: Installed | null): Promise<void> {
+    const bucket = this.d.bucket();
+    if (!bucket) return;
+    const fetches = e ? methodsOf(e).includes("photo") : false;
+    const failed: string[] = [];
+    let kept = 0;
+    const one = async (p: { id: string; photo: string }) => {
+      const src = await photoSource(p.photo);
+      if (keptPhoto(this.d.sql, p.id)?.src === src) return;
+      try {
+        let bytes: Uint8Array | null;
+        if (p.photo.startsWith("data:")) bytes = fromDataUrl(p.photo);
+        else if (e && fetches)
+          bytes = fromBase64((await this.d.host.call<{ base64: string }>(e.id, "photo", [p.photo], { ms: 20_000 })).base64);
+        else return;
+        if (!bytes) throw new Error("it isn't base64");
+        await keepPhoto(this.d.sql, bucket, p.id, bytes, src);
+        kept += 1;
+      } catch (err) {
+        failed.push(err instanceof Error ? err.message : String(err));
+      }
+    };
+    const queue = list.slice(0, MAX_PHOTOS);
+    await Promise.all(
+      Array.from({ length: 4 }, async () => {
+        for (let p = queue.shift(); p; p = queue.shift()) await one(p);
+      }),
+    );
+    if (failed.length) {
+      const text = `${failed.length} contact ${failed.length === 1 ? "photo" : "photos"} couldn't be kept; the first: ${failed[0]}`;
+      console.error(JSON.stringify({ at: "contacts.photos", ext: e?.id ?? "vcard", failed: failed.length, error: failed[0] }));
+      if (e) noteExt(this.d.sql, e.id, text);
+    }
+    if (kept) this.d.recordsChanged();
   }
 
   // --- moving M4's providers out of the core (once) ---------------------------------------------------------

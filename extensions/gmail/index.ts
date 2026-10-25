@@ -8,7 +8,8 @@
 // for the quarantined reader; the owner's own sent mail isn't news, but the
 // threads they wrote on are remembered, so a reply in one is marked as one.
 
-import { type Extension, type Item, type Json, get, http, json, tidy } from "../sdk";
+import { type Extension, type Item, type Json, get, http, image, json, tidy } from "../sdk";
+import { googleCards } from "./contacts";
 import { base64url, buildMail, decodeWords, fromBase64url, htmlText } from "../lib/mail";
 import { addEvent, type CalendarCopy, calendars, heldEvents, keep, listEvents, moveEvent, removeEvent } from "./calendar";
 
@@ -133,11 +134,12 @@ const ext: Extension = {
   manifest: {
     id: "gmail",
     name: "Google",
-    version: "1.1.0",
+    version: "1.2.0",
     about:
-      "Your Gmail inbox as something Atlas notices (new mail, replies you're waiting for), mail sent as you only after you say yes, and your Google calendars. One Google sign-in covers both. Atlas reads mail and sends; it doesn't delete or archive.",
-    provides: ["mail", "sense", "calendar"],
-    hosts: ["gmail.googleapis.com", "oauth2.googleapis.com", "www.googleapis.com"],
+      "Your Gmail inbox as something Atlas notices (new mail, replies you're waiting for), mail sent as you only after you say yes, your Google calendars, and your Google contacts with their photos. One Google sign-in covers them all. Atlas reads mail and sends; it doesn't delete or archive.",
+    provides: ["mail", "sense", "calendar", "contacts"],
+    // Contacts' photos are on Google's image host (lh3.googleusercontent.com), read only when a photo is new.
+    hosts: ["gmail.googleapis.com", "oauth2.googleapis.com", "www.googleapis.com", "people.googleapis.com", "lh3.googleusercontent.com"],
     signin: {
       authorize: "https://accounts.google.com/o/oauth2/v2/auth",
       token: "https://oauth2.googleapis.com/token",
@@ -146,11 +148,12 @@ const ext: Extension = {
         "https://www.googleapis.com/auth/gmail.send",
         "https://www.googleapis.com/auth/calendar.readonly",
         "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/contacts.readonly",
       ],
       params: { access_type: "offline", prompt: "consent" },
       help: [
-        "Atlas signs in to Google with a sign-in of your own, so your mail and calendar go from Google to your Atlas and nowhere else.",
-        "1. At console.cloud.google.com, make a project (any name), then APIs & Services → Library: enable the Gmail API and the Google Calendar API.",
+        "Atlas signs in to Google with a sign-in of your own, so your mail, calendar and contacts go from Google to your Atlas and nowhere else.",
+        "1. At console.cloud.google.com, make a project (any name), then APIs & Services → Library: enable the Gmail API, the Google Calendar API and the People API.",
         "2. APIs & Services → OAuth consent screen: External, your own email as the contact, and add yourself as a test user. Then Publish app, so it's In production: a sign-in left in Testing stops working after seven days. Google will say it's unverified; that's expected for an app only you use.",
         "3. APIs & Services → Credentials → Create credentials → OAuth client ID → Web application, with the redirect address below as an authorized redirect URI.",
         "4. Paste its client ID and secret here, then sign in with Google.",
@@ -290,6 +293,13 @@ const ext: Extension = {
       owner: { emails: [p.emailAddress.toLowerCase()] },
       state: { ...((ctx.state ?? {}) as State), email: p.emailAddress.toLowerCase() } as unknown as Json,
     };
+  },
+  async contacts(ctx) {
+    return { cards: await googleCards(auth(ctx)) };
+  },
+  // A contact's photo is on Google's image host, which takes no sign-in.
+  async photo(_ctx, url) {
+    return image(await get(url, {}, "Google contacts"), "Google contacts");
   },
 };
 

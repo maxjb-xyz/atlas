@@ -10,7 +10,7 @@ import type { LogRow, RecordView } from "../../core/src/protocol";
 import type { AreaPage, PagePage, PersonPage, StageMessage, StageView } from "../../core/src/stage";
 import { Markdown } from "./Markdown";
 import type { Atlas } from "./connection";
-import { AreaChip, AreaDot, Diamond, Empty, Icon, pressable, Sheet, shortDay } from "./ui";
+import { AreaChip, AreaDot, Avatar, Diamond, Empty, Icon, pressable, Sheet, shortDay } from "./ui";
 import { AutomationFlow } from "./pages/Automations";
 import { AppFrame, ChartBody, CompareBody, KitBody } from "./ChartViews";
 import { McpAppFrame } from "./McpApp";
@@ -350,7 +350,7 @@ function Group({
           {...(onPick ? pressable(() => onPick(r)) : {})}
           title={r.fact || r.name}
         >
-          <span className="dot sq" />
+          {r.photo ? <Avatar name={r.name} photo={r.photo} size={16} /> : <span className="dot sq" />}
           <span>
             {r.name}
             {r.fact && r.fact !== r.name && <span className="muted"> · {r.fact}</span>}
@@ -412,7 +412,7 @@ function PersonView({
   return (
     <>
       <div className="sheet-title">
-        <Icon name="people" />
+        {r.photo ? <Avatar name={r.name} photo={r.photo} size={32} /> : <Icon name="people" />}
         <h1 className="disp">{r.name}</h1>
         <AreaChip
           ids={r.areas}

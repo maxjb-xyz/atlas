@@ -141,6 +141,9 @@ describe("moving M4's providers out of the core", () => {
         messages: async () => {},
         changed: () => {},
         origin: () => null,
+        bucket: () => null,
+        background: () => {},
+        recordsChanged: () => {},
       });
       await desk.upgrade();
       expect(

@@ -49,6 +49,8 @@ export interface RecordView {
   /** For a person (§7.1): how to reach them, each with where it came from, and how much the owner trusts them. */
   channels?: Array<{ kind: string; value: string; via: string }>;
   trust?: string;
+  /** For a person with a photo in the address book (docs/ui §8): where the app loads it, with the owner's session. */
+  photo?: string;
   /** Whether faces may share it, from its areas (§7.2). */
   shared: boolean;
 }

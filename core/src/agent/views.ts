@@ -25,6 +25,7 @@ import { indexNewMessages, keywordSearch } from "../store/memory";
 import { type AtlasRecord, getRecord, linked, RECORD_TYPES, type RecordType, recordHistory } from "../store/records";
 import { getState, setState } from "../store/state";
 import { channelsOf, lastTouch, trustOf } from "../contacts";
+import { photoUrl } from "../photos";
 import { personInfo } from "../tools/people";
 import { openTasks } from "../tasks";
 import { openLoops } from "../loops";
@@ -37,6 +38,7 @@ export function recordView(sql: Sql, r: AtlasRecord): RecordView {
   const from = r.source.log_id ? getRow(sql, r.source.log_id) : null;
   const history = recordHistory(sql, r.id);
   const last = history[history.length - 1];
+  const photo = r.type === "person" ? photoUrl(sql, r.id) : undefined;
   return {
     id: r.id,
     type: r.type,
@@ -56,7 +58,11 @@ export function recordView(sql: Sql, r: AtlasRecord): RecordView {
     was: last ? { name: last.name ?? r.name, fact: typeof last.fields.fact === "string" ? last.fields.fact : "", at: last.at } : null,
     shared: r.visibility === "shared",
     ...(r.type === "person"
-      ? { channels: channelsOf(r).map((c) => ({ kind: c.kind, value: c.value, via: c.via })), trust: trustOf(r) }
+      ? {
+          channels: channelsOf(r).map((c) => ({ kind: c.kind, value: c.value, via: c.via })),
+          trust: trustOf(r),
+          ...(photo ? { photo } : {}),
+        }
       : {}),
   };
 }

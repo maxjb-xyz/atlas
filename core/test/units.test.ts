@@ -402,6 +402,18 @@ describe("voice out", () => {
     expect(sentences.map((a) => a.reduce((n, b) => n + b.byteLength, 0))).toEqual([8, 8, 8, 8]);
   });
 
+  it("asks ElevenLabs for the owner's speed, and leaves the voice's own settings alone at normal speed", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const f = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return new Response(bytes(4));
+    }) as unknown as typeof fetch;
+    await collect(elevenLabsPcm({ apiKey: "k", voiceId: "v", modelId: "m", speed: 1.1, fetch: f }).synthesizeStream("Hi."));
+    await collect(elevenLabsPcm({ apiKey: "k", voiceId: "v", modelId: "m", speed: 1, fetch: f }).synthesizeStream("Hi."));
+    expect(bodies[0]).toEqual({ text: "Hi.", model_id: "m", voice_settings: { speed: 1.1 } });
+    expect(bodies[1]).toEqual({ text: "Hi.", model_id: "m" });
+  });
+
   it("retries a refused sentence, and reports one it still can't speak", async () => {
     const problems: string[] = [];
     let n = 0;

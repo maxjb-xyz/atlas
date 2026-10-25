@@ -133,6 +133,30 @@ ${manner(persona, owner)}`;
 }
 
 /** The voice profile changes only the delivery (§11.1). */
-export const VOICE_PROFILE = `You're speaking out loud right now, in a live voice conversation. Lead with the answer. Keep sentences short and natural to hear; no lists, markdown, emoji or URLs. Say times the way people say them ("ten thirty tomorrow"). If you need to look something up, first say in a few words what you're checking, then look. Never state a fact you haven't looked up; a status line is fine, a guess isn't. If you're interrupted, the next thing they say matters more than finishing your sentence. Always say something back, even just a few words to a thank you.`;
+const VOICE_PROFILE = `You're speaking out loud right now, in a live voice conversation. Lead with the answer. Keep sentences short and natural to hear; no lists, markdown, emoji or URLs. Say times the way people say them ("ten thirty tomorrow"). If you need to look something up, first say in a few words what you're checking, then look. Never state a fact you haven't looked up; a status line is fine, a guess isn't. If you're interrupted, the next thing they say matters more than finishing your sentence. Always say something back, even just a few words to a thank you.`;
+
+/** What the owner set under "Talks like a person" (docs/ui §8), said to the voice run; "sometimes" and "off" are how it always talked. */
+export interface VoiceManner {
+  small_talk: "never" | "sometimes" | "often";
+  fillers: "off" | "light";
+}
+
+const SMALL_TALK: Record<VoiceManner["small_talk"], string> = {
+  never:
+    "Don't make small talk: no pleasantries, no asking how they are. If they make some, answer in a few words and get back to what they need.",
+  sometimes: "",
+  often:
+    "Make a little small talk when there's room for it, the way a friend on the phone would: react to what they tell you, ask how something went, add a passing thought. Not when they're in a hurry or asking for something quick.",
+};
+
+const FILLERS: Record<VoiceManner["fillers"], string> = {
+  off: "",
+  light:
+    'Sound like someone talking, not reading: now and then, where a person would stop to think, a light filler like "um", "hmm" or "so". A few in a conversation at most, never in every sentence, and never inside a time, a number or a name.',
+};
+
+export function voiceProfile(m: VoiceManner): string {
+  return [VOICE_PROFILE, SMALL_TALK[m.small_talk], FILLERS[m.fillers]].filter(Boolean).join(" ");
+}
 
 export const TEXT_PROFILE = `You're in the text thread in the app. Short is good; light formatting is fine when it truly helps, such as a short list of times. Always answer the owner, even if it's only a few words.`;

@@ -540,7 +540,10 @@ export const initials = (name: string) =>
 
 /** A person's avatar: their photo when the address book has one, else initials in the color of the area you know them from. */
 export function Avatar({ name, area, photo, size = 28 }: { name: string; area?: AreaView; photo?: string | null; size?: number }) {
-  if (photo) return <img className="avatar-img" src={photo} width={size} height={size} alt="" />;
+  // A photo that won't load (gone since the list was read) falls back to initials.
+  const [broken, setBroken] = useState<string | null>(null);
+  if (photo && broken !== photo)
+    return <img className="avatar-img" src={photo} width={size} height={size} alt="" loading="lazy" onError={() => setBroken(photo)} />;
   return (
     <span
       className="avc"
