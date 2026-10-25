@@ -107,7 +107,7 @@ export const jobAsk = defineTool({
   description: [
     "Ask the owner for what only they can give: a choice of taste, their OK before something that can't be undone, a sign-in, a fact only they know. Never ask what you can decide yourself: decide as they would and say what you chose.",
     "It's one message in the thread and in Inbox, with a button per option, and it notifies them; your turn ends and their answer starts your next one.",
-    "Put what they need to decide in `content` (the whole script, the plan), and the things themselves in `files` from your folder (the three tracks to play, the images, the cut): they play or show right there, so they never have to go and find them. Talk as yourself: 'Three tracks to pick from. I'd go with the first.'",
+    "Put what they need to decide in `content` (the whole script, the plan), and the things themselves in `files` from your folder (the three tracks to play, the images, the cut to watch): they play or show right there in the app and arrive on their chat, so they never have to go and find them. Attach them to the question even if you showed them before: the question is what they answer from. Talk as yourself: 'Three tracks to pick from. I'd go with the first.'",
   ].join(" "),
   input: z.object({
     text: z.string().min(1).max(1_000).describe("The question, in a sentence or two."),

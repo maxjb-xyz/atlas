@@ -175,7 +175,7 @@ import {
   tidySkills,
 } from "./skills";
 import type { RunEvent } from "./workspace";
-import { cleanName, deleteFile, filePage, getFile, keyOf, listFiles, saveFile } from "./files";
+import { cleanName, deleteFile, filePage, getFile, keyOf, listFiles, saveFile, typeOf } from "./files";
 import { keptPhoto, photoKey } from "./photos";
 import { type BrowserDriver, type BrowserPage, BrowserRunDriver } from "./browser";
 import { fillsOn, findEntry, hiddenValues, removeEntry, saveEntry, siteFor, touchEntry, vault } from "./vault";
@@ -2423,6 +2423,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         chat?.stop();
         await this.#finishRun(runId, surface, res, true);
         if (via && res.text.trim()) await this.#chatAnswer(via, scrub(res.text, this.#outbox.secrets()));
+        // A file Atlas made or showed in this turn goes with its answer on the chat, as the kind of thing it is.
+        if (via) for (const f of this.#runFiles(runId)) await this.#sendFile(via.ext, via.chat, f).catch(() => {});
         if (res.state === "replied") this.#senses.seenBy(inRow.at);
       },
       { id: runId, surface },
@@ -3765,9 +3767,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         if (!full) throw new Error(`${path} isn't in your folder`);
         const got = await this.#workspaceApi.read(full);
         if (!got.ok) throw new Error(`couldn't read ${full}: ${got.error}`);
+        // Named as the owner sees it, with the file's own extension, so it keeps its type: a video plays as a video.
+        const base = full.split("/").pop()!;
+        const ext = /\.[a-z0-9]{1,5}$/i.exec(base)?.[0] ?? "";
+        const shown = name?.trim() || base;
         const { file } = await saveFile(sql, files, {
-          name: cleanName(name ?? full.split("/").pop()!),
+          name: cleanName(ext && !shown.toLowerCase().endsWith(ext.toLowerCase()) ? `${shown}${ext}` : shown),
           body: got.bytes,
+          type: typeOf(base),
           made_by: "atlas",
           note: note ?? `From ${job.title}.`,
           run_id: job.asked_in,
@@ -3785,8 +3792,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           files: question.files,
           row,
         }),
-      // The result says itself (§8.3): what Atlas wrote in it goes out as it is, where the owner is, as something that can wait.
+      // The result says itself (§8.3): what Atlas wrote in it goes out as it is, where the owner is, as something that can
+      // wait; what it made goes with it to their chat, as the kind of thing it is (a video plays, a track has a player).
       tell: async ({ job, row, text }) => {
+        const files = Array.isArray(row.body.files) ? (row.body.files as unknown as FileRef[]).filter((f) => typeof f === "object") : [];
+        const ext = route(sql, "soon").find((c) => c !== "push" && links(sql)[c]);
+        const l = ext ? links(sql)[ext] : undefined;
+        if (ext && l) for (const f of files.slice(0, 6)) await this.#sendFile(ext, l.chat, f).catch(() => {});
         await this.#outbox.notify({ id: row.id, run_id: job.asked_in, text: `${job.title}: ${text}` }, "soon", { url: "/#/home" });
       },
       site: ({ job, host, why }) => this.#askSite({ run_id: job.asked_in ?? job.id, host, why }),
@@ -3953,6 +3965,25 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       () => {},
     );
     return res.state === "replied" ? res.text : "";
+  }
+
+  /** The files a run made or put on the stage, from its receipts: what a chat answer carries with it. */
+  #runFiles(runId: string): FileRef[] {
+    const ids = new Set<string>();
+    for (const r of this.#sql
+      .exec<{ body: string }>(
+        `SELECT body FROM log WHERE run_id = ? AND kind = 'tool.result' AND json_extract(body, '$.receipt.view.kind') = 'file'`,
+        runId,
+      )
+      .toArray()) {
+      const id = (JSON.parse(r.body) as { receipt?: { view?: { file?: string } } }).receipt?.view?.file;
+      if (id) ids.add(id);
+    }
+    return [...ids]
+      .slice(0, 6)
+      .map((id) => getFile(this.#sql, id))
+      .filter((f): f is NonNullable<typeof f> => f != null)
+      .map((f) => ({ id: f.id, name: f.name, type: f.type, url: `/api/files/${f.id}`, size: f.size }));
   }
 
   /** Sends a kept file to a chat (Telegram), when it's small enough to go as one. */
@@ -6191,6 +6222,7 @@ function jobSystem(settings: Settings, job: Job): string {
     `You're working on something you took on for ${owner}, in the background: "${job.title}". What done looks like, in ${owner}'s words: ${job.goal}`,
     `This is your own working conversation about it; ${owner} doesn't see it. They see what you tell them in the thread, as yourself: what you show them (job_update), what you ask them (job_ask), and your result (job_finish). Talk to them the way you always do, in the first person and briefly, and never mention jobs, steps, turns, helpers, tools or this conversation.`,
     `Do the work yourself, a piece at a time: your folder in the workspace (${job.folder}) has a shell (folder_run) with Python, ffmpeg, Chromium and the rest, and keeps what you make between turns; you have the web, a browser for sites built by script, and the owner's files. Building something in code (a video project, a site) goes to their coding agent with job_build; research across many options (laptops, tracks, venues, quotes) goes to helpers in parallel with job_helpers, one brief each, so it's done in minutes and your own conversation stays clear; then you compare what they bring back.`,
+    `Your last words in each turn are what ${owner} sees on this work's card, so write them to ${owner} as yourself, about the work itself ("Claude Code is cutting it to the track you picked"), never about turns, tools or what you'll do next in this conversation.`,
     `Keep notes as you go with job_notes: what you decided and why, ${owner}'s answers and wishes in their words, what failed and why, what's next. You read them at the start of every turn, and they stay when older parts of this conversation are summarized.`,
     `Keep moving. End a turn only by asking ${owner} something only they can give (job_ask), handing work off (job_build, job_helpers), waiting until a time (job_wait), asking for a website (job_site), or finishing (job_finish, or job_fail when it truly can't be done). Decide what you can as ${owner} would, and say what you chose; don't ask what to do next. When a choice is about something to see or hear, bring the things themselves in job_ask's files. Without a deadline, never give a time estimate.`,
     JOB_LIMITS,

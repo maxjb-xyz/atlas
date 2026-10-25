@@ -165,6 +165,8 @@ export interface JobView {
   activity?: "working" | "waiting" | "paused" | "stalled";
   /** When it last moved: a step, a look, the owner's words. */
   moved_at?: number;
+  /** Work done for a job Atlas owns (its coding agent): part of that job's card, not a card of its own (§21.4). */
+  part_of?: string;
   /** Working only until then, unless news comes: it's between one move and its next look, with nothing at work yet. */
   quiet_until?: number;
   /** What the helper is doing right now, such as "Thinking back." */

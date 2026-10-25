@@ -1765,6 +1765,7 @@ Now: ${d.now}.`;
         ? {}
         : { activity: j.phase === "waiting" ? ("waiting" as const) : ("working" as const) }),
       moved_at: j.progress_at,
+      ...(j.step ? { part_of: j.step.goal } : {}),
       status: jobState(this.h.sql, j).now,
       steps: j.turns,
       started_at: j.started_at,

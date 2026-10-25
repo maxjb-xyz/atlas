@@ -946,11 +946,14 @@ export class JobDesk {
   ): Promise<{ ok: boolean; text: string }> {
     const job = this.#live(id);
     if ("ok" in job) return job;
-    if (job.question) return { ok: false, text: "You're already waiting on the owner's answer to a question. End your turn." };
+    if (job.question) return { ok: false, text: "You're already waiting on the owner's answer to a question." };
     const files = await this.#keep(job, o.files ?? []);
     if ("error" in files) return { ok: false, text: files.error };
     await this.#ask(job, { text: o.text, options: o.options ?? [], ...(o.content ? { content: o.content } : {}), files });
-    return { ok: true, text: "Asked. You'll hear their answer in your next turn; end this one now." };
+    return {
+      ok: true,
+      text: "Asked. You'll hear their answer in your next turn. Close the turn with a line to the owner about where it stands, as yourself.",
+    };
   }
 
   /** Hands building in code to a coding agent, in repo/ in the folder; the job's next turn has its result. */
@@ -971,7 +974,10 @@ export class JobDesk {
         },
         { moved: true },
       );
-      return { ok: true, text: `${c.name} is on it, in ${job.folder}/repo. Its result comes back in your next turn; end this one now.` };
+      return {
+        ok: true,
+        text: `${c.name} is on it, in ${job.folder}/repo. Its result comes back in your next turn. Close the turn with a line to the owner about where it stands, as yourself.`,
+      };
     } catch (err) {
       const why = err instanceof Error ? err.message : String(err);
       return { ok: false, text: `The coding agent couldn't start: ${why}` };
@@ -1002,7 +1008,7 @@ export class JobDesk {
     this.#save({ ...job, work: [...job.work, ...work] }, { moved: true });
     return {
       ok: true,
-      text: `${work.length} ${work.length === 1 ? "helper is" : "helpers are"} reading. What they find comes back in your next turn; end this one now.`,
+      text: `${work.length} ${work.length === 1 ? "helper is" : "helpers are"} reading. What they find comes back in your next turn. Close the turn with a line to the owner about where it stands, as yourself.`,
     };
   }
 
@@ -1013,7 +1019,10 @@ export class JobDesk {
     const until = Date.now() + Math.max(1, o.minutes) * 60_000;
     this.#save({ ...job, until, notes: job.notes }, { moved: true });
     await this.h.watch(id, until);
-    return { ok: true, text: `You'll carry on in ${ago(until - Date.now())}. End this turn now.` };
+    return {
+      ok: true,
+      text: `You'll carry on in ${ago(until - Date.now())}. Close the turn with a line to the owner about where it stands, as yourself.`,
+    };
   }
 
   /** A website the job needs: allowed already, or an approval card it waits on. */
@@ -1030,7 +1039,10 @@ export class JobDesk {
     if ("allowed" in r) return { ok: true, text: `The workspace can reach ${host} already. Carry on.` };
     this.#save({ ...job, phase: "waiting", site: { approval: r.approval, host, at: Date.now() }, reminded_at: null }, { moved: true });
     await this.#arm(getOwned(this.h.sql, id)!);
-    return { ok: true, text: "The owner is asked on a card. You'll hear their answer in your next turn; end this one now." };
+    return {
+      ok: true,
+      text: "The owner is asked on a card. You'll hear their answer in your next turn. Close the turn with a line to the owner about where it stands, as yourself.",
+    };
   }
 
   /** A deadline the owner set or moved, or took away. */
@@ -1053,7 +1065,7 @@ export class JobDesk {
     const files = await this.#keep(job, o.files ?? []);
     if ("error" in files) return { ok: false, text: `${files.error}. Nothing is finished yet.` };
     await this.#end({ ...job, files: [...job.files, ...files] }, "done", o.summary, files);
-    return { ok: true, text: "Finished: your result is in the thread. End your turn." };
+    return { ok: true, text: "Finished: your result is in the thread. Nothing more to say this turn." };
   }
 
   /** It can't be done: it ends, with why. */
@@ -1061,7 +1073,7 @@ export class JobDesk {
     const job = this.#live(id);
     if ("ok" in job) return job;
     await this.#end(job, "failed", why);
-    return { ok: true, text: "Ended: why is in the thread. End your turn." };
+    return { ok: true, text: "Ended: why is in the thread. Nothing more to say this turn." };
   }
 
   async #end(job: Job, phase: "done" | "failed" | "cancelled", text: string, files: FileRef[] = []): Promise<void> {

@@ -44,4 +44,4 @@ export function jobNow(j: JobView, now = Date.now()): JobNow {
 }
 
 /** The jobs something is at work on right now. */
-export const liveJobs = (jobs: JobView[], now = Date.now()) => jobs.filter((j) => jobNow(j, now).live);
+export const liveJobs = (jobs: JobView[], now = Date.now()) => jobs.filter((j) => !j.part_of && jobNow(j, now).live);

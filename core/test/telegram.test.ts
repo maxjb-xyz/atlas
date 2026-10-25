@@ -10,7 +10,8 @@ import { seams } from "../src/agent";
 import { getExt, install, setExtSecrets, uninstall } from "../src/extensions";
 import { createArea } from "../src/store/areas";
 import { setState } from "../src/store/state";
-import { call, fakeCalendar, fakeEmbedder, runExtensionsHere, say } from "./helpers";
+import { saveFile } from "../src/files";
+import { call, env, fakeCalendar, fakeEmbedder, runExtensionsHere, say } from "./helpers";
 import { brain, connect, inOwner, type Socket } from "./owner";
 
 interface Sent {
@@ -164,6 +165,31 @@ describe("Telegram", { timeout: 20_000 }, () => {
     );
     expect(row.surface).toBe("chat");
     expect(JSON.parse(row.body)).toMatchObject({ text: "anything today?", channel: "telegram" });
+  });
+
+  it("sends what a turn made or showed with its answer, as the kind of thing it is: a video plays, a document is a file", async () => {
+    await link();
+    // A video made in the workspace and kept, as a job's cut would be.
+    const video = await inOwner(
+      async (_a, sql) =>
+        (
+          await saveFile(sql, env.FILES, {
+            name: "first-cut.mp4",
+            body: new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]),
+            made_by: "atlas",
+          })
+        ).file,
+    );
+    expect(video.type).toBe("video/mp4");
+    brain([
+      call("show", { view: { kind: "file", file: video.id } }, "c1"),
+      call("file_save", { name: "notes.md", text: "# Cut notes" }, "c2"),
+      say("Here's the first cut and my notes."),
+    ]);
+    await post(message(OWNER, { text: "send me the cut" }));
+    await waitFor("the answer", () => said().find((x) => x.body.text === "Here's the first cut and my notes."));
+    await waitFor("the video", () => said("sendVideo")[0]);
+    await waitFor("the notes", () => said("sendDocument")[0]);
   });
 
   it("voids the app's code after a few wrong guesses", async () => {

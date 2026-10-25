@@ -116,7 +116,8 @@ function arrange(rows: LogRow[], live: Record<string, Live>, jobs: JobView[], pe
     const item: Item = { k: "live", live: l, receipts: lastOut.has(run) ? [] : (receipts.get(run) ?? []), run, at: Date.now() };
     if (!after(run, item)) items.push(item);
   }
-  for (const job of [...jobs].sort((a, b) => a.started_at - b.started_at)) {
+  // Work done for a job (its coding agent) is part of that job's card, not a card of its own.
+  for (const job of [...jobs].filter((j) => !j.part_of).sort((a, b) => a.started_at - b.started_at)) {
     const asked = job.owned?.asked_by ?? rows.find((r) => r.kind === "message.in" && r.run_id != null && r.run_id === job.run_id)?.id;
     const anchor = asked ? items.find((it) => it.k === "row" && it.row.id === asked) : undefined;
     const item: Item = { k: "job", job, run: anchor?.run ?? null, at: anchor?.at ?? job.started_at };
