@@ -38,7 +38,14 @@
           "status": "finished_successfully",
           "end_turn": null,
           "weight": 1.0,
-          "metadata": { "is_visually_hidden_from_conversation": true, "user_context_message_data": { "about_user_message": "I'm Max, a video editor in Orlando. I run a small studio called Keyframes.", "about_model_message": "Be brief. No bullet points unless I ask." }, "is_user_system_message": true },
+          "metadata": {
+            "is_visually_hidden_from_conversation": true,
+            "user_context_message_data": {
+              "about_user_message": "I'm Max, a video editor in Orlando. I run a small studio called Keyframes.",
+              "about_model_message": "Be brief. No bullet points unless I ask."
+            },
+            "is_user_system_message": true
+          },
           "recipient": "all",
           "channel": null
         },
@@ -52,7 +59,10 @@
           "author": { "role": "user", "name": null, "metadata": {} },
           "create_time": 1741000100.2,
           "update_time": null,
-          "content": { "content_type": "text", "parts": ["I'm going to Lisbon in March with my sister Ana. I'm vegetarian, so find places that work for that."] },
+          "content": {
+            "content_type": "text",
+            "parts": ["I'm going to Lisbon in March with my sister Ana. I'm vegetarian, so find places that work for that."]
+          },
           "status": "finished_successfully",
           "end_turn": null,
           "weight": 1.0,
@@ -235,7 +245,13 @@
           "content": {
             "content_type": "multimodal_text",
             "parts": [
-              { "content_type": "image_asset_pointer", "asset_pointer": "file-service://file-abc", "size_bytes": 81234, "width": 1024, "height": 576 },
+              {
+                "content_type": "image_asset_pointer",
+                "asset_pointer": "file-service://file-abc",
+                "size_bytes": 81234,
+                "width": 1024,
+                "height": 576
+              },
               "Can you match this LUT to the look of the Riverside promo I'm cutting for the city?"
             ]
           },

@@ -64,6 +64,7 @@ import { sharedAreas, sharedLine, sharedSave } from "./shared";
 import { agentNameOf, byInvite, getMember, invite, joined, memberOfAgent, removeMember, setRole } from "./members";
 import type { FileRef, SharedArea } from "./protocol";
 import { whoIs } from "./tools/people";
+import { chatgptCacheKey } from "./brains/chatgpt";
 import type { Message as BrainMessage } from "./brains/types";
 import { base64, type Out } from "../../extensions/sdk";
 import { makeNotes, type Notes } from "./voice/providers";
@@ -299,6 +300,8 @@ const TOOLS: Record<Actor, Tool[]> = {
     approve,
     deviceCall,
     noticedTool,
+    // Helpers (§8.1): reading a lot, or reading what shouldn't steer Atlas, so only the result comes back.
+    delegate,
     jobOwn,
     ...codingTools.filter((t) => t.name === "job_answer" || t.name === "jobs_look"),
   ],
@@ -378,11 +381,6 @@ const OWNER_GROUPS: ToolGroup[] = [
       "your own settings (notifications, quiet hours, permissions, character, voice, brains), when you speak up, the owner's focus, deleting something for good",
     tools: [...settingsTools, speakingUp, focusTool, deleteForGood],
   },
-  {
-    name: "helpers",
-    about: "helpers that read many pages at once, or read for you what shouldn't steer you, and hand back what they found",
-    tools: [delegate],
-  },
 ];
 
 /** What an automation's Atlas step can reach: what the clock's runs can, and the owner's webhooks (§13.1). */
@@ -426,7 +424,7 @@ const TEST_TOOLS: Tool[] = [
  * The most history an owner's turn reads, in tokens, by voice or text (§4.1): about the last 40 messages of ordinary
  * talk, with the summary of what came before. A long prompt slows a model's first words; recall has the rest.
  */
-const TURN_HISTORY_TOKENS = 10_000;
+const TURN_HISTORY_TOKENS = 6_000;
 
 /** The most of a job's question's content that goes on a chat with it; the rest waits in Inbox. */
 const CHAT_CONTENT = 12_000;
@@ -4103,6 +4101,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       ...(res.error ? { error: res.error } : {}),
       ...(res.brain ? { brain: brainKey(res.brain) } : {}),
       usage: res.usage as never,
+      ...(res.calls?.length ? { calls: res.calls as never } : {}),
+      // Whether ChatGPT took the cache key, so a run's end says why nothing was cached (§4.1).
+      ...(res.brain?.provider === "chatgpt" ? { cache_key: chatgptCacheKey.refused ? "refused" : "sent" } : {}),
       ...(res.interrupted ? { interrupted: true } : {}),
     });
     const end = this.#sql.exec<{ id: string }>(`SELECT id FROM log WHERE run_id = ? AND kind = 'run.end'`, runId).toArray()[0];
@@ -6185,7 +6186,7 @@ function jobSystem(settings: Settings, job: Job): string {
   return [
     `You're working on something you took on for ${owner}, in the background: "${job.title}". What done looks like, in ${owner}'s words: ${job.goal}`,
     `This is your own working conversation about it; ${owner} doesn't see it. They see what you tell them in the thread, as yourself: what you show them (job_update), what you ask them (job_ask), and your result (job_finish). Talk to them the way you always do, in the first person and briefly, and never mention jobs, steps, turns, helpers, tools or this conversation.`,
-    `Do the work yourself, a piece at a time: your folder in the workspace (${job.folder}) has a shell (folder_run) with Python, ffmpeg, Chromium and the rest, and keeps what you make between turns; you have the web, a browser for sites built by script, and the owner's files. Building something in code (a video project, a site) goes to their coding agent with job_build; reading many pages at once goes to helpers with job_helpers.`,
+    `Do the work yourself, a piece at a time: your folder in the workspace (${job.folder}) has a shell (folder_run) with Python, ffmpeg, Chromium and the rest, and keeps what you make between turns; you have the web, a browser for sites built by script, and the owner's files. Building something in code (a video project, a site) goes to their coding agent with job_build; research across many options (laptops, tracks, venues, quotes) goes to helpers in parallel with job_helpers, one brief each, so it's done in minutes and your own conversation stays clear; then you compare what they bring back.`,
     `Keep notes as you go with job_notes: what you decided and why, ${owner}'s answers and wishes in their words, what failed and why, what's next. You read them at the start of every turn, and they stay when older parts of this conversation are summarized.`,
     `Keep moving. End a turn only by asking ${owner} something only they can give (job_ask), handing work off (job_build, job_helpers), waiting until a time (job_wait), asking for a website (job_site), or finishing (job_finish, or job_fail when it truly can't be done). Decide what you can as ${owner} would, and say what you chose; don't ask what to do next. When a choice is about something to see or hear, bring the things themselves in job_ask's files. Without a deadline, never give a time estimate.`,
     JOB_LIMITS,

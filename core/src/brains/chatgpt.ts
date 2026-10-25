@@ -219,9 +219,12 @@ async function refused(res: Response): Promise<BrainError> {
   return new BrainError(`ChatGPT: ${status}${detail ? ` ${detail}` : ""}`, false, res.status);
 }
 
+/** Whether ChatGPT refused the cache key, for the run's end to say (§4.1). */
+export const chatgptCacheKey = { refused: false };
+
 export function chatgptBrain(auth: ChatGPTAccess, model: string, f: typeof fetch = fetch): Brain {
   // Whether ChatGPT took a cache key: if it ever says it doesn't know one, Atlas stops sending it.
-  let keyless = false;
+  let keyless = chatgptCacheKey.refused;
   async function open(req: BrainRequest, force: boolean): Promise<Response> {
     const token = await auth.access(force);
     if (!token) throw new BrainError("ChatGPT isn't signed in.", true);
@@ -276,6 +279,7 @@ export function chatgptBrain(auth: ChatGPTAccess, model: string, f: typeof fetch
         // The plan's endpoint doesn't take a cache key: say so in the Worker log, and go on without one.
         console.error(JSON.stringify({ at: "chatgpt.cache_key", status: 400, note: "prompt_cache_key refused; sending without it" }));
         keyless = true;
+        chatgptCacheKey.refused = true;
         res = await open(req, false);
       }
       logLimits(res);

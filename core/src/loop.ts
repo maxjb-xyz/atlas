@@ -134,6 +134,8 @@ export interface LoopResult {
   error?: string;
   /** The conversation as the run left it: what it was given, each step's tools and results, and its last words. */
   messages?: Message[];
+  /** Each model call's tokens in and how many came from the provider's cache, to see whether caching works (§4.1). */
+  calls?: Array<{ input: number; cached: number; ms: number }>;
 }
 
 class NoBrainError extends Error {}
@@ -144,6 +146,7 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
   const started = Date.now();
   const messages: Message[] = [...(spec.resume?.messages ?? spec.messages)];
   const usage: Usage = { input: 0, output: 0, cached: 0 };
+  const calls: NonNullable<LoopResult["calls"]> = [];
   let text = spec.resume?.text ?? "";
   let steps = spec.resume?.steps ?? 0;
   let lastBrain: LoopResult["brain"] = null;
@@ -191,6 +194,7 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
     interrupted: false,
     usage,
     messages: last ? [...messages, { role: "assistant", content: last }] : [...messages],
+    calls,
     ...extra,
   });
 
@@ -198,6 +202,7 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
     while (true) {
       const over = steps >= spec.budget.steps || Date.now() - started > spec.budget.ms;
       steps += 1;
+      const callAt = Date.now();
       const step = await runStep(deps, spec, {
         system: over ? `${spec.system}\n\n${BUDGET_NOTE}` : spec.system,
         messages,
@@ -213,6 +218,7 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
       usage.input += step.usage?.input ?? 0;
       usage.output += step.usage?.output ?? 0;
       usage.cached = (usage.cached ?? 0) + (step.usage?.cached ?? 0);
+      calls.push({ input: step.usage?.input ?? 0, cached: step.usage?.cached ?? 0, ms: Date.now() - callAt });
 
       if (over || step.calls.length === 0) {
         last = step.text;

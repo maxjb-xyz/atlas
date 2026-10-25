@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { seams } from "../src/agent";
-import { chatgptBrain } from "../src/brains/chatgpt";
+import { chatgptBrain, chatgptCacheKey } from "../src/brains/chatgpt";
 import type { BrainEvent } from "../src/brains/types";
 import { tokens } from "../src/context";
 import { append } from "../src/store/log";
@@ -83,6 +83,9 @@ describe("ChatGPT's cache key", () => {
     expect(bodies.at(-1)!.prompt_cache_key).toBeUndefined();
 
     // An endpoint that takes it gets it every time.
+    // It's remembered for every brain until the Worker restarts; a fresh start sends it again.
+    expect(chatgptCacheKey.refused).toBe(true);
+    chatgptCacheKey.refused = false;
     refuse = false;
     const c = chatgptBrain({ access: async () => "token" }, "gpt-5.6-terra", f);
     await collect(c.stream(req));

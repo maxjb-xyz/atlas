@@ -79,8 +79,12 @@ interface TurnResult {
   brain: string | null;
   first_text_ms: number | null;
   first_status_ms: number | null;
+  /** The first thing the owner sees: Atlas's first words, or on a lookup its status line ("Checking your calendar"). */
+  first_seen_ms: number | null;
   total_ms: number | null;
   tokens_in: number | null;
+  /** Model calls in the run, from run.end: tokens in are checked per call. */
+  calls: number | null;
   tokens_cached: number | null;
   tools: string[];
   error?: string;
@@ -292,6 +296,8 @@ async function turn(line: Line, scenario: string, n: number, say: string): Promi
     reply: "",
     brain: null,
     first_text_ms: null,
+    first_seen_ms: null,
+    calls: null,
     first_status_ms: null,
     total_ms: null,
     tokens_in: null,
@@ -327,6 +333,8 @@ async function turn(line: Line, scenario: string, n: number, say: string): Promi
     result.first_text_ms = firstText ? Math.round(firstText.at - t0) : null;
     const status = tape.seen.find((s) => s.m.type === "atlas.status" && mine(s) && s.m.text);
     result.first_status_ms = status ? Math.round(status.at - t0) : null;
+    const seen = [result.first_text_ms, result.first_status_ms].filter((x): x is number => x != null);
+    result.first_seen_ms = seen.length ? Math.min(...seen) : null;
     const streamed = tape.seen
       .filter((s) => s.m.type === "atlas.delta" && mine(s))
       .map((s) => String(s.m.text))
@@ -343,6 +351,7 @@ async function turn(line: Line, scenario: string, n: number, say: string): Promi
     const usage = runEnd?.body.usage as { input?: number; cached?: number } | undefined;
     result.tokens_in = typeof usage?.input === "number" ? usage.input : null;
     result.tokens_cached = typeof usage?.cached === "number" ? usage.cached : null;
+    result.calls = typeof runEnd?.body.steps === "number" ? runEnd.body.steps : null;
     result.brain = typeof runEnd?.body.brain === "string" ? runEnd.body.brain : null;
     if (typeof runEnd?.body.error === "string") result.error = runEnd.body.error;
     result.tools = rows.filter((r) => r.kind === "tool.call").map((r) => String(r.body.name));
@@ -371,11 +380,13 @@ function turnChecks(t: TurnResult, c: Checks, forbid: string[], label: string): 
   const at = (what: string) => `${label}${what}`;
   if (t.state === "failed" || t.error) failed.push(at(`run failed: ${t.error ?? "no reason given"}`));
   else if (!t.reply.trim()) failed.push(at("no reply"));
-  if (c.first_text_ms != null && (t.first_text_ms == null || t.first_text_ms > c.first_text_ms))
-    failed.push(at(t.first_text_ms == null ? "no text came" : `first text ${t.first_text_ms} ms > ${c.first_text_ms}`));
+  // What the owner waits on: Atlas's first words, or on a lookup its status line, then the answer (VISION §4.1, §11.2).
+  if (c.first_text_ms != null && (t.first_seen_ms == null || t.first_seen_ms > c.first_text_ms))
+    failed.push(at(t.first_seen_ms == null ? "nothing came" : `first words or status ${t.first_seen_ms} ms > ${c.first_text_ms}`));
   if (c.tokens_in != null) {
-    if (t.tokens_in == null) failed.push(at("tokens in unknown (no usage on run.end)"));
-    else if (t.tokens_in > c.tokens_in) failed.push(at(`tokens in ${t.tokens_in} > ${c.tokens_in}`));
+    const per = t.tokens_in != null ? Math.round(t.tokens_in / Math.max(1, t.calls ?? 1)) : null;
+    if (per == null) failed.push(at("tokens in unknown (no usage on run.end)"));
+    else if (per > c.tokens_in) failed.push(at(`tokens in per call ${per} > ${c.tokens_in}`));
   }
   const lines = t.reply.split("\n").filter((l) => l.trim()).length;
   if (c.max_lines != null && lines > c.max_lines) failed.push(at(`${lines} lines > ${c.max_lines}`));
@@ -605,21 +616,23 @@ async function main() {
   // --- the report ---
   const ms = (xs: Array<number | null>) => xs.map((x) => (x == null ? "-" : String(x))).join(" / ");
   const table = [
-    "| Scenario | Result | First text ms | Total ms | Tokens in | Failed | Judge |",
-    "|---|---|---|---|---|---|---|",
+    "| Scenario | Result | First seen ms | First text ms | Total ms | Tokens in (cached) | Failed | Judge |",
+    "|---|---|---|---|---|---|---|---|",
     ...results.map(
       (r) =>
-        `| ${r.id} | ${r.passed ? "PASS" : "FAIL"} | ${ms(r.turns.map((t) => t.first_text_ms))} | ${ms(r.turns.map((t) => t.total_ms))} | ${ms(r.turns.map((t) => t.tokens_in))} | ${cell(r.failed.join("; ") || "-")} | ${cell(r.judge ? `${r.judge.notes}${r.judge.judge ? ` (${r.judge.judge})` : ""}` : "-")} |`,
+        `| ${r.id} | ${r.passed ? "PASS" : "FAIL"} | ${ms(r.turns.map((t) => t.first_seen_ms))} | ${ms(r.turns.map((t) => t.first_text_ms))} | ${ms(r.turns.map((t) => t.total_ms))} | ${r.turns.map((t) => (t.tokens_in == null ? "-" : `${t.tokens_in} (${t.tokens_cached ?? 0})`)).join(" / ")} | ${cell(r.failed.join("; ") || "-")} | ${cell(r.judge ? `${r.judge.notes}${r.judge.judge ? ` (${r.judge.judge})` : ""}` : "-")} |`,
     ),
   ];
   const turns = results.flatMap((r) => r.turns);
-  const first = turns.map((t) => t.first_text_ms).filter((x): x is number => x != null);
+  const first = turns.map((t) => t.first_seen_ms).filter((x): x is number => x != null);
+  const cached = turns.reduce((n, t) => n + (t.tokens_cached ?? 0), 0);
+  const all = turns.reduce((n, t) => n + (t.tokens_in ?? 0), 0);
   const tokens = turns.map((t) => t.tokens_in).filter((x): x is number => x != null);
   const passed = results.filter((r) => r.passed).length;
   const summary =
     `${passed} of ${results.length} scenarios passed. ` +
-    `First text: median ${median(first) ?? "-"} ms, p90 ${p90(first) ?? "-"} ms. ` +
-    `Tokens in: median ${median(tokens) ?? "-"}, p90 ${p90(tokens) ?? "-"}.` +
+    `First seen (words or status line): median ${median(first) ?? "-"} ms, p90 ${p90(first) ?? "-"} ms. ` +
+    `Tokens in: median ${median(tokens) ?? "-"}, p90 ${p90(tokens) ?? "-"}, ${all ? Math.round((100 * cached) / all) : 0}% from the cache.` +
     (judging ? "" : " Not judged (--no-judge).");
   console.log(`${table.join("\n")}\n\n${summary}`);
 
