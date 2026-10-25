@@ -28,6 +28,8 @@ export interface BrainRequest {
   signal?: AbortSignal;
   /** Lower for voice: answer fast rather than think long. */
   effort?: "low" | "medium";
+  /** The same for every turn of one conversation, so a provider routes it to the cache it filled last time (§4.1). */
+  cacheKey?: string;
   maxOutputTokens?: number;
 }
 

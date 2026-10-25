@@ -13,7 +13,7 @@ import { systemPrompt } from "../src/context";
 import { install, setExtSecrets } from "../src/extensions";
 import { readSettings } from "../src/store/settings";
 import { setState } from "../src/store/state";
-import { call, env, fakeCalendar, fakeEmbedder, say, scripted, SECRET, type Step } from "./helpers";
+import { call, env, fakeCalendar, fakeEmbedder, say, scripted, SECRET, type Step, offered } from "./helpers";
 
 const ORIGIN = "http://atlas.test";
 const HOOK = "https://hooks.example.com/api/webhook/lights-1f2e";
@@ -298,9 +298,7 @@ describe("automations", () => {
       text: "Made automation · Weekday brief · paused until you've seen a test run",
       view: { kind: "automation" },
     });
-    expect(b.requests[0]!.tools.map((x) => x.name)).toEqual(
-      expect.arrayContaining(["automation_save", "automation_test", "automation_set"]),
-    );
+    expect(offered(b.requests[0]!)).toEqual(expect.arrayContaining(["automation_save", "automation_test", "automation_set"]));
     let v = await view(s, "Weekday brief");
     expect(v).toMatchObject({ state: "paused", made_by: "atlas", can_turn_on: false, next_at: null, when_text: "At 08:00, weekdays" });
 

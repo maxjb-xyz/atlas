@@ -15,7 +15,7 @@ import { findSkill } from "../src/skills";
 import { upcoming } from "../src/store/agenda";
 import { setState } from "../src/store/state";
 import type { Extension } from "../../extensions/sdk";
-import { call, fakeCalendar, fakeEmbedder, runExtensionsHere, say } from "./helpers";
+import { call, fakeCalendar, fakeEmbedder, runExtensionsHere, say, offered } from "./helpers";
 import { brain, connect, inOwner, out, turn } from "./owner";
 
 /** An extension with a tool of each kind, run here (outside a sandbox) with what it was asked kept. */
@@ -560,9 +560,11 @@ describe("an extension's tools", () => {
     const s = await connect();
     const b = brain([call("ext_tooly_find_note", { title: "Plans" }), say("Found it.")]);
     const { results, deliveries } = await turn(s, "find my Plans note");
-    const names = b.requests[0]!.tools!.map((t) => t.name);
-    expect(names).toEqual(expect.arrayContaining(["ext_tooly_find_note", "ext_tooly_rename_note", "ext_tooly_post_note", "ext_tooly_pay"]));
-    expect(b.requests[0]!.tools!.find((t) => t.name === "ext_tooly_find_note")!.parameters).toMatchObject({ required: ["title"] });
+    // Offered in the index of what the turn can load, and loaded with their schemas once one is called (§4.1).
+    expect(offered(b.requests[0]!)).toEqual(
+      expect.arrayContaining(["ext_tooly_find_note", "ext_tooly_rename_note", "ext_tooly_post_note", "ext_tooly_pay"]),
+    );
+    expect(b.requests[1]!.tools!.find((t) => t.name === "ext_tooly_find_note")!.parameters).toMatchObject({ required: ["title"] });
     expect(JSON.parse(out(results[0]!))).toMatchObject({
       answer: "Note Plans: buy milk",
       untrusted: expect.stringContaining("someone else's words"),

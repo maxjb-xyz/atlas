@@ -16,7 +16,7 @@ import osm from "../../extensions/osm";
 import { placeKind, type Found } from "../src/maps";
 import { install } from "../src/extensions";
 import { setState } from "../src/store/state";
-import { call, fakeCalendar, fakeEmbedder, runExt, say, SECRET } from "./helpers";
+import { call, fakeCalendar, fakeEmbedder, runExt, say, SECRET, offered } from "./helpers";
 import { brain, connect, inOwner, turn, type Socket } from "./owner";
 
 const GYM = { lat: 28.6024, lon: -81.2001 };
@@ -295,7 +295,7 @@ describe("the gym-to-store moment", () => {
     const b = brain([call("speaking_up", { quiet_about_add: ["stores on the way home"] }), say("Got it, no more store tips.")]);
     const t = await turn(s, "stop telling me about stores");
     expect(b.requests[0]!.system).toContain("seems to be saying stop to the nudge you sent");
-    expect(b.requests[0]!.tools.map((x) => x.name)).toContain("speaking_up");
+    expect(offered(b.requests[0]!)).toContain("speaking_up");
     const receipt = t.results[0]!;
     expect(receipt.body.receipt).toMatchObject({ text: "Speaking up · won't bring up stores on the way home" });
     expect((await inOwner((_a, sql) => readSettings(sql))).speaking).toMatchObject({
@@ -388,8 +388,10 @@ describe("the gym-to-store moment", () => {
     await tick();
     const review = await waitFor("the review", async () => (await rowsSince(from, "awareness")).find((x) => x.step === "review"));
     expect(review).toMatchObject({ outcome: "silent", count: 1 });
-    expect(String(r.requests[0]!.messages.at(-1)!.content)).toContain("Since your last look, these came in");
-    expect(String(r.requests[0]!.messages.at(-1)!.content)).not.toContain("Lunch with Sam");
+    // The run's own note, after what's true now (§4.1).
+    const note = String(r.requests[0]!.messages.at(-1)!.content).split("</now>").at(-1)!;
+    expect(note).toContain("Since your last look, these came in");
+    expect(note).not.toContain("Lunch with Sam");
     const seen = await inOwner((_a, sql) =>
       sql.exec<{ seen_at: number | null }>(`SELECT seen_at FROM intake WHERE id = ?`, second.id).one(),
     );

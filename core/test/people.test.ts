@@ -191,7 +191,9 @@ describe("contacts", () => {
     ]);
     await inOwner((_a, sql) => ownerLearned(sql, ["owner@icloud.com"], "iCloud"));
     const s = await connect();
-    const b = brain([call("calendar_read", {}), say("Planning, with Doug.")]);
+    // The day the event is on, in the owner's time zone, so the read finds it at any hour (even just before midnight).
+    const day = new Date(Date.now() + 3_600_000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const b = brain([call("calendar_read", { start: day }), say("Planning, with Doug.")]);
     await turn(s, "what's next?");
     const read = String(b.requests[1]!.messages.at(-1)!.content);
     expect(read).toContain("Doug Henderson <doug@acme.com>");

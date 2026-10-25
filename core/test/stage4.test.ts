@@ -104,7 +104,11 @@ describe("stage 4: brains, end to end", () => {
     await turn(s, "hello");
     const second = await turn(s, "and again");
     // The stable part of the prompt and the tools went marked for the cache, and the second turn read them from it.
-    expect(sent.at(-1)!.body).toMatchObject({ system: [{ cache_control: { type: "ephemeral" } }, {}] });
+    // What's true now rides with the turn's message, so the whole prompt is the stable part (§4.1); the conversation
+    // so far is cached up to its last block.
+    expect(sent.at(-1)!.body).toMatchObject({ system: [{ cache_control: { type: "ephemeral" } }] });
+    const turns = (sent.at(-1)!.body as { messages: Array<{ content: Array<{ cache_control?: unknown }> }> }).messages;
+    expect(turns.at(-1)!.content.at(-1)).toMatchObject({ cache_control: { type: "ephemeral" } });
     const end = await inOwner((_a, sql) =>
       sql.exec<{ body: string }>(`SELECT body FROM log WHERE kind = 'run.end' AND run_id = ?`, second.run).one(),
     );

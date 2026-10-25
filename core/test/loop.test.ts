@@ -129,6 +129,40 @@ describe("the loop", () => {
       expect(thread(sql, 10).some((r) => r.kind === "tool.result")).toBe(true);
     }));
 
+  it("starts with the common tools and loads a group by name, or by calling one of its tools (§4.1)", () =>
+    withSql(async (sql) => {
+      const agenda = { name: "agenda", about: "reminders and promises", tools: agendaTools };
+      const t = setup(sql, [call("tools_load", { groups: ["agenda"] }, "c1"), call("agenda_list", {}, "c2"), say("Nothing coming up.")], {
+        tools: [calendarRead],
+        groups: [agenda],
+      });
+      await t.run();
+      const names = (i: number) => t.main.requests[i]!.tools.map((x) => x.name);
+      // First only what it starts with, and the index, which lists each group's tools.
+      expect(names(0)).toEqual(["calendar_read", "tools_load"]);
+      expect(t.main.requests[0]!.tools.find((x) => x.name === "tools_load")!.description).toContain(
+        "agenda: reminders and promises (reminder_create, promise, agenda_list, agenda_cancel)",
+      );
+      // Then the group, for the rest of the turn.
+      expect(names(1)).toEqual(expect.arrayContaining(["calendar_read", "tools_load", "reminder_create", "agenda_list"]));
+      expect(t.main.requests[1]!.messages.find((m) => m.role === "tool" && m.name === "tools_load")!.content).toContain("reminder_create");
+
+      // Calling a group's tool by name loads it and runs it, with its status line.
+      const u = setup(sql, [call("reminder_create", { text: "Stretch", at: "2026-10-21T18:30" }), say("Set.")], {
+        tools: [calendarRead],
+        groups: [agenda],
+      });
+      await u.run();
+      expect(upcoming(sql).some((i) => i.title === "Stretch")).toBe(true);
+      expect(u.main.requests[1]!.tools.map((x) => x.name)).toContain("promise");
+      // An unknown group says what there is.
+      const v = setup(sql, [call("tools_load", { groups: ["nope"] }), say("Hm.")], { tools: [], groups: [agenda] });
+      await v.run();
+      expect(v.main.requests[1]!.messages.find((m) => m.role === "tool")!.content).toContain(
+        "There's no group called nope. The groups are: agenda.",
+      );
+    }));
+
   it("tells the model when its arguments don't fit or the time is past", () =>
     withSql(async (sql) => {
       const t = setup(sql, [

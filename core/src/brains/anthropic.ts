@@ -40,10 +40,11 @@ const SPLIT = "\n\n---\n\n";
 /** The answer's length when the request doesn't say: Messages needs one. */
 const MAX_TOKENS = 8_192;
 
+type Cache = { cache_control?: { type: "ephemeral" } };
 type Block =
-  | { type: "text"; text: string; cache_control?: { type: "ephemeral" } }
-  | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string };
+  | ({ type: "text"; text: string } & Cache)
+  | ({ type: "tool_use"; id: string; name: string; input: unknown } & Cache)
+  | ({ type: "tool_result"; tool_use_id: string; content: string } & Cache);
 
 interface Turn {
   role: "user" | "assistant";
@@ -70,6 +71,10 @@ export function toTurns(messages: Message[]): Turn[] {
   }
   // Messages starts with the user.
   while (out[0]?.role === "assistant") out.shift();
+  // The conversation so far is cached up to its last block (§4.1): the next step, and the next turn up to the
+  // message that carried what was true then, read it from the cache.
+  const end = out.at(-1)?.content.at(-1);
+  if (end) end.cache_control = { type: "ephemeral" };
   return out;
 }
 

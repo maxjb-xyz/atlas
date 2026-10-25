@@ -77,8 +77,8 @@ import { runCharacterCheck, summary as characterSummary } from "./character-chec
 import { newSessionId, type Session, SESSION_DAYS, SESSION_HEADER } from "./auth";
 import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
 import { compact, planCompaction } from "./compaction";
-import { CONTEXT_TOKENS, history, systemPrompt, tokens, withMessage } from "./context";
-import { BUDGETS, type LoopEvent, type LoopResult, runLoop } from "./loop";
+import { CONTEXT_TOKENS, history, promptParts, systemPrompt, tokens, withMessage, withNow } from "./context";
+import { BUDGETS, type LoopEvent, type LoopResult, runLoop, type ToolGroup } from "./loop";
 import { askedOn, Outbox, type PushDevice, pushDevices, route, StreamScrubber, type Urgency } from "./outbox";
 import { vapidKeys } from "./push";
 import {
@@ -284,43 +284,21 @@ const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
  * and nobody is looking at the stage when they run, so they can't `show`.
  */
 const TOOLS: Record<Actor, Tool[]> = {
+  // What an owner's turn starts with: what most turns use (§4.1). The rest load by group (OWNER_GROUPS), so a turn
+  // doesn't send every tool's schema to the brain each time.
   owner: [
-    ...settingsTools,
-    calendarRead,
-    calendarMove,
-    calendarAdd,
-    ...agendaTools,
     ...memoryTools,
-    delegate,
-    show,
-    webhookCall,
-    deleteForGood,
-    approve,
-    focusTool,
-    ...pageTools,
-    ...automationTools,
+    calendarRead,
+    calendarAdd,
+    calendarMove,
+    ...agendaTools,
     ...webTools,
-    ...browserTools,
-    vaultFill,
-    ...fileTools,
-    ...workspaceTools,
-    codeRun,
-    ...skillTools,
-    ...hubTools,
-    ...mcpToolset,
-    ...placeTools,
-    ...taskTools,
+    ...placeLooks,
+    approve,
     deviceCall,
-    speakingUp,
     noticedTool,
-    extensionDraft,
-    ...peopleTools,
-    emailSend,
-    mailAccount,
-    ...sharedTools,
-    areaLook,
-    ...codingTools,
     jobOwn,
+    ...codingTools.filter((t) => t.name === "job_answer" || t.name === "jobs_look"),
   ],
   atlas: [
     calendarRead,
@@ -343,6 +321,67 @@ const TOOLS: Record<Actor, Tool[]> = {
   ],
   system: [],
 };
+
+/** The rest of what an owner's turn can do, one line each in its index, loaded by name when it needs them (§4.1). */
+const OWNER_GROUPS: ToolGroup[] = [
+  {
+    name: "stage",
+    about:
+      "show: put something on the owner's screen to look at: a week, a map, a place, a person, an area, a table, a list, a chart, a comparison, a draft, a plan, research with sources, a document, code, a file, a small app, the live browser, the weather, their situation, what you noticed, or what you can do",
+    tools: [show],
+  },
+  {
+    name: "automations",
+    about: "make, change, test, run and list the owner's automations: what you do on a schedule or when something happens",
+    tools: automationTools,
+  },
+  {
+    name: "library",
+    about: "save and read files and pages in the owner's Library: documents, spreadsheets, kept views",
+    tools: [...fileTools, ...pageTools],
+  },
+  {
+    name: "browser",
+    about: "a real browser: open sites built by script, click, fill and submit forms, sign in with the owner's vault, hand it to the owner",
+    tools: [...browserTools, vaultFill],
+  },
+  {
+    name: "workspace",
+    about:
+      "a computer of your own: run commands and code (python, ffmpeg, git, curl), make and convert files, preview a site, let it reach a website",
+    tools: [...workspaceTools, codeRun],
+  },
+  {
+    name: "coding",
+    about: "coding on the owner's repos: a coding agent (Claude Code, Codex) works on a branch and opens a pull request",
+    tools: codingTools.filter((t) => t.name !== "job_answer" && t.name !== "jobs_look"),
+  },
+  {
+    name: "people",
+    about:
+      "people and mail: what you know about someone, save a contact, open and close loops with people, send email, pick the account mail goes from, what's shared with members, an area's settings",
+    tools: [...peopleTools, emailSend, mailAccount, ...sharedTools, areaLook],
+  },
+  { name: "tasks", about: "the owner's tasks: add one, mark one done", tools: taskTools },
+  { name: "places", about: "pin a place the owner goes to, with its name", tools: placeTools.filter((t) => !placeLooks.includes(t)) },
+  { name: "skills", about: "your skills: read, write and check them, find and install new ones", tools: [...skillTools, ...hubTools] },
+  {
+    name: "services",
+    about: "connected services' tools (MCP and extensions), connecting a new service, the owner's webhooks, drafting an extension",
+    tools: [...mcpToolset, webhookCall, extensionDraft],
+  },
+  {
+    name: "settings",
+    about:
+      "your own settings (notifications, quiet hours, permissions, character, voice, brains), when you speak up, the owner's focus, deleting something for good",
+    tools: [...settingsTools, speakingUp, focusTool, deleteForGood],
+  },
+  {
+    name: "helpers",
+    about: "helpers that read many pages at once, or read for you what shouldn't steer you, and hand back what they found",
+    tools: [delegate],
+  },
+];
 
 /** What an automation's Atlas step can reach: what the clock's runs can, and the owner's webhooks (§13.1). */
 const AUTOMATION_TOOLS: Tool[] = [
@@ -382,10 +421,10 @@ const TEST_TOOLS: Tool[] = [
 ];
 
 /**
- * The most history a voice turn reads, in tokens: about M0's last 40
- * messages of ordinary talk. A long prompt slows a model's first words.
+ * The most history an owner's turn reads, in tokens, by voice or text (§4.1): about the last 40 messages of ordinary
+ * talk, with the summary of what came before. A long prompt slows a model's first words; recall has the rest.
  */
-const VOICE_HISTORY_TOKENS = 12_000;
+const TURN_HISTORY_TOKENS = 10_000;
 
 /** The most of a job's question's content that goes on a chat with it; the rest waits in Inbox. */
 const CHAT_CONTENT = 12_000;
@@ -3139,17 +3178,29 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const now = new Date();
     const base = o.tools ?? TOOLS[o.actor];
     // A run that may use services' tools (it has mcp_call) has the extensions' own tools too, held to their kinds (§17).
-    const tools = base.includes(mcpCall) ? [...base, ...extensionTools(this.#services.toolHosts())] : base;
-    const mcp = tools.includes(mcpCall) ? await this.#mcpServers(3_000) : [];
+    const ext = () => extensionTools(this.#services.toolHosts());
+    // An owner's turn starts with the common tools and loads the rest by group; other runs get their set whole.
+    const groups: ToolGroup[] | undefined =
+      !o.tools && o.actor === "owner"
+        ? OWNER_GROUPS.map((g) => (g.name === "services" ? { ...g, tools: [...g.tools, ...ext()] } : g))
+        : undefined;
+    const tools = !groups && base.includes(mcpCall) ? [...base, ...ext()] : base;
+    const every = [...tools, ...(groups ?? []).flatMap((g) => g.tools)];
+    const mcp = every.includes(mcpCall) ? await this.#mcpServers(3_000) : [];
     // What's shared, and for a member's Atlas whose it is (§7.1). The owner's Atlas being unreachable doesn't stop a run.
     const shared = await this.#sharedNote();
     const extra = [o.extra ?? "", shared].filter(Boolean).join("\n\n") || undefined;
-    const system = systemPrompt({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq, mcp, extra });
-    // Compaction keeps this well inside the window; the budget only matters if it hasn't caught up.
-    // Voice reads less, so a spoken reply starts fast; recall still has the rest.
-    const room = o.role === "voice" ? VOICE_HISTORY_TOKENS : Math.floor(this.#window * 0.85) - tokens(system);
+    // What stays put is the prompt, which brains cache; what's true now rides with this turn's message (§4.1).
+    const parts = promptParts({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq, mcp, extra });
+    const system = parts.stable;
+    // A turn reads the recent conversation and the summary before it, so its first words come fast; recall has the rest.
+    // Atlas's own runs on the clock read as much as fits, since nobody waits on them.
+    const room = o.actor === "owner" ? TURN_HISTORY_TOKENS : Math.floor(this.#window * 0.85) - tokens(system);
     const budget = room - tokens(o.input);
-    const messages = withMessage(history(this.#sql, { excludeRunId: o.runId, beforeSeq: o.beforeSeq, budget }), o.input);
+    const messages = withMessage(
+      history(this.#sql, { excludeRunId: o.runId, beforeSeq: o.beforeSeq, budget }),
+      withNow(parts.now, o.input),
+    );
     const via = o.actor === "atlas" ? "clock" : o.surface === "voice" ? "voice" : "chat";
     return runLoop(
       {
@@ -3178,7 +3229,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             : {}),
           ...(o.context ?? {}),
           // Code Mode (§9.1): a program calls this run's own tools, and each call is a row of this run, with its receipt.
-          tools,
+          tools: every,
           loader: (this.env as { LOADER?: WorkerLoader }).LOADER ?? null,
           record: async (name, input, res) => {
             const row = append(this.#sql, {
@@ -3207,10 +3258,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         system,
         messages,
         tools,
+        ...(groups ? { groups } : {}),
         budget: o.budget,
         signal: o.signal,
         joiner: o.surface === "voice" ? " " : "\n\n",
-        effort: o.role === "voice" ? "low" : "medium",
+        // The owner waits on their own turns, so those think briefly; work that runs on its own (a job's turns,
+        // Atlas's own runs) thinks longer (§4.1).
+        effort: o.actor === "owner" ? "low" : "medium",
+        // One conversation, one cache: each turn's prompt starts as the last one's did (§4.1).
+        cacheKey: `atlas:${this.name}:${o.actor}:${o.role}`,
         firstEventMs: FIRST_EVENT_MS[o.role],
         ...(o.role === "voice" ? { hedgeMs: VOICE_HEDGE_MS } : {}),
         ...(o.silentOk ? { silentOk: true } : {}),

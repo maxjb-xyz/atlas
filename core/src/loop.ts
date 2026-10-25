@@ -16,7 +16,8 @@ import { type BrainRouter, SlowBrainError } from "./brains/router";
 import type { Append, LogRow, Surface } from "./store/log";
 import type { FinalState } from "./store/runs";
 import type { BrainChoice } from "./store/settings";
-import { type Tool, type ToolContext, type ToolResult, fail, toSpec } from "./tools/types";
+import { z } from "zod";
+import { type Tool, type ToolContext, type ToolResult, defineTool, fail, toSpec } from "./tools/types";
 
 export interface Budget {
   /** Model calls with tools. One more call without tools always follows when it runs out. */
@@ -35,6 +36,36 @@ export const BUDGETS = {
 export const BUDGET_NOTE =
   "You've used this run's step budget. Answer now from what you've found, without tools: say what you found, and ask whether to keep going.";
 
+/** Tools a turn can load by name when it needs them (§4.1): one line each in the index, the tools only once loaded. */
+export interface ToolGroup {
+  name: string;
+  /** What the group does, in a line, as the index shows it. */
+  about: string;
+  tools: Tool[];
+}
+
+export const TOOLS_LOAD = "tools_load";
+
+/** The index of what a turn can load, as a tool: loading a group adds its tools for the rest of the turn. */
+function loader(groups: ToolGroup[], load: (names: string[]) => string[]): Tool {
+  return defineTool({
+    name: TOOLS_LOAD,
+    kind: "look",
+    status: "Getting that ready.",
+    description: [
+      "You can do more than the tools you have now. Load a group by name to get its tools for the rest of this turn; calling one of a group's tools by its name loads it too. Never tell the owner you can't do something one of these covers: load it and do it.",
+      ...groups.map((g) => `${g.name}: ${g.about} (${g.tools.map((t) => t.name).join(", ")})`),
+    ].join("\n"),
+    input: z.object({ groups: z.array(z.string().min(1).max(40)).min(1).max(groups.length) }),
+    async run({ groups: names }) {
+      const unknown = names.filter((n) => !groups.some((g) => g.name === n));
+      if (unknown.length)
+        return fail(`There's no group called ${unknown.join(", ")}. The groups are: ${groups.map((g) => g.name).join(", ")}.`);
+      return { ok: true, output: { loaded: load(names) } };
+    },
+  });
+}
+
 export interface RunSpec {
   runId: string;
   role: "main" | "voice";
@@ -42,11 +73,15 @@ export interface RunSpec {
   system: string;
   messages: Message[];
   tools: Tool[];
+  /** More tools, by group, that the turn loads when it needs them; `tools` is what it starts with. */
+  groups?: ToolGroup[];
   budget: Budget;
   signal?: AbortSignal;
   /** Put between text from separate steps: a space when spoken, a paragraph break in text. */
   joiner: string;
   effort?: "low" | "medium";
+  /** Sent with each call so the provider reuses its cache across this conversation's turns (§4.1). */
+  cacheKey?: string;
   /** How long a brain gets to start answering before the next one is tried. */
   firstEventMs: number;
   /**
@@ -111,6 +146,29 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
   let steps = spec.resume?.steps ?? 0;
   let lastBrain: LoopResult["brain"] = null;
   let fellBack = false;
+  // What this turn can call now: what it started with, and each group it has loaded since.
+  const active: Tool[] = [...spec.tools];
+  const groups = spec.groups ?? [];
+  const load = (names: string[]): string[] => {
+    const added: string[] = [];
+    for (const g of groups.filter((x) => names.includes(x.name)))
+      for (const t of g.tools)
+        if (!active.some((a) => a.name === t.name)) {
+          active.push(t);
+          added.push(t.name);
+        }
+    return added;
+  };
+  if (groups.length) active.push(loader(groups, load));
+  /** A tool by name: one the turn has, or one from a group, which loads its group (a call by name is a load). */
+  const find = (name: string): Tool | undefined => {
+    const have = active.find((t) => t.name === name);
+    if (have) return have;
+    const g = groups.find((x) => x.tools.some((t) => t.name === name));
+    if (!g) return undefined;
+    load([g.name]);
+    return active.find((t) => t.name === name);
+  };
 
   /** Whether the last step's tools all worked, with something the owner sees. */
   let done = false;
@@ -138,7 +196,8 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
       const step = await runStep(deps, spec, {
         system: over ? `${spec.system}\n\n${BUDGET_NOTE}` : spec.system,
         messages,
-        tools: over ? [] : spec.tools,
+        tools: over ? [] : [...active],
+        find,
         say,
         emit,
         alreadySaid: () => text.length > 0,
@@ -161,7 +220,7 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
       emit({ type: "pause" });
       messages.push({ role: "assistant", content: step.text, toolCalls: step.calls });
       // A stop doesn't wait for a slow tool: the run ends now, and the tool's own result is still logged when it lands.
-      const tools = Promise.all(step.calls.map((call) => runTool(deps, spec, call, emit)));
+      const tools = Promise.all(step.calls.map((call) => runTool(deps, spec, call, emit, find)));
       const outputs = spec.signal ? await Promise.race([tools, stopped(spec.signal)]) : await tools;
       for (const [i, call] of step.calls.entries()) {
         messages.push({ role: "tool", callId: call.id, name: call.name, content: outputs[i]!.content });
@@ -196,6 +255,8 @@ interface StepIo {
   system: string;
   messages: Message[];
   tools: Tool[];
+  /** Finds a tool the step may call, loading its group when it's one the turn hasn't loaded yet. */
+  find: (name: string) => Tool | undefined;
   say: (t: string) => void;
   emit: (e: LoopEvent) => void;
   alreadySaid: () => boolean;
@@ -250,7 +311,14 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
     const attempt = { index, brain, abort, at: lastStart } as Attempt;
     try {
       attempt.it = brain
-        .stream({ system: io.system, messages: io.messages, tools: specs, signal, effort: spec.effort })
+        .stream({
+          system: io.system,
+          messages: io.messages,
+          tools: specs,
+          signal,
+          effort: spec.effort,
+          ...(spec.cacheKey ? { cacheKey: spec.cacheKey } : {}),
+        })
         [Symbol.asyncIterator]();
       attempt.first = firstEvent(attempt.it, spec.firstEventMs, abort).then(
         (next): Started => {
@@ -333,7 +401,7 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
           // The status line goes out at the first sign of a lookup: some
           // providers announce a tool call early, others only send it whole.
           const name = ev.type === "tool_start" ? ev.name : ev.call.name;
-          const status = io.tools.find((t) => t.name === name)?.status;
+          const status = (io.tools.find((t) => t.name === name) ?? io.find(name))?.status;
           if (status && !statusSaid) {
             statusSaid = true;
             const speakable = !stepText && !io.alreadySaid();
@@ -387,8 +455,9 @@ async function runTool(
   spec: RunSpec,
   call: ToolCall,
   emit: (e: LoopEvent) => void,
+  find: (name: string) => Tool | undefined,
 ): Promise<{ content: string; ok: boolean; receipt: boolean }> {
-  const tool = spec.tools.find((t) => t.name === call.name);
+  const tool = find(call.name);
   await deps.log({
     actor: "atlas",
     kind: "tool.call",

@@ -70,7 +70,23 @@ export function latestSummary(sql: Sql, beforeSeq?: number): Summary | null {
   return { seq: r.seq, at: r.at, text: body.text, through_seq: body.through_seq };
 }
 
-export function systemPrompt(opts: {
+/** The whole prompt in one piece: what stays put, then what's true now. For checks and runs that don't cache. */
+export function systemPrompt(opts: Parameters<typeof promptParts>[0]): string {
+  const { stable, now } = promptParts(opts);
+  return `${stable}\n\n---\n\n${now}`;
+}
+
+/** The note a turn's message carries with what's true right now (§4.1), so the prompt before it stays the same and caches. */
+export function withNow(now: string, content: string): string {
+  return `<now>\nWhat's true right now, from Atlas's own context, not from the owner:\n\n${now}\n</now>\n\n${content}`;
+}
+
+/**
+ * The prompt in two parts (§4.1): what stays put from turn to turn (the character, what Atlas knows for good, the
+ * summary, how to talk on this surface), which brains cache, and what's true now (the time, the situation, the
+ * agenda, jobs), which changes every turn and so goes with the turn's message instead.
+ */
+export function promptParts(opts: {
   settings: Settings;
   tz: string;
   now: Date;
@@ -81,11 +97,12 @@ export function systemPrompt(opts: {
   extra?: string;
   /** Connected MCP servers, for runs that can use them (§9.2). */
   mcp?: McpServer[];
-}): string {
+}): { stable: string; now: string } {
   const { settings, tz, now, surface, sql } = opts;
   const summary = latestSummary(sql, opts.beforeSeq);
   const stable = [
     character(settings.assistant_name, settings.owner_name, settings.character),
+    surface === "voice" ? voiceProfile(settings.voice) : surface === "none" ? "" : TEXT_PROFILE,
     facts(sql, settings.owner_name),
     summary
       ? `Earlier in this conversation (your own summary, written ${shortLocal(new Date(summary.at), tz)}; recall has the full messages):\n${summary.text}`
@@ -119,13 +136,13 @@ export function systemPrompt(opts: {
     reachContext(sql, settings),
     exitsContext(sql, tz, now),
     jobsLine(sql, now),
-    surface === "voice" ? voiceProfile(settings.voice) : surface === "none" ? "" : TEXT_PROFILE,
-    opts.extra ?? "",
   ]
     .filter(Boolean)
     .join("\n\n");
 
-  return `${stable}\n\n---\n\n${fresh}`;
+  // A run's own note (someone else's words to treat as information, a reaction to a nudge) stays in the prompt, apart
+  // from anything the owner says; only that run pays for it not being cached.
+  return { stable: opts.extra ? `${stable}\n\n---\n\n${opts.extra}` : stable, now: fresh };
 }
 
 /**

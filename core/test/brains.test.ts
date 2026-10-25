@@ -67,7 +67,8 @@ describe("Anthropic as a brain (§18)", () => {
         role: "user",
         content: [
           { type: "tool_result", tool_use_id: "t1", content: "dentist at 10" },
-          { type: "text", text: "and Friday?" },
+          // The conversation so far is cached up to its last block (§4.1).
+          { type: "text", text: "and Friday?", cache_control: { type: "ephemeral" } },
         ],
       },
     ]);
