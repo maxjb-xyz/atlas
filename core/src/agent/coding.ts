@@ -416,10 +416,13 @@ export function jobState(sql: Sql, job: CodingJob, now = Date.now()) {
 
 /** Coding jobs running now, in the owner's context (§8.2: "how's the Keyframes job?" answers from here). */
 export function codingLines(sql: Sql, now: Date): string[] {
-  return activeJobs(sql).map((j) => {
-    const s = jobState(sql, j, now.getTime());
-    return `- ${j.title} (coding job id ${j.id}, ${s.agent} on ${j.repo}, branch ${j.branch}): ${s.now}; ${s.minutes} min so far${s.last ? `; last: ${s.last}` : ""}${s.spent_usd ? `; $${s.spent_usd} spent` : ""}`;
-  });
+  // A coding agent building for work Atlas owns is part of that work, said in its line, not a job of its own.
+  return activeJobs(sql)
+    .filter((j) => !j.step)
+    .map((j) => {
+      const s = jobState(sql, j, now.getTime());
+      return `- ${j.title} (coding job id ${j.id}, ${s.agent} on ${j.repo}, branch ${j.branch}): ${s.now}; ${s.minutes} min so far${s.last ? `; last: ${s.last}` : ""}${s.spent_usd ? `; $${s.spent_usd} spent` : ""}`;
+    });
 }
 
 // --- the desk --------------------------------------------------------------------------------------------
@@ -1808,7 +1811,7 @@ Now: ${d.now}.`;
   look(id?: string): unknown[] {
     const jobs = id
       ? [getJob(this.h.sql, id)].filter((j): j is CodingJob => j != null)
-      : codingJobs(this.h.sql, Date.now() - 24 * 3600_000);
+      : codingJobs(this.h.sql, Date.now() - 24 * 3600_000).filter((j) => !j.step);
     return jobs.map((j) => ({
       ...jobState(this.h.sql, j),
       ...(j.question ? { waiting_on_owner: j.question.text } : {}),

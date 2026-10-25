@@ -105,7 +105,7 @@ export const jobsLook = defineTool({
   kind: "look",
   status: "Checking where that's at.",
   description:
-    "How the work you're doing in the background is going, from its state, newest first (what you're making, and reading you sent off from the conversation): what's at work on it now, what it's waiting on (with what the owner was shown, in full), your notes on it and what you last said, how long it's run, and a coding job's pull request once there is one. Use it for 'how's the video going?' and answer as yourself in a sentence or two ('I'm cutting it to the track you picked.'); when they ask to see what you asked them, show it as it is.",
+    "How the work you're doing in the background is going, from its state, newest first (what you're making, and reading you sent off from the conversation): what's at work on it now, what it's waiting on (with what the owner was shown, in full), your notes on it and what you last said, how long it's run, and a coding job's pull request once there is one. Use it for 'how's the video going?' and answer about that one alone (when they don't say which, the one they last asked for), as yourself in a sentence or two, about the thing and not how you work ('I'm cutting it to the track you picked.'); when they ask to see what you asked them, show it as it is.",
   input: z.object({ id: z.string().max(64).optional().describe("One job's id; default all of them from the last day.") }),
   async run(input, ctx) {
     if (!ctx.coding) return fail("Coding jobs can't be reached from here.");

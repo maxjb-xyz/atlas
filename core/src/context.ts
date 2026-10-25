@@ -418,7 +418,7 @@ function jobsLine(sql: Sql, now: Date): string {
   // Something is at work on one while a turn runs (it says what) or work it handed off is running.
   const owned = ownedLines(sql, (j) => j.now != null || j.work.some((w) => getItem(sql, w.id)?.state === "running"));
   const ownedText = owned.length
-    ? `Long work you're doing in the background (when the owner asks how it's going, answer from these as yourself, in the first person; jobs_look has more, and what they say about one goes to it with job_answer, in their words):\n${owned.join("\n")}`
+    ? `Long work you're doing in the background (the owner sees each on its card in the thread, and you tell them when one has something, so you don't bring them up otherwise; when they ask how one's going, answer about that one alone, as yourself, in the first person; jobs_look has more, and what they say about one goes to it with job_answer, in their words):\n${owned.join("\n")}`
     : "";
   if (!running.length) return [codingText, ownedText].filter(Boolean).join("\n\n");
   const lines = running.map((j) => {
@@ -427,7 +427,7 @@ function jobsLine(sql: Sql, now: Date): string {
     const steps = run ? sql.exec<{ n: number }>(`SELECT count(*) AS n FROM log WHERE run_id = ? AND kind = 'tool.call'`, run).one().n : 0;
     const mins = Math.max(0, Math.round((now.getTime() - j.created_at) / 60_000));
     const read = detail?.research && run ? lookedAt(sql, run) : null;
-    return `- ${j.title} (id ${j.id}${detail?.research ? ", a long research job" : ""}): started ${mins ? `${mins} min` : "under a minute"} ago, ${steps} lookup${steps === 1 ? "" : "s"} so far${read ? ` (${read.toLowerCase()})` : ""}`;
+    return `- ${j.title} (id ${j.id}${detail?.research ? ", a long research job" : ""}): started ${mins ? `${mins} min` : "under a minute"} ago${steps ? "" : ", just starting"}${read ? ` (${read.toLowerCase()})` : ""}`;
   });
   return [
     `Helpers working now (you get each one's result when it's done, and finish the task then):\n${lines.join("\n")}`,

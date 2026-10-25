@@ -3064,7 +3064,6 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         reading_for_you_since: `${ago(now - h.started_at)} ago`,
         state: h.state === "running" ? "at work" : h.state,
         ...(h.status ? { now: h.status } : {}),
-        looked_at_so_far: `${h.steps} ${h.steps === 1 ? "thing" : "things"}`,
         ...(h.result ? { found: h.result.slice(0, 4_000) } : {}),
       }));
   }

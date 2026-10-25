@@ -217,7 +217,7 @@ describe("helpers", () => {
         surface: "app",
         sql,
       });
-      expect(system).toMatch(/Helpers working now[^\n]*\n- Spending chart \(id ag_\w+\): started 3 min ago, 0 lookups so far/);
+      expect(system).toMatch(/Helpers working now[^\n]*\n- Spending chart \(id ag_\w+\): started 3 min ago, just starting/);
     });
   });
 
