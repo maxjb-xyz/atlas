@@ -202,6 +202,7 @@ import {
   uninstall,
 } from "./extensions";
 import { ExtensionDesk } from "./agent/extensions";
+import { searchEverything } from "./search";
 import { nameFor, provide } from "./providers";
 import { AUDIO, makeTranscriber, makeTTS } from "./voice/providers";
 import { HELPER_TOOLS, HelperAgent, type HelperHost, type HelperOutcome } from "./helper";
@@ -1988,6 +1989,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         return;
       case "atlas.files":
         this.#send(connection, { type: "atlas.files", files: listFiles(this.#sql) });
+        return;
+      case "atlas.search":
+        this.#send(connection, { type: "atlas.search.results", text: msg.text, hits: searchEverything(this.#sql, msg.text, this.#jobs()) });
         return;
       case "atlas.skills":
         this.#send(connection, { type: "atlas.skills", skills: this.#skillViews() });

@@ -157,6 +157,26 @@ export interface AreaView {
 }
 
 /** A helper's job as the app shows it (§21.4). */
+/** What ⌘K found (M7 W20): one thing Atlas keeps that matched, by its kind. */
+export type SearchGroup = "files" | "pages" | "jobs" | "skills" | "automations" | "people" | "places" | "memory" | "conversation";
+
+export interface SearchHit {
+  group: SearchGroup;
+  id: string;
+  title: string;
+  /** A line under it: when, what kind, what it said. */
+  sub: string;
+  at: number;
+  /** A file's type, so its row can show a frame or its mark. */
+  type?: string;
+  /** A job at work now. */
+  live?: boolean;
+  /** A person's photo, when the address book has one. */
+  photo?: string | null;
+  /** A moment in the conversation: who said it. */
+  by?: "owner" | "atlas";
+}
+
 export interface JobView {
   id: string;
   title: string;
@@ -555,6 +575,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.passkey.remove"), id: z.string().max(512) }),
   /** Sign out everywhere. */
   z.object({ type: z.literal("atlas.sessions.end") }),
+  /** ⌘K (M7 W20): everything Atlas keeps that matches the owner's words. */
+  z.object({ type: z.literal("atlas.search"), text: z.string().max(200) }),
   /** Library: records, by type, area or text. `ref` is echoed back. */
   z.object({
     type: z.literal("atlas.records.list"),
@@ -1239,6 +1261,7 @@ export type ServerMessage =
   | { type: "atlas.stage.page"; ref: string; page: StagePage | null }
   | { type: "atlas.automations"; automations: AutomationView[]; suggestions: SuggestionView[] }
   | { type: "atlas.pages"; pages: PageSummary[] }
+  | { type: "atlas.search.results"; text: string; hits: SearchHit[] }
   | { type: "atlas.files"; files: import("./stage").FileRow[] }
   | { type: "atlas.skills"; skills: SkillView[] }
   /** Get skills (§17): the catalog's skill hubs and what each holds. Sent when asked and after a read or an install. */

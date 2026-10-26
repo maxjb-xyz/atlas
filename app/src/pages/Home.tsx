@@ -15,6 +15,7 @@ import { JobDetail, JobGone } from "../JobViews";
 import { MapCanvas, whereLine } from "../SenseViews";
 import { sky, temp } from "../../../core/src/weather";
 import { useDetail } from "../theme";
+import { voiceFullNow } from "../VoiceStage";
 import { ApprovalCard } from "../Approval";
 import {
   addDays,
@@ -185,7 +186,8 @@ export function Home({ atlas, detail, go, place }: { atlas: Atlas; detail: strin
       .map(shownFrom)
       .filter((v): v is Shown => v != null)
       .at(-1);
-    if (newest) openView(newest);
+    // In full-screen voice, what Atlas shows rises under its words instead (M7 W19).
+    if (newest && !(atlas.inCall && voiceFullNow())) openView(newest);
   }, [s.rows, s.loaded]);
 
   const now = useNow();

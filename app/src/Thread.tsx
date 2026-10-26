@@ -11,6 +11,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { InboxItem, JobView, LogRow } from "../../core/src/protocol";
 import { ApprovalCard } from "./Approval";
 import { FrontPage } from "./FrontPage";
+import { useVoiceFull, VoiceStage } from "./VoiceStage";
 import type { Atlas, Live, Pending } from "./connection";
 import { isOpen, JobCard, questionFromRow, QuestionBody, ResultBody, topJobs } from "./JobViews";
 import { jobNow } from "./jobs";
@@ -208,6 +209,7 @@ export function Conversation({
 }) {
   const s = atlas.state;
   const { at } = useDetail();
+  const [full, setFull] = useVoiceFull();
   const { rows, pending, live, loaded, noOlder } = s;
   const name = s.view?.settings.assistant_name ?? "Atlas";
   const box = useRef<HTMLDivElement>(null);
@@ -353,8 +355,18 @@ export function Conversation({
           ]}
         </div>
       </div>
+      {atlas.inCall && full && (
+        <VoiceStage
+          atlas={atlas}
+          onShrink={() => setFull(false)}
+          onOpen={(v) => {
+            setFull(false);
+            opens.view(v);
+          }}
+        />
+      )}
       <div className="convo-dock">
-        {atlas.inCall && <VoiceStrip atlas={atlas} />}
+        {atlas.inCall && !full && <VoiceStrip atlas={atlas} onExpand={() => setFull(true)} />}
         {/* The front page shows what needs the owner in its own tile, so the strip waits until they've spoken. */}
         {(spokeToday || !loaded) && <NeedsYou atlas={atlas} onOpen={opens.inbox} />}
         <Composer atlas={atlas} placeholder={`Message ${name}`} reply={false} />

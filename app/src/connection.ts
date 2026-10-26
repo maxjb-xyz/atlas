@@ -61,6 +61,8 @@ export interface TestResult {
 
 export interface State {
   rows: LogRow[];
+  /** ⌘K's latest answer (M7 W20): what matched, for the words it was asked with. */
+  search: { text: string; hits: import("../../core/src/protocol").SearchHit[] } | null;
   pending: Pending[];
   live: Record<string, Live>;
   agenda: AgendaItem[];
@@ -143,6 +145,7 @@ export interface State {
 
 const initial: State = {
   rows: [],
+  search: null,
   pending: [],
   live: {},
   agenda: [],
@@ -363,6 +366,8 @@ function reduce(s: State, a: Action): State {
       return { ...s, calendarVersion: s.calendarVersion + 1 };
     case "atlas.inbox.items":
       return { ...s, inbox: m.items };
+    case "atlas.search.results":
+      return { ...s, search: { text: m.text, hits: m.hits } };
     case "atlas.stage.page":
       return { ...s, stage: { ...s.stage, [m.ref]: m.page } };
     case "atlas.automations":
