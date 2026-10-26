@@ -258,7 +258,7 @@ describe("when automations run", () => {
       const system = systemPrompt({ settings: readSettings(sql), tz: "America/New_York", now: new Date(), surface: "app", sql });
       expect(system).toContain("Telegram (linked to them)");
       expect(system).toContain("Connected services: Telegram: chat with you");
-      expect(system).toContain("The owner has no webhooks.");
+      expect(system).not.toContain("webhook_call");
     }));
 });
 

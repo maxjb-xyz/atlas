@@ -419,6 +419,9 @@ const KINDS: Record<HistoryFilter, LogKind[]> = {
   faces: ["face.in", "face.out", "face.handoff", "face.digest"],
 };
 
+/** Agenda kinds that are Atlas keeping itself running, not anything the owner asked for or would recognize. */
+const UPKEEP = new Set(["skills", "portrait", "skill_review", "rhythm", "situation", "looks", "digest", "index", "updates", "follow_up"]);
+
 /** Whether a row belongs on History's list for a filter: the things that happened, not the plumbing. */
 function shown(row: LogRow, filter: HistoryFilter): boolean {
   if (row.kind === "tool.result") return row.body.receipt != null;
@@ -426,6 +429,9 @@ function shown(row: LogRow, filter: HistoryFilter): boolean {
   if (filter === "jobs" && row.kind === "agenda.change") return row.body.kind === "job";
   // A notification held for quiet hours is told by its delivery receipt, and an automation's next run by its run, not as agenda changes.
   if (row.kind === "agenda.change" && (row.body.kind === "notify" || row.body.kind === "automation")) return false;
+  // Atlas's own upkeep on the clock (looking back for skills, the services index, the situation's refresh) isn't
+  // something that happened to the owner: what comes of it shows as its own entry (a skill saved, an update found).
+  if (row.kind === "agenda.change" && UPKEEP.has(String(row.body.kind))) return false;
   return true;
 }
 

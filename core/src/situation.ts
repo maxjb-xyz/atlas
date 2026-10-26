@@ -20,7 +20,7 @@ import { mapsCredit } from "./providers";
 import type { Sql } from "./store/db";
 import type { Settings } from "./store/settings";
 import { getState, setState } from "./store/state";
-import { addLocalDays, clockLocal, shortLocal, startOfLocalDay, zoneOf } from "./time";
+import { addLocalDays, clockLocal, localDate, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import type { MapsApi } from "./tools/types";
 import { distance, roughArea, unitsFor, type Units, type Weather, weatherLine, whatMatters } from "./weather";
 
@@ -132,7 +132,7 @@ export interface RefreshDeps {
 }
 
 /**
- * Brings the cache up to date: today's and tomorrow's events always, and,
+ * Brings the cache up to date: the week's events always, and,
  * when `full`, the weather (hourly at most) and the travel time to the next
  * event with a place (every 15 minutes, or after a move of more than a km).
  * Never throws: what failed is kept with the service's words, for the
@@ -145,7 +145,7 @@ export async function refresh(d: RefreshDeps): Promise<SituationCache> {
   if (d.calendar) {
     try {
       const start = startOfLocalDay(new Date(now), tz);
-      const read = await d.calendar.read({ start, end: addLocalDays(start, 2, tz) });
+      const read = await d.calendar.read({ start, end: addLocalDays(start, CALENDAR_DAYS, tz) });
       c.events = read.events.map(({ id, title, start, end, all_day, location, people }) => ({
         id,
         title,
@@ -304,14 +304,10 @@ export function situationLines(sql: Sql, settings: Settings, now = Date.now()): 
   const c = cache(sql);
   const lines: string[] = [];
 
-  // Where.
-  if (!settings.location.on) {
-    lines.push("Where: unknown. The owner turned location off, so you don't know where they are; say so rather than guess.");
-  } else {
+  // Where. Not knowing goes unsaid: a line about it only gets repeated back to the owner (docs/AUDIT-feel.md).
+  if (settings.location.on) {
     const h = here(sql);
-    if (!h.fix) {
-      lines.push("Where: unknown. No location has come in yet (OwnTracks isn't set up, or hasn't reported); say so rather than guess.");
-    } else {
+    if (h.fix) {
       const old = now - h.fix.at > STALE_FIX_MS ? ` (from the phone's last report, ${ago(now - h.fix.at)}; it may be out of date)` : "";
       if (h.place) {
         lines.push(`Where: at ${h.place.name}, since ${clockLocal(new Date(h.place.since), tz)} (${forHow(now - h.place.since)})${old}.`);
@@ -347,8 +343,6 @@ export function situationLines(sql: Sql, settings: Settings, now = Date.now()): 
     );
   } else if (c.events_error) {
     lines.push(`Next: the calendar couldn't be read (${c.events_error}).`);
-  } else if (c.events_at) {
-    lines.push("Next: nothing more on the calendar today.");
   }
 
   // Weather.
@@ -370,9 +364,43 @@ export function situationLines(sql: Sql, settings: Settings, now = Date.now()): 
     lines.push(`Devices: phone ${phone.join(", ")} (as of ${clockLocal(new Date(h.fix.at), tz)}).`);
   }
 
-  return lines.length
-    ? `The situation, rebuilt from what the phone, calendar and weather last said. It's newer than anything said earlier in the conversation: where the owner is now comes from here, not from where they said they were before. Don't look up what's here (to show it, use show with the weather or situation view); say how old it is when it matters, and since when they've been somewhere when you say where:\n${lines.map((l) => `- ${l}`).join("\n")}`
-    : "";
+  const week = weekLines(c, tz, now);
+  return [
+    lines.length
+      ? `Their situation, from what the phone, calendar and weather last said (newer than anything said earlier in the conversation; already looked up, so use it as it is):\n${lines.map((l) => `- ${l}`).join("\n")}`
+      : "",
+    week,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** How many days ahead the situation keeps the calendar, so a question about the week needs no lookup. */
+export const CALENDAR_DAYS = 7;
+
+/**
+ * The calendar for the coming week, a line a day, from the situation's cache: already looked up, so "what's
+ * Thursday like?" is answered in one step. Days with nothing on aren't listed.
+ */
+export function weekLines(c: SituationCache, tz: string, now: number): string {
+  if (!c.events_at) return "";
+  const today = localDate(new Date(now), tz);
+  const days = new Map<string, string[]>();
+  const label = (d: string) =>
+    new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" }).format(
+      new Date(`${d}T12:00:00Z`),
+    );
+  const sorted = [...c.events].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+  for (const e of sorted.slice(0, 60)) {
+    const day = e.all_day ? e.start.slice(0, 10) : localDate(new Date(startOf(e)), tz);
+    if (day < today || (!e.all_day && endOf(e) <= now)) continue;
+    const when = e.all_day ? "all day" : `${clockLocal(new Date(startOf(e)), tz)}–${clockLocal(new Date(endOf(e)), tz)}`;
+    const where = placeOf(e);
+    days.set(day, [...(days.get(day) ?? []), `${when} ${e.title}${where ? ` (${where})` : ""}`]);
+  }
+  if (!days.size) return "Their calendar for the next week is empty.";
+  const out = [...days].map(([d, items]) => `- ${d === today ? "Today" : label(d)}: ${items.join("; ")}`);
+  return `Their calendar for the next week (already looked up; calendar_read for further out or more detail):\n${out.join("\n")}`;
 }
 
 /** Whether the weather is worth a mention today (for Now). */

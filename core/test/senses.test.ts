@@ -807,13 +807,13 @@ describe("the situation", () => {
     void b;
   });
 
-  it("says Atlas doesn't know where you are when location is off", async () => {
+  it("tells Atlas nothing about where you are when location is off", async () => {
     await post(fixAt(GYM), auth);
     s.send({ type: "atlas.settings.update", patch: { location: { on: false } } });
     await s.next("atlas.view", (m) => m.view.settings.location.on === false);
     const b = brain([say("I don't know.")]);
     await turn(s, "where am I?");
-    expect(b.requests[0]!.system).toContain("Where: unknown. The owner turned location off");
+    expect(b.requests[0]!.system).not.toMatch(/Where: /);
   });
 });
 
@@ -1135,5 +1135,36 @@ describe("the weather with nowhere new to look", () => {
       expect(asked).toEqual([area]);
       expect(cache(sql).weather?.now.temp_c).toBe(27);
     });
+  });
+});
+
+describe("the week in the situation", () => {
+  it("lists the coming week a line a day, so a question about a day needs no lookup", async () => {
+    const { weekLines } = await import("../src/situation");
+    const now = Date.parse("2026-10-26T13:00:00Z"); // 9 AM in New York
+    const ev = (id: string, title: string, start: string, end: string, extra = {}) => ({ id, title, start, end, all_day: false, ...extra });
+    const text = weekLines(
+      {
+        events: [
+          ev("a", "Standup", "2026-10-26T09:30:00-04:00", "2026-10-26T09:45:00-04:00"),
+          ev("past", "Breakfast", "2026-10-26T07:00:00-04:00", "2026-10-26T08:00:00-04:00"),
+          ev("b", "Dentist", "2026-10-28T10:00:00-04:00", "2026-10-28T11:00:00-04:00", { location: "12 Main St" }),
+          { id: "c", title: "Rent due", start: "2026-10-29", end: "2026-10-30", all_day: true },
+        ],
+        events_at: now,
+        weather: null,
+        travel: null,
+        places: {},
+      },
+      "America/New_York",
+      now,
+    );
+    expect(text).toContain("- Today: 9:30 AM–9:45 AM Standup");
+    expect(text).not.toContain("Breakfast");
+    expect(text).toContain("- Wed, Oct 28: 10:00 AM–11:00 AM Dentist (12 Main St)");
+    expect(text).toContain("- Thu, Oct 29: all day Rent due");
+    expect(weekLines({ events: [], events_at: now, weather: null, travel: null, places: {} }, "America/New_York", now)).toBe(
+      "Their calendar for the next week is empty.",
+    );
   });
 });

@@ -960,11 +960,9 @@ export function speakingLine(s: Settings): string {
   const on = keys.filter((k) => isOn(s, k)).map((k) => NUDGE_WORDS[k]);
   const off = keys.filter((k) => !isOn(s, k)).map((k) => NUDGE_WORDS[k]);
   return [
-    `Speaking up on your own (Settings → Notifications → Speaking up; change it with speaking_up): ${on.length ? `on for ${on.join(", ")}` : "off for everything"}${on.length && off.length ? `; off for ${off.join(", ")}` : ""}.`,
+    `Speaking up on your own: ${on.length ? `on for ${on.join(", ")}` : "off for everything"}${on.length && off.length ? `; off for ${off.join(", ")}` : ""}.`,
     s.speaking.tell_about.length ? ` The owner asked you to always bring up: ${s.speaking.tell_about.join("; ")}.` : "",
     s.speaking.quiet_about.length ? ` The owner asked you not to bring up: ${s.speaking.quiet_about.join("; ")}.` : "",
-    " When the owner asks why you didn't tell them something, or what you noticed, look it up with noticed before you answer; never guess what you saw or decided.",
-    " These lists are exactly what's set now: one not shown here is empty, whatever earlier in the conversation says was added. Never say you changed how you'll speak up without changing it with speaking_up.",
   ].join("");
 }
 
@@ -1011,6 +1009,7 @@ export const speakingUp = defineTool({
     "Change what you bring up on your own, when the owner asks: add or remove subjects they don't want to hear about (in their words, as narrow or broad as they meant: 'the weather unless it's severe', 'errands'), subjects they always want to hear about ('anything from my landlord', 'reviews requested on my PRs'), or switch what you notice and the look before leaving for events.",
     "The morning brief and the evening wrap-up are automations: change their time or turn them off with automation_save or automation_set.",
     "They see a receipt with Undo, and it all shows in Settings → Notifications → Speaking up.",
+    "Only this changes what you bring up, so saying you will without calling it changes nothing. The lists in your context are exactly what's set now, whatever earlier in the conversation says.",
   ].join(" "),
   input: z.object({
     quiet_about_add: z.array(z.string().min(1).max(120)).max(5).optional(),

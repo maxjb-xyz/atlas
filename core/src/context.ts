@@ -397,7 +397,7 @@ function exitsContext(sql: Sql, tz: string, now: Date): string {
     lines.push(
       `The owner's webhooks (call them with webhook_call):\n${hooks.map((w) => `- ${w.name}${w.about ? `: ${w.about}` : ""}`).join("\n")}`,
     );
-  } else lines.push("The owner has no webhooks.");
+  }
   const entries = vault(sql);
   if (entries.length) {
     lines.push(
