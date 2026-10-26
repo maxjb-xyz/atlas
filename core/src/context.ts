@@ -27,10 +27,11 @@ import { parse, type Sql } from "./store/db";
 import { type AtlasRecord, standingFacts } from "./store/records";
 import { get as getRow, type LogRow, type Surface } from "./store/log";
 import type { Settings } from "./store/settings";
-import { clockLocal, isoLocal, localDate, longLocal, shortLocal } from "./time";
+import { clockLocal, isoLocal, localDate, longLocal, shortLocal, startOfLocalDay } from "./time";
 import type { Health } from "./brains/router";
 import { current, dollars, FREE_NEURONS, paidThisMonth, type Spend } from "./brains/catalog";
 import { getState } from "./store/state";
+import { type Thread, threadLines } from "./store/threads";
 import { situationLines } from "./situation";
 import { openTasks, taskView } from "./tasks";
 import { loopsLine } from "./loops";
@@ -100,9 +101,12 @@ export function promptParts(opts: {
   mcp?: McpServer[];
   /** False for a job's turns: a job has its own conversation, and the owner's would only cost tokens and break its cache. */
   conversation?: boolean;
+  /** The thread this turn is in (§21.1); left out, Today. A thread has no summary of Today's and wears its own spaces. */
+  thread?: Thread | null;
 }): { stable: string; now: string } {
   const { settings, tz, now, surface, sql } = opts;
-  const summary = opts.conversation === false ? null : latestSummary(sql, opts.beforeSeq);
+  const here = opts.thread ?? null;
+  const summary = opts.conversation === false || here ? null : latestSummary(sql, opts.beforeSeq);
   // What changes only when the owner changes something (a page kept, a skill saved, a brain or a server set up) sits in
   // the cached part of the owner's turns, after what never changes; Atlas's own runs and jobs don't carry it there.
   const own = surface !== "none";
@@ -138,10 +142,15 @@ export function promptParts(opts: {
     speakingLine(settings),
     // What could wait, for the owner's own turns; Atlas's own runs get it in their notes.
     surface === "none" ? "" : pileLine(sql, settings),
-    areaContext(sql, opts.beforeSeq),
+    here
+      ? `This conversation is the thread "${here.title}" (thread ${here.id}), one of the owner's threads; Today is their line to you outside any thread.`
+      : "",
+    areaContext(sql, opts.beforeSeq, here),
     reachContext(sql, settings),
     exitsContext(sql, tz, now),
     jobsLine(sql, now),
+    // The owner's other threads, a line each, in their own turns (§21.1).
+    surface === "none" ? "" : threadLines(sql, here?.id ?? null, now.getTime()),
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -181,18 +190,33 @@ function factLine(r: AtlasRecord): string {
   return text ? `- ${text} (id ${r.id})` : "";
 }
 
-/** The messages since the summary in force, oldest first, as log rows. */
-export function sinceSummary(sql: Sql, beforeSeq?: number): LogRow[] {
-  const from = latestSummary(sql, beforeSeq)?.through_seq ?? 0;
+/**
+ * The messages since the summary in force, oldest first, as log rows: Today's by default, or one thread's (§21.1).
+ * Summaries are Today's; a thread reads its own newest messages, and recall has the rest.
+ */
+export function sinceSummary(sql: Sql, beforeSeq?: number, thread: string | null = null): LogRow[] {
+  const from = thread ? 0 : (latestSummary(sql, beforeSeq)?.through_seq ?? 0);
   const ids = sql
     .exec<{ id: string }>(
-      `SELECT id FROM log WHERE kind IN ('message.in', 'message.out') AND seq > ? AND seq < ? ORDER BY seq DESC LIMIT ?`,
+      `SELECT id FROM log WHERE kind IN ('message.in', 'message.out') AND seq > ? AND seq < ? AND ${thread ? "thread = ?" : "thread IS NULL"} ORDER BY seq DESC LIMIT ?`,
       from,
       beforeSeq ?? Number.MAX_SAFE_INTEGER,
+      ...(thread ? [thread] : []),
       MAX_HISTORY_ROWS,
     )
     .toArray();
   return ids.reverse().map((r) => getRow(sql, r.id)!);
+}
+
+/** How far back Today reads past midnight, so a conversation that runs late isn't cut off mid-thought (§21.1). */
+export const TODAY_CARRY_MS = 2 * 3_600_000;
+
+/**
+ * Where Today's conversation starts for a turn (§21.1): the start of the owner's day, or two hours ago when that's
+ * earlier. What came before is in the summary and recall.
+ */
+export function todayFrom(now: Date, tz: string): number {
+  return Math.min(startOfLocalDay(now, tz).getTime(), now.getTime() - TODAY_CARRY_MS);
 }
 
 /**
@@ -200,8 +224,13 @@ export function sinceSummary(sql: Sql, beforeSeq?: number): LogRow[] {
  * (tokens) is a safety net for when compaction hasn't caught up: the oldest
  * messages are left out until the rest fit, and recall still has them.
  */
-export function history(sql: Sql, opts: { excludeRunId?: string; beforeSeq?: number; budget?: number } = {}): Message[] {
-  let rows = sinceSummary(sql, opts.beforeSeq).filter((r) => !opts.excludeRunId || r.run_id !== opts.excludeRunId);
+export function history(
+  sql: Sql,
+  opts: { excludeRunId?: string; beforeSeq?: number; budget?: number; thread?: string | null; since?: number } = {},
+): Message[] {
+  let rows = sinceSummary(sql, opts.beforeSeq, opts.thread ?? null).filter(
+    (r) => (!opts.excludeRunId || r.run_id !== opts.excludeRunId) && (opts.since == null || r.at >= opts.since),
+  );
   if (opts.budget != null) rows = rows.slice(windowStart(rows, opts.budget));
   return toMessages(rows);
 }
@@ -522,10 +551,16 @@ function reachContext(sql: Sql, settings: Settings): string {
 }
 
 /** What a run is told about areas: the hat, its tone, and the owner's other areas. */
-function areaContext(sql: Sql, beforeSeq?: number): string {
+function areaContext(sql: Sql, beforeSeq?: number, thread?: Thread | null): string {
   const all = listAreas(sql).filter((a) => a.state !== "archived");
   if (!all.length) return "";
-  return wornLines(sql, hat(sql, beforeSeq), all);
+  return wornLines(sql, threadHat(sql, thread) ?? hat(sql, beforeSeq), all);
+}
+
+/** The spaces a thread is in, as the hat its turns wear (§21.3), or null when it's in none (then the usual hat). */
+export function threadHat(sql: Sql, thread?: Thread | null): Area[] | null {
+  const worn = (thread?.areas ?? []).map((id) => getArea(sql, id)).filter((a): a is Area => a != null && a.state !== "archived");
+  return worn.length ? worn : null;
 }
 
 /** The areas a run acts in, with their tone and accounts, and the owner's others (a job's own areas use it too). */

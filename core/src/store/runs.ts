@@ -18,21 +18,24 @@ export interface RunRow {
   ended_at: number | null;
   steps: number;
   detail: Record<string, unknown>;
+  /** The thread it runs in (§21.1), or null for Today. */
+  thread: string | null;
 }
 
 /** A run with no final state after this long was lost (a restart mid-turn). */
 export const STALE_RUN_MS = 15 * 60_000;
 
-export function startRun(sql: Sql, r: { actor: Actor; trigger: string; surface: Surface; role: string }): string {
+export function startRun(sql: Sql, r: { actor: Actor; trigger: string; surface: Surface; role: string; thread?: string | null }): string {
   const id = newId("run");
   sql.exec(
-    `INSERT INTO runs (id, actor, trigger, surface, role, state, started_at) VALUES (?, ?, ?, ?, ?, 'running', ?)`,
+    `INSERT INTO runs (id, actor, trigger, surface, role, state, started_at, thread) VALUES (?, ?, ?, ?, ?, 'running', ?, ?)`,
     id,
     r.actor,
     r.trigger,
     r.surface,
     r.role,
     Date.now(),
+    r.thread ?? null,
   );
   return id;
 }

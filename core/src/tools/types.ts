@@ -76,6 +76,14 @@ export interface ToolContext {
   /** A job's turn (§8.3): its moves, bound to that job. Null elsewhere. */
   ownedJob?: OwnedJobApi | null;
   /**
+   * Threads (§21.1), in an owner's turn: the thread it's in (null for Today), and moving this turn's message to one
+   * of the owner's open threads, which gives back what was said there lately.
+   */
+  threads?: {
+    here: string | null;
+    move(id: string): { ok: true; title: string; recent: string } | { ok: false; error: string };
+  } | null;
+  /**
    * The way out for actions that may need the owner's OK (§12): the outbox
    * does it now when the kind allows, or it waits as an approval card. Null
    * where nothing may leave, such as inside a helper.

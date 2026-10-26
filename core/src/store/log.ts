@@ -30,6 +30,8 @@ export type LogKind =
   | "job.update"
   /** An area was created, changed, merged or archived, or the owner moved an item's areas (§6). */
   | "area.change"
+  /** A thread made, renamed, put away, or a message moved between threads (§21.1). */
+  | "thread.change"
   /** An automation was made, changed, turned on or paused, or deleted (§13). */
   | "automation.change"
   /** An automation ran, or ran as a test: each step's result, how long, and what it cost (§13.4). */
@@ -97,7 +99,9 @@ export type Undo =
   /** Puts back which account new mail goes from: the owner's default (no area) or one area's. */
   | { kind: "account.restore"; area: string | null; before: string }
   /** Takes back an extension tool's change (§17): its `undo` tool, with the input the call gave back for it. */
-  | { kind: "tool.undo"; ext: string; tool: string; name: string; input: Json };
+  | { kind: "tool.undo"; ext: string; tool: string; name: string; input: Json }
+  /** Moves a message (its run) back to where it was said: a thread, or Today when `from` is null (§21.1). */
+  | { kind: "thread.move"; run: string; from: string | null; to: string };
 
 /** What a source says happened, as the intake keeps it in a `sense` row (§10.4). Sources add their own fields beside these (a place, a device, an event). */
 export interface SenseItem {
@@ -131,6 +135,8 @@ export interface LogRow {
   areas: string[];
   privacy: string;
   body: Record<string, Json>;
+  /** The thread this row is in (§21.1), or null for Today. A row of a run is in its run's thread. */
+  thread: string | null;
 }
 
 export interface Append {
@@ -142,6 +148,8 @@ export interface Append {
   privacy?: string;
   body?: Record<string, unknown>;
   at?: number;
+  /** Its thread, when it isn't its run's: null puts it in Today (a "went to a thread" note stays where it was said). */
+  thread?: string | null;
 }
 
 type RawRow = {
@@ -155,6 +163,7 @@ type RawRow = {
   areas: string;
   privacy: string;
   body: string;
+  thread: string | null;
 };
 
 function fromRaw(r: RawRow): LogRow {
@@ -169,14 +178,26 @@ function fromRaw(r: RawRow): LogRow {
     areas: parse(r.areas, []),
     privacy: r.privacy,
     body: parse(r.body, {}),
+    thread: r.thread ?? null,
   };
 }
 
 export function append(sql: Sql, row: Append): LogRow {
   const id = newId("lg");
   const at = row.at ?? Date.now();
+  // A row of a run is in its run's thread, unless it says where it goes. The note that a message went to a thread
+  // stays where the message was said, so its Undo is there.
+  const went = (row.body?.receipt as { undo?: Undo } | undefined)?.undo;
+  const thread =
+    row.thread !== undefined
+      ? row.thread
+      : went?.kind === "thread.move"
+        ? went.from
+        : row.run_id
+          ? (sql.exec<{ thread: string | null }>(`SELECT thread FROM runs WHERE id = ?`, row.run_id).toArray()[0]?.thread ?? null)
+          : null;
   sql.exec(
-    `INSERT INTO log (id, at, actor, run_id, kind, surface, areas, privacy, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO log (id, at, actor, run_id, kind, surface, areas, privacy, body, thread) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     at,
     row.actor,
@@ -186,6 +207,7 @@ export function append(sql: Sql, row: Append): LogRow {
     JSON.stringify(row.areas ?? []),
     row.privacy ?? "private",
     JSON.stringify(row.body ?? {}),
+    thread,
   );
   return get(sql, id)!;
 }
@@ -201,14 +223,19 @@ export function get(sql: Sql, id: string): LogRow | null {
   return r ? fromRaw(r) : null;
 }
 
-/** Rows of the given kinds, newest `limit`, returned oldest first. */
-export function recent(sql: Sql, kinds: LogKind[], limit: number, beforeSeq?: number): LogRow[] {
+/**
+ * Rows of the given kinds, newest `limit`, returned oldest first. `thread` keeps one thread's rows (null: Today's);
+ * left out, every thread's.
+ */
+export function recent(sql: Sql, kinds: LogKind[], limit: number, beforeSeq?: number, thread?: string | null): LogRow[] {
   const marks = kinds.map(() => "?").join(", ");
+  const where = thread === undefined ? "" : thread === null ? " AND thread IS NULL" : " AND thread = ?";
   const rows = sql
     .exec<RawRow>(
-      `SELECT * FROM log WHERE kind IN (${marks}) AND seq < ? ORDER BY seq DESC LIMIT ?`,
+      `SELECT * FROM log WHERE kind IN (${marks}) AND seq < ?${where} ORDER BY seq DESC LIMIT ?`,
       ...kinds,
       beforeSeq ?? Number.MAX_SAFE_INTEGER,
+      ...(thread ? [thread] : []),
       limit,
     )
     .toArray();
@@ -226,6 +253,8 @@ export function quietTrigger(trigger: string): boolean {
   // Moving in says how its reading went on its own page.
   return (
     trigger === "compaction" ||
+    // Naming a thread (§21.1) that didn't work leaves it with the start of its first message.
+    trigger === "thread.name" ||
     trigger === "areas" ||
     trigger === "movein" ||
     trigger.startsWith("helper:") ||
@@ -260,6 +289,8 @@ export function isThreadRow(row: LogRow): boolean {
       (row.body.kind === "reminder" || row.body.kind === "promise")
     );
   }
+  // A message moved back from a thread says so where it lands (§21.1).
+  if (row.kind === "thread.change") return row.body.undo_of != null;
   // Atlas starting an area is said once, in the thread (§6.3).
   if (row.kind === "area.change") return row.body.change === "started";
   // A job's questions are messages in the thread, with their buttons (§21.4), and so is the result of a job that
@@ -278,6 +309,7 @@ export const THREAD_KINDS: LogKind[] = [
   "agenda.change",
   "record.change",
   "area.change",
+  "thread.change",
   "voice.problem",
   "job.question",
   "job.result",
@@ -307,13 +339,16 @@ export function jobThread(sql: Sql, job: string, limit = 200): LogRow[] {
     .map(fromRaw);
 }
 
-export function thread(sql: Sql, limit: number, beforeSeq?: number): LogRow[] {
+/**
+ * What a thread shows (§21.1), oldest first: Today's when `id` is null (the default), else that thread's.
+ */
+export function thread(sql: Sql, limit: number, beforeSeq?: number, id: string | null = null): LogRow[] {
   // Some rows of these kinds aren't shown (tool results without receipts, record changes
   // that aren't undos), so read back in pages until there are enough or none are left.
   const out: LogRow[] = [];
   let before = beforeSeq;
   for (let page = 0; page < 20 && out.length < limit; page++) {
-    const rows = recent(sql, THREAD_KINDS, limit * 3, before);
+    const rows = recent(sql, THREAD_KINDS, limit * 3, before, id);
     out.unshift(...rows.filter(isThreadRow));
     if (rows.length < limit * 3) break;
     before = rows[0]!.seq;

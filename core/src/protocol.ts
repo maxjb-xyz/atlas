@@ -177,6 +177,22 @@ export interface SearchHit {
   by?: "owner" | "atlas";
 }
 
+/** A thread (§21.1, §21.4) as the sidebar and its view show it. Jobs are threads at work, and stay JobViews. */
+export interface ThreadView {
+  id: string;
+  title: string;
+  /** The spaces (areas) it's in. */
+  areas: string[];
+  /** working: a turn of it is going now; open: it's had its say; quiet: nobody touched it in three days. */
+  state: "working" | "open" | "quiet";
+  pinned: boolean;
+  last_at: number;
+  /** The last thing said in it, in a line, and by whom. */
+  last: { text: string; by: "owner" | "atlas" } | null;
+  /** A turn waiting for a free hand: four threads are working (§21.1). */
+  waiting?: boolean;
+}
+
 export interface JobView {
   id: string;
   title: string;
@@ -298,7 +314,39 @@ export const ClientMessage = z.discriminatedUnion("type", [
   /** Sent on connect. `tz` is the browser's zone, used until the owner sets one. */
   z.object({ type: z.literal("atlas.hello"), tz: z.string().max(64).optional() }),
   /** The owner says something in text. `client_id` lets the app match its optimistic bubble. */
-  z.object({ type: z.literal("atlas.say"), text: z.string().min(1).max(20_000), client_id: z.string().max(64) }),
+  z.object({
+    type: z.literal("atlas.say"),
+    text: z.string().min(1).max(20_000),
+    client_id: z.string().max(64),
+    /** The thread it's said in (§21.1); left out, Today. */
+    thread: z.string().max(64).optional(),
+  }),
+  /**
+   * A new thread (§21.1): ⌘N, a space's message box (its area), or `text` to say in it at once. `client_id` matches
+   * the app's optimistic row; the thread's id comes back in atlas.thread.made.
+   */
+  z.object({
+    type: z.literal("atlas.thread.new"),
+    client_id: z.string().max(64),
+    text: z.string().min(1).max(20_000).optional(),
+    title: z.string().max(120).optional(),
+    areas: z.array(z.string().max(64)).max(4).optional(),
+  }),
+  /** A thread's rows, newest first page, or older ones for scrolling back. */
+  z.object({ type: z.literal("atlas.thread.open"), id: z.string().max(64), before_seq: z.number().int().optional() }),
+  /** Rename, pin, put away or bring back a thread, or move it to other spaces. */
+  z.object({
+    type: z.literal("atlas.thread.update"),
+    id: z.string().max(64),
+    title: z.string().min(1).max(120).optional(),
+    pinned: z.boolean().optional(),
+    archived: z.boolean().optional(),
+    areas: z.array(z.string().max(64)).max(4).optional(),
+  }),
+  /** Move to a thread (§21.1): a message, with Atlas's answer to it, starts a new thread of its own. */
+  z.object({ type: z.literal("atlas.thread.split"), log_id: z.string().max(64) }),
+  /** A space's feed (§21.3): what Atlas said there on its own, newest last. */
+  z.object({ type: z.literal("atlas.space.feed"), area: z.string().max(64) }),
   /** Undo from a receipt. */
   z.object({ type: z.literal("atlas.undo"), log_id: z.string().max(64) }),
   /** Older thread rows, for scrolling back. */
@@ -1235,7 +1283,19 @@ export type ServerMessage =
       areas: AreaView[];
       /** The area the owner is focused on, or null for all. */
       scope: string | null;
+      /** The owner's threads (§21.1), most recent first. */
+      threads: ThreadView[];
     }
+  /** The threads changed: one started, moved, was named or put away, or one's turn started or ended. */
+  | { type: "atlas.threads"; threads: ThreadView[] }
+  /** A thread's rows, for its view: the newest page, or an older one. */
+  | { type: "atlas.thread.rows"; id: string; rows: LogRow[]; older?: boolean; has_more?: boolean }
+  /** A new thread, for the app's optimistic one (`client_id`). */
+  | { type: "atlas.thread.made"; id: string; client_id: string }
+  /** A run's rows moved to a thread, or back to Today (null): the app moves them. */
+  | { type: "atlas.thread.moved"; run_id: string; thread: string | null }
+  /** A space's feed (§21.3). */
+  | { type: "atlas.space.feed"; area: string; rows: LogRow[] }
   /** A new or older thread row. The saved truth: it replaces any streamed text for its run. */
   | { type: "atlas.rows"; rows: LogRow[]; older?: boolean; has_more?: boolean }
   /** Streamed reply text for a run in progress. A progress hint only (§4.1). */

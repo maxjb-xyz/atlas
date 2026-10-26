@@ -91,16 +91,34 @@ import {
   promptParts,
   standingLines,
   systemPrompt,
+  threadHat,
+  todayFrom,
   tokens,
   withMessage,
   withNow,
   wornLines,
 } from "./context";
+import {
+  busyThreads,
+  createThread,
+  getThread,
+  lastSaid,
+  listThreads,
+  moveRun,
+  provisionalTitle,
+  QUIET_AFTER_MS,
+  threadOfRun,
+  touchThread,
+  spaceFeed,
+  updateThread,
+} from "./store/threads";
+import { threadMove } from "./tools/threads";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop, TOOLS_LOAD, type ToolGroup } from "./loop";
 import { askedOn, Outbox, type PushDevice, pushDevices, route, StreamScrubber, type Urgency } from "./outbox";
 import { vapidKeys } from "./push";
 import {
   type AreaView,
+  type ThreadView,
   ClientMessage,
   type IndexView,
   type JobView,
@@ -116,7 +134,7 @@ import { type AgendaItem, createItem, due, finish, getItem, lease, rearm, setSch
 import { migrate, newId, parse, type Sql } from "./store/db";
 import { type Actor, append, forRun, get as getRow, jobThread, type LogRow, logTo, type Surface, thread } from "./store/log";
 import { indexNewMessages } from "./store/memory";
-import { getState, setState } from "./store/state";
+import { getState, setState, type StateName } from "./store/state";
 import { endRun, getRun, runningRuns, startRun, sweepStaleRuns } from "./store/runs";
 import {
   type BrainChoice,
@@ -311,6 +329,13 @@ export interface WorkspaceStub extends Partial<JobWorkspace> {
 /** The one owner in M0. Members get their own agents in M5. */
 export const OWNER = "owner";
 
+/** At most this many threads' turns work at once (§21.1); a fifth waits for a free hand. Today never waits. */
+export const THREAD_HANDS = 4;
+
+/** What naming a thread asks (§21.1): its name in the sidebar, in Atlas's own words. */
+const THREAD_NAME_NOTE =
+  "Below is how one of the owner's conversations with you started. Give it a name for their list of threads: two to five words that say what it's about, in sentence case, the way they'd look for it later. Reply with the name alone, on one line, without quotes or a full stop.";
+
 /** A Workers AI model on every plan (Kimi K2.6 needs Workers Paid), used as a last-resort judge for the character check. */
 const FREE_JUDGE = "@cf/moonshotai/kimi-k2.5";
 
@@ -339,6 +364,8 @@ const TOOLS: Record<Actor, Tool[]> = {
     delegate,
     jobOwn,
     ...codingTools.filter((t) => t.name === "job_answer" || t.name === "jobs_look"),
+    // A message in Today that continues one of the owner's threads goes there (§21.1).
+    threadMove,
   ],
   atlas: [
     calendarRead,
@@ -576,6 +603,8 @@ interface ConverseOpts {
   context?: Partial<ToolContext>;
   /** False for a run given what it needs in its input, without the conversation (the skill review). */
   history?: boolean;
+  /** The thread an owner's turn is in (§21.1); left out or null, Today. */
+  thread?: string | null;
 }
 
 export class PersonAgent extends VoiceAgent implements HelperHost {
@@ -640,6 +669,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   #faces!: FaceDesk;
   /** Runs go one at a time, so each one sees the last one's answer. A job's looks keep their own line (goals.ts). */
   #line: Promise<unknown> = Promise.resolve();
+  /** Each thread's own line of turns (§21.1): threads run side by side, and within one, turns keep their order. */
+  #lines = new Map<string, Promise<unknown>>();
+  /** Thread turns working now, and those waiting for a free hand past the cap (§21.1). */
+  #hands = 0;
+  #handQueue: Array<() => void> = [];
 
   get #sql(): Sql {
     return this.ctx.storage.sql;
@@ -1289,16 +1323,97 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           view: this.#view(),
           running: runningRuns(this.#sql)
             .filter((r) => r.surface !== "none")
-            .map((r) => ({ run_id: r.id, surface: r.surface, ...(this.#live.get(r.id) ?? {}) })),
+            .map((r) => ({ run_id: r.id, surface: r.surface, thread: r.thread, ...(this.#live.get(r.id) ?? {}) })),
           jobs: this.#jobs(),
           areas: this.#areasView(),
           scope: getScope(this.#sql),
+          threads: this.#threadViews(),
         });
         return;
       }
       case "atlas.say":
-        void this.keepAliveWhile(() => this.#textTurn(msg.text, msg.client_id));
+        void this.keepAliveWhile(() => this.#textTurn(msg.text, msg.client_id, undefined, undefined, undefined, msg.thread ?? null));
         return;
+      case "atlas.thread.new": {
+        const areas = (msg.areas ?? []).filter((id) => getArea(this.#sql, id));
+        const t = createThread(this.#sql, {
+          title: msg.title ?? (msg.text ? provisionalTitle(msg.text) : "New thread"),
+          areas,
+          named: Boolean(msg.title),
+        });
+        append(this.#sql, { actor: "owner", kind: "thread.change", thread: t.id, body: { change: "started", title: t.title, areas } });
+        this.#send(connection, { type: "atlas.thread.made", id: t.id, client_id: msg.client_id });
+        this.#threadsChanged();
+        const text = msg.text;
+        if (text) void this.keepAliveWhile(() => this.#textTurn(text, msg.client_id, undefined, undefined, undefined, t.id));
+        return;
+      }
+      case "atlas.thread.open": {
+        const t = getThread(this.#sql, msg.id);
+        if (!t) {
+          this.#send(connection, { type: "atlas.error", message: "That thread isn't there any more." });
+          return;
+        }
+        const rows = thread(this.#sql, 60, msg.before_seq, t.id);
+        this.#send(connection, {
+          type: "atlas.thread.rows",
+          id: t.id,
+          rows,
+          ...(msg.before_seq != null ? { older: true } : {}),
+          has_more: rows.length === 60,
+        });
+        return;
+      }
+      case "atlas.thread.update": {
+        const t = updateThread(this.#sql, msg.id, {
+          ...(msg.title ? { title: msg.title, named: true } : {}),
+          ...(msg.pinned != null ? { pinned: msg.pinned } : {}),
+          ...(msg.archived != null ? { state: msg.archived ? ("archived" as const) : ("open" as const) } : {}),
+          ...(msg.areas ? { areas: msg.areas.filter((id) => getArea(this.#sql, id)) } : {}),
+        });
+        if (!t) {
+          this.#send(connection, { type: "atlas.error", message: "That thread isn't there any more." });
+          return;
+        }
+        append(this.#sql, {
+          actor: "owner",
+          kind: "thread.change",
+          thread: t.id,
+          body: {
+            change: msg.archived ? "archived" : msg.archived === false ? "reopened" : msg.title ? "renamed" : "changed",
+            title: t.title,
+            pinned: t.pinned,
+            areas: t.areas,
+          },
+        });
+        this.#threadsChanged();
+        return;
+      }
+      case "atlas.thread.split": {
+        // Move to a thread (§21.1): what the owner said, with Atlas's answer, starts a thread of its own.
+        const row = getRow(this.#sql, msg.log_id);
+        if (!row || row.kind !== "message.in" || !row.run_id) {
+          this.#send(connection, { type: "atlas.error", message: "Only something you said can start a thread." });
+          return;
+        }
+        const t = createThread(this.#sql, { title: provisionalTitle(String(row.body.text ?? "")), areas: row.areas });
+        append(this.#sql, {
+          actor: "owner",
+          kind: "thread.change",
+          thread: t.id,
+          body: { change: "started", title: t.title, from: row.thread },
+        });
+        moveRun(this.#sql, row.run_id, t.id);
+        this.#broadcast({ type: "atlas.thread.moved", run_id: row.run_id, thread: t.id });
+        this.#send(connection, { type: "atlas.thread.made", id: t.id, client_id: msg.log_id });
+        this.#threadsChanged();
+        void this.keepAliveWhile(() => this.#nameThread(t.id)).catch(() => {});
+        return;
+      }
+      case "atlas.space.feed": {
+        this.#send(connection, { type: "atlas.space.feed", area: msg.area, rows: spaceFeed(this.#sql, msg.area) });
+        return;
+      }
       case "atlas.run.stop": {
         const stop = this.#stops.get(msg.run_id);
         if (stop) stop.abort("You stopped it.");
@@ -2328,14 +2443,23 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   /** The owner's text runs that can still be stopped, waiting in line or under way. */
   #stops = new Map<string, AbortController>();
 
-  async #textTurn(text: string, clientId: string, note?: string, via?: ChatVia, mail?: { thread: string; areas: string[] }): Promise<void> {
+  async #textTurn(
+    text: string,
+    clientId: string,
+    note?: string,
+    via?: ChatVia,
+    mail?: { thread: string; areas: string[] },
+    thread?: string | null,
+  ): Promise<void> {
     const surface: Surface = via ? "chat" : "app";
-    const runId = startRun(this.#sql, { actor: "owner", trigger: "message", surface, role: "main" });
+    // A thread that's gone (put away and removed) can't take words: they land in Today instead.
+    const here = thread && getThread(this.#sql, thread) ? thread : null;
+    const runId = startRun(this.#sql, { actor: "owner", trigger: "message", surface, role: "main", thread: here });
     const stop = new AbortController();
     this.#stops.set(runId, stop);
     if (via) this.#chatRuns.set(runId, via);
     try {
-      await this.#textRun(runId, text, clientId, stop.signal, note, via, mail);
+      await this.#textRun(runId, text, clientId, stop.signal, note, via, mail, here);
     } finally {
       this.#stops.delete(runId);
       this.#chatRuns.delete(runId);
@@ -2468,8 +2592,15 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     note?: string,
     via?: ChatVia,
     mail?: { thread: string; areas: string[] },
+    thread: string | null = null,
   ): Promise<void> {
     const surface: Surface = via ? "chat" : "app";
+    if (thread) {
+      // A thread that's been put away comes back when the owner says something in it.
+      const t = getThread(this.#sql, thread);
+      if (t?.state === "archived") updateThread(this.#sql, thread, { state: "open" });
+      touchThread(this.#sql, thread);
+    }
     const inRow = append(this.#sql, {
       actor: "owner",
       kind: "message.in",
@@ -2494,15 +2625,29 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
     const hit = matchPhrase(this.#sql, text);
     if (hit) {
-      await this.#inLine(() => this.#phraseRun(hit, runId, surface), { id: runId, surface }).catch(() => {});
+      await this.#inLine(() => this.#phraseRun(hit, runId, surface), { id: runId, surface }, thread).catch(() => {});
       chat?.stop();
       return;
     }
     if (noticeAsk(this.#sql, text, zoneOf(readSettings(this.#sql)))) this.#automationsChanged();
     this.#ownerActive();
+    if (thread) this.#threadsChanged();
 
+    let release: (() => void) | null = null;
     await this.#inLine(
       async () => {
+        // A thread's turn takes a hand; past the cap it says it's waiting, and starts when one is free (§21.1).
+        if (thread) {
+          release = await this.#hand(() => {
+            this.#waiting.add(runId);
+            this.#broadcast({ type: "atlas.status", run_id: runId, text: `Waiting for a free hand: ${THREAD_HANDS} threads are working.` });
+            this.#threadsChanged();
+          });
+          if (this.#waiting.delete(runId)) {
+            this.#broadcast({ type: "atlas.status", run_id: runId, text: null });
+            this.#threadsChanged();
+          }
+        }
         const scrubber = new StreamScrubber(this.#outbox.secrets());
         const extra = [note, (await this.#senses.reacted(text)) ?? ""].filter(Boolean).join("\n\n") || undefined;
         const res = await this.#converse({
@@ -2516,6 +2661,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           budget: BUDGETS.chat,
           signal,
           extra,
+          thread,
           emit: (e) => {
             if (e.type === "status" && e.text) chat?.status(e.text);
             this.#relay(runId, e, scrubber);
@@ -2531,9 +2677,22 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         if (res.state === "replied") this.#senses.seenBy(inRow.at);
       },
       { id: runId, surface },
+      thread,
     )
       .catch(() => {})
-      .finally(() => chat?.stop());
+      .finally(() => {
+        chat?.stop();
+        (release as (() => void) | null)?.();
+        this.#waiting.delete(runId);
+        // Whatever thread the turn ended in (it may have moved there from Today), its row changes, and a new one
+        // gets its name.
+        const ended = threadOfRun(this.#sql, runId);
+        if (ended || thread) {
+          if (ended) touchThread(this.#sql, ended);
+          this.#threadsChanged();
+          if (ended) void this.keepAliveWhile(() => this.#nameThread(ended)).catch(() => {});
+        }
+      });
   }
 
   /**
@@ -3341,13 +3500,108 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     },
   };
 
+  // --- threads (§21.1) ---------------------------------------------------------
+
+  /** Thread turns waiting for a free hand. */
+  #waiting = new Set<string>();
+
+  #threadViews(): ThreadView[] {
+    const busy = busyThreads(this.#sql);
+    const waiting = new Set([...this.#waiting].map((r) => threadOfRun(this.#sql, r)).filter((t): t is string => t != null));
+    const now = Date.now();
+    return listThreads(this.#sql, { limit: 100 }).map((t) => {
+      const last = lastSaid(this.#sql, t.id);
+      return {
+        id: t.id,
+        title: t.title,
+        areas: t.areas,
+        pinned: t.pinned,
+        last_at: t.last_at,
+        last: last ? { text: last.text, by: last.by } : null,
+        state: busy.has(t.id) && !waiting.has(t.id) ? "working" : !t.pinned && now - t.last_at > QUIET_AFTER_MS ? "quiet" : "open",
+        ...(waiting.has(t.id) ? { waiting: true } : {}),
+      };
+    });
+  }
+
+  #threadsChanged(): void {
+    this.#broadcast({ type: "atlas.threads", threads: this.#threadViews() });
+  }
+
+  /** Today's message goes to one of the owner's threads (thread_continue), with what was said there lately. */
+  #moveToThread(runId: string, id: string): { ok: true; title: string; recent: string } | { ok: false; error: string } {
+    const t = getThread(this.#sql, id);
+    if (!t || t.state === "archived") return { ok: false, error: "There's no open thread with that id. Answer here in Today." };
+    moveRun(this.#sql, runId, id);
+    this.#broadcast({ type: "atlas.thread.moved", run_id: runId, thread: id });
+    this.#threadsChanged();
+    const recent = history(this.#sql, { thread: id, excludeRunId: runId, budget: 3_000 })
+      .map((m) => `${m.role === "user" ? "The owner" : "You"}: ${typeof m.content === "string" ? m.content : ""}`)
+      .join("\n\n")
+      .slice(-8_000);
+    return { ok: true, title: t.title, recent };
+  }
+
+  /**
+   * Names a new thread from how it started (§21.1), once it has an answer: a few words, in Atlas's own judgment.
+   * Until then, and if naming doesn't work, its name is the start of its first message.
+   */
+  async #nameThread(id: string): Promise<void> {
+    const t = getThread(this.#sql, id);
+    if (!t || t.named) return;
+    const said = this.#sql
+      .exec<{ kind: string; body: string }>(
+        `SELECT kind, body FROM log WHERE thread = ? AND kind IN ('message.in', 'message.out') ORDER BY seq LIMIT 4`,
+        id,
+      )
+      .toArray()
+      .map((r) => ({ kind: r.kind, text: String(parse<{ text?: unknown }>(r.body, {}).text ?? "") }))
+      .filter((r) => r.text);
+    if (!said.some((r) => r.kind === "message.out")) return;
+    // Named once: a second turn ending meanwhile doesn't name it again.
+    updateThread(this.#sql, id, { named: true });
+    const settings = readSettings(this.#sql);
+    const runId = startRun(this.#sql, { actor: "atlas", trigger: "thread.name", surface: "none", role: "main" });
+    const res = await runLoop(
+      { log: logTo(this.#sql), router: this.#router, chain: settings.brains.main, toolContext: {} as never },
+      {
+        runId,
+        role: "main",
+        surface: "none",
+        system: THREAD_NAME_NOTE,
+        messages: [
+          {
+            role: "user",
+            content: said.map((r) => `${r.kind === "message.in" ? "The owner" : "You"}: ${r.text.slice(0, 1_500)}`).join("\n\n"),
+          },
+        ],
+        tools: [],
+        budget: { steps: 1, ms: 30_000 },
+        joiner: " ",
+        effort: "low",
+        firstEventMs: 20_000,
+      },
+      () => {},
+    );
+    endRun(this.#sql, runId, res.state, res.steps, {
+      ...(res.error ? { error: res.error } : {}),
+      ...(res.brain ? { brain: brainKey(res.brain) } : {}),
+      usage: res.usage as never,
+    });
+    const title = res.text.trim();
+    if (res.state === "replied" && title) {
+      updateThread(this.#sql, id, { title });
+      this.#threadsChanged();
+    }
+  }
+
   // --- one run ---------------------------------------------------------------
 
   /**
    * Runs `fn` after the run ahead of it. If it throws, the run still ends in
    * one saved state (failed, with the reason), so nothing stays running.
    */
-  #inLine<T>(fn: () => Promise<T>, run?: { id: string; surface: Surface }): Promise<T> {
+  #inLine<T>(fn: () => Promise<T>, run?: { id: string; surface: Surface }, thread?: string | null): Promise<T> {
     const guarded = async () => {
       try {
         return await fn();
@@ -3356,9 +3610,38 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         throw err;
       }
     };
-    const next = this.#line.then(guarded, guarded);
-    this.#line = next.catch(() => {});
+    // Today and Atlas's own runs share one line; each thread has its own (§21.1).
+    if (!thread) {
+      const next = this.#line.then(guarded, guarded);
+      this.#line = next.catch(() => {});
+      return next;
+    }
+    const next = (this.#lines.get(thread) ?? Promise.resolve()).then(guarded, guarded);
+    const tail = next.catch(() => {});
+    this.#lines.set(thread, tail);
+    void tail.then(() => {
+      if (this.#lines.get(thread) === tail) this.#lines.delete(thread);
+    });
     return next;
+  }
+
+  /**
+   * A hand for a thread's turn (§21.1): at most THREAD_HANDS work at once, so the brain's bill and its rate limits
+   * stay sane. Today never waits for one. Gives back the release.
+   */
+  async #hand(onWait: () => void): Promise<() => void> {
+    if (this.#hands >= THREAD_HANDS) {
+      onWait();
+      await new Promise<void>((go) => this.#handQueue.push(go));
+    } else this.#hands += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = this.#handQueue.shift();
+      if (next) next();
+      else this.#hands -= 1;
+    };
   }
 
   #failRun(runId: string, surface: Surface, err: unknown): void {
@@ -3391,21 +3674,34 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const extra = [o.extra ?? "", shared].filter(Boolean).join("\n\n") || undefined;
     // A typed message wears its own area (§6.2) when tagging it is quick; a slow tag lands for the tools instead.
     if (o.actor === "owner" && o.surface !== "voice") await this.#taggedBy(o.runId, TAG_WAIT_MS);
+    // A thread's turn reads its own conversation and wears its spaces (§21.1, §21.3); Today's reads from the morning.
+    const here = o.thread ? getThread(this.#sql, o.thread) : null;
+    const worn = threadHat(this.#sql, here);
     // What stays put is the prompt, which brains cache; what's true now rides with this turn's message (§4.1).
-    const parts = promptParts({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq, mcp, extra });
+    const parts = promptParts({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq, mcp, extra, thread: here });
     const system = parts.stable;
     // A turn reads the recent conversation and the summary before it, so its first words come fast; recall has the rest.
     // Atlas's own runs on the clock read as much as fits, since nobody waits on them.
     const room = o.actor === "owner" ? TURN_HISTORY_TOKENS : Math.floor(this.#window * 0.85) - tokens(system);
     const budget = room - tokens(o.input);
     const messages = withMessage(
-      o.history === false ? [] : history(this.#sql, { excludeRunId: o.runId, beforeSeq: o.beforeSeq, budget }),
+      o.history === false
+        ? []
+        : history(this.#sql, {
+            excludeRunId: o.runId,
+            beforeSeq: o.beforeSeq,
+            budget,
+            thread: here?.id ?? null,
+            ...(o.actor === "owner" && !here ? { since: todayFrom(now, tz) } : {}),
+          }),
       withNow(parts.now, o.input),
     );
     const via = o.actor === "atlas" ? "clock" : o.surface === "voice" ? "voice" : "chat";
     // The groups of tools this conversation has loaded since its last summary: the turn starts with them (§4.1).
-    const since = latestSummary(this.#sql, o.beforeSeq)?.through_seq ?? 0;
-    const kept = groups ? getState<{ since: number; groups: string[] }>(this.#sql, "turn_groups") : null;
+    // Each thread keeps its own.
+    const since = here ? 0 : (latestSummary(this.#sql, o.beforeSeq)?.through_seq ?? 0);
+    const groupsKey: StateName = here ? `turn_groups:${here.id}` : "turn_groups";
+    const kept = groups ? getState<{ since: number; groups: string[] }>(this.#sql, groupsKey) : null;
     const loaded = kept && kept.since === since ? kept.groups : [];
     const res = await runLoop(
       {
@@ -3432,6 +3728,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
                 },
               }
             : {}),
+          // A thread in a space acts in that space: its accounts and tone (§21.3).
+          ...(worn ? { areas: worn } : {}),
+          // Threads (§21.1): an owner's turn knows where it is, and Today's can take a message to a thread.
+          ...(o.actor === "owner" ? { threads: { here: here?.id ?? null, move: (id: string) => this.#moveToThread(o.runId, id) } } : {}),
           ...(o.context ?? {}),
           // Code Mode (§9.1): a program calls this run's own tools, and each call is a row of this run, with its receipt.
           tools: every,
@@ -3470,8 +3770,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         // The owner waits on their own turns, so those think briefly; work that runs on its own (a job's turns,
         // Atlas's own runs) thinks longer (§4.1).
         effort: o.actor === "owner" ? "low" : "medium",
-        // One conversation, one cache: each turn's prompt starts as the last one's did (§4.1).
-        cacheKey: `atlas:${this.name}:${o.actor}:${o.role}`,
+        // One conversation, one cache: each turn's prompt starts as the last one's did (§4.1). Each thread is its own.
+        cacheKey: `atlas:${this.name}:${o.actor}:${o.role}${here ? `:${here.id}` : ""}`,
         firstEventMs: FIRST_EVENT_MS[o.role],
         ...(o.role === "voice" ? { hedgeMs: VOICE_HEDGE_MS } : {}),
         ...(o.silentOk ? { silentOk: true } : {}),
@@ -3481,7 +3781,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     if (groups && res.loaded?.length) {
       const order = groups.map((g) => g.name);
       const all = [...new Set([...loaded, ...res.loaded])].sort((a, b) => order.indexOf(a) - order.indexOf(b));
-      setState(this.#sql, "turn_groups", { since, groups: all });
+      setState(this.#sql, groupsKey, { since, groups: all });
     }
     return res;
   }

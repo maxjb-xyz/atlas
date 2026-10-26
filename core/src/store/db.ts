@@ -338,6 +338,25 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE files ADD COLUMN areas TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE pages ADD COLUMN areas TEXT NOT NULL DEFAULT '[]';
   `,
+  // 19. M7 stage 6e: threads (§21.1, §21.4). A thread is a conversation of its own, with a name, the space (area) it's
+  // in, and its state. A run belongs to a thread, or to Today when it has none, and every row of the run says which,
+  // so a thread reads only its own conversation. Moving a message to a thread moves its run.
+  `
+  CREATE TABLE threads (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    areas TEXT NOT NULL DEFAULT '[]',
+    named INTEGER NOT NULL DEFAULT 0,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT 'open',
+    created_at INTEGER NOT NULL,
+    last_at INTEGER NOT NULL
+  );
+  CREATE INDEX threads_last ON threads(state, last_at);
+  ALTER TABLE runs ADD COLUMN thread TEXT;
+  ALTER TABLE log ADD COLUMN thread TEXT;
+  CREATE INDEX log_thread ON log(thread, seq);
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

@@ -11,6 +11,7 @@ import { forgetRecord, getRecord, restoreRecord, revertRecord } from "../store/r
 import type { ToolContext } from "../tools/types";
 import { deletePage, getPage, pageVersion, savePage } from "../pages";
 import { getArea, updateArea } from "../store/areas";
+import { moveRun } from "../store/threads";
 
 export type UndoOutcome = { ok: true; row: LogRow; agenda: boolean } | { ok: false; message: string };
 
@@ -63,6 +64,18 @@ export async function undoReceipt(
         };
       }
       return { ok: true, row: undoneBy(sql, logId)!, agenda: false };
+    }
+    case "thread.move": {
+      // The message and Atlas's answer to it go back to where it was said.
+      moveRun(sql, undo.run, undo.from);
+      const row = append(sql, {
+        actor: "owner",
+        kind: "thread.change",
+        run_id: receiptRow.run_id,
+        thread: undo.from,
+        body: { change: "moved", run: undo.run, from: undo.to, to: undo.from, ...mark },
+      });
+      return { ok: true, row, agenda: false };
     }
     case "skill.undo": {
       const s = getSkill(sql, undo.id);
@@ -169,7 +182,7 @@ export async function undoReceipt(
 function undoneBy(sql: Sql, logId: string): LogRow | null {
   const r = sql
     .exec<{ id: string }>(
-      `SELECT id FROM log WHERE kind IN ('agenda.change', 'record.change', 'page.change', 'settings.change', 'calendar.change', 'delivery') AND json_extract(body, '$.undo_of') = ? LIMIT 1`,
+      `SELECT id FROM log WHERE kind IN ('agenda.change', 'record.change', 'page.change', 'settings.change', 'calendar.change', 'delivery', 'thread.change') AND json_extract(body, '$.undo_of') = ? LIMIT 1`,
       logId,
     )
     .toArray()[0];

@@ -24,6 +24,8 @@ export type StateName =
   | "skill_review_seq"
   /** The groups of tools the owner's conversation has loaded since its last summary, which each turn starts with (§4.1). */
   | "turn_groups"
+  /** The same, for one thread's conversation (§21.1). */
+  | `turn_groups:${string}`
   /** Pairs of skills already offered to the review to merge, as "a|b", so each is offered once. */
   | "skill_pairs_offered"
   /** Where each skill installed from a skill hub came from (§17): the hub, the folder, the commit and each file's hash. */
