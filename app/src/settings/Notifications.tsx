@@ -81,7 +81,7 @@ export function Notifications({ atlas, draft, edit, view }: { atlas: Atlas; draf
                 ...(list.length > 1 ? [{ value: "", label: "Remove this" }] : []),
               ]}
               onPick={(v) => set(v ? list.map((x) => (x === p ? v : x)) : list.filter((x) => x !== p))}
-              foot={linked.length ? undefined : "Link a chat in Abilities → Services, and it can reach you there too."}
+              foot={linked.length ? undefined : "Link a chat in Settings → Connections, and it can reach you there too."}
             />
           </span>
         ))}

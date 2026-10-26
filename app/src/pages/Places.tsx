@@ -46,7 +46,7 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
 
   return (
     <Stage
-      label="Inbox"
+      label="Needs you"
       // Only the kinds that have something waiting get a tab: four empty filters over an empty list is noise.
       tabs={[
         { id: "all", label: "All", badge: s.inbox?.length || null },
@@ -310,7 +310,7 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
 
   return (
     <Stage
-      label="Agenda"
+      label="Calendar"
       tabs={[
         { id: "upcoming", label: "Upcoming" },
         { id: "week", label: "Week" },

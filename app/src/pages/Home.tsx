@@ -16,6 +16,7 @@ import { MapCanvas, whereLine } from "../SenseViews";
 import { sky, temp } from "../../../core/src/weather";
 import { useDetail } from "../theme";
 import { voiceFullNow } from "../VoiceStage";
+import { SpaceMark } from "../Shell";
 import { ApprovalCard } from "../Approval";
 import {
   addDays,
@@ -113,7 +114,23 @@ function keep(next: Kept): void {
   }
 }
 
-export function Home({ atlas, detail, go, place }: { atlas: Atlas; detail: string; go: (d: string) => void; place: (p: "inbox") => void }) {
+export function Home({
+  atlas,
+  detail,
+  go,
+  place,
+  thread = null,
+  fresh = false,
+}: {
+  atlas: Atlas;
+  detail: string;
+  go: (d: string) => void;
+  place: (p: "inbox") => void;
+  /** A thread (§21.1) instead of Today, with the same stage beside it. */
+  thread?: string | null;
+  /** A thread not started yet (⌘N). */
+  fresh?: boolean;
+}) {
   const s = atlas.state;
   // The stage outlives a visit to another page: what was open comes back with Home.
   const [tab, setTab] = useState<Tab | null>(() => kept.tab);
@@ -156,7 +173,7 @@ export function Home({ atlas, detail, go, place }: { atlas: Atlas; detail: strin
 
   // From elsewhere: a job ("job:<id>", or "jobs:<id>" from older links), a view ("view:<receipt id>"), or where something was asked ("at:<row id>").
   useEffect(() => {
-    if (!detail) return;
+    if (!detail || thread || fresh) return;
     if (detail.startsWith("job:") || detail.startsWith("jobs:")) openJob(detail.slice(detail.indexOf(":") + 1));
     else if (detail.startsWith("view:")) {
       const id = detail.slice(5);
@@ -193,6 +210,7 @@ export function Home({ atlas, detail, go, place }: { atlas: Atlas; detail: strin
 
   const now = useNow();
   const tz = s.view?.settings.timezone;
+  const { at } = useDetail();
   const job = tab?.startsWith("job:") ? s.jobs.find((j) => j.id === tab.slice(4)) : undefined;
   const opens: Opens = {
     view: openView,
@@ -219,12 +237,27 @@ export function Home({ atlas, detail, go, place }: { atlas: Atlas; detail: strin
       : []),
   ];
 
+  const th = thread ? s.threads.find((t) => t.id === thread) : undefined;
   return (
     <Stage
-      label="Home"
+      label={thread ? (th?.title ?? "Thread") : fresh ? "New thread" : "Today"}
+      title={
+        thread ? (
+          <ThreadTitle atlas={atlas} id={thread} />
+        ) : (
+          <span className="page-title">
+            <span className="disp">{fresh ? "New thread" : "Today"}</span>
+            {!fresh && (
+              <span className="faint">
+                {new Date(now).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}
+                {tz && at("developer") ? ` · ${tz}` : ""}
+              </span>
+            )}
+          </span>
+        )
+      }
       home
       bodyClass="home-body"
-      meta={tab ? null : `${dayName(now)} · ${clock(now)}${tz ? ` · ${tz}` : ""}`}
       actions={
         <div className="stage-opens">
           <div className="tabs" role="tablist" aria-label="Open on the stage">
@@ -253,7 +286,15 @@ export function Home({ atlas, detail, go, place }: { atlas: Atlas; detail: strin
       }
     >
       <div className={`home-split ${tab ? "open" : ""}`}>
-        <Conversation atlas={atlas} opens={opens} focus={focus} onFocused={() => setFocus(null)} />
+        <Conversation
+          key={thread ?? (fresh ? "new" : "today")}
+          atlas={atlas}
+          opens={opens}
+          focus={focus}
+          onFocused={() => setFocus(null)}
+          thread={thread}
+          fresh={fresh}
+        />
         {tab && (
           <StageArea key={tab} at={tab}>
             <button className="btn sm home-back" onClick={close}>
@@ -765,4 +806,108 @@ function settledDetail(r: LogRow): string {
   if (r.body.change === "done") return (Array.isArray(r.body.results) ? r.body.results.map(String) : []).join(" ") || "Done.";
   if (r.body.change === "cancelled") return "You declined, so nothing was done.";
   return "Nobody answered in time, so nothing was done.";
+}
+
+/**
+ * A thread's head (§21.1): its name, which renames in place, its space, and Pin and Put away. The name cross-fades
+ * when Atlas names it.
+ */
+function ThreadTitle({ atlas, id }: { atlas: Atlas; id: string }) {
+  const s = atlas.state;
+  const t = s.threads.find((x) => x.id === id);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [moving, setMoving] = useState(false);
+  const area = s.areas.find((a) => t?.areas.includes(a.id));
+  if (!t)
+    return (
+      <span className="page-title">
+        <span className="disp faint">Thread</span>
+      </span>
+    );
+  const save = () => {
+    const title = editing?.trim();
+    if (title && title !== t.title) atlas.send({ type: "atlas.thread.update", id, title });
+    setEditing(null);
+  };
+  return (
+    <span className="page-title thread-title">
+      {editing != null ? (
+        <input
+          className="title-edit disp"
+          autoFocus
+          value={editing}
+          aria-label="The thread's name"
+          onChange={(e) => setEditing(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+            if (e.key === "Escape") setEditing(null);
+          }}
+        />
+      ) : (
+        <button className="disp title-btn" title="Rename" onClick={() => setEditing(t.title)} key={t.title}>
+          {t.title}
+        </button>
+      )}
+      <span className="t-space">
+        <button className="space-chip" onClick={() => setMoving(!moving)} aria-expanded={moving} title="Which space it's in">
+          {area ? (
+            <>
+              <SpaceMark area={area} size={14} />
+              {area.name}
+            </>
+          ) : (
+            <span className="faint">No space</span>
+          )}
+        </button>
+        {moving && (
+          <span className="pop rise" style={{ left: 0 }}>
+            <button
+              className={`item ${!area ? "on" : ""}`}
+              onClick={() => {
+                atlas.send({ type: "atlas.thread.update", id, areas: [] });
+                setMoving(false);
+              }}
+            >
+              <span className="grow">No space</span>
+            </button>
+            {s.areas
+              .filter((a) => a.state !== "archived")
+              .map((a) => (
+                <button
+                  key={a.id}
+                  className={`item ${area?.id === a.id ? "on" : ""}`}
+                  onClick={() => {
+                    atlas.send({ type: "atlas.thread.update", id, areas: [a.id] });
+                    setMoving(false);
+                  }}
+                >
+                  <SpaceMark area={a} size={14} />
+                  <span className="grow">{a.name}</span>
+                </button>
+              ))}
+          </span>
+        )}
+      </span>
+      <button
+        className={`icon ${t.pinned ? "on" : ""}`}
+        aria-label={t.pinned ? "Unpin" : "Pin"}
+        title={t.pinned ? "Unpin" : "Pin it to the top of Recent"}
+        onClick={() => atlas.send({ type: "atlas.thread.update", id, pinned: !t.pinned })}
+      >
+        <Icon name="pin" size={14} />
+      </button>
+      <button
+        className="icon"
+        aria-label="Put away"
+        title="Put it away: it leaves the sidebar and stays in search"
+        onClick={() => {
+          atlas.send({ type: "atlas.thread.update", id, archived: true });
+          location.hash = "/home";
+        }}
+      >
+        <Icon name="archive" size={14} />
+      </button>
+    </span>
+  );
 }

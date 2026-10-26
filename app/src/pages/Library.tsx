@@ -13,7 +13,7 @@ import { signedIn } from "../abilities/Services";
 import { MoveIn } from "../movein/MoveIn";
 import { AREA_ICON_PATHS, AreaChip, areaColor, AreaDot, Empty, Icon, Picker, pressable, Sheet, shortDay, Stage, Toggle } from "../ui";
 
-type LibTab = "overview" | "places" | "memory" | "areas" | "files" | "movein";
+type LibTab = "overview" | "places" | "memory" | "areas" | "files" | "movein" | "people";
 
 /** Asks for records under `ref`, and again whenever they change. */
 function useRecords(atlas: Atlas, ref: string, q: { record_type?: RecordView["type"]; text?: string; limit?: number; learned?: boolean }) {
@@ -64,9 +64,11 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
         { id: "files", label: "Pages & files", badge: (s.pages?.length ?? 0) + (s.files?.length ?? 0) || null },
         // Moving in (§23.3): what's waiting to be kept or dropped shows as its badge.
         { id: "movein", label: "Move in", badge: s.movein?.items.filter((i) => i.state === "new").length || null },
+        // People live in Library now (§21.2); their page is its own.
+        { id: "people" as LibTab, label: "People" },
       ]}
       tab={tab}
-      onTab={(t) => go(t === "overview" ? "" : t)}
+      onTab={(t) => (t === "people" ? (location.hash = "#/people") : go(t === "overview" ? "" : t))}
       meta={s.scope ? `Focused on ${s.areas.find((a) => a.id === s.scope)?.name ?? "an area"}` : null}
       dock={
         <div className="dock slim">

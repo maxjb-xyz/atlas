@@ -2,6 +2,7 @@
 // Inbox's waiting items. Each is a read of the one log or the records, shaped
 // for its page; nothing here changes anything except marking Inbox items done.
 
+import { threadOfRun } from "../store/threads";
 import { codingJobs } from "./coding";
 import { ownedJobs } from "./jobs";
 import { getPage, pageVersion, pageVersions, segments } from "../pages";
@@ -576,7 +577,11 @@ export function inbox(sql: Sql): InboxItem[] {
         },
       };
     });
-  return [...approvals, ...jobQuestions, ...questions, ...pastItems(sql)];
+  // Each says which thread it was asked in (§21.1), so opening it goes there; null is Today.
+  return [...approvals, ...jobQuestions, ...questions, ...pastItems(sql)].map((i) => ({
+    ...i,
+    thread: i.run_id ? threadOfRun(sql, i.run_id) : null,
+  }));
 }
 
 /** An approval as its card shows it: every step, why, and the checks it already passed. */

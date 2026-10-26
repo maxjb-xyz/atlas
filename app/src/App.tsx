@@ -1,11 +1,11 @@
-import { type FormEvent, lazy, Suspense, useEffect, useState } from "react";
+import { type FormEvent, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { type Atlas, useAtlas } from "./connection";
 import { addPasskey, deviceName, inviteName, joinWithPasskey, passkeysSupported, signInWithCode, signInWithPasskey } from "./passkey";
 import { Home } from "./pages/Home";
 import { MOVED, SettingsPage } from "./settings";
 import { Setup } from "./Setup";
-import { openConversation, Palette, Sidebar, TabBar, Toolbar } from "./Shell";
-import { areaColor, AsciiDiamond, Diamond, ScopeColor, useRoute } from "./ui";
+import { needHref, needsYou, openConversation, Palette, Sidebar, TabBar } from "./Shell";
+import { areaColor, AsciiDiamond, Diamond, Icon, ScopeColor, useRoute } from "./ui";
 
 // Every place but Home loads when first opened, and its code is fetched in the background once the app is idle,
 // so opening one is instant.
@@ -17,6 +17,7 @@ const pages = {
   devices: () => import("./abilities/Devices"),
   abilities: () => import("./pages/Abilities"),
   people: () => import("./pages/People"),
+  space: () => import("./pages/Space"),
 };
 const History = lazy(() => pages.history().then((m) => ({ default: m.History })));
 const Library = lazy(() => pages.library().then((m) => ({ default: m.Library })));
@@ -26,6 +27,7 @@ const Automations = lazy(() => pages.automations().then((m) => ({ default: m.Aut
 const Pair = lazy(() => pages.devices().then((m) => ({ default: m.Pair })));
 const Abilities = lazy(() => pages.abilities().then((m) => ({ default: m.Abilities })));
 const People = lazy(() => pages.people().then((m) => ({ default: m.People })));
+const Space = lazy(() => pages.space().then((m) => ({ default: m.Space })));
 const idle = (f: () => void) => ("requestIdleCallback" in window ? window.requestIdleCallback(f, { timeout: 4000 }) : setTimeout(f, 2000));
 idle(() => {
   for (const load of Object.values(pages)) void load().catch(() => {});
@@ -219,23 +221,55 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
     if (atlas.voice.connected) atlas.send({ type: "atlas.inbox" });
   }, [atlas.voice.connected]);
 
+  // The keys (§21.1): ⌘K search, ⌘N a new thread, ⌘1 to ⌘9 the sidebar's rows, Tab what needs you, Esc back to Today,
+  // ⌘J Today ready to type, Space to talk.
+  const needs = needsYou(atlas);
+  const needAt = useRef(0);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t.closest("input, textarea, select, [contenteditable]") != null || t.isContentEditable);
       if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPalette((p) => !p);
         return;
       }
-      // ⌘J: the conversation, from anywhere, ready to type.
+      if (mod && e.key.toLowerCase() === "n" && !e.shiftKey) {
+        e.preventDefault();
+        go("new");
+        setTimeout(() => document.getElementById("say")?.focus(), 60);
+        return;
+      }
+      if (mod && /^[1-9]$/.test(e.key)) {
+        const rows = [...document.querySelectorAll<HTMLAnchorElement>(".side [data-nav]")];
+        const row = rows[Number(e.key) - 1];
+        if (row) {
+          e.preventDefault();
+          location.hash = row.getAttribute("href")!.slice(1);
+        }
+        return;
+      }
+      // ⌘J: Today, from anywhere, ready to type.
       if (mod && e.key.toLowerCase() === "j") {
         e.preventDefault();
         openConversation();
         return;
       }
-      if (e.key === "Escape") setPalette(false);
+      if (e.key === "Escape") {
+        if (palette) return setPalette(false);
+        if (!typing && !document.querySelector(".overlay, .pop") && place !== "home") go("home");
+        return;
+      }
+      // Tab steps through what needs you, when nothing on the page has focus.
+      if (e.key === "Tab" && !mod && (t == null || t === document.body) && needs.length) {
+        e.preventDefault();
+        const i = needAt.current % needs.length;
+        needAt.current = i + 1;
+        location.hash = needHref(atlas, needs[i]!).slice(1);
+        return;
+      }
       if (e.code !== "Space" || e.repeat) return;
-      const t = e.target as HTMLElement | null;
       // Space belongs to whatever has focus (a row, a link, a card that opens); it starts voice only from the page itself.
       if (
         t &&
@@ -256,7 +290,7 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("atlas:talk", onTalk);
     };
-  }, [atlas.toggleCall, atlas.inCall]);
+  }, [atlas.toggleCall, atlas.inCall, palette, place, needs]);
 
   async function signOut() {
     await fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => null);
@@ -274,36 +308,62 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
   const error = atlas.state.error ?? (atlas.voice.connected ? atlas.voice.error : null);
   const sub = (d: string) => go(place, d);
   const scoped = atlas.state.areas.find((a) => a.id === atlas.state.scope);
+  // On a phone the list of threads is its own screen, and the first one (§21.10); a wider screen always has it beside.
+  const list = place === "threads" || (place === "home" && !location.hash && window.matchMedia("(max-width: 760px)").matches);
+  const conversation = place === "home" || place === "thread" || place === "new" || place === "threads";
+  const thread = place === "thread" ? detail.split("|")[0]! : null;
+  // Each place and thread fades in when it opens, so moving between them never flashes (§21.8).
+  const paneKey = place === "thread" ? `thread:${thread}` : place === "space" ? `space:${detail}` : place === "threads" ? "home" : place;
 
   return (
     <ScopeColor.Provider value={scoped ? areaColor(scoped) : null}>
-      {/* Home is the conversation on the open grid: the shell steps back there (M7 W14). */}
-      <div className={`app ${place === "home" ? "focus" : ""}`}>
-        <Sidebar atlas={atlas} place={place} go={go} />
+      {/* Today and threads are conversations on the open page: the frame steps back there (M7 W14). */}
+      <div className={`app ${conversation ? "focus" : ""} ${list ? "list" : ""}`}>
+        <Sidebar
+          atlas={atlas}
+          place={place === "threads" ? "home" : place}
+          detail={detail}
+          onSearch={() => setPalette(true)}
+          onNew={() => {
+            go("new");
+            setTimeout(() => document.getElementById("say")?.focus(), 60);
+          }}
+        />
         <div className="main">
-          <Toolbar atlas={atlas} go={go} onSearch={() => setPalette(true)} />
           {error && (
-            <div className="banner" style={{ margin: "8px 16px 0", position: "relative", zIndex: 6 }}>
+            <div className="banner" style={{ margin: "10px 16px 0", position: "relative", zIndex: 6 }}>
               <span className="grow">{error}</span>
               <button className="link" onClick={atlas.dismiss}>
                 Dismiss
               </button>
             </div>
           )}
-          {place === "home" && <Home atlas={atlas} detail={detail} go={sub} place={(p) => go(p)} />}
-          <Suspense fallback={<div className="stage" aria-busy="true" />}>
-            {place === "inbox" && <Inbox atlas={atlas} />}
-            {place === "agenda" && <Agenda atlas={atlas} />}
-            {place === "automations" && <Automations atlas={atlas} detail={detail} go={sub} />}
-            {place === "library" && <Library atlas={atlas} detail={detail} go={sub} />}
-            {place === "people" && <People atlas={atlas} detail={detail} go={sub} />}
-            {place === "abilities" && <Abilities atlas={atlas} detail={detail} go={sub} place={go} />}
-            {place === "history" && <History atlas={atlas} />}
-            {place === "settings" && <SettingsPage atlas={atlas} detail={detail} go={sub} onSignOut={signOut} onSetup={onSetup} />}
-            {place === "pair" && <Pair atlas={atlas} code={detail} />}
-          </Suspense>
+          {/* On a phone, a thread or a space opens over the list; this goes back to it. */}
+          {(place === "thread" || place === "space" || place === "new" || place === "home") && (
+            <a className="phone-back" href="#/threads">
+              <Icon name="back" size={16} />
+              Threads
+            </a>
+          )}
+          <div className="pane" key={paneKey}>
+            {(place === "home" || place === "threads") && <Home atlas={atlas} detail={detail} go={sub} place={(p) => go(p)} />}
+            {place === "thread" && thread && <Home atlas={atlas} detail="" go={sub} place={(p) => go(p)} thread={thread} />}
+            {place === "new" && <Home atlas={atlas} detail="" go={sub} place={(p) => go(p)} fresh />}
+            <Suspense fallback={<div className="stage" aria-busy="true" />}>
+              {place === "space" && <Space atlas={atlas} id={detail} />}
+              {place === "inbox" && <Inbox atlas={atlas} />}
+              {place === "agenda" && <Agenda atlas={atlas} />}
+              {place === "automations" && <Automations atlas={atlas} detail={detail} go={sub} />}
+              {place === "library" && <Library atlas={atlas} detail={detail} go={sub} />}
+              {place === "people" && <People atlas={atlas} detail={detail} go={sub} />}
+              {place === "abilities" && <Abilities atlas={atlas} detail={detail} go={sub} place={go} />}
+              {place === "history" && <History atlas={atlas} />}
+              {place === "settings" && <SettingsPage atlas={atlas} detail={detail} go={sub} onSignOut={signOut} onSetup={onSetup} />}
+              {place === "pair" && <Pair atlas={atlas} code={detail} />}
+            </Suspense>
+          </div>
         </div>
-        <TabBar atlas={atlas} place={place} />
+        <TabBar atlas={atlas} place={list ? "threads" : place} />
         {palette && <Palette atlas={atlas} go={go} onClose={() => setPalette(false)} />}
       </div>
     </ScopeColor.Provider>

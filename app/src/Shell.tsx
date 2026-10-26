@@ -1,17 +1,19 @@
-// The shell (§21.1): the sidebar with the eight places (§21.2), the toolbar
-// (scope switcher, jobs, Talk, search), and the composer. Home is the
-// conversation; every other page has the composer at its foot. No side panes.
+// The shell (§21.1): the sidebar of Today, what needs you, threads at work,
+// spaces and recent threads, with Calendar, Library and Settings at its foot
+// (§21.2), and the message box. Today and every thread are conversations;
+// every other page has the message box at its foot. No toolbar, no side panes.
 
-import { useDetail } from "./theme";
-import { type ReactNode, useEffect, useRef, useState } from "react";
-import type { LogRow, SearchHit } from "../../core/src/protocol";
+import { stillMotion, useDetail } from "./theme";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { AreaView, InboxItem, LogRow, SearchHit, ThreadView } from "../../core/src/protocol";
 import type { Atlas } from "./connection";
 import { jobNow, liveJobs } from "./jobs";
+import { topJobs } from "./JobViews";
 import { Markdown } from "./Markdown";
 import { openOnStage, type Shown, shownFrom, StageCard } from "./StageViews";
 import {
+  AREA_ICON_PATHS,
   AreaChip,
-  AreaDot,
   areaColor,
   Avatar,
   AsciiDiamond,
@@ -25,325 +27,476 @@ import {
   shortDay,
   SiteMark,
   stepIcon,
-  useDismiss,
   undoneIds,
+  useNow,
 } from "./ui";
 
-/** The eight places, in three groups: what's yours today, what Atlas knows and can do, and what it did. */
-export const PLACES: Array<{ id: Place; label: string; icon: IconName; gap?: boolean }> = [
-  { id: "home", label: "Home", icon: "home" },
-  { id: "inbox", label: "Inbox", icon: "inbox" },
-  { id: "agenda", label: "Agenda", icon: "agenda" },
-  { id: "automations", label: "Automations", icon: "automations", gap: true },
-  { id: "library", label: "Library", icon: "library" },
-  { id: "people", label: "People", icon: "people" },
-  { id: "abilities", label: "Abilities", icon: "abilities" },
-  { id: "history", label: "History", icon: "history", gap: true },
+/**
+ * The places at the sidebar's foot (§21.2): Calendar, Library and Settings. The rest live inside them: People in
+ * Library; Routines, Connections and Activity in Settings. Their old links still open them.
+ */
+export const PLACES: Array<{ id: Place; label: string; icon: IconName; also?: Place[] }> = [
+  { id: "agenda", label: "Calendar", icon: "agenda" },
+  { id: "library", label: "Library", icon: "library", also: ["people"] },
+  { id: "settings", label: "Settings", icon: "settings", also: ["automations", "abilities", "history", "pair"] },
 ];
 
-export function Sidebar({ atlas, place, go }: { atlas: Atlas; place: Place; go: (p: Place, d?: string) => void }) {
+/** Every place ⌘K can go to, by the names people know them by. */
+const GO_TO: Array<{ id: Place; label: string; icon: IconName }> = [
+  { id: "home", label: "Today", icon: "chat" },
+  { id: "agenda", label: "Calendar", icon: "agenda" },
+  { id: "library", label: "Library", icon: "library" },
+  { id: "people", label: "People", icon: "people" },
+  { id: "automations", label: "Routines", icon: "automations" },
+  { id: "abilities", label: "Connections", icon: "abilities" },
+  { id: "history", label: "Activity", icon: "history" },
+  { id: "inbox", label: "Needs you", icon: "inbox" },
+  { id: "settings", label: "Settings", icon: "settings" },
+];
+
+/** How long ago, in a word: "now", "4m", "2h", "Tue". */
+export function ago(at: number, now = Date.now()): string {
+  const m = Math.round((now - at) / 60_000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h`;
+  return new Date(at).toLocaleDateString([], { weekday: "short" });
+}
+
+/** A space's mark (§21.3): a rounded square in its color, with its icon or its first letter. */
+export function SpaceMark({ area, size = 18 }: { area?: AreaView; size?: number }) {
+  if (!area) return <span className="space-mark none" style={{ width: size, height: size }} aria-hidden />;
+  const icon = area.icon;
+  return (
+    <span
+      className="space-mark"
+      aria-hidden
+      style={{ width: size, height: size, "--c": areaColor(area), fontSize: Math.round(size * 0.55) } as React.CSSProperties}
+    >
+      {icon?.startsWith("file:") ? (
+        <img src={`/api/files/${icon.slice(5)}?inline=1`} alt="" />
+      ) : icon && AREA_ICON_PATHS[icon] ? (
+        <svg className="ic" width={Math.round(size * 0.62)} height={Math.round(size * 0.62)} viewBox="0 0 24 24">
+          <path d={AREA_ICON_PATHS[icon]} />
+        </svg>
+      ) : (
+        (area.name.trim()[0] ?? "·").toUpperCase()
+      )}
+    </span>
+  );
+}
+
+/**
+ * Rows that slide to where they now are when the list changes (§21.8): a thread moving from Working to Recent, a new
+ * one arriving at the top. Positions are read relative to the list, so scrolling it doesn't move anything.
+ */
+function useFlip(ref: React.RefObject<HTMLElement | null>) {
+  const last = useRef(new Map<string, number>());
+  useLayoutEffect(() => {
+    const box = ref.current;
+    if (!box) return;
+    const still = stillMotion();
+    const next = new Map<string, number>();
+    for (const el of box.querySelectorAll<HTMLElement>("[data-flip]")) {
+      const key = el.dataset.flip!;
+      const top = el.offsetTop;
+      next.set(key, top);
+      if (still || last.current.size === 0) continue;
+      const was = last.current.get(key);
+      if (was === undefined) {
+        el.animate(
+          [
+            { opacity: 0, transform: "translateX(-8px)" },
+            { opacity: 1, transform: "none" },
+          ],
+          { duration: 420, easing: SPRING },
+        );
+      } else if (Math.abs(was - top) > 1) {
+        el.animate([{ transform: `translateY(${was - top}px)` }, { transform: "none" }], { duration: 520, easing: SPRING });
+      }
+    }
+    last.current = next;
+  });
+}
+
+/** The app's one spring (§21.8): what moves settles with a little overshoot. */
+export const SPRING = "cubic-bezier(0.34, 1.32, 0.64, 1)";
+
+/** What needs the owner, as the sidebar and Tab show it: decisions first, then the rest, newest last. */
+export function needsYou(atlas: Atlas): InboxItem[] {
+  const all = (atlas.state.inbox ?? []).filter((i) => !atlas.state.answered[i.id]);
+  const deciding = all.filter((i) => i.kind === "approval" || i.kind === "question" || i.job);
+  return [...deciding, ...all.filter((i) => !deciding.includes(i))];
+}
+
+/** Where a thing that needs the owner was asked (§21.2): its job, its thread, or Today; else the list. */
+export function needHref(atlas: Atlas, i: InboxItem): string {
+  if (i.job) return `#/home/${encodeURIComponent(`job:${i.job.id}`)}`;
+  const t = i.thread ?? (i.run_id ? atlas.state.runThread[i.run_id] : undefined);
+  if (t) return `#/thread/${encodeURIComponent(t)}`;
+  if (i.kind === "approval" && i.run_id && atlas.state.rows.some((r) => r.run_id === i.run_id))
+    return `#/home/${encodeURIComponent(`at:${i.id}`)}`;
+  return "#/inbox";
+}
+
+const NEED_ACT: Record<InboxItem["kind"], string> = {
+  approval: "Your OK",
+  question: "Answer",
+  face: "Answer",
+  review: "Review",
+  failed: "Look",
+  service: "Fix",
+};
+
+/**
+ * The sidebar (§21.1): Today, what needs you, what Atlas is working on, the spaces, and recent threads, so all the
+ * work can be seen at once; Calendar, Library and Settings at its foot.
+ */
+export function Sidebar({
+  atlas,
+  place,
+  detail,
+  onSearch,
+  onNew,
+}: {
+  atlas: Atlas;
+  place: Place;
+  detail: string;
+  onSearch: () => void;
+  onNew: () => void;
+}) {
   const s = atlas.state;
   const settings = s.view?.settings;
   const owner = settings?.owner_name || "You";
-  const inbox = s.inbox?.length ?? 0;
-  const [adding, setAdding] = useState(false);
-  const pins = settings?.pins ?? [];
-  const setPins = (next: string[]) => atlas.send({ type: "atlas.settings.update", patch: { pins: next } });
-  const pinned = pins.map((id) => s.areas.find((a) => a.id === id)).filter((a) => a != null);
+  const now = useNow(30_000);
+  const [older, setOlder] = useState(false);
+  const list = useRef<HTMLDivElement>(null);
+  useFlip(list);
+
+  const here = place === "thread" ? detail.split("|")[0] : null;
+  const job = place === "home" && detail.startsWith("job:") ? detail.slice(4) : null;
+  const space = place === "space" ? detail : null;
+  const needs = needsYou(atlas);
+  const jobs = topJobs(s.jobs);
+  const working = [
+    ...liveJobs(jobs, now).map((j) => ({ kind: "job" as const, j, at: j.moved_at ?? j.started_at })),
+    ...s.threads.filter((t) => t.state === "working").map((t) => ({ kind: "thread" as const, t, at: t.last_at })),
+  ].sort((a, b) => b.at - a.at);
+  const recentThreads = s.threads
+    .filter((t) => t.state !== "working" && (older || t.state !== "quiet" || t.pinned))
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.last_at - a.last_at);
+  // Jobs that aren't at work and aren't waiting on an answer are recent threads too, for three days.
+  const asking = new Set(needs.map((i) => i.job?.id).filter(Boolean));
+  const recentJobs = jobs.filter((j) => !jobNow(j, now).live && !asking.has(j.id) && now - (j.moved_at ?? j.started_at) < 3 * 86_400_000);
+  const quiet = s.threads.filter((t) => t.state === "quiet" && !t.pinned).length;
+  const spaces = s.areas
+    .filter((a) => a.state !== "archived")
+    .sort((a, b) => Number(a.state === "dormant") - Number(b.state === "dormant"));
+  const lastToday = [...s.rows].reverse().find((r) => r.kind === "message.in" || r.kind === "message.out");
+  const name = settings?.assistant_name ?? "Atlas";
+  const area = (ids?: string[]) => s.areas.find((a) => ids?.includes(a.id));
 
   return (
     <nav className="side" aria-label="Sidebar">
       <div className="brand">
-        <Diamond size={19} />
-        <span className="disp">{settings?.assistant_name ?? "Atlas"}</span>
-      </div>
-      <div className="nav">
-        {PLACES.map((n) => (
-          <a
-            key={n.id}
-            href={`#/${n.id}`}
-            className={`${place === n.id ? "on" : ""} ${n.gap ? "gap" : ""}`}
-            aria-current={place === n.id ? "page" : undefined}
-            title={n.label}
-          >
-            <Icon name={n.icon} />
-            <span>{n.label}</span>
-            {n.id === "inbox" && inbox > 0 && <span className="badge">{inbox}</span>}
-          </a>
-        ))}
-      </div>
-      <div className="pins-head">
-        <span className="grow">Pinned</span>
-        <button className="icon" style={{ width: 20, height: 20 }} aria-label="Pin an area" onClick={() => setAdding(!adding)}>
-          <Icon name="plus" size={13} />
+        <Diamond size={17} />
+        <span className="disp">{name}</span>
+        <span className="grow" />
+        <button className="icon side-new" onClick={onNew} aria-label="New thread" title="New thread  ⌘N">
+          <Icon name="pencil" size={14} />
         </button>
       </div>
-      <div className="pins">
-        {pinned.map((a) => (
-          <a
-            key={a.id}
-            href="#/home"
-            className={s.scope === a.id ? "on" : ""}
-            onClick={(e) => {
-              e.preventDefault();
-              atlas.send({ type: "atlas.scope.set", area: s.scope === a.id ? null : a.id });
-              go("home");
-            }}
-          >
-            <AreaDot area={a} square />
-            <span className="grow">{a.name}</span>
-          </a>
-        ))}
-        {adding && (
-          <div className="pop rise" style={{ position: "relative", top: 4, marginBottom: 8 }}>
-            <div className="head">
-              <span className="lab">Pin an area</span>
+      <button className="side-search" onClick={onSearch}>
+        <Icon name="search" size={14} />
+        <span className="grow">Search</span>
+        <span className="kbd-soft">⌘K</span>
+      </button>
+      <div className="side-list" ref={list}>
+        <a
+          href="#/home"
+          data-nav
+          data-flip="today"
+          className={`srow today ${place === "home" && !job ? "on" : ""}`}
+          aria-current={place === "home" && !job ? "page" : undefined}
+        >
+          <span className="lead">
+            <LiveMark
+              size={15}
+              state={Object.values(s.live).some((l) => !l.job && !l.thread && l.surface !== "voice") ? "thinking" : "still"}
+            />
+          </span>
+          <span className="t">
+            <span className="t1">Today</span>
+            {lastToday && <span className="t2 clip">{str(lastToday.body.text).slice(0, 80)}</span>}
+          </span>
+          {lastToday && <span className="meta">{ago(lastToday.at, now)}</span>}
+        </a>
+
+        {needs.length > 0 && (
+          <>
+            <div className="sgroup need" data-flip="g:needs">
+              <span className="sq-ac" aria-hidden />
+              Needs you
+              <span className="grow" />
+              <span className="n">{needs.length}</span>
             </div>
-            {s.areas
-              .filter((a) => a.state !== "archived")
-              .map((a) => {
-                const on = pins.includes(a.id);
-                return (
-                  <button
-                    key={a.id}
-                    className={`item ${on ? "on" : ""}`}
-                    onClick={() => setPins(on ? pins.filter((p) => p !== a.id) : [...pins, a.id])}
-                  >
-                    <AreaDot area={a} square />
-                    <span className="grow">{a.name}</span>
-                    {on && <Icon name="check" size={13} />}
-                  </button>
-                );
-              })}
-            {s.areas.length === 0 && <div className="foot">No areas yet. Atlas starts them as things come up.</div>}
-          </div>
+            {needs.map((i) => (
+              <a key={`need:${i.id}`} href={needHref(atlas, i)} data-nav data-flip={`need:${i.id}`} className="srow need" title={i.text}>
+                <span className="lead">{area(i.areas) ? <SpaceMark area={area(i.areas)} size={16} /> : <span className="dot-ac" />}</span>
+                <span className="t">
+                  <span className="t1 clip">{i.job ? i.job.title : i.title}</span>
+                </span>
+                <span className="meta ac">{NEED_ACT[i.kind]}</span>
+              </a>
+            ))}
+          </>
         )}
-        {!pinned.length && !adding && (
-          <p className="faint small" style={{ padding: "4px 8px" }}>
-            Pin an area you live in.
-          </p>
+
+        {working.length > 0 && (
+          <>
+            <div className="sgroup" data-flip="g:working">
+              Working
+              <span className="grow" />
+              <span className="n">{working.length}</span>
+            </div>
+            {working.map((w) =>
+              w.kind === "job" ? (
+                <a
+                  key={`job:${w.j.id}`}
+                  href={`#/home/${encodeURIComponent(`job:${w.j.id}`)}`}
+                  data-nav
+                  data-flip={`job:${w.j.id}`}
+                  className={`srow ${job === w.j.id ? "on" : ""}`}
+                  title={w.j.owned?.now ?? jobNow(w.j, now).status}
+                >
+                  <span className="lead">
+                    <span className="live-dot" />
+                  </span>
+                  <span className="t">
+                    <span className="t1 clip">{w.j.title}</span>
+                  </span>
+                  <span className="meta">{ago(w.j.started_at, now)}</span>
+                </a>
+              ) : (
+                <ThreadRow key={`th:${w.t.id}`} atlas={atlas} t={w.t} on={here === w.t.id} now={now} />
+              ),
+            )}
+          </>
+        )}
+
+        {spaces.length > 0 && (
+          <>
+            <div className="sgroup" data-flip="g:spaces">
+              Spaces
+            </div>
+            {spaces.map((a) => {
+              const open = s.threads.filter((t) => t.areas.includes(a.id) && t.state !== "quiet").length;
+              return (
+                <a
+                  key={`space:${a.id}`}
+                  href={`#/space/${encodeURIComponent(a.id)}`}
+                  data-nav
+                  data-flip={`space:${a.id}`}
+                  className={`srow ${space === a.id ? "on" : ""} ${a.state === "dormant" ? "dim" : ""}`}
+                  aria-current={space === a.id ? "page" : undefined}
+                >
+                  <span className="lead">
+                    <SpaceMark area={a} size={18} />
+                  </span>
+                  <span className="t">
+                    <span className="t1 clip">{a.name}</span>
+                  </span>
+                  {s.scope === a.id && <span className="meta ac">Focus</span>}
+                  {s.scope !== a.id && open > 0 && <span className="meta">{open}</span>}
+                </a>
+              );
+            })}
+          </>
+        )}
+
+        {(recentThreads.length > 0 || recentJobs.length > 0 || quiet > 0) && (
+          <>
+            <div className="sgroup" data-flip="g:recent">
+              Recent
+            </div>
+            {recentThreads.map((t) => (
+              <ThreadRow key={`th:${t.id}`} atlas={atlas} t={t} on={here === t.id} now={now} />
+            ))}
+            {recentJobs.map((j) => (
+              <a
+                key={`job:${j.id}`}
+                href={`#/home/${encodeURIComponent(`job:${j.id}`)}`}
+                data-nav
+                data-flip={`job:${j.id}`}
+                className={`srow ${job === j.id ? "on" : ""}`}
+              >
+                <span className="lead">
+                  {j.state === "done" ? <Icon name="check" size={13} style={{ color: "var(--ok)" }} /> : <span className="dot-quiet" />}
+                </span>
+                <span className="t">
+                  <span className="t1 clip">{j.title}</span>
+                </span>
+                <span className="meta">{jobNow(j, now).label === "Done" ? "Done" : jobNow(j, now).label}</span>
+              </a>
+            ))}
+            {quiet > 0 && (
+              <button className="srow more" onClick={() => setOlder(!older)}>
+                <span className="lead" />
+                <span className="t">
+                  <span className="t1">{older ? "Show fewer" : `Show older · ${quiet}`}</span>
+                </span>
+              </button>
+            )}
+          </>
         )}
       </div>
       <div className="side-foot">
-        <a href="#/settings" className={place === "settings" ? "on" : ""} title="Atlas settings">
-          <Icon name="settings" />
-          <span>Atlas settings</span>
-        </a>
+        {PLACES.map((n) => {
+          const on = place === n.id || (n.also ?? []).includes(place);
+          return (
+            <a key={n.id} href={`#/${n.id}`} className={`srow ${on ? "on" : ""}`} aria-current={on ? "page" : undefined}>
+              <span className="lead">
+                <Icon name={n.icon} size={15} />
+              </span>
+              <span className="t">
+                <span className="t1">{n.label}</span>
+              </span>
+            </a>
+          );
+        })}
         <div className="me">
           <span className="avatar">{owner === "You" ? "Me" : initials(owner)}</span>
-          <span>{owner}</span>
+          <span className="clip">{owner}</span>
+          <span className="grow" />
+          {!atlas.voice.connected && <span className="conn small">Reconnecting</span>}
         </div>
       </div>
     </nav>
   );
 }
 
-/** The phone's tab bar: Home, Inbox, Agenda, Library, and the rest under More (§21.10). */
+/** One thread in the sidebar: its name, its space, and how long since it moved, or that it's working or waiting. */
+function ThreadRow({ atlas, t, on, now }: { atlas: Atlas; t: ThreadView; on: boolean; now: number }) {
+  const area = atlas.state.areas.find((a) => t.areas.includes(a.id));
+  return (
+    <a
+      href={`#/thread/${encodeURIComponent(t.id)}`}
+      data-nav
+      data-flip={`th:${t.id}`}
+      className={`srow ${on ? "on" : ""} ${t.state === "quiet" ? "dim" : ""}`}
+      aria-current={on ? "page" : undefined}
+      title={t.last?.text}
+    >
+      <span className="lead">
+        {t.state === "working" ? (
+          <span className="live-dot" />
+        ) : area ? (
+          <SpaceMark area={area} size={14} />
+        ) : (
+          <span className="dot-quiet" />
+        )}
+      </span>
+      <span className="t">
+        <span className="t1 clip" key={t.title}>
+          {t.title}
+        </span>
+      </span>
+      <span className="meta">
+        {t.waiting ? "Waiting" : t.state === "working" ? "now" : t.pinned ? <Icon name="pin" size={11} /> : ago(t.last_at, now)}
+      </span>
+    </a>
+  );
+}
+
+/** The phone's tab bar (§21.10): Threads, Calendar, Library and Settings. Threads is the sidebar itself. */
 export function TabBar({ atlas, place }: { atlas: Atlas; place: Place }) {
-  const [more, setMore] = useState(false);
-  const moreRef = useDismiss<HTMLElement>(more, () => setMore(false));
-  const inbox = atlas.state.inbox?.length ?? 0;
-  const tabs: Array<{ id: Place; label: string; icon: "home" | "inbox" | "agenda" | "library" }> = [
-    { id: "home", label: "Home", icon: "home" },
-    { id: "inbox", label: "Inbox", icon: "inbox" },
-    { id: "agenda", label: "Agenda", icon: "agenda" },
-    { id: "library", label: "Library", icon: "library" },
-  ];
-  // The rest of the places, under More, in the sidebar's order.
-  const rest: Array<{ id: Place; label: string; icon: IconName }> = [
-    ...PLACES.filter((p) => !tabs.some((t) => t.id === p.id)),
-    { id: "settings", label: "Atlas settings", icon: "settings" },
+  const needs = needsYou(atlas).length;
+  const threads = ["threads", "home", "thread", "space", "new", "inbox"].includes(place);
+  const tabs: Array<{ href: string; label: string; icon: IconName; on: boolean; badge?: number }> = [
+    { href: "#/threads", label: "Threads", icon: "chat", on: threads, badge: needs },
+    { href: "#/agenda", label: "Calendar", icon: "agenda", on: place === "agenda" },
+    { href: "#/library", label: "Library", icon: "library", on: place === "library" || place === "people" },
+    {
+      href: "#/settings",
+      label: "Settings",
+      icon: "settings",
+      on: ["settings", "automations", "abilities", "history", "pair"].includes(place),
+    },
   ];
   return (
-    <nav className="tabbar" aria-label="Places" ref={moreRef}>
+    <nav className="tabbar" aria-label="Places">
       {tabs.map((t) => (
-        <a key={t.id} href={`#/${t.id}`} className={place === t.id ? "on" : ""}>
-          <Icon name={t.icon} size={18} />
+        <a key={t.href} href={t.href} className={t.on ? "on" : ""}>
+          <Icon name={t.icon} size={19} />
           {t.label}
-          {t.id === "inbox" && inbox > 0 && <span className="badge">{inbox}</span>}
+          {t.badge ? <span className="badge">{t.badge}</span> : null}
         </a>
       ))}
-      <button
-        type="button"
-        className={`tab ${rest.some((r) => r.id === place) ? "on" : ""}`}
-        aria-expanded={more}
-        onClick={() => setMore(!more)}
-      >
-        <Icon name="more" size={18} />
-        More
-      </button>
-      {more && (
-        <div className="pop rise" role="menu" style={{ bottom: 60, top: "auto", right: 6, position: "fixed" }}>
-          {rest.map((r) => (
-            <a
-              key={r.id}
-              className={`item ${place === r.id ? "on" : ""}`}
-              role="menuitem"
-              href={`#/${r.id}`}
-              onClick={() => setMore(false)}
-            >
-              <Icon name={r.icon} size={15} />
-              {r.label}
-            </a>
-          ))}
-        </div>
-      )}
     </nav>
-  );
-}
-
-export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, d?: string) => void; onSearch: () => void }) {
-  const s = atlas.state;
-  const [scopeOpen, setScopeOpen] = useState(false);
-  const [jobsOpen, setJobsOpen] = useState(false);
-  const scoped = s.areas.find((a) => a.id === s.scope);
-  const live = s.areas.filter((a) => a.state !== "archived");
-  const running = liveJobs(s.jobs);
-  const scopeRef = useDismiss<HTMLDivElement>(scopeOpen, () => setScopeOpen(false));
-  const jobsRef = useDismiss<HTMLDivElement>(jobsOpen, () => setJobsOpen(false));
-
-  return (
-    <header className="toolbar">
-      <div style={{ position: "relative" }} ref={scopeRef}>
-        <button className={`tb ${scopeOpen ? "on" : ""}`} onClick={() => setScopeOpen(!scopeOpen)} aria-expanded={scopeOpen}>
-          <span className="dots">
-            {scoped ? (
-              <AreaDot area={scoped} />
-            ) : (
-              (live.length ? live.slice(0, 4) : [undefined, undefined, undefined, undefined]).map((a, i) => (
-                <AreaDot key={a?.id ?? i} area={a} plain />
-              ))
-            )}
-          </span>
-          {scoped ? scoped.name : "All areas"}
-          <Icon name="down" size={12} style={{ color: "var(--tx3)" }} />
-        </button>
-        {scopeOpen && (
-          <div className="pop rise" style={{ left: 0 }}>
-            <div className="head">
-              <span className="lab">Focus on</span>
-            </div>
-            <button
-              className={`item ${!s.scope ? "on" : ""}`}
-              onClick={() => {
-                atlas.send({ type: "atlas.scope.set", area: null });
-                setScopeOpen(false);
-              }}
-            >
-              <span className="dots">
-                {live.slice(0, 4).map((a) => (
-                  <AreaDot key={a.id} area={a} plain />
-                ))}
-              </span>
-              <span className="grow">All areas</span>
-            </button>
-            {live.map((a) => (
-              <button
-                key={a.id}
-                className={`item ${s.scope === a.id ? "on" : ""}`}
-                onClick={() => {
-                  atlas.send({ type: "atlas.scope.set", area: a.id });
-                  setScopeOpen(false);
-                }}
-              >
-                <AreaDot area={a} />
-                <span className="grow">{a.name}</span>
-              </button>
-            ))}
-            <div className="foot">
-              {live.length
-                ? "Pages filter to it and Atlas leads with it. Atlas still knows everything."
-                : "No areas yet. Atlas starts them as things come up."}
-            </div>
-          </div>
-        )}
-      </div>
-      <span className="conn lab">{atlas.voice.connected ? "" : "Reconnecting"}</span>
-      <span className="grow" />
-      {s.jobs.length > 0 && (
-        <div style={{ position: "relative" }} ref={jobsRef}>
-          <button className={`tb ${jobsOpen ? "on" : ""}`} onClick={() => setJobsOpen(!jobsOpen)} aria-expanded={jobsOpen}>
-            {running.length > 0 && <span className="mono spin" aria-hidden style={{ color: "var(--ac)", width: 9 }} />}
-            <span>{running.length > 0 ? `${running.length} ${running.length === 1 ? "job" : "jobs"} running` : "Jobs"}</span>
-          </button>
-          {jobsOpen && (
-            <div className="pop rise" style={{ right: 0, width: 340 }}>
-              <div className="head">
-                <span className="lab">{running.length ? "Running now" : "Lately"}</span>
-              </div>
-              {/* Focused on an area (§21.3), the list is that area's work, and work that has no area. */}
-              {s.jobs
-                .filter((j) => !s.scope || !j.areas?.length || j.areas.includes(s.scope))
-                .map((j) => (
-                  <button
-                    key={j.id}
-                    className="item"
-                    style={{ flexDirection: "column", alignItems: "stretch", gap: 3 }}
-                    onClick={() => {
-                      go("home", `job:${j.id}`);
-                      setJobsOpen(false);
-                    }}
-                  >
-                    <span style={{ fontWeight: 500 }}>{j.title}</span>
-                    <span className="row small" style={{ gap: 10 }}>
-                      <span className={`${jobNow(j).tone} mono`}>{jobNow(j).label}</span>
-                      <span className="muted grow clip">
-                        {j.owned && j.activity === "working" && j.owned.now
-                          ? j.owned.now
-                          : j.state === "running"
-                            ? jobNow(j).status
-                            : (j.status ?? `${j.steps} lookups`)}
-                      </span>
-                      <span className="mono faint">{shortDay(j.started_at)}</span>
-                    </span>
-                  </button>
-                ))}
-              <div className="foot">Open one for everything I've said and done on it.</div>
-            </div>
-          )}
-        </div>
-      )}
-      <button className={`tb ${atlas.inCall ? "on" : ""}`} onClick={() => void atlas.toggleCall()}>
-        {atlas.inCall ? "End" : "Talk"}
-        <span className="kbd">Space</span>
-      </button>
-      <button className="tb search" onClick={onSearch} aria-label="Search">
-        <Icon name="search" size={14} />
-        <span className="grow label">Search</span>
-        <span className="kbd">⌘K</span>
-      </button>
-    </header>
   );
 }
 
 // --- talking to Atlas -----------------------------------------------------------------
 
-/** Goes to the conversation on Home, from anywhere (⌘J does the same). */
+/** Goes to Today, from anywhere (⌘J does the same), ready to type. */
 export const openConversation = () => {
   location.hash = "/home";
   setTimeout(() => document.getElementById("say")?.focus(), 50);
 };
 
+/** A space named at the start of a message ("@Keyframes draft the invoice"), and the words after it (§21.1). */
+export function mentioned(text: string, areas: AreaView[]): { area: AreaView; rest: string } | null {
+  if (!text.startsWith("@")) return null;
+  const lower = text.slice(1).toLowerCase();
+  const hit = [...areas]
+    .filter((a) => a.state !== "archived")
+    .sort((a, b) => b.name.length - a.name.length)
+    .find((a) => lower.startsWith(a.name.toLowerCase()) && /^(\s|$|[,:])/.test(lower.slice(a.name.length)));
+  if (!hit) return null;
+  const rest = text
+    .slice(1 + hit.name.length)
+    .replace(/^[\s,:]+/, "")
+    .trim();
+  return rest ? { area: hit, rest } : null;
+}
+
 /**
- * The composer. Off Home, where the conversation isn't in view, it shows
- * the exchange sent from it (`reply`), so what you asked and Atlas's
- * answer stay in view on the page you asked from.
+ * The message box (§21.1). In Today or a thread, what's typed is said there. `fresh` is a thread not started yet
+ * (⌘N): its first message starts it. `space` starts a new thread in that space. Starting with "@Space" starts one
+ * there from anywhere. Off a conversation, it shows the exchange sent from it (`reply`), so what you asked and
+ * Atlas's answer stay in view on the page you asked from.
  */
 export function Composer({
   atlas,
   placeholder,
   chip = true,
   reply = true,
+  thread = null,
+  fresh = false,
+  space,
 }: {
   atlas: Atlas;
   placeholder: string;
   chip?: boolean;
   reply?: boolean;
+  thread?: string | null;
+  fresh?: boolean;
+  space?: string;
 }) {
   const [text, setText] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
   const s = atlas.state;
   const [sent, setSent] = useState<{ client_id: string; text: string; at: number; run_id: string | null } | null>(null);
+  // A thread being started from here: once its id comes back, it opens.
+  const [starting, setStarting] = useState<string | null>(null);
+  useEffect(() => {
+    const id = starting ? s.made[starting] : undefined;
+    if (!id) return;
+    setStarting(null);
+    location.hash = `/thread/${encodeURIComponent(id)}`;
+    setTimeout(() => document.getElementById("say")?.focus(), 60);
+  }, [starting, s.made]);
 
   // Learn the sent message's run as soon as Atlas takes it; failing that, find its row in the thread.
   const fromPending = sent && !sent.run_id ? s.pending.find((p) => p.client_id === sent.client_id)?.run_id : undefined;
@@ -366,14 +519,25 @@ export function Composer({
     return () => window.removeEventListener("atlas:compose", on);
   }, []);
 
-  const { busy, mine, stop } = useTurn(atlas);
+  const { busy, mine, stop } = useTurn(atlas, thread);
+  const at = text.startsWith("@") && !text.includes(" ") ? text.slice(1).toLowerCase() : null;
+  const suggest = at != null ? s.areas.filter((a) => a.state !== "archived" && a.name.toLowerCase().startsWith(at)).slice(0, 5) : [];
 
   function submit() {
     const t = text.trim();
     // While the socket is down the words stay here, rather than going nowhere.
     if (!t || !atlas.voice.connected) return;
-    const client_id = atlas.say(t);
-    if (reply) setSent({ client_id, text: t, at: Date.now(), run_id: null });
+    const named = mentioned(t, s.areas);
+    if (named || fresh || space) {
+      const client_id = atlas.startThread({
+        text: named ? named.rest : t,
+        ...(named ? { areas: [named.area.id] } : space ? { areas: [space] } : {}),
+      });
+      setStarting(client_id);
+    } else {
+      const client_id = atlas.say(t, thread);
+      if (reply) setSent({ client_id, text: t, at: Date.now(), run_id: null });
+    }
     setText("");
     ref.current?.focus();
   }
@@ -388,6 +552,26 @@ export function Composer({
     >
       {/* On its own, the field is the box; with an exchange above it, the console's edge shows it. */}
       {busy && !sent && <BusyEdge />}
+      {suggest.length > 0 && (
+        <div className="mention-pop rise" role="listbox" aria-label="Spaces">
+          {suggest.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              role="option"
+              aria-selected={false}
+              onClick={() => {
+                setText(`@${a.name} `);
+                ref.current?.focus();
+              }}
+            >
+              <SpaceMark area={a} size={16} />
+              <span className="grow">{a.name}</span>
+              <span className="faint small">New thread here</span>
+            </button>
+          ))}
+        </div>
+      )}
       <span className="lead mark-lead">
         <LiveMark
           size={18}
@@ -396,7 +580,7 @@ export function Composer({
               ? atlas.voice.status === "listening" || atlas.voice.status === "thinking" || atlas.voice.status === "speaking"
                 ? atlas.voice.status
                 : "idle"
-              : busy
+              : busy || starting
                 ? "thinking"
                 : "idle"
           }
@@ -417,20 +601,26 @@ export function Composer({
             e.preventDefault();
             submit();
           }
+          if (e.key === "Tab" && suggest[0]) {
+            e.preventDefault();
+            setText(`@${suggest[0].name} `);
+          }
         }}
       />
-      {chip && s.scope && (
+      {chip && s.scope && !thread && !space && (
         <span className="lead hide-phone">
           <AreaChip ids={[s.scope]} areas={s.areas} />
         </span>
       )}
       <button
         type="button"
-        className={`icon ${atlas.inCall ? "live" : ""}`}
+        className={`talk ${atlas.inCall ? "live" : ""}`}
         aria-label={atlas.inCall ? "End voice" : "Talk"}
+        title={atlas.inCall ? "End voice" : "Talk  Space"}
         onClick={() => void atlas.toggleCall()}
       >
-        <Icon name="mic" />
+        <Icon name="mic" size={14} />
+        <span className="hide-phone">{atlas.inCall ? "End" : "Talk"}</span>
       </button>
       {busy && !text.trim() && mine.length > 0 ? (
         // Typing while Atlas works shows Send again: the message waits its turn.
@@ -455,15 +645,15 @@ export function Composer({
 }
 
 /**
- * A turn under way: any run that isn't a voice call. The owner's own text
- * runs are the ones Stop ends.
+ * A turn under way in this conversation (Today, or one thread): any run that isn't a voice call. The owner's own
+ * text runs are the ones Stop ends.
  */
-function useTurn(atlas: Atlas) {
+function useTurn(atlas: Atlas, thread: string | null = null) {
   const s = atlas.state;
-  // A job's turns work in its own thread, so they show on its composer, not this one.
-  const runs = Object.entries(s.live).filter(([, l]) => l.surface !== "voice" && !l.job);
+  // A job's turns work in its own thread, and each thread's turns in that thread, so they show on its message box.
+  const runs = Object.entries(s.live).filter(([, l]) => l.surface !== "voice" && !l.job && (l.thread ?? null) === thread);
   const mine = runs.filter(([, l]) => l.surface === "app").map(([id]) => id);
-  const busy = runs.length > 0 || s.pending.some((p) => !p.run_id);
+  const busy = runs.length > 0 || s.pending.some((p) => !p.run_id && (p.thread ?? null) === thread);
   const stop = () => {
     for (const run_id of mine) atlas.send({ type: "atlas.run.stop", run_id });
   };
@@ -779,11 +969,14 @@ export function Palette({ atlas, go, onClose }: { atlas: Atlas; go: (p: Place, d
   }, [text]);
   const hits = text.length >= 2 && atlas.state.search?.text === text ? atlas.state.search.hits : [];
   const lower = text.toLowerCase();
-  const places: Array<[Place, string]> = [...PLACES.map((p) => [p.id, p.label] as [Place, string]), ["settings", "Atlas settings"]];
+  const places: Array<[Place, string]> = GO_TO.map((p) => [p.id, p.label]);
   const ask = (words: string) => {
     atlas.say(words);
     openConversation();
   };
+  // ⌘K finds threads by their names too (§21.1).
+  const lowerQ = text.toLowerCase();
+  const threadHits = lowerQ.length >= 2 ? atlas.state.threads.filter((t) => t.title.toLowerCase().includes(lowerQ)).slice(0, 6) : [];
   const open = (h: SearchHit) => {
     if (h.group === "files") go("library", `file:${h.id}`);
     else if (h.group === "pages") go("library", `page:${h.id}`);
@@ -805,7 +998,7 @@ export function Palette({ atlas, go, onClose }: { atlas: Atlas; go: (p: Place, d
             group: "Go to",
             mark: (
               <span className="hit-mark">
-                <Icon name={PLACES.find((x) => x.id === p)?.icon ?? "settings"} size={14} />
+                <Icon name={GO_TO.find((x) => x.id === p)?.icon ?? "settings"} size={14} />
               </span>
             ),
             title: l,
@@ -813,6 +1006,19 @@ export function Palette({ atlas, go, onClose }: { atlas: Atlas; go: (p: Place, d
             run: () => go(p),
           }))
       : []),
+    ...threadHits.map((t) => ({
+      key: `thread:${t.id}`,
+      group: "Threads",
+      mark: (
+        <span className="hit-mark">
+          <Icon name="chat" size={14} />
+        </span>
+      ),
+      title: t.title,
+      sub: t.last?.text ?? "",
+      act: "Open",
+      run: () => go("thread", t.id),
+    })),
     ...hits.map((h) => ({
       key: `${h.group}:${h.id}`,
       group: GROUPS[h.group],

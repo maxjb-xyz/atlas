@@ -61,7 +61,7 @@ export function Abilities({
           : `${online} online · ${nodes.length - online} offline`;
   return (
     <Stage
-      label="Abilities"
+      label="Connections"
       tabs={[
         { id: "map", label: "Map" },
         { id: "services", label: "Services", badge: on || null },

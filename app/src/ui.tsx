@@ -5,6 +5,7 @@
 
 import { createContext, type ReactNode, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AreaView, LogRow } from "../../core/src/protocol";
+import { flushSync } from "react-dom";
 import { LOGOS } from "./logos";
 import { stillMotion } from "./theme";
 
@@ -67,6 +68,8 @@ export const ICONS = {
   sun: "M12 4V2M12 22v-2M4.9 4.9 3.5 3.5M20.5 20.5l-1.4-1.4M4 12H2M22 12h-2M4.9 19.1l-1.4 1.4M20.5 3.5l-1.4 1.4M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z",
   book: "M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z",
   calendar: "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z",
+  pin: "M12 17v5M9 3h6l-1 6 4 4v2H6v-2l4-4z",
+  archive: "M3 4h18v4H3zM5 8v12h14V8M10 12h4",
 } as const;
 
 export type IconName = keyof typeof ICONS;
@@ -305,6 +308,7 @@ export const ScopeColor = createContext<string | null>(null);
 /** A page: its label, pill tabs and metadata on top, then the body; the dock (composer or console) floats over its foot. */
 export function Stage<T extends string>({
   label,
+  title,
   tabs,
   tab,
   onTab,
@@ -316,6 +320,8 @@ export function Stage<T extends string>({
   dock,
 }: {
   label: string;
+  /** The head's title, when it's more than the place's name: a thread's name you can rename, a space's mark. */
+  title?: ReactNode;
   tabs?: Tab<T>[];
   tab?: T;
   onTab?: (t: T) => void;
@@ -360,9 +366,7 @@ export function Stage<T extends string>({
       <span className="node" aria-hidden style={{ left: 40, top: 56 }} />
       <span className="node" aria-hidden style={{ left: "calc(100% - 40px)", top: 56 }} />
       <div className="stage-head">
-        <span className="lab" style={{ color: "var(--tx2)" }}>
-          {label}
-        </span>
+        {title ?? <span className="lab page-name">{label}</span>}
         {tabs && (
           <>
             <span className="lab" style={{ color: "var(--sep2)" }}>
@@ -978,8 +982,38 @@ export function useNow(ms = 30_000): number {
 
 // --- routing ------------------------------------------------------------------------------
 
-export type Place = "home" | "inbox" | "agenda" | "automations" | "library" | "people" | "abilities" | "history" | "settings" | "pair";
-const PLACES: Place[] = ["home", "inbox", "agenda", "automations", "library", "people", "abilities", "history", "settings", "pair"];
+/** Home is Today; "thread" and "space" open one thread or space (§21.1, §21.3); "new" is a thread not started yet (⌘N). */
+export type Place =
+  | "threads"
+  | "home"
+  | "thread"
+  | "space"
+  | "new"
+  | "inbox"
+  | "agenda"
+  | "automations"
+  | "library"
+  | "people"
+  | "abilities"
+  | "history"
+  | "settings"
+  | "pair";
+const PLACES: Place[] = [
+  "threads",
+  "home",
+  "thread",
+  "space",
+  "new",
+  "inbox",
+  "agenda",
+  "automations",
+  "library",
+  "people",
+  "abilities",
+  "history",
+  "settings",
+  "pair",
+];
 
 /** The place, and an optional detail ("library/areas"), kept in the address so back and forward work. */
 export function useRoute(): [Place, string, (p: Place, detail?: string) => void] {
@@ -989,7 +1023,15 @@ export function useRoute(): [Place, string, (p: Place, detail?: string) => void]
   };
   const [route, setRoute] = useState(read);
   useEffect(() => {
-    const on = () => setRoute(read());
+    // A new place cross-fades in over the old one where the browser can (§21.8), so moving between threads never
+    // flashes; elsewhere the pane fades up on its own (.no-vt).
+    const vt = (document as Document & { startViewTransition?: (f: () => void) => unknown }).startViewTransition;
+    if (!vt) document.documentElement.classList.add("no-vt");
+    const on = () => {
+      const next = read();
+      if (vt && !stillMotion()) vt.call(document, () => flushSync(() => setRoute(next)));
+      else setRoute(next);
+    };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);

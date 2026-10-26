@@ -365,3 +365,28 @@ The motion, as frames in order (left to right, then down):
 - [A card into the stage](screenshots/m7/conversation-motion-morph.png): the list's card, the stage growing out of it, in place.
 
 These were taken from the app on a local server, with a sample morning put in over its socket; the tracks, covers and video are stand-ins. The app is judged in motion: run it and send something.
+
+## 10. Threads, spaces and the Mac look (stage 6e, built 2026-10-26)
+
+Built from [VISION §21.1 to §21.4 and §21.8](../../VISION.md#211-the-shell-threads-with-the-stage-they-open), after the threads proposal ([source/threads.html](source/threads.html)) and the owner's "Atlas UI v2 mockups" canvas. It replaces the eight places in the sidebar and the toolbar.
+
+**The sidebar is where all the work is seen at once.** At the top, the Atlas name, New thread (⌘N) and Search (⌘K). Then Today, always first, with its last line. Then Needs you, in ember, each item with what it asks ("Answer", "Your OK") and opening where it was asked. Then Working: jobs at work and threads with a turn going, each with a breathing dot. Then Spaces: each area as a rounded square in its color and icon, with its open threads. Then Recent, pinned first, quiet ones behind "Show older". At the foot, Calendar, Library and Settings. Rows slide to their new group when their state changes.
+
+**One conversation view** draws Today, a thread, and a thread not yet started. Today folds what came before this morning into one "Earlier" line. A thread's head renames in place, picks its space, pins and puts away. The owner's own messages in Today offer "Move to a thread". A message sent there by Atlas leaves "Went to Lisbon trip · Undo" as a quiet line. "@Keyframes" at the start of a message starts a thread in that space.
+
+**A space** has its mark, name and what it is, Focus, and Feed, Threads, Page and Routines. Its message box starts a thread in it; "Reply in a thread" on a feed post does too.
+
+**The look** follows the v2 mockups: the system font first, a near-black ground (`#0c0d0f` in Graphite, with Daylight to match), soft rounded surfaces, hairline separators, sentence-case labels at Simple, and a frosted message box with Talk in it. The dashed rails and dotted grid stay on the stage only. Route changes cross-fade with view transitions, and nothing moves with reduced motion.
+
+**Renamed:** Agenda is Calendar, Automations is Routines, Abilities is Connections, History is Activity, and Inbox is Needs you; People is a tab of Library. Old links still open their new home.
+
+| | |
+|---|---|
+| ![Today with the sidebar](screenshots/m7/threads-today.png) | ![A thread](screenshots/m7/threads-thread.png) |
+| ![A space](screenshots/m7/threads-space.png) | ![Today in Daylight](screenshots/m7/threads-today-light.png) |
+
+On the phone the thread list is the first screen: [the list](screenshots/m7/threads-phone-list.png) and [a thread over it](screenshots/m7/threads-phone-thread.png).
+
+These were taken against a faked socket with a sample morning; nothing here has run against the real deployment yet.
+
+**Not done yet:** job cards and the day's presence block keep their mono labels and dashed rule; a thread's head on the phone hides its space, pin and put away; a space's feed is asked for again on news rather than pushed.

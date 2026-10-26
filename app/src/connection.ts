@@ -21,6 +21,7 @@ import type {
   StagePage,
   AutomationView,
   PageSummary,
+  ThreadView,
 } from "../../core/src/protocol";
 
 /** One calendar read for a page: the events, why it failed, or how old Atlas's copy is when iCloud couldn't be asked. */
@@ -41,6 +42,8 @@ export interface Pending {
   text: string;
   run_id?: string;
   at: number;
+  /** The thread it was said in (§21.1): null for Today, `new:<client_id>` until a new thread's id comes back. */
+  thread?: string | null;
 }
 
 export interface Live {
@@ -49,6 +52,8 @@ export interface Live {
   surface: string;
   /** A turn of work Atlas owns: it shows in that job's own thread, not the main one. */
   job?: string;
+  /** The thread the run is in (§21.1); null or missing for Today. */
+  thread?: string | null;
   /** Where in its words each thing it did landed (a tool result's row id at a length of `text`), so they read in order. */
   marks?: Array<{ at: number; id: string }>;
 }
@@ -60,7 +65,20 @@ export interface TestResult {
 }
 
 export interface State {
+  /** Today's rows (§21.1): the line to Atlas outside any thread. */
   rows: LogRow[];
+  /** The owner's threads (§21.1), most recent first. */
+  threads: ThreadView[];
+  /** Each thread's rows once it has been opened (or something arrived in it), oldest first. */
+  threadRows: Record<string, LogRow[]>;
+  /** Threads whose first page has come back, and whether older rows are left to read. */
+  threadLoaded: Record<string, { more: boolean }>;
+  /** Which thread each run is in, from its rows: null for Today. */
+  runThread: Record<string, string | null>;
+  /** New threads' ids, by the client id the app asked with (or the row a split started from). */
+  made: Record<string, string>;
+  /** Each space's feed (§21.3), once asked for. */
+  feeds: Record<string, LogRow[]>;
   /** ⌘K's latest answer (M7 W20): what matched, for the words it was asked with. */
   search: { text: string; hits: import("../../core/src/protocol").SearchHit[] } | null;
   pending: Pending[];
@@ -145,6 +163,12 @@ export interface State {
 
 const initial: State = {
   rows: [],
+  threads: [],
+  threadRows: {},
+  threadLoaded: {},
+  runThread: {},
+  made: {},
+  feeds: {},
   search: null,
   pending: [],
   live: {},
@@ -222,6 +246,25 @@ export function jobOf(r: LogRow): string | null {
   return null;
 }
 
+/** Whether a row is the note that a message went to a thread (§21.1): it stays where the message was said. */
+export const isThreadNote = (r: LogRow) => (r.body.receipt as { undo?: { kind?: string } } | undefined)?.undo?.kind === "thread.move";
+
+/** Rows sorted into Today's and each thread's, by the thread each one says it's in. */
+function sortRows(s: State, rows: LogRow[]): Pick<State, "rows" | "threadRows" | "runThread"> {
+  const today: LogRow[] = [];
+  const by: Record<string, LogRow[]> = {};
+  let runThread = s.runThread;
+  for (const r of rows) {
+    const t = r.thread ?? null;
+    if (r.run_id && !isThreadNote(r) && runThread[r.run_id] !== t) runThread = { ...runThread, [r.run_id]: t };
+    if (t) (by[t] ??= []).push(r);
+    else today.push(r);
+  }
+  let threadRows = s.threadRows;
+  for (const [t, list] of Object.entries(by)) threadRows = { ...threadRows, [t]: mergeRows(threadRows[t] ?? [], list) };
+  return { rows: today.length ? mergeRows(s.rows, today) : s.rows, threadRows, runThread };
+}
+
 function without<T>(rec: Record<string, T>, key: string): Record<string, T> {
   if (!(key in rec)) return rec;
   const next = { ...rec };
@@ -250,7 +293,12 @@ function reduce(s: State, a: Action): State {
       const live: Record<string, Live> = {};
       // What a run in progress has said so far comes back with the snapshot, so a refresh mid-answer picks up there.
       for (const r of m.running)
-        live[r.run_id] = { text: r.text ?? s.live[r.run_id]?.text ?? "", status: r.status ?? null, surface: r.surface };
+        live[r.run_id] = {
+          text: r.text ?? s.live[r.run_id]?.text ?? "",
+          status: r.status ?? null,
+          surface: r.surface,
+          thread: (r as { thread?: string | null }).thread ?? null,
+        };
       // A message Atlas never took (no run) was lost with the old socket: say so, with its words, so it can be sent again.
       const lost = s.pending.filter((p) => !p.run_id);
       const pending = s.pending.filter((p) => p.run_id && !m.thread.some((r) => r.kind === "message.in" && r.run_id === p.run_id));
@@ -260,7 +308,8 @@ function reduce(s: State, a: Action): State {
         ...(lost.length
           ? { error: `This didn't reach Atlas before the connection dropped: "${lost.map((p) => p.text).join(" / ")}". Send it again.` }
           : {}),
-        rows: mergeRows([], m.thread),
+        // Today's rows; anything in a thread goes to that thread.
+        ...sortRows({ ...s, rows: [] }, m.thread),
         agenda: m.agenda,
         view: m.view,
         live,
@@ -269,8 +318,38 @@ function reduce(s: State, a: Action): State {
         jobs: m.jobs,
         areas: m.areas,
         scope: m.scope,
+        // A server from before threads sends none.
+        threads: m.threads ?? [],
       };
     }
+    case "atlas.threads":
+      return { ...s, threads: m.threads };
+    case "atlas.thread.rows": {
+      const sorted = sortRows({ ...s, threadRows: { ...s.threadRows, [m.id]: s.threadRows[m.id] ?? [] } }, m.rows);
+      return {
+        ...s,
+        ...sorted,
+        threadLoaded: {
+          ...s.threadLoaded,
+          [m.id]: { more: m.has_more ?? false },
+        },
+      };
+    }
+    case "atlas.thread.made": {
+      const pending = s.pending.map((p) => (p.thread === `new:${m.client_id}` ? { ...p, thread: m.id } : p));
+      return { ...s, pending, made: { ...s.made, [m.client_id]: m.id } };
+    }
+    case "atlas.thread.moved": {
+      // A run's rows go where the run went; the note that it went stays where it was said.
+      const moves = (r: LogRow) => r.run_id === m.run_id && !isThreadNote(r);
+      const moving = [...s.rows, ...Object.values(s.threadRows).flat()].filter(moves).map((r) => ({ ...r, thread: m.thread }));
+      const threadRows = Object.fromEntries(Object.entries(s.threadRows).map(([k, v]) => [k, v.filter((r) => !moves(r))]));
+      const base = { ...s, rows: s.rows.filter((r) => !moves(r)), threadRows, runThread: { ...s.runThread, [m.run_id]: m.thread } };
+      const live = s.live[m.run_id] ? { ...s.live, [m.run_id]: { ...s.live[m.run_id]!, thread: m.thread } } : s.live;
+      return { ...base, ...sortRows(base, moving), live };
+    }
+    case "atlas.space.feed":
+      return { ...s, feeds: { ...s.feeds, [m.area]: m.rows } };
     case "atlas.rows": {
       let { live, pending, recordsVersion } = s;
       // A fact saved, corrected or forgotten from any composer, or undone from a chip: Library reads again.
@@ -294,26 +373,44 @@ function reduce(s: State, a: Action): State {
         const job = jobOf(r);
         if (job && jobThreads[job]) jobThreads = { ...jobThreads, [job]: mergeRows(jobThreads[job], [r]) };
       }
-      return { ...s, rows: mergeRows(s.rows, m.rows), live, pending, noOlder, recordsVersion, jobThreads };
+      return { ...s, ...sortRows(s, m.rows), live, pending, noOlder, recordsVersion, jobThreads };
     }
     case "atlas.delta": {
-      const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app", ...(m.job ? { job: m.job } : {}) };
+      const cur = s.live[m.run_id] ?? {
+        text: "",
+        status: null,
+        surface: "app",
+        thread: s.runThread[m.run_id] ?? null,
+        ...(m.job ? { job: m.job } : {}),
+      };
       return { ...s, live: { ...s.live, [m.run_id]: { ...cur, text: cur.text + m.text, status: null } } };
     }
     case "atlas.status": {
-      const cur = s.live[m.run_id] ?? { text: "", status: null, surface: "app", ...(m.job ? { job: m.job } : {}) };
+      const cur = s.live[m.run_id] ?? {
+        text: "",
+        status: null,
+        surface: "app",
+        thread: s.runThread[m.run_id] ?? null,
+        ...(m.job ? { job: m.job } : {}),
+      };
       return { ...s, live: { ...s.live, [m.run_id]: { ...cur, status: m.text } } };
     }
     case "atlas.run": {
-      let { pending, live } = s;
+      let { pending, live, runThread } = s;
+      const mine = m.client_id ? pending.find((p) => p.client_id === m.client_id) : undefined;
       if (m.client_id) pending = pending.map((p) => (p.client_id === m.client_id ? { ...p, run_id: m.run_id } : p));
+      // Where the run is: from its rows, else from what was sent here.
+      const where =
+        runThread[m.run_id] !== undefined ? runThread[m.run_id]! : mine?.thread?.startsWith("new:") ? null : (mine?.thread ?? null);
+      if (mine && runThread[m.run_id] === undefined && mine.thread && !mine.thread.startsWith("new:"))
+        runThread = { ...runThread, [m.run_id]: mine.thread };
       if (TERMINAL.has(m.state)) {
         live = without(live, m.run_id);
         pending = pending.filter((p) => p.run_id !== m.run_id);
       } else if (!live[m.run_id]) {
-        live = { ...live, [m.run_id]: { text: "", status: null, surface: m.surface, ...(m.job ? { job: m.job } : {}) } };
+        live = { ...live, [m.run_id]: { text: "", status: null, surface: m.surface, thread: where, ...(m.job ? { job: m.job } : {}) } };
       }
-      return { ...s, pending, live };
+      return { ...s, pending, live, runThread };
     }
     case "atlas.job.thread":
       return { ...s, jobThreads: { ...s.jobThreads, [m.id]: mergeRows([], m.rows) } };
@@ -528,11 +625,29 @@ export function useAtlas(agent = "owner") {
     client.current?.sendJSON(m as unknown as Record<string, unknown>);
   }, []);
 
+  /** Says something in Today, or in a thread (§21.1). */
   const say = useCallback(
-    (text: string) => {
+    (text: string, thread: string | null = null) => {
       const client_id = crypto.randomUUID();
-      dispatch({ type: "say", pending: { client_id, text, at: Date.now() } });
-      send({ type: "atlas.say", text, client_id });
+      dispatch({ type: "say", pending: { client_id, text, at: Date.now(), thread } });
+      send({ type: "atlas.say", text, client_id, ...(thread ? { thread } : {}) });
+      return client_id;
+    },
+    [send],
+  );
+
+  /** Starts a thread (§21.1), in a space when `areas` names one, saying `text` in it at once. Its id comes back in `made`. */
+  const startThread = useCallback(
+    (o: { text?: string; areas?: string[]; title?: string } = {}) => {
+      const client_id = crypto.randomUUID();
+      if (o.text) dispatch({ type: "say", pending: { client_id, text: o.text, at: Date.now(), thread: `new:${client_id}` } });
+      send({
+        type: "atlas.thread.new",
+        client_id,
+        ...(o.text ? { text: o.text } : {}),
+        ...(o.areas?.length ? { areas: o.areas } : {}),
+        ...(o.title ? { title: o.title } : {}),
+      });
       return client_id;
     },
     [send],
@@ -582,7 +697,7 @@ export function useAtlas(agent = "owner") {
     send({ type: "atlas.setup.look" });
   }, [send]);
 
-  return { state, voice, inCall, send, say, test, toggleCall, dismiss, firstLook, jobSay };
+  return { state, voice, inCall, send, say, startThread, test, toggleCall, dismiss, firstLook, jobSay };
 }
 
 export type Atlas = ReturnType<typeof useAtlas>;

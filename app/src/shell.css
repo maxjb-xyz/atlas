@@ -1,0 +1,805 @@
+/* UI v2 (VISION §21.1, §21.8, decided 2026-10-26): the premium Mac look, from the owner's "Atlas UI v2 mockups".
+   The sidebar is mission control: Today, what needs you, threads at work, spaces and recent threads. Pages are
+   plain: the system face, soft surfaces, hairlines, a frosted message box. The frame (dashed rails, square nodes,
+   the dotted grid) is kept for the stage, voice and Atlas's mark. Loaded after styles.css and places.css, so these
+   win where they say something different. Motion uses only transform and opacity, and stops with reduced motion. */
+
+/* --- the frame steps back on pages ------------------------------------------------------- */
+
+.stage {
+  background-image: none;
+}
+.stage > .rail,
+.stage > .rail-h,
+.stage > .node,
+.sheet > .node {
+  display: none;
+}
+/* The stage beside a conversation keeps its frame: that's where Atlas's work is shown. */
+.home-stage {
+  background-image: radial-gradient(var(--dot) 1px, transparent 1.2px);
+  background-size: 16px 16px;
+  border-radius: 16px;
+}
+.home-stage .sheet > .node {
+  display: block;
+}
+.sheet {
+  border-radius: 14px;
+  border-color: var(--sep);
+}
+.stage-head {
+  height: 52px;
+  padding: 0 28px;
+  gap: 12px;
+}
+.stage-body {
+  padding: 6px 28px 96px;
+}
+.stage-body.home-body {
+  padding: 6px 24px 18px;
+}
+.page-name {
+  font-family: inherit;
+  text-transform: none;
+  letter-spacing: -0.01em;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--tx);
+}
+.page-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  position: relative;
+}
+.page-title .disp {
+  font-size: 15px;
+  letter-spacing: -0.015em;
+}
+.page-title .faint {
+  font-size: 13px;
+}
+
+/* At Simple, labels read as sentences, not mono capitals (§21.5). */
+:root[data-detail="simple"] .lab,
+:root[data-detail="simple"] .tag {
+  font-family: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+:root[data-detail="simple"] .tag {
+  font-weight: 500;
+}
+
+/* --- the sidebar -------------------------------------------------------------------------- */
+
+.side {
+  flex: 0 0 248px;
+  width: 248px;
+  padding: 12px 10px 10px;
+  gap: 0;
+  overflow: hidden;
+  view-transition-name: side;
+}
+.side .brand {
+  height: 34px;
+  padding: 0 4px 0 8px;
+  margin-bottom: 6px;
+  gap: 8px;
+  font-size: 15px;
+}
+.side .brand .disp {
+  font-size: 15px;
+}
+.side-new {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--tx2);
+}
+.side-new:hover {
+  background: var(--hover);
+  color: var(--tx);
+}
+.side-search {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--hover);
+  color: var(--tx3);
+  font-size: 13px;
+  text-align: left;
+  margin-bottom: 8px;
+  box-shadow: inset 0 0 0 1px var(--soft, transparent);
+}
+.side-search:hover {
+  color: var(--tx2);
+}
+.kbd-soft {
+  font-size: 11.5px;
+  color: var(--tx3);
+}
+.side-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  position: relative;
+  margin: 0 -6px;
+  padding: 0 6px 12px;
+  scrollbar-width: thin;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.srow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tx2);
+  font-size: 13.5px;
+  text-decoration: none;
+  text-align: left;
+  width: 100%;
+  transition: background-color 0.15s ease;
+  will-change: transform;
+}
+.srow:hover {
+  background: var(--hover);
+  color: var(--tx);
+}
+.srow.on {
+  background: var(--sel);
+  color: var(--tx);
+  font-weight: 500;
+}
+.srow.dim {
+  opacity: 0.62;
+}
+.srow .lead {
+  width: 18px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tx3);
+}
+.srow .t {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.srow .t1 {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: fade-in 0.4s ease both;
+}
+.srow .t2 {
+  font-size: 12px;
+  color: var(--tx3);
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.srow .meta {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--tx3);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.srow .meta.ac {
+  color: var(--ac);
+  font-weight: 500;
+}
+.srow.today {
+  min-height: 44px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  color: var(--tx);
+}
+.srow.today .t1 {
+  font-weight: 600;
+}
+.srow.more .t1 {
+  color: var(--tx3);
+  font-size: 12.5px;
+}
+.sgroup {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 14px 8px 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--tx3);
+}
+.sgroup .n {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.sgroup.need {
+  color: var(--ac);
+}
+.live-dot,
+.dot-ac,
+.dot-quiet {
+  display: inline-block;
+  border-radius: 50%;
+  flex: none;
+}
+.dot-ac {
+  width: 7px;
+  height: 7px;
+  background: var(--ac);
+  box-shadow: 0 0 0 3px var(--acs);
+}
+.dot-quiet {
+  width: 5px;
+  height: 5px;
+  background: var(--sep2);
+}
+/* Something at work: an ember dot whose ring breathes out and back. */
+.live-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--ac);
+  position: relative;
+}
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ac);
+  opacity: 0;
+  animation: breathe 1.8s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+@keyframes breathe {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.space-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 30%;
+  background: var(--c);
+  color: #fff;
+  font-weight: 700;
+  line-height: 1;
+  flex: none;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.space-mark.none {
+  background: var(--sep2);
+}
+.space-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.space-mark .ic {
+  stroke: #fff;
+  stroke-width: 2;
+}
+.side .side-foot {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--sep);
+  gap: 1px;
+}
+.side .me {
+  height: 36px;
+  padding: 0 8px;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--tx2);
+}
+.side .conn {
+  color: var(--ac);
+}
+
+/* --- conversations: Today and threads ------------------------------------------------------- */
+
+.app.focus .stage.home:has(.home-split:not(.open)) > .stage-head {
+  top: 0;
+  background: linear-gradient(var(--bg) 55%, transparent);
+}
+.app.focus .stage.home:has(.home-split:not(.open)) .convo > .thread {
+  mask-image: linear-gradient(to bottom, transparent 0, transparent 40px, #000 96px);
+}
+.app.focus .stage.home:has(.home-split:not(.open)) .thread-col {
+  padding-top: 72px;
+}
+/* What needs the owner is at the top of the sidebar; the strip above the box is for the phone. */
+.needs-strip {
+  display: none;
+}
+.convo-dock {
+  padding: 6px 32px 20px;
+}
+.composer {
+  position: relative;
+  border: 0;
+  border-radius: 18px;
+  background: var(--glass, var(--win));
+  backdrop-filter: blur(22px) saturate(1.5);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  box-shadow:
+    inset 0 1px 0 var(--hi, transparent),
+    0 0 0 1px var(--soft, var(--sep2)),
+    var(--sh);
+  padding: 7px 7px 7px 12px;
+}
+.convo-dock .composer {
+  border-radius: 18px;
+  min-height: 52px;
+  padding: 7px 7px 7px 14px;
+}
+.composer .send,
+.convo-dock .composer .send {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+}
+.composer .talk {
+  height: 30px;
+  padding: 0 11px 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--acs);
+  color: var(--ac);
+  font-size: 12.5px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  align-self: center;
+}
+.composer .talk.live {
+  background: var(--ac);
+  color: var(--actx);
+}
+.console {
+  border: 0;
+  border-radius: 18px;
+  background: var(--glass, var(--win));
+  backdrop-filter: blur(22px) saturate(1.5);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  box-shadow:
+    inset 0 1px 0 var(--hi, transparent),
+    0 0 0 1px var(--soft, var(--sep2)),
+    var(--sh);
+}
+.console .composer {
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  border-top: 1px solid var(--sep);
+  border-radius: 0;
+}
+.mention-pop {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  min-width: 260px;
+  background: var(--win);
+  border-radius: 12px;
+  box-shadow:
+    0 0 0 1px var(--soft, var(--sep2)),
+    var(--sh);
+  padding: 4px;
+  z-index: 30;
+}
+.mention-pop button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+.mention-pop button:hover {
+  background: var(--hover);
+}
+.msg .when .move-out {
+  border: 0;
+  background: transparent;
+  color: var(--tx3);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+}
+.msg .when .move-out:hover {
+  color: var(--tx);
+}
+.note.moved {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--tx3);
+  font-size: 12.5px;
+}
+.note.moved .link {
+  color: var(--tx2);
+}
+.link.quiet {
+  color: var(--tx3);
+  font-size: 12px;
+}
+.earlier {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--tx3);
+  font-size: 12.5px;
+  padding: 6px 0;
+  width: 100%;
+}
+.earlier:hover {
+  color: var(--tx);
+}
+.earlier .e-line {
+  flex: 1;
+  height: 1px;
+  background: var(--sep);
+}
+.thread-start {
+  padding: 8px 0 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: auto;
+}
+.thread-start h2 {
+  font-size: 24px;
+  letter-spacing: -0.025em;
+  animation: fade-in 0.45s ease both;
+}
+.thread-title .title-btn {
+  border: 0;
+  background: transparent;
+  padding: 3px 7px;
+  margin-left: -7px;
+  border-radius: 7px;
+  font-size: 15px;
+  color: var(--tx);
+  max-width: 44vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: fade-in 0.45s ease both;
+}
+.thread-title .title-btn:hover {
+  background: var(--hover);
+}
+.title-edit {
+  font-size: 15px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+  min-width: 260px;
+}
+.t-space {
+  position: relative;
+  display: inline-flex;
+}
+.space-chip {
+  height: 24px;
+  padding: 0 9px 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--tx2);
+  font-size: 12.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.space-chip:hover {
+  color: var(--tx);
+}
+.t-space .pop {
+  top: 30px;
+}
+.thread-title .icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--tx3);
+}
+.thread-title .icon:hover {
+  background: var(--hover);
+  color: var(--tx);
+}
+.thread-title .icon.on {
+  color: var(--ac);
+}
+
+/* --- a space ---------------------------------------------------------------------------- */
+
+.space-title .st-words {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.space-title .st-words .small {
+  max-width: 46vw;
+}
+.space-body {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 10px 4px 0;
+}
+.feed {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.post {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+}
+.post .mark {
+  color: var(--ac);
+  padding-top: 2px;
+}
+.p-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.p-reply {
+  align-self: flex-start;
+  color: var(--tx3);
+}
+.p-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.p-form input {
+  flex: 1;
+  min-width: 0;
+}
+.tline {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  text-decoration: none;
+  color: var(--tx);
+  transition: background-color 0.15s ease;
+}
+.tline:hover {
+  background: var(--hover);
+}
+.tline .grow {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tl1 {
+  font-weight: 500;
+}
+.tl2 {
+  font-size: 12.5px;
+}
+.feed-threads {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--sep);
+}
+.sub-head {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--tx3);
+  padding: 0 12px 4px;
+}
+.rules-link {
+  margin-top: 12px;
+  padding: 0 12px;
+}
+.focus-btn.on {
+  background: var(--acs);
+  color: var(--ac);
+  border-color: transparent;
+}
+
+/* --- Settings' other pages ------------------------------------------------------------------ */
+
+.set-nav a {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border-radius: 7px;
+  color: var(--tx2);
+  font-size: 13px;
+  text-decoration: none;
+}
+.set-nav a:hover {
+  background: var(--hover);
+  color: var(--tx);
+}
+.set-nav a .ic {
+  color: var(--tx3);
+}
+.set-sep {
+  height: 1px;
+  background: var(--sep);
+  margin: 8px 10px;
+}
+
+/* --- motion between places (§21.8) ------------------------------------------------------- */
+
+/* Where the browser has view transitions, a new place cross-fades in over the old one; the sidebar holds still. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.24s;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+::view-transition-old(side),
+::view-transition-new(side) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+.pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+:root.no-vt .pane {
+  animation: pane-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes pane-in {
+  from {
+    opacity: 0.4;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.phone-back {
+  display: none;
+}
+
+/* --- the phone (§21.10): the list of threads is the first screen; a thread opens over it ----- */
+
+@media (max-width: 760px) {
+  .app.list .side {
+    display: flex;
+    position: fixed;
+    inset: 0 0 calc(56px + env(safe-area-inset-bottom)) 0;
+    width: auto;
+    flex: none;
+    border: 0;
+    z-index: 15;
+    padding: calc(12px + env(safe-area-inset-top)) 12px 8px;
+  }
+  .app.list .main {
+    visibility: hidden;
+  }
+  .app.list .side-foot {
+    display: none;
+  }
+  .app.list .srow {
+    min-height: 44px;
+    font-size: 15px;
+  }
+  .app.list .srow.today {
+    min-height: 56px;
+  }
+  .app.list .side .brand .disp {
+    font-size: 22px;
+  }
+  .app.list .sgroup {
+    font-size: 12.5px;
+    padding-top: 18px;
+  }
+  .app:not(.list) .pane {
+    animation: over 0.38s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  @keyframes over {
+    from {
+      opacity: 0;
+      transform: translateX(28px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  .needs-strip {
+    display: flex;
+  }
+  .phone-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    position: absolute;
+    top: 14px;
+    left: 8px;
+    z-index: 8;
+    height: 30px;
+    padding: 0 8px;
+    border-radius: 8px;
+    color: var(--ac);
+    font-size: 14px;
+    text-decoration: none;
+  }
+  .main:has(.phone-back) .stage-head {
+    padding-left: 104px;
+  }
+  .stage-body,
+  .stage-body.home-body {
+    padding: 4px 12px 96px;
+  }
+  .convo-dock {
+    padding: 6px 12px 12px;
+  }
+  .thread-title .title-btn {
+    max-width: 52vw;
+  }
+  /* A phone's head keeps the thread's name; its space, Pin and Put away are a tap on the name away on a wider screen. */
+  .thread-title .t-space,
+  .thread-title .icon,
+  .stage-head:has(.thread-title) .stage-opens .tabs {
+    display: none;
+  }
+}
+.space-chip {
+  white-space: nowrap;
+}

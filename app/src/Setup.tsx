@@ -256,7 +256,7 @@ function ConnectStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
       <h1 className="disp">Your calendar</h1>
       <p className="muted">
         So I can see your week. iCloud takes an app-specific password, about two minutes. Google takes a sign-in client of your own from
-        Google Cloud, about ten minutes, once; it brings your mail too. Others you can add any time in Abilities.
+        Google Cloud, about ten minutes, once; it brings your mail too. Others you can add any time in Settings → Connections.
       </p>
       {icloud && <ExtensionCard atlas={atlas} e={icloud} />}
       {google && <ExtensionCard atlas={atlas} e={google} />}

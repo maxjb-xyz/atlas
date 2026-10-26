@@ -7,13 +7,13 @@
 // what needs the owner just above it. Messages carry their area chip; tapping
 // it moves the message (§6.3).
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { InboxItem, JobView, LogRow } from "../../core/src/protocol";
 import { ApprovalCard } from "./Approval";
 import { FrontPage } from "./FrontPage";
 import { NextSteps } from "./InlineViews";
 import { useVoiceFull, VoiceStage } from "./VoiceStage";
-import type { Atlas, Live, Pending } from "./connection";
+import { type Atlas, isThreadNote, type Live, type Pending } from "./connection";
 import { isOpen, JobCard, questionFromRow, QuestionBody, ResultBody, topJobs } from "./JobViews";
 import { jobNow } from "./jobs";
 import { InlineText, Markdown } from "./Markdown";
@@ -206,17 +206,49 @@ export function Conversation({
   opens,
   focus,
   onFocused,
+  thread = null,
+  fresh = false,
 }: {
   atlas: Atlas;
   opens: Opens;
   focus?: string | null;
   onFocused?: () => void;
+  /** The thread shown (§21.1); null for Today. */
+  thread?: string | null;
+  /** A thread not started yet (⌘N): its first message starts it. */
+  fresh?: boolean;
 }) {
   const s = atlas.state;
   const { at } = useDetail();
   const [full, setFull] = useVoiceFull();
-  const { rows, pending, live, loaded, noOlder } = s;
+  const today = thread == null && !fresh;
+  // Today's rows, or one thread's; what's under way and waiting is this conversation's own.
+  const rows = useMemo(() => (thread ? (s.threadRows[thread] ?? []) : fresh ? [] : s.rows), [thread, fresh, s.threadRows, s.rows]);
+  const live = useMemo(
+    () => Object.fromEntries(Object.entries(s.live).filter(([, l]) => (l.thread ?? null) === thread && !fresh)),
+    [s.live, thread, fresh],
+  );
+  const pending = useMemo(() => s.pending.filter((p) => (p.thread ?? null) === thread && !fresh), [s.pending, thread, fresh]);
+  const loaded = thread ? s.threadLoaded[thread] != null : fresh || s.loaded;
+  const noOlder = thread ? !s.threadLoaded[thread]?.more : fresh || s.noOlder;
   const name = s.view?.settings.assistant_name ?? "Atlas";
+  // Today starts fresh each morning (§21.1): what came before folds into one line that opens.
+  const [earlier, setEarlier] = useState(false);
+  useEffect(() => {
+    setEarlier(false);
+  }, [thread]);
+  // A thread's first page comes when it's opened.
+  useEffect(() => {
+    if (thread && atlas.voice.connected) atlas.send({ type: "atlas.thread.open", id: thread });
+  }, [thread, atlas.voice.connected]);
+  // A message moved to a thread of its own opens there (§21.1).
+  const [splitting, setSplitting] = useState<string | null>(null);
+  useEffect(() => {
+    const id = splitting ? s.made[splitting] : undefined;
+    if (!id) return;
+    setSplitting(null);
+    location.hash = `/thread/${encodeURIComponent(id)}`;
+  }, [splitting, s.made]);
   const box = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const asked = useRef<number | null>(null);
@@ -224,7 +256,7 @@ export function Conversation({
   const firstSeq = rows[0]?.seq;
   // What was already here when the thread first loaded stays put; what arrives after rises into place, once.
   const known = useRef<Set<string> | null>(null);
-  const fresh = useRef(new Set<string>());
+  const risen = useRef(new Set<string>());
 
   // Keep the newest message in view unless the owner has scrolled up; older messages load in above without a jump.
   useLayoutEffect(() => {
@@ -256,9 +288,11 @@ export function Conversation({
   }, []);
 
   function older() {
-    if (noOlder || firstSeq === undefined || asked.current !== null) return;
+    // Today reads back only once what came before today is open.
+    if (noOlder || firstSeq === undefined || asked.current !== null || (today && !earlier)) return;
     asked.current = firstSeq;
-    atlas.send({ type: "atlas.more", before_seq: firstSeq });
+    if (thread) atlas.send({ type: "atlas.thread.open", id: thread, before_seq: firstSeq });
+    else atlas.send({ type: "atlas.more", before_seq: firstSeq });
   }
 
   function onScroll() {
@@ -285,7 +319,25 @@ export function Conversation({
   }, [focus, loaded, rows, noOlder]);
 
   const undone = undoneIds(rows);
-  const items = arrange(rows, live, topJobs(s.jobs), pending, { dev: at("developer"), detailed: at("detailed") });
+  // A job's card sits in the conversation it was asked in: a thread's in its thread, the rest in Today.
+  const jobs = topJobs(s.jobs).filter((j) => {
+    const asked = j.owned?.asked_by;
+    const where = asked
+      ? (Object.entries(s.threadRows).find(([, list]) => list.some((r) => r.id === asked))?.[0] ?? null)
+      : j.run_id
+        ? (s.runThread[j.run_id] ?? null)
+        : null;
+    return where === thread;
+  });
+  const todayAt = startOfDay(new Date()).getTime();
+  const all = arrange(rows, live, fresh ? [] : jobs, pending, { dev: at("developer"), detailed: at("detailed") });
+  // Work still under way stays in view, however long ago it was asked for.
+  const folded =
+    today && !earlier
+      ? all.filter((it) => it.at < todayAt && it.k !== "pending" && it.k !== "live" && !(it.k === "job" && it.job.state === "running"))
+      : [];
+  const earlierCount = folded.filter((it) => it.k === "row" && (it.row.kind === "message.in" || it.row.kind === "message.out")).length;
+  const items = folded.length ? all.filter((it) => !folded.includes(it)) : all;
   for (const it of items) {
     if (it.k === "live") {
       seenLive.add(it.run);
@@ -296,26 +348,26 @@ export function Conversation({
   if (loaded && known.current == null) known.current = new Set(items.map(keyOf));
   const isFresh = (it: Item): boolean => {
     const key = keyOf(it);
-    if (!known.current || known.current.has(key)) return fresh.current.has(key);
+    if (!known.current || known.current.has(key)) return risen.current.has(key);
     known.current.add(key);
     // A reply saved after it streamed here, or words saved after they were sent from here, are already in place.
     const settled =
       (it.k === "row" && it.row.kind === "message.out" && it.run != null && seenLive.has(it.run)) ||
       (it.k === "row" && it.row.kind === "message.in" && Date.now() - (justSent.get(str(it.row.body.text)) ?? 0) < 60_000);
-    if (!settled) fresh.current.add(key);
+    if (!settled) risen.current.add(key);
     return !settled;
   };
-  const empty = loaded && items.length === 0;
-  const todayAt = startOfDay(new Date()).getTime();
+  const empty = loaded && items.length === 0 && folded.length === 0;
   // Today opens with Atlas's presence, in place of the day's marker; with nothing yet today, it's the newest thing here.
   const heroAt = items.findIndex((it) => it.at >= todayAt);
   // Until the owner says something today, the day opens on the front page; then its presence in the thread.
   const spokeToday = items.some((it) => it.at >= todayAt && (it.k === "pending" || (it.k === "row" && it.row.kind === "message.in")));
-  const hero = !loaded ? null : spokeToday ? (
-    <Presence key="presence" atlas={atlas} opens={opens} empty={empty} />
-  ) : (
-    <FrontPage key="front" atlas={atlas} opens={opens} />
-  );
+  const hero =
+    !loaded || !today ? null : spokeToday ? (
+      <Presence key="presence" atlas={atlas} opens={opens} empty={empty} />
+    ) : (
+      <FrontPage key="front" atlas={atlas} opens={opens} />
+    );
   let day = "";
 
   return (
@@ -336,7 +388,18 @@ export function Conversation({
               <span className="sk own" style={{ width: "34%" }} />
             </div>
           )}
-          {loaded && noOlder && items.length > 0 && <p className="faint thread-hint">The start of your conversation with {name}.</p>}
+          {today && loaded && noOlder && items.length > 0 && earlier && (
+            <p className="faint thread-hint">The start of your conversation with {name}.</p>
+          )}
+          {thread && loaded && noOlder && <ThreadStart atlas={atlas} id={thread} />}
+          {fresh && <FreshThread atlas={atlas} />}
+          {folded.length > 0 && (
+            <button className="earlier" onClick={() => setEarlier(true)}>
+              <span className="e-line" aria-hidden />
+              <span>{earlierCount ? `Earlier · ${earlierCount} ${earlierCount === 1 ? "message" : "messages"}` : "Earlier"}</span>
+              <span className="e-line" aria-hidden />
+            </button>
+          )}
           {[
             ...items.flatMap((it, i) => {
               const label = dayLabel(it.at);
@@ -352,7 +415,7 @@ export function Conversation({
                       <span className="lab">{label}</span>
                     </div>
                   )}
-                  <ItemView atlas={atlas} item={it} undone={undone} opens={opens} />
+                  <ItemView atlas={atlas} item={it} undone={undone} opens={opens} split={today ? setSplitting : undefined} />
                 </div>,
               ];
             }),
@@ -372,9 +435,15 @@ export function Conversation({
       )}
       <div className="convo-dock">
         {atlas.inCall && !full && <VoiceStrip atlas={atlas} onExpand={() => setFull(true)} />}
-        {/* The front page shows what needs the owner in its own tile, so the strip waits until they've spoken. */}
-        {(spokeToday || !loaded) && <NeedsYou atlas={atlas} onOpen={opens.inbox} />}
-        <Composer atlas={atlas} placeholder={`Message ${name}`} reply={false} />
+        {/* On a phone, what needs the owner shows above the box; on a wider screen it's at the top of the sidebar. */}
+        {today && (spokeToday || !loaded) && <NeedsYou atlas={atlas} onOpen={opens.inbox} />}
+        <Composer
+          atlas={atlas}
+          placeholder={fresh ? "Start a thread: what's it about?" : thread ? "Message this thread" : `Message ${name}`}
+          reply={false}
+          thread={thread}
+          fresh={fresh}
+        />
       </div>
     </div>
   );
@@ -447,7 +516,7 @@ function Presence({ atlas, opens, empty }: { atlas: Atlas; opens: Opens; empty: 
             ) : (
               <>
                 <span className="pr-v faint">{s.view?.calendar.provider ? "Clear" : "No calendar yet"}</span>
-                <span className="pr-a mono">{s.view?.calendar.provider ? "The rest of today" : "Add one in Abilities"}</span>
+                <span className="pr-a mono">{s.view?.calendar.provider ? "The rest of today" : "Add one in Settings → Connections"}</span>
               </>
             )}
           </button>
@@ -674,11 +743,26 @@ function Working({ run, status, done = [] }: { run: string; status: string | nul
   );
 }
 
-function ItemView({ atlas, item, undone, opens }: { atlas: Atlas; item: Item; undone: Set<string>; opens: Opens }) {
+function ItemView({
+  atlas,
+  item,
+  undone,
+  opens,
+  split,
+}: {
+  atlas: Atlas;
+  item: Item;
+  undone: Set<string>;
+  opens: Opens;
+  /** Moves an owner's message, with its answer, to a thread of its own (Today only). */
+  split?: (logId: string) => void;
+}) {
   switch (item.k) {
     case "row":
-      return <Row atlas={atlas} row={item.row} receipts={item.receipts} undone={undone} opens={opens} />;
+      return <Row atlas={atlas} row={item.row} receipts={item.receipts} undone={undone} opens={opens} split={split} />;
     case "receipts":
+      // A message that went to a thread leaves a quiet note here, with Undo (§21.1).
+      if (item.rows.every(isThreadNote)) return <MovedNote atlas={atlas} row={item.rows[0]!} undone={undone.has(item.rows[0]!.id)} />;
       return (
         <div className="msg atlas" data-row={item.rows[0]!.id}>
           <span className="mark" />
@@ -719,6 +803,63 @@ function ItemView({ atlas, item, undone, opens }: { atlas: Atlas; item: Item; un
         </div>
       );
   }
+}
+
+/** The note left in Today when a message went to a thread (§21.1): one quiet line that opens it, with Undo. */
+function MovedNote({ atlas, row, undone }: { atlas: Atlas; row: LogRow; undone: boolean }) {
+  const to = (row.body.receipt as { undo?: { to?: string } } | undefined)?.undo?.to ?? "";
+  const title =
+    atlas.state.threads.find((t) => t.id === to)?.title ?? str((row.body.receipt as { text?: string }).text).replace(/^Went to /, "");
+  return (
+    <p className="note moved" data-row={row.id}>
+      <Icon name="chat" size={12} />
+      {undone ? (
+        <span>Brought back from {title}.</span>
+      ) : (
+        <>
+          <span>
+            Went to{" "}
+            <a className="link" href={`#/thread/${encodeURIComponent(to)}`}>
+              {title}
+            </a>
+          </span>
+          <button className="link quiet" onClick={() => atlas.send({ type: "atlas.undo", log_id: row.id })}>
+            Undo
+          </button>
+        </>
+      )}
+    </p>
+  );
+}
+
+/** The top of a thread (§21.1): its name and its space, where it started. */
+function ThreadStart({ atlas, id }: { atlas: Atlas; id: string }) {
+  const t = atlas.state.threads.find((x) => x.id === id);
+  if (!t) return null;
+  const area = atlas.state.areas.find((a) => t.areas.includes(a.id));
+  return (
+    <div className="thread-start">
+      <h2 className="disp" key={t.title}>
+        {t.title}
+      </h2>
+      <p className="faint small">
+        {area ? `In ${area.name}. ` : ""}A thread of its own: it reads only what's said here, and Atlas still knows everything.
+      </p>
+    </div>
+  );
+}
+
+/** A thread not started yet (⌘N): a few words on what one is, and the spaces it could start in. */
+function FreshThread({ atlas }: { atlas: Atlas }) {
+  return (
+    <div className="thread-start fresh">
+      <h2 className="disp">New thread</h2>
+      <p className="faint small">
+        A thread is a conversation of its own, for one piece of work or one topic. It runs beside the others, and Atlas names it once it
+        answers. Start with @ and a space's name to start it in that space.
+      </p>
+    </div>
+  );
 }
 
 /** A receipt for a lookup that changed nothing: a search or a page read (receipts saved before `look` was kept are known by their tool). */
@@ -889,12 +1030,14 @@ function Row({
   receipts,
   undone,
   opens,
+  split,
 }: {
   atlas: Atlas;
   row: LogRow;
   receipts: LogRow[];
   undone: Set<string>;
   opens: Opens;
+  split?: (logId: string) => void;
 }) {
   const b = row.body as Record<string, unknown>;
   const s = atlas.state;
@@ -919,6 +1062,18 @@ function Row({
         <div className="msg owner" data-row={row.id}>
           <p className="bubble">{str(b.text)}</p>
           <span className={`when ${row.areas.length || voiceTag ? "keep" : ""}`}>
+            {split && row.run_id && b.job == null && (
+              <button
+                className="move-out"
+                title="Move this and its answer to a thread of its own"
+                onClick={() => {
+                  split(row.id);
+                  atlas.send({ type: "atlas.thread.split", log_id: row.id });
+                }}
+              >
+                <Icon name="chat" size={11} /> Move to a thread
+              </button>
+            )}
             {voiceTag}
             {s.areas.length > 0 && (row.areas.length > 0 || at("detailed")) && chip}
             <span className="mono">{clock(row.at)}</span>

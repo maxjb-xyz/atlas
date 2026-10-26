@@ -27,6 +27,13 @@ const SECTIONS: Array<{ id: Section; name: string; icon: IconName }> = [
   { id: "account", name: "Account", icon: "user" },
 ];
 
+/** The pages that live under Settings (§21.2, changed 2026-10-26): what Atlas does on its own, what it's connected to, and what it did. */
+const MORE: Array<{ href: string; name: string; icon: IconName }> = [
+  { href: "#/automations", name: "Routines", icon: "automations" },
+  { href: "#/abilities", name: "Connections", icon: "abilities" },
+  { href: "#/history", name: "Activity", icon: "history" },
+];
+
 /** Where the sections of earlier versions went, so old links (and sign-ins that come back to one) still land. */
 export const MOVED: Record<string, [place: "settings" | "abilities" | "people", detail: string]> = {
   character: ["settings", "atlas"],
@@ -139,6 +146,15 @@ export function SettingsPage({
                 <span className="grow">{s.name}</span>
                 <span className="mono aside">{metaOf(s.id)}</span>
               </button>
+            ))}
+            {/* Routines, Connections and Activity are pages of their own that live under Settings (§21.2). */}
+            <span className="set-sep" />
+            {MORE.map((m) => (
+              <a key={m.href} href={m.href}>
+                <Icon name={m.icon} size={15} />
+                <span className="grow">{m.name}</span>
+                <Icon name="right" size={12} />
+              </a>
             ))}
             <span className="grow" />
             <p className="aside set-foot">Anything here can also be done by asking.</p>

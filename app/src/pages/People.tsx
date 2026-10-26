@@ -69,7 +69,7 @@ export function People({ atlas, detail, go }: { atlas: Atlas; detail: string; go
         : `${faces.length} ${faces.length === 1 ? "face" : "faces"} · ${faces.filter((f) => f.on).length} on`;
   return (
     <Stage
-      label="People"
+      label="Library · People"
       tabs={[
         { id: "contacts", label: "Contacts", badge: people?.records.length || null },
         { id: "members", label: "Members", badge: view?.me ? null : members.filter((m) => m.joined_at).length + 1 },
@@ -1129,7 +1129,7 @@ function FaceEditor({
                 flip={() => setF({ ...f, addresses: toggle(f.addresses, a.id) })}
               />
             ))}
-            {!addresses.length && <p className="aside line">Nowhere yet: set up Atlas's email or a chat in Abilities → Services.</p>}
+            {!addresses.length && <p className="aside line">Nowhere yet: set up Atlas's email or a chat in Settings → Connections.</p>}
           </div>
           <span className="h2" style={{ display: "block", marginTop: 12 }}>
             Who it's for

@@ -120,6 +120,8 @@ export interface InboxItem {
   at: number;
   areas: string[];
   run_id: string | null;
+  /** The thread it was asked in (§21.1), or null for Today. */
+  thread?: string | null;
   approval?: ApprovalView;
   /** Atlas asking the owner something it can't decide alone, such as whether to stop asking for an action. */
   question?: { key: string; yes: string; no: string };

@@ -63,7 +63,7 @@ export function Automations({ atlas, detail, go }: { atlas: Atlas; detail: strin
 
   return (
     <Stage
-      label="Automations"
+      label="Routines"
       tabs={[
         { id: "all", label: "All", badge: all.length || null },
         { id: "request", label: "On request", badge: count("request") },

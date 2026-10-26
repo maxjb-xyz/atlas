@@ -372,7 +372,7 @@ export function History({ atlas }: { atlas: Atlas }) {
 
   return (
     <Stage
-      label="History"
+      label="Activity"
       tabs={[
         { id: "everything", label: "Everything" },
         { id: "actions", label: "Actions" },

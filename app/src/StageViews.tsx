@@ -1486,7 +1486,7 @@ const KIND: Record<StageView["kind"], string> = {
   day: "Day",
   situation: "Situation",
   senses: "Noticed",
-  abilities: "Abilities",
+  abilities: "Connections",
 };
 
 /**
