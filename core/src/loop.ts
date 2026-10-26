@@ -497,6 +497,8 @@ async function runTool(
   }
 
   const content = truncate(JSON.stringify(res.output ?? null), MAX_TOOL_OUTPUT);
+  const r = res.receipt;
+  const receipt = r && tool?.kind === "look" && !r.view && !r.undo && !r.approval ? { ...r, look: true } : r;
   const row = await deps.log({
     actor: "atlas",
     kind: "tool.result",
@@ -507,10 +509,10 @@ async function runTool(
       name: call.name,
       ok: res.ok,
       output: truncate(content, 2_000),
-      ...(res.receipt ? { receipt: res.receipt as never } : {}),
+      ...(receipt ? { receipt: receipt as never } : {}),
     },
   });
-  if (res.receipt) emit({ type: "row", row });
+  if (receipt) emit({ type: "row", row });
   return { content, ok: res.ok, receipt: Boolean(res.receipt) };
 }
 

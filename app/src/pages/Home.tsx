@@ -10,7 +10,7 @@ import { jobNow, liveJobs } from "../jobs";
 import type { StageView } from "../../../core/src/stage";
 import type { Atlas } from "../connection";
 import { type Shown, shownFrom, StageSheet, titleOf } from "../StageViews";
-import { Conversation, diamondState, type Opens } from "../Thread";
+import { Conversation, diamondState, isLook, type Opens } from "../Thread";
 import { JobDetail, JobGone } from "../JobViews";
 import { MapCanvas, whereLine } from "../SenseViews";
 import { sky, temp } from "../../../core/src/weather";
@@ -351,7 +351,16 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
   const needs = inbox.length ? `${inbox.length === 1 ? "One thing needs" : `${inbox.length} things need`} you.` : "";
   // What Atlas did today, as receipts under the greeting.
   const done = s.rows
-    .filter((r) => r.kind === "tool.result" && r.body.receipt && r.body.ok !== false && r.at >= today.getTime())
+    .filter(
+      (r) =>
+        r.kind === "tool.result" &&
+        r.body.receipt &&
+        r.body.ok !== false &&
+        r.at >= today.getTime() &&
+        // Lookups changed nothing, and Atlas's own silent runs (a skill review) are History's.
+        !isLook(r) &&
+        r.surface !== "none",
+    )
     .slice(-2)
     .reverse();
   const u = wx?.units ?? sit?.units ?? "metric";
@@ -660,6 +669,8 @@ function ReceiptView({ atlas, row }: { atlas: Atlas; row: LogRow }) {
   const asked = detail?.rows.find((r) => r.kind === "message.in");
   const receipt = row.body.receipt as { text: string; undo?: unknown };
   const undone = atlas.state.rows.some((r) => r.body.undo_of === row.id);
+  const { at } = useDetail();
+  const tech = at("developer");
   return (
     <Sheet className="pick">
       <div className="sheet-in">
@@ -673,37 +684,49 @@ function ReceiptView({ atlas, row }: { atlas: Atlas; row: LogRow }) {
             </button>
           )}
         </div>
-        <div className="chain" style={{ marginBottom: 16 }}>
-          <span className="tag">You · {asked?.surface === "voice" ? "voice" : "chat"}</span>
-          <span className="dash" />
-          <span className="tag">Atlas</span>
-          <span className="dash" />
-          <span className={`tag ${row.body.ok === false ? "ac" : "ok"}`}>
-            {row.body.ok === false ? "×" : "✓"} {String(row.body.name ?? "")}
-          </span>
-        </div>
-        <div className="kv">
-          <span className="lab">Asked by</span>
-          <span>{asked ? `You · ${clock(asked.at)} · “${String(asked.body.text ?? "")}”` : "Atlas"}</span>
-          <span className="lab">Did</span>
-          <span className="mono small">{String(row.body.name ?? "")}</span>
-          {call && (
-            <>
-              <span className="lab">With</span>
-              <span className="mono small" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                {JSON.stringify(call.body.input, null, 1)}
+        {!tech && (
+          <div className="kv">
+            <span className="lab">Asked by</span>
+            <span>{asked ? `You · ${clock(asked.at)} · “${String(asked.body.text ?? "")}”` : "Atlas, on its own"}</span>
+            <span className="lab">Undo</span>
+            <span>{receipt.undo != null ? (undone ? "Undone" : "You can undo this") : "Nothing to undo"}</span>
+          </div>
+        )}
+        {tech && (
+          <>
+            <div className="chain" style={{ marginBottom: 16 }}>
+              <span className="tag">You · {asked?.surface === "voice" ? "voice" : "chat"}</span>
+              <span className="dash" />
+              <span className="tag">Atlas</span>
+              <span className="dash" />
+              <span className={`tag ${row.body.ok === false ? "ac" : "ok"}`}>
+                {row.body.ok === false ? "×" : "✓"} {String(row.body.name ?? "")}
               </span>
-            </>
-          )}
-          <span className="lab">Result</span>
-          <span className="mono small" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-            {String(row.body.output ?? "")}
-          </span>
-          <span className="lab">Undo</span>
-          <span>{receipt.undo != null ? (undone ? "Done" : "Available") : "Nothing to undo"}</span>
-          <span className="lab">Run</span>
-          <span className="mono small">{runId}</span>
-        </div>
+            </div>
+            <div className="kv">
+              <span className="lab">Asked by</span>
+              <span>{asked ? `You · ${clock(asked.at)} · “${String(asked.body.text ?? "")}”` : "Atlas"}</span>
+              <span className="lab">Did</span>
+              <span className="mono small">{String(row.body.name ?? "")}</span>
+              {call && (
+                <>
+                  <span className="lab">With</span>
+                  <span className="mono small" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                    {JSON.stringify(call.body.input, null, 1)}
+                  </span>
+                </>
+              )}
+              <span className="lab">Result</span>
+              <span className="mono small" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                {String(row.body.output ?? "")}
+              </span>
+              <span className="lab">Undo</span>
+              <span>{receipt.undo != null ? (undone ? "Done" : "Available") : "Nothing to undo"}</span>
+              <span className="lab">Run</span>
+              <span className="mono small">{runId}</span>
+            </div>
+          </>
+        )}
       </div>
     </Sheet>
   );

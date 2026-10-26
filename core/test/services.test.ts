@@ -569,7 +569,7 @@ describe("an extension's tools", () => {
       answer: "Note Plans: buy milk",
       untrusted: expect.stringContaining("someone else's words"),
     });
-    expect(results[0]!.body.receipt).toEqual({ text: "Asked Tooly · find_note" });
+    expect(results[0]!.body.receipt).toEqual({ text: "Asked Tooly · find_note", look: true });
     expect(deliveries[0]!.body).toMatchObject({ channel: "extension", to: "tooly", text: "find_note", ok: true });
   });
 

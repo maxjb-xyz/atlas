@@ -1035,6 +1035,25 @@ button.chip:hover {
 .receipt:hover {
   border-color: var(--tx3);
 }
+/* At Simple, receipts read as words, not a log (§21.5); mono comes back at Detailed. */
+:root[data-detail="simple"] .receipt {
+  font-family: inherit;
+  font-size: 12.5px;
+}
+button.receipt {
+  padding: 0;
+  cursor: pointer;
+  font-family: "Geist Mono", ui-monospace, monospace;
+}
+:root[data-detail="simple"] button.receipt {
+  font-family: inherit;
+}
+.receipt.looks {
+  color: var(--tx3);
+}
+.receipt.looks:hover {
+  color: var(--tx2);
+}
 .receipt .tick {
   flex: none;
   display: grid;

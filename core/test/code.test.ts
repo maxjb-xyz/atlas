@@ -44,7 +44,7 @@ describe("Code Mode", () => {
       calls: 3,
       called: "web_search ×3",
     });
-    expect(program.body.receipt).toEqual({ text: "Ran a program · 3 calls (web_search ×3)" });
+    expect(program.body.receipt).toEqual({ text: "Ran a program · 3 calls (web_search ×3)", look: true });
     expect(searched.sort()).toEqual(["banh mi near UCF", "pho near UCF", "ramen near UCF"]);
     // Each call inside is a row of the run, with its own receipt, as if Atlas had made it.
     const inner = results.filter((r) => r.body.via === "code");

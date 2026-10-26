@@ -7,7 +7,7 @@
 // what needs the owner just above it. Messages carry their area chip; tapping
 // it moves the message (§6.3).
 
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { InboxItem, JobView, LogRow } from "../../core/src/protocol";
 import { ApprovalCard } from "./Approval";
 import type { Atlas, Live, Pending } from "./connection";
@@ -52,15 +52,22 @@ type Item =
   | { k: "job"; job: JobView; run: string | null; at: number }
   | { k: "pending"; p: Pending; run: null; at: number };
 
+/** How much of the plumbing the thread shows: brain fallbacks only at Developer, Atlas's silent runs from Detailed (§21.5). */
+interface Shows {
+  dev: boolean;
+  detailed: boolean;
+}
+
 /** Whether a row is a message in the conversation. A job's updates aren't: they're on its card and in its own thread. */
-function shows(r: LogRow): boolean {
+function shows(r: LogRow, at: Shows): boolean {
   // A job's own rows (the owner's words and answers to it, what its turns did) are its thread's, not the main one (§21.4).
   if ((r.kind === "message.in" || r.kind === "tool.result") && r.body.job != null) return false;
   switch (r.kind) {
+    case "brain.fallback":
+      return at.dev;
     case "message.in":
     case "message.out":
     case "voice.problem":
-    case "brain.fallback":
     case "agenda.change":
     case "record.change":
     case "area.change":
@@ -77,8 +84,8 @@ function shows(r: LogRow): boolean {
 }
 
 /** The thread, in order: messages with their receipts, what's being said now, and each job's card where it was asked for. */
-function arrange(rows: LogRow[], live: Record<string, Live>, jobs: JobView[], pending: Pending[]): Item[] {
-  const visible = rows.filter(shows);
+function arrange(rows: LogRow[], live: Record<string, Live>, jobs: JobView[], pending: Pending[], at: Shows): Item[] {
+  const visible = rows.filter((r) => shows(r, at));
   const lastOut = new Map<string, string>();
   for (const r of visible) if (r.kind === "message.out" && r.run_id) lastOut.set(r.run_id, r.id);
   // Receipts sit under the message of the run that made them, or under what it's saying now.
@@ -89,6 +96,9 @@ function arrange(rows: LogRow[], live: Record<string, Live>, jobs: JobView[], pe
   for (const r of visible) {
     if (r.kind === "tool.result") {
       if (sits(r.run_id)) continue;
+      // What one of Atlas's own runs did without saying anything (a skill review, a silent automation) is History's,
+      // not the conversation's: what matters from those, Atlas brings into the thread in its own words (§21.2).
+      if (r.surface === "none" && !at.detailed) continue;
       const prev = items.at(-1);
       if (prev?.k === "receipts" && prev.run === r.run_id) prev.rows.push(r);
       else items.push({ k: "receipts", rows: [r], run: r.run_id, at: r.at });
@@ -196,6 +206,7 @@ export function Conversation({
   onFocused?: () => void;
 }) {
   const s = atlas.state;
+  const { at } = useDetail();
   const { rows, pending, live, loaded, noOlder } = s;
   const name = s.view?.settings.assistant_name ?? "Atlas";
   const box = useRef<HTMLDivElement>(null);
@@ -266,7 +277,7 @@ export function Conversation({
   }, [focus, loaded, rows, noOlder]);
 
   const undone = new Set(rows.filter((r) => r.body.undo_of).map((r) => String(r.body.undo_of)));
-  const items = arrange(rows, live, topJobs(s.jobs), pending);
+  const items = arrange(rows, live, topJobs(s.jobs), pending, { dev: at("developer"), detailed: at("detailed") });
   for (const it of items) {
     if (it.k === "live") {
       seenLive.add(it.run);
@@ -537,11 +548,67 @@ function ItemView({ atlas, item, undone, opens }: { atlas: Atlas; item: Item; un
   }
 }
 
+/** A receipt for a lookup that changed nothing: a search or a page read (receipts saved before `look` was kept are known by their tool). */
+export function isLook(r: LogRow): boolean {
+  const rc = r.body.receipt as { look?: boolean; view?: unknown; undo?: unknown; approval?: unknown } | undefined;
+  if (!rc) return false;
+  if (rc.look === true) return true;
+  return rc.view == null && rc.undo == null && rc.approval == null && (r.body.name === "web_search" || r.body.name === "web_fetch");
+}
+
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+};
+
+/** What Atlas looked at for a reply, as one quiet line that opens to each search and page (§21.5, Simple). */
+function Lookups({ atlas, rows, undone }: { atlas: Atlas; rows: LogRow[]; undone: Set<string> }) {
+  const [open, setOpen] = useState(false);
+  const hosts = [...new Set(rows.map((r) => hostOf(String((r.body.receipt as { link?: string }).link ?? ""))).filter(Boolean))];
+  const label = hosts.length
+    ? `Looked at ${hosts.slice(0, 2).join(", ")}${hosts.length > 2 ? ` and ${hosts.length - 2} more` : ""}`
+    : rows.length === 1
+      ? "Searched the web"
+      : `Searched the web ${rows.length} times`;
+  if (open)
+    return (
+      <>
+        {rows.map((r, i) => (
+          <span key={r.id} data-row={r.id} style={{ "--i": i } as React.CSSProperties}>
+            <Receipt row={r} atlas={atlas} undone={undone.has(r.id)} />
+          </span>
+        ))}
+        <button className="receipt looks" onClick={() => setOpen(false)}>
+          <span className="open">Fewer</span>
+        </button>
+      </>
+    );
+  return (
+    <span data-row={rows[0]!.id}>
+      <button className="receipt looks" onClick={() => setOpen(true)} title="Show each search and page" aria-expanded={false}>
+        <span className="tick" aria-hidden>
+          <svg width="11" height="10" viewBox="0 0 11 10">
+            <path d="M1.5 5.2 4.3 8 9.6 1.8" />
+          </svg>
+        </span>
+        <span className="open">{label}</span>
+      </button>
+    </span>
+  );
+}
+
 /** The receipts for what Atlas did, under its message: views it showed as cards, approvals waiting as their card, the rest as chips. */
 function Receipts({ atlas, rows, undone, opens }: { atlas: Atlas; rows: LogRow[]; undone: Set<string>; opens: Opens }) {
   const inbox = atlas.state.inbox ?? [];
+  const { at } = useDetail();
   const shown = rows.map((r) => [r, shownFrom(r)] as const);
-  const chips = shown.filter(([, v]) => !v).map(([r]) => r);
+  const all = shown.filter(([, v]) => !v).map(([r]) => r);
+  // At Simple, lookups (searches, pages read) fold into one line; what changed something keeps its own receipt.
+  const looks = at("detailed") ? [] : all.filter(isLook);
+  const chips = all.filter((r) => !looks.includes(r));
   const cards = shown.filter((x): x is readonly [LogRow, Shown] => x[1] != null);
   const waiting = chips
     .map((r) => {
@@ -552,8 +619,9 @@ function Receipts({ atlas, rows, undone, opens }: { atlas: Atlas; rows: LogRow[]
     .filter((x) => x != null);
   return (
     <>
-      {chips.length > 0 && (
+      {(chips.length > 0 || looks.length > 0) && (
         <div className="receipts">
+          {looks.length > 0 && <Lookups atlas={atlas} rows={looks} undone={undone} />}
           {chips.map((r, i) => (
             <span
               key={r.id}
@@ -608,8 +676,9 @@ function Row({
   const b = row.body as Record<string, unknown>;
   const s = atlas.state;
   const { at } = useDetail();
+  // At Simple a message carries only its time, on hover: the area chip only when it has an area, the voice tag from Detailed.
   const voiceTag =
-    row.surface === "voice" ? (
+    row.surface === "voice" && at("detailed") ? (
       <span className="voice-tag" title="Said out loud">
         <Icon name="mic" size={11} /> Voice
       </span>
@@ -626,9 +695,9 @@ function Row({
       return (
         <div className="msg owner" data-row={row.id}>
           <p className="bubble">{str(b.text)}</p>
-          <span className={`when ${row.areas.length || row.surface === "voice" ? "keep" : ""}`}>
+          <span className={`when ${row.areas.length || voiceTag ? "keep" : ""}`}>
             {voiceTag}
-            {s.areas.length > 0 && chip}
+            {s.areas.length > 0 && (row.areas.length > 0 || at("detailed")) && chip}
             <span className="mono">{clock(row.at)}</span>
           </span>
         </div>
@@ -641,7 +710,7 @@ function Row({
           <div className="body">
             <Markdown className="said" text={str(b.text)} />
             {receipts.length > 0 && <Receipts atlas={atlas} rows={receipts} undone={undone} opens={opens} />}
-            <span className={`when ${row.surface === "voice" || b.interrupted ? "keep" : ""}`}>
+            <span className={`when ${voiceTag || b.interrupted ? "keep" : ""}`}>
               {voiceTag}
               {b.interrupted ? <span>Interrupted</span> : null}
               {at("developer") && <Timing timing={b.timing} />}

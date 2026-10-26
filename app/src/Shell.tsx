@@ -2,6 +2,7 @@
 // (scope switcher, jobs, Talk, search), and the composer. Home is the
 // conversation; every other page has the composer at its foot. No side panes.
 
+import { useDetail } from "./theme";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { LogRow, RecordView } from "../../core/src/protocol";
 import type { Atlas } from "./connection";
@@ -657,6 +658,7 @@ export function Receipt({
 
 export function VoiceStrip({ atlas }: { atlas: Atlas }) {
   const { status, interim, level, latencyMs } = atlas.voice;
+  const dev = useDetail().at("developer");
   const label = status === "idle" ? "Starting" : status[0]!.toUpperCase() + status.slice(1);
   const live = Object.values(atlas.state.live)
     .filter((l) => !l.job)
@@ -678,7 +680,7 @@ export function VoiceStrip({ atlas }: { atlas: Atlas }) {
           ))}
         </div>
       </div>
-      <span className="lab">{latencyMs != null ? `${Math.round(latencyMs)} ms` : ""}</span>
+      <span className="lab">{latencyMs != null && dev ? `${Math.round(latencyMs)} ms` : ""}</span>
     </div>
   );
 }

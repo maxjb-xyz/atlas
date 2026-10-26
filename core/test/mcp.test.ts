@@ -183,7 +183,7 @@ describe("MCP in a run", () => {
       answer: "ENG-12 Fix the login page (login)",
       untrusted: expect.stringContaining("someone else's words"),
     });
-    expect(results[1]!.body.receipt).toEqual({ text: "Asked Linear · search_issues" });
+    expect(results[1]!.body.receipt).toEqual({ text: "Asked Linear · search_issues", look: true });
     expect(calls).toEqual([{ server: "lin1", tool: "search_issues", args: { query: "login" } }]);
     expect(deliveries[0]!.body).toMatchObject({ channel: "mcp", to: "Linear", text: "search_issues", ok: true, by: "atlas" });
   });
