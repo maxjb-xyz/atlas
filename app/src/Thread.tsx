@@ -11,6 +11,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { InboxItem, JobView, LogRow } from "../../core/src/protocol";
 import { ApprovalCard } from "./Approval";
 import { FrontPage } from "./FrontPage";
+import { NextSteps } from "./InlineViews";
 import { useVoiceFull, VoiceStage } from "./VoiceStage";
 import type { Atlas, Live, Pending } from "./connection";
 import { isOpen, JobCard, questionFromRow, QuestionBody, ResultBody, topJobs } from "./JobViews";
@@ -28,10 +29,13 @@ import {
   CountUp,
   type DiamondState,
   elapsed,
+  hostOf,
   Icon,
   LiveMark,
   morphOrigin,
+  SiteMark,
   startOfDay,
+  stepIcon,
   useNow,
 } from "./ui";
 
@@ -646,13 +650,20 @@ function Working({ run, status, done = [] }: { run: string; status: string | nul
       {steps.length > 0 && (
         <span className="w-nodes" aria-hidden>
           {done.length > steps.length && <span className="w-more mono">+{done.length - steps.length}</span>}
-          {steps.map((r) => (
-            <span key={r.id} className="w-node done">
-              <i />
-              {nodeLabel(r)}
-              <span className="w-link" />
-            </span>
-          ))}
+          {steps.map((r) => {
+            const link = (r.body.receipt as { link?: string } | undefined)?.link;
+            return (
+              <span key={r.id} className={`w-node done ${r.body.ok === false ? "bad" : ""}`}>
+                {link && hostOf(link) ? (
+                  <SiteMark host={hostOf(link)} size={14} />
+                ) : (
+                  <Icon name={stepIcon(String(r.body.name ?? ""))} size={12} />
+                )}
+                {nodeLabel(r)}
+                <span className="w-link" />
+              </span>
+            );
+          })}
           <span className="w-node live">
             <i />
           </span>
@@ -682,7 +693,9 @@ function ItemView({ atlas, item, undone, opens }: { atlas: Atlas; item: Item; un
           <div className="body">
             {(item.live.status || !item.live.text) && <Working run={item.run} status={item.live.status} done={item.receipts} />}
             {item.live.text && <Markdown className="said streaming" text={item.live.text} />}
-            {item.receipts.length > 0 && <Receipts atlas={atlas} rows={item.receipts} undone={undone} opens={opens} />}
+            {item.receipts.length > 0 && (
+              <Receipts atlas={atlas} rows={item.receipts} undone={undone} opens={opens} said={item.live.text} />
+            )}
           </div>
         </div>
       );
@@ -715,26 +728,37 @@ export function isLook(r: LogRow): boolean {
   return rc.view == null && rc.undo == null && rc.approval == null && (r.body.name === "web_search" || r.body.name === "web_fetch");
 }
 
-const hostOf = (url: string) => {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "";
-  }
-};
+/** The pages a search found, best first, from its output (kept clipped in the log, so read by pattern). */
+function resultsOf(r: LogRow): string[] {
+  return [...String(r.body.output ?? "").matchAll(/"url":"(https?:[^"]+)"/g)].map((m) => m[1]!);
+}
 
 /**
- * What Atlas looked at for a reply (§21.5 at Simple, M7 W17): each site it read as a source with its mark, which
- * opens the page, and a search as one quiet pill. "Details" opens each search and page as its receipt.
+ * The sites behind a reply, one per site: those its words link to and the pages Atlas read; only when there are
+ * none, what its searches found.
  */
-function Lookups({ atlas, rows, undone }: { atlas: Atlas; rows: LogRow[]; undone: Set<string> }) {
-  const [open, setOpen] = useState(false);
-  const pages = new Map<string, string>();
+export function sourcesOf(rows: LogRow[], said = ""): Array<{ host: string; url: string; title: string }> {
+  const out = new Map<string, { host: string; url: string; title: string }>();
+  const add = (url: string, title = "") => {
+    const host = hostOf(url);
+    if (host && /^https?:/.test(url) && !out.has(host)) out.set(host, { host, url, title });
+  };
+  for (const m of said.matchAll(/\]\((https?:\/\/[^\s)]+)\)|(?<![(\w])(https?:\/\/[^\s)<>\]]+)/g)) add(m[1] ?? m[2]!);
   for (const r of rows) {
-    const link = (r.body.receipt as { link?: string }).link;
-    const host = link ? hostOf(link) : "";
-    if (host && !pages.has(host)) pages.set(host, link!);
+    const rc = r.body.receipt as { link?: string; text?: string } | undefined;
+    if (rc?.link) add(rc.link, (rc.text ?? "").replace(/^Read · /, ""));
   }
+  if (out.size === 0) for (const r of rows) if (r.body.name === "web_search") for (const url of resultsOf(r).slice(0, 3)) add(url);
+  return [...out.values()];
+}
+
+/**
+ * What Atlas looked at for a reply (§21.5 at Simple, M7 W17): the sites behind it, each with its own icon, which open
+ * the page; a search that found nothing to show as one quiet pill. "Details" opens each search and page as its receipt.
+ */
+function Lookups({ atlas, rows, undone, said }: { atlas: Atlas; rows: LogRow[]; undone: Set<string>; said?: string }) {
+  const [open, setOpen] = useState(false);
+  const sources = sourcesOf(rows, said);
   const searches = rows.filter((r) => r.body.name === "web_search").length;
   if (open)
     return (
@@ -751,31 +775,49 @@ function Lookups({ atlas, rows, undone }: { atlas: Atlas; rows: LogRow[]; undone
     );
   return (
     <span className="sources" data-row={rows[0]!.id}>
-      {[...pages].slice(0, 4).map(([host, link], i) => (
-        <a key={host} className="src" href={link} target="_blank" rel="noreferrer" title={link} style={{ "--i": i } as React.CSSProperties}>
-          <span className="src-mark" aria-hidden>
-            {host.replace(/^(m|en|news)\./, "")[0]!.toUpperCase()}
-          </span>
-          {host}
+      {sources.slice(0, 4).map((x, i) => (
+        <a
+          key={x.host}
+          className="src"
+          href={x.url}
+          target="_blank"
+          rel="noreferrer"
+          title={x.title ? `${x.title}\n${x.url}` : x.url}
+          style={{ "--i": i } as React.CSSProperties}
+        >
+          <SiteMark host={x.host} />
+          {x.host}
         </a>
       ))}
-      {pages.size === 0 && searches > 0 && (
+      {sources.length === 0 && searches > 0 && (
         <span className="src">
-          <span className="src-mark" aria-hidden>
+          <span className="site-mark" aria-hidden>
             <Icon name="search" size={10} />
           </span>
           {searches === 1 ? "Searched the web" : `Searched the web ${searches} times`}
         </span>
       )}
       <button className="src more" onClick={() => setOpen(true)} title="Each search and page">
-        {pages.size > 4 ? `+${pages.size - 4} · Details` : "Details"}
+        {sources.length > 4 ? `+${sources.length - 4} · Details` : "Details"}
       </button>
     </span>
   );
 }
 
 /** The receipts for what Atlas did, under its message: views it showed as cards, approvals waiting as their card, the rest as chips. */
-function Receipts({ atlas, rows, undone, opens }: { atlas: Atlas; rows: LogRow[]; undone: Set<string>; opens: Opens }) {
+function Receipts({
+  atlas,
+  rows,
+  undone,
+  opens,
+  said,
+}: {
+  atlas: Atlas;
+  rows: LogRow[];
+  undone: Set<string>;
+  opens: Opens;
+  said?: string;
+}) {
   const inbox = atlas.state.inbox ?? [];
   const { at } = useDetail();
   const shown = rows.map((r) => [r, shownFrom(r)] as const);
@@ -795,7 +837,7 @@ function Receipts({ atlas, rows, undone, opens }: { atlas: Atlas; rows: LogRow[]
     <>
       {(chips.length > 0 || looks.length > 0) && (
         <div className="receipts">
-          {looks.length > 0 && <Lookups atlas={atlas} rows={looks} undone={undone} />}
+          {looks.length > 0 && <Lookups atlas={atlas} rows={looks} undone={undone} said={said} />}
           {chips.map((r, i) => (
             <span
               key={r.id}
@@ -825,11 +867,15 @@ function Receipts({ atlas, rows, undone, opens }: { atlas: Atlas; rows: LogRow[]
           <ApprovalCard atlas={atlas} a={item.approval!} />
         </div>
       ))}
-      {cards.map(([r, v]) => (
-        <div key={r.id} data-row={r.id}>
-          <StageCard atlas={atlas} shown={v} row={r} onOpen={() => opens.view(v)} />
-        </div>
-      ))}
+      {cards.map(([r, v]) => {
+        const next = (r.body.receipt as { next?: string[] } | undefined)?.next;
+        return (
+          <div key={r.id} data-row={r.id}>
+            <StageCard atlas={atlas} shown={v} row={r} onOpen={() => opens.view(v)} />
+            {next && next.length > 0 && <NextSteps atlas={atlas} next={next} />}
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -883,7 +929,7 @@ function Row({
           <Glyph />
           <div className="body">
             <Markdown className="said" text={str(b.text)} />
-            {receipts.length > 0 && <Receipts atlas={atlas} rows={receipts} undone={undone} opens={opens} />}
+            {receipts.length > 0 && <Receipts atlas={atlas} rows={receipts} undone={undone} opens={opens} said={str(b.text)} />}
             <span className={`when ${voiceTag || b.interrupted ? "keep" : ""}`}>
               {voiceTag}
               {b.interrupted ? <span>Interrupted</span> : null}

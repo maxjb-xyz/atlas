@@ -29,16 +29,20 @@ export const show = defineTool({
     "A view isn't a file: when the owner asks for a spreadsheet or a document to keep or download, make a file (file_save, or the workspace for .xlsx, .docx or PDF), which opens on the stage by itself.",
     "Fill a list, table or research view only with what you've looked up or what's in the conversation, never with guesses, and say where it came from in `source` (for research, in its `sources`).",
     "The owner sees the view as you answer, so don't read the view out, but always say at least a line: what matters most in it. In a voice conversation, say a sentence or two and let the stage show the rest.",
+    "In `next`, offer up to three things the owner is likely to want next that you can do, each a short instruction in their words ('Block 1 to 3 for French', 'Remind me when to leave'). They show under the view, and a tap asks you to do it. Leave it out when nothing is likely.",
   ].join(" "),
-  input: z.object({ view: StageViewSchema }),
-  async run({ view }, ctx) {
+  input: z.object({
+    view: StageViewSchema,
+    next: z.array(z.string().min(2).max(60)).max(3).optional().describe("Up to three likely next steps, each in the owner's words."),
+  }),
+  async run({ view, next }, ctx) {
     const shown = resolve(ctx.sql, view);
     if ("error" in shown) return fail(shown.error);
     const name = stageTitle(shown.view, shown.names);
     const out: ToolResult = {
       ok: true,
       output: { shown: shown.view.kind, title: name, ...(shown.what ? { on_the_stage: shown.what } : {}) },
-      receipt: { text: `Showing · ${name}`, view: shown.view },
+      receipt: { text: `Showing · ${name}`, view: shown.view, ...(next?.length ? { next } : {}) },
     };
     return out;
   },

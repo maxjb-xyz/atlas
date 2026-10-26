@@ -1099,3 +1099,77 @@ export function HoldButton({
     </button>
   );
 }
+
+// --- what a step is, at a glance (M7 W17) -----------------------------------------------------------
+
+/** A link's site, without "www.": "reuters.com". Empty when it isn't a web address. */
+export const hostOf = (url: string) => {
+  try {
+    const u = new URL(url);
+    return /^https?:$/.test(u.protocol) ? u.hostname.replace(/^www\./, "") : "";
+  } catch {
+    return "";
+  }
+};
+
+/** Sites whose icon didn't load in this session, so their letter shows at once. */
+const noIcon = new Set<string>();
+
+/** A site's own icon, fetched once by Atlas and kept; its first letter until it comes, or when it has none. */
+export function SiteMark({ host, size = 18 }: { host: string; size?: number }) {
+  const h = host.toLowerCase().replace(/^www\./, "");
+  const [failed, setFailed] = useState(() => noIcon.has(h));
+  const [loaded, setLoaded] = useState(false);
+  const letter = (h.replace(/^(m|en|news|edition|amp)\./, "")[0] ?? "?").toUpperCase();
+  return (
+    <span
+      className={`site-mark ${loaded && !failed ? "has" : ""}`}
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.5) }}
+      aria-hidden
+    >
+      {!(loaded && !failed) && letter}
+      {!failed && /^[a-z0-9.-]{4,253}$/.test(h) && (
+        <img
+          src={`/api/icons/${h}`}
+          alt=""
+          loading="lazy"
+          onLoad={() => setLoaded(true)}
+          onError={() => {
+            noIcon.add(h);
+            setFailed(true);
+          }}
+        />
+      )}
+    </span>
+  );
+}
+
+/** The icon for a kind of step Atlas took, by its tool's name. */
+export function stepIcon(tool: string): IconName {
+  const t = tool.toLowerCase();
+  const by: Array<[RegExp, IconName]> = [
+    [/^web_search|^skill_find|^recall|_look$|^jobs_look|^agenda_list|^free_busy/, "search"],
+    [/^web_fetch|^page_read|^site_ask/, "globe"],
+    [/^calendar_|^hold_time/, "calendar"],
+    [/^reminder_|^agenda_|^promise|^loop_/, "bell"],
+    [/^task_/, "check"],
+    [/^remember|^forget|^delete_for_good/, "memory"],
+    [/^email_|^mail_/, "mail"],
+    [/^skill_/, "skills"],
+    [/^job_|^delegate|^code_job/, "jobs"],
+    [/^file_|^page_save|^folder_/, "file"],
+    [/^place_|^route/, "place"],
+    [/^weather/, "sun"],
+    [/^person|^contact_|^face_/, "user"],
+    [/^browser_/, "browser"],
+    [/^code_|^workspace_|^packages_/, "terminal"],
+    [/^automation_/, "automations"],
+    [/^settings_|^focus/, "settings"],
+    [/^vault_/, "key"],
+    [/^mcp_|^extension_|^webhook_/, "plug"],
+    [/^device_/, "devices"],
+    [/^show/, "eye"],
+    [/^owner_ask|^approve/, "hand"],
+  ];
+  return by.find(([re]) => re.test(t))?.[1] ?? "diamond";
+}

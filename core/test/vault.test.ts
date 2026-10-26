@@ -172,7 +172,9 @@ describe("the vault in a run", () => {
     expect(shop.log).toEqual([]);
 
     s.send({ type: "atlas.inbox" });
-    const card = (await s.next("atlas.inbox.items")).items.find((i) => i.approval?.id === receipt.approval)!.approval!;
+    const card = (await s.next("atlas.inbox.items", (m) => m.items.some((i) => i.approval?.id === receipt.approval))).items.find(
+      (i) => i.approval?.id === receipt.approval,
+    )!.approval!;
     expect(card).toMatchObject({ hold: false, steps: [{ kind: "vault", title: "Fill in Shop login on shop.example" }] });
     expect(card.steps[0]!.detail).toContain('username or email, password, then press "Sign in"');
 
@@ -233,7 +235,9 @@ describe("the vault in a run", () => {
     const { results } = await turn(s, "pay with my visa");
     const receipt = results[0]!.body.receipt as { approval: string };
     s.send({ type: "atlas.inbox" });
-    const card = (await s.next("atlas.inbox.items")).items.find((i) => i.approval?.id === receipt.approval)!.approval!;
+    const card = (await s.next("atlas.inbox.items", (m) => m.items.some((i) => i.approval?.id === receipt.approval))).items.find(
+      (i) => i.approval?.id === receipt.approval,
+    )!.approval!;
     expect(card.hold).toBe(true);
     expect(card.steps[0]!.undo).toBe("Card details always ask, every time.");
   });

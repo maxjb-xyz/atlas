@@ -6294,6 +6294,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return k ? { key: photoKey(id), type: k.type } : null;
   }
 
+  /** A site's icon for a source chip (the Worker keeps it in R2 once it has it). */
+  async apiIcon(host: string): Promise<{ type: string; bytes: ArrayBuffer } | null> {
+    return this.#outbox.icon(host);
+  }
+
   /** Approve from a push notification's button (the service worker calls /api/approve). */
   async apiApprove(id: string): Promise<{ ok: boolean; text: string }> {
     return this.keepAliveWhile(() => this.#decide(id, { yes: true, by: "push" }));
@@ -6327,7 +6332,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return [...inbox(this.#sql), ...this.#extensions.needs()];
   }
 
-  #serviceNeeds = "";
+  // Null until sent once, so a list that empties is still sent.
+  #serviceNeeds: string | null = null;
 }
 
 /**

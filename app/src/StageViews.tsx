@@ -5,6 +5,7 @@
 // views (§21.2).
 
 import { DayStrip } from "./DayView";
+import { InlineCompare, InlineMap, InlineMedia, InlineResearch, InlineWeather } from "./InlineViews";
 import { useEffect, useRef, useState } from "react";
 import type { Segment } from "../../core/src/pages";
 import type { LogRow, RecordView } from "../../core/src/protocol";
@@ -1438,20 +1439,50 @@ const KIND: Record<StageView["kind"], string> = {
  * first items, a table's first rows, a chart's shape). Tapped, it grows into
  * its full view on the stage. `row` is the receipt it came from.
  */
+/**
+ * Whether a view is drawn in the message itself (M7 W18): a day, a route or places on a map, the weather, options
+ * side by side, an answer's sources, a picture or a video. Tapped, each opens large on the stage; until then the
+ * thread is the stage. The weather is now's, so only on an answer from the last few hours.
+ */
+export function drawnInline(atlas: Atlas, v: StageView, at?: number): boolean {
+  if (v.kind === "day" || v.kind === "compare" || v.kind === "research") return true;
+  if (v.kind === "map") return (v.markers?.length ?? 0) > 0;
+  if (v.kind === "weather") return at == null || Date.now() - at < 6 * 3_600_000;
+  if (v.kind === "file") {
+    const f = atlas.state.files?.find((x) => x.id === v.file);
+    return f != null && /^(image|video)\//.test(f.type) && f.type !== "image/svg+xml";
+  }
+  return false;
+}
+
 export function StageCard({ atlas, shown, onOpen, row }: { atlas: Atlas; shown: Shown; onOpen: () => void; row?: LogRow }) {
   const v = shown.view;
-  // A day is drawn in the message itself, to scale (M7 W18); tapped, it opens large on the stage.
-  if (v.kind === "day")
+  const file = v.kind === "file" ? atlas.state.files?.find((f) => f.id === v.file) : undefined;
+  const units = (atlas.state.stage.weather as { units?: "us" | "metric" } | null | undefined)?.units ?? "metric";
+  const inline = !drawnInline(atlas, v, row?.at) ? null : v.kind === "day" ? (
+    <DayStrip atlas={atlas} date={v.date} />
+  ) : v.kind === "map" ? (
+    <InlineMap v={v} units={units} />
+  ) : v.kind === "weather" ? (
+    <InlineWeather atlas={atlas} />
+  ) : v.kind === "compare" ? (
+    <InlineCompare v={v} />
+  ) : v.kind === "research" ? (
+    <InlineResearch v={v} />
+  ) : file ? (
+    <InlineMedia file={file} />
+  ) : null;
+  if (inline)
     return (
       <button
-        className="day-inline"
+        className={`day-inline inline-${v.kind}`}
         onClick={(e) => {
           morphOrigin(e.currentTarget);
           onOpen();
         }}
         title="Open on the stage"
       >
-        <DayStrip atlas={atlas} date={v.date} />
+        {inline}
       </button>
     );
   const preview =

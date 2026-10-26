@@ -16,7 +16,7 @@ import { append, get as getRow, type LogRow, type Surface, type Undo } from "./s
 import { readSettings, secretValues } from "./store/settings";
 import { getState, setState } from "./store/state";
 import { deleteRecord, findRecords } from "./store/records";
-import { hostOf, type LookOut } from "./web";
+import { hostOf, iconHost, type LookOut, siteIcon } from "./web";
 import type { BrowserDriver } from "./browser";
 import { findServer, type McpClient, type McpResult, type McpServer, resultText } from "./mcp";
 import { FIELDS, fillsOn, findEntry, hiddenValues, siteFor, touchEntry, valueOf } from "./vault";
@@ -577,6 +577,15 @@ export class Outbox {
     });
     if (!out.ok) console.error(JSON.stringify({ at: `web.${o.what}`, to: o.to, status: out.status, error: out.error }));
     return out;
+  }
+
+  /**
+   * A site's icon, for a source shown in the thread (M7 W17). Only a public host leaves, one Atlas already read or
+   * found in a search, so there's nothing to check it for and no receipt: the look that found the site has one.
+   */
+  async icon(host: string): Promise<{ type: string; bytes: ArrayBuffer } | null> {
+    if (!iconHost(host)) return null;
+    return siteIcon(this.channels.fetch, host).catch(() => null);
   }
 
   /**

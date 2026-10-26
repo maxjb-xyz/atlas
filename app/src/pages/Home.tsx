@@ -9,7 +9,7 @@ import type { JobView, LogRow } from "../../../core/src/protocol";
 import { jobNow, liveJobs } from "../jobs";
 import type { StageView } from "../../../core/src/stage";
 import type { Atlas } from "../connection";
-import { type Shown, shownFrom, StageSheet, titleOf } from "../StageViews";
+import { drawnInline, type Shown, shownFrom, StageSheet, titleOf } from "../StageViews";
 import { Conversation, diamondState, isLook, type Opens } from "../Thread";
 import { JobDetail, JobGone } from "../JobViews";
 import { MapCanvas, whereLine } from "../SenseViews";
@@ -182,9 +182,10 @@ export function Home({ atlas, detail, go, place }: { atlas: Atlas; detail: strin
     }
     const fresh = s.rows.filter((r) => r.seq > kept.seen! && r.kind === "tool.result");
     keep({ ...kept, seen: Math.max(kept.seen, last) });
+    // A view drawn in the message stays there until the owner taps it (M7 W18).
     const newest = fresh
       .map(shownFrom)
-      .filter((v): v is Shown => v != null)
+      .filter((v): v is Shown => v != null && !drawnInline(atlas, v.view))
       .at(-1);
     // In full-screen voice, what Atlas shows rises under its words instead (M7 W19).
     if (newest && !(atlas.inCall && voiceFullNow())) openView(newest);

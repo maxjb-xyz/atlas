@@ -16,12 +16,15 @@ import {
   Avatar,
   AsciiDiamond,
   Diamond,
+  hostOf,
   Icon,
   LiveMark,
   type IconName,
   initials,
   type Place,
   shortDay,
+  SiteMark,
+  stepIcon,
   useDismiss,
 } from "./ui";
 
@@ -621,10 +624,10 @@ export function Receipt({
           </svg>
         ) : waiting ? (
           <i className="sq-ac" />
+        ) : receipt.link && hostOf(receipt.link) ? (
+          <SiteMark host={hostOf(receipt.link)} size={14} />
         ) : (
-          <svg width="11" height="10" viewBox="0 0 11 10">
-            <path d="M1.5 5.2 4.3 8 9.6 1.8" />
-          </svg>
+          <Icon name={stepIcon(String(row.body.name ?? ""))} size={11} />
         )}
       </span>
       {onOpen ? (

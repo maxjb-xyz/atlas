@@ -6,7 +6,17 @@ import { privateIn } from "../src/outbox";
 import { migrate } from "../src/store/db";
 import { createRecord } from "../src/store/records";
 import { setSecret, writeSettings } from "../src/store/settings";
-import { cloudflareSearch, fetchPage, pageLinks, pageTitle, readable, type WebSearchBinding } from "../src/web";
+import {
+  cloudflareSearch,
+  fetchPage,
+  iconHost,
+  iconLinks,
+  pageLinks,
+  pageTitle,
+  readable,
+  siteIcon,
+  type WebSearchBinding,
+} from "../src/web";
 import { install, setExtSecrets } from "../src/extensions";
 import brave from "../../extensions/brave";
 import exa from "../../extensions/exa";
@@ -351,5 +361,39 @@ describe("the web through the agent", () => {
     const inbox = await s.next("atlas.inbox.items");
     const card = inbox.items.find((i) => i.approval?.id === receipt.approval)!;
     expect(card.approval!.why).toContain("Atlas read the web while working on this");
+  });
+});
+
+describe("site icons", () => {
+  it("picks a sharp icon a page names, then falls back to /favicon.ico", async () => {
+    const html = `<head>
+      <link rel="icon" sizes="16x16" href="/f16.png">
+      <link rel="apple-touch-icon" href="https://cdn.example.com/touch.svg">
+      <link rel="icon" sizes="32x32" href="/f32.png">
+      <link rel="apple-touch-icon" sizes="180x180" href="/touch-180.png">
+      <link rel="mask-icon" href="/mask.png"></head>`;
+    expect(iconLinks(html, "https://www.example.com/")).toEqual([
+      "https://www.example.com/touch-180.png",
+      "https://www.example.com/f32.png",
+      "https://www.example.com/f16.png",
+    ]);
+    const asked: string[] = [];
+    const png = new Uint8Array(100);
+    const f = (async (url: string) => {
+      asked.push(url);
+      if (url === "https://example.com/") return new Response(html, { headers: { "content-type": "text/html" } });
+      if (url.endsWith("/favicon.ico")) return new Response(png, { headers: { "content-type": "image/x-icon" } });
+      return new Response("no", { status: 404 });
+    }) as unknown as typeof fetch;
+    const got = await siteIcon(f, "example.com");
+    expect(got?.type).toBe("image/x-icon");
+    expect(asked.slice(-1)[0]).toBe("https://example.com/favicon.ico");
+  });
+
+  it("asks only plain public hosts", () => {
+    expect(iconHost("reuters.com")).toBe(true);
+    expect(iconHost("localhost")).toBe(false);
+    expect(iconHost("printer.local")).toBe(false);
+    expect(iconHost("10.0.0.1")).toBe(false);
   });
 });
