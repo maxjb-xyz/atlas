@@ -2,19 +2,34 @@ import { type FormEvent, lazy, Suspense, useEffect, useState } from "react";
 import { type Atlas, useAtlas } from "./connection";
 import { addPasskey, deviceName, inviteName, joinWithPasskey, passkeysSupported, signInWithCode, signInWithPasskey } from "./passkey";
 import { Home } from "./pages/Home";
-// Home is what opens; every other place loads the first time it's opened, so the first paint carries only Home.
-const History = lazy(() => import("./pages/History").then((m) => ({ default: m.History })));
-const Library = lazy(() => import("./pages/Library").then((m) => ({ default: m.Library })));
-const Agenda = lazy(() => import("./pages/Places").then((m) => ({ default: m.Agenda })));
-const Inbox = lazy(() => import("./pages/Places").then((m) => ({ default: m.Inbox })));
-const Automations = lazy(() => import("./pages/Automations").then((m) => ({ default: m.Automations })));
-const Pair = lazy(() => import("./abilities/Devices").then((m) => ({ default: m.Pair })));
-const Abilities = lazy(() => import("./pages/Abilities").then((m) => ({ default: m.Abilities })));
-const People = lazy(() => import("./pages/People").then((m) => ({ default: m.People })));
 import { MOVED, SettingsPage } from "./settings";
 import { Setup } from "./Setup";
 import { openConversation, Palette, Sidebar, TabBar, Toolbar } from "./Shell";
 import { areaColor, AsciiDiamond, Diamond, ScopeColor, useRoute } from "./ui";
+
+// Every place but Home loads when first opened, and its code is fetched in the background once the app is idle,
+// so opening one is instant.
+const pages = {
+  history: () => import("./pages/History"),
+  library: () => import("./pages/Library"),
+  places: () => import("./pages/Places"),
+  automations: () => import("./pages/Automations"),
+  devices: () => import("./abilities/Devices"),
+  abilities: () => import("./pages/Abilities"),
+  people: () => import("./pages/People"),
+};
+const History = lazy(() => pages.history().then((m) => ({ default: m.History })));
+const Library = lazy(() => pages.library().then((m) => ({ default: m.Library })));
+const Agenda = lazy(() => pages.places().then((m) => ({ default: m.Agenda })));
+const Inbox = lazy(() => pages.places().then((m) => ({ default: m.Inbox })));
+const Automations = lazy(() => pages.automations().then((m) => ({ default: m.Automations })));
+const Pair = lazy(() => pages.devices().then((m) => ({ default: m.Pair })));
+const Abilities = lazy(() => pages.abilities().then((m) => ({ default: m.Abilities })));
+const People = lazy(() => pages.people().then((m) => ({ default: m.People })));
+const idle = (f: () => void) => ("requestIdleCallback" in window ? window.requestIdleCallback(f, { timeout: 4000 }) : setTimeout(f, 2000));
+idle(() => {
+  for (const load of Object.values(pages)) void load().catch(() => {});
+});
 
 type Session = {
   signed_in: boolean;
