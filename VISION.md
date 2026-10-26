@@ -1109,6 +1109,7 @@ Atlas should feel like the future: alive, fast, a little magical.
   - **Alive with what Atlas is doing:** a sweep of light now and then while idle, ripples with your voice while listening, a shimmer while thinking, a pulse with its own voice while speaking. It moves with the actual audio.
   - It is never an orb, a glow or a gradient: only characters and their color. Reduced motion shows one still frame.
   - **At the size of a glyph** (added 2026-10-25) it's the flat mark, lit the same way by its facets in ember, by opacity alone: beside Atlas's words only on the message being written, and in the composer as the large one is (a sweep while idle, a shimmer while a turn runs, a ripple while listening).
+  - **In the grid while Atlas works** (added 2026-10-26): while Atlas works on a reply, the stage grid's dots near its mark turn into the diamond's characters, in ember, and ripple outward from it; when the answer lands they settle back into dots. Still only characters and their opacity, never a glow, and still with reduced motion.
 - **Visual language** (details in [docs/ui/README.md](docs/ui/README.md#5-visual-language)):
   - **The frame:** a dotted stage grid between dashed rails, with square nodes at intersections.
   - **Atlas's selection:** an ember outline with square handles and a mono tag (for example "MOVED · WAS WED 3 PM") marks what Atlas just changed.
