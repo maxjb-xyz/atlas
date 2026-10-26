@@ -192,13 +192,14 @@ function factLine(r: AtlasRecord): string {
 
 /**
  * The messages since the summary in force, oldest first, as log rows: Today's by default, or one thread's (§21.1).
- * Summaries are Today's; a thread reads its own newest messages, and recall has the rest.
+ * Summaries are Today's; a thread reads its own newest messages, and recall has the rest. What the owner said to a
+ * job is that job's, in its own transcript, so Today doesn't read it.
  */
 export function sinceSummary(sql: Sql, beforeSeq?: number, thread: string | null = null): LogRow[] {
   const from = thread ? 0 : (latestSummary(sql, beforeSeq)?.through_seq ?? 0);
   const ids = sql
     .exec<{ id: string }>(
-      `SELECT id FROM log WHERE kind IN ('message.in', 'message.out') AND seq > ? AND seq < ? AND ${thread ? "thread = ?" : "thread IS NULL"} ORDER BY seq DESC LIMIT ?`,
+      `SELECT id FROM log WHERE kind IN ('message.in', 'message.out') AND seq > ? AND seq < ? AND ${thread ? "thread = ?" : "thread IS NULL AND json_extract(body, '$.job') IS NULL"} ORDER BY seq DESC LIMIT ?`,
       from,
       beforeSeq ?? Number.MAX_SAFE_INTEGER,
       ...(thread ? [thread] : []),
