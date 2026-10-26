@@ -1,0 +1,559 @@
+<title>Atlas Threads</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Layout: a proposal in Atlas's own look (Graphite, Daylight in light mode). Text column ~680px; mockups open full width. */
+:root {
+  color-scheme: dark;
+  --bg: #141413; --win: #1b1a19; --win2: #211f1d; --side: #181716;
+  --sep: #2c2a28; --sep2: #3a3835; --dash: #3f3c37; --hover: #252321; --sel: #2c2a27;
+  --tx: #f1efea; --tx2: #aaa69e; --tx3: #98948d;
+  --ac: #ff6a3d; --acs: rgba(255,106,61,.10); --ok: #3fbf7f;
+  --btn: #f1efea; --btntx: #191817;
+  --school: #10b981; --home: #f5a524; --work: #3b82f6; --money: #a78bfa;
+  --dot: rgba(241,239,234,.07);
+  --f-ui: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-disp: "Inter Tight", Inter, system-ui, sans-serif;
+  --f-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  color-scheme: light;
+  --bg: #faf9f6; --win: #ffffff; --win2: #f6f5f1; --side: #f4f3ef;
+  --sep: #e7e5df; --sep2: #d9d6ce; --dash: #cdc9c0; --hover: #eeece7; --sel: #e7e5df;
+  --tx: #191817; --tx2: #5c5954; --tx3: #67635d;
+  --ac: #e8501b; --acs: rgba(232,80,27,.08); --ok: #2e9a6b;
+  --btn: #191817; --btntx: #ffffff;
+  --school: #0f9a6c; --home: #c07d0c; --work: #2563eb; --money: #7c5cd6;
+  --dot: rgba(25,24,23,.09);
+} }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #faf9f6; --win: #ffffff; --win2: #f6f5f1; --side: #f4f3ef;
+  --sep: #e7e5df; --sep2: #d9d6ce; --dash: #cdc9c0; --hover: #eeece7; --sel: #e7e5df;
+  --tx: #191817; --tx2: #5c5954; --tx3: #67635d;
+  --ac: #e8501b; --acs: rgba(232,80,27,.08); --ok: #2e9a6b;
+  --btn: #191817; --btntx: #ffffff;
+  --school: #0f9a6c; --home: #c07d0c; --work: #2563eb; --money: #7c5cd6;
+  --dot: rgba(25,24,23,.09);
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--tx); font: 15px/1.6 var(--f-ui);
+  -webkit-font-smoothing: antialiased; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 96px;
+}
+a { color: var(--tx); text-decoration-color: var(--sep2); text-underline-offset: 3px; }
+a:hover { text-decoration-color: var(--tx2); }
+:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.wrap { max-width: 1080px; margin: 0 auto; }
+.col { max-width: 680px; }
+.lab { font-family: var(--f-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--tx3); }
+.mono { font-family: var(--f-mono); }
+h1 { font: 600 clamp(34px, 6vw, 56px)/1.02 var(--f-disp); letter-spacing: -.035em; margin: 8px 0 16px; text-wrap: balance; }
+h2 { font: 600 28px/1.15 var(--f-disp); letter-spacing: -.025em; margin: 0 0 12px; text-wrap: balance; }
+h3 { font: 600 16px/1.3 var(--f-disp); margin: 0 0 6px; }
+p { margin: 0 0 14px; }
+.lede { color: var(--tx2); font-size: 17px; max-width: 640px; }
+section { padding-block: 44px 8px; border-top: 1px dashed var(--dash); }
+section:first-of-type { border-top: 0; }
+.muted { color: var(--tx2); }
+code { font-family: var(--f-mono); font-size: 13px; background: var(--win2); border: 1px solid var(--sep); border-radius: 4px; padding: 0 4px; overflow-wrap: anywhere; }
+ul.plain { padding-left: 18px; margin: 0 0 14px; }
+ul.plain li { margin: 4px 0; }
+
+/* Hero */
+.hero { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 32px; align-items: center; padding-block: 56px 36px; }
+.mark { width: 120px; height: 150px; position: relative; }
+.mark svg { width: 100%; height: 100%; display: block; }
+@media (max-width: 640px) { .hero { grid-template-columns: 1fr; } .mark { width: 72px; height: 90px; } }
+
+/* Diagnosis */
+.why { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 18px; }
+.why div { border: 1px solid var(--sep); background: var(--win); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.why b { display: block; font: 600 15px/1.3 var(--f-disp); margin-bottom: 4px; }
+.why span { color: var(--tx2); font-size: 14px; }
+.why .ev { display: block; margin-top: 8px; font-family: var(--f-mono); font-size: 11.5px; color: var(--tx3); overflow-wrap: anywhere; }
+
+/* Four nouns */
+.nouns { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0; border: 1px solid var(--sep); border-radius: 8px; overflow: hidden; margin-top: 18px; background: var(--win); }
+.nouns > div { padding: 16px 18px; border-right: 1px solid var(--sep); border-bottom: 1px solid var(--sep); min-width: 0; }
+.nouns h3 { display: flex; gap: 8px; align-items: center; }
+.nouns p { color: var(--tx2); font-size: 14px; margin: 0 0 8px; }
+.nouns .rep { font-family: var(--f-mono); font-size: 11.5px; color: var(--tx3); }
+
+/* Tables */
+.tbl { overflow-x: auto; margin: 16px 0 8px; border: 1px solid var(--sep); border-radius: 8px; background: var(--win); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 640px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--sep); }
+th { font: 500 11px/1.4 var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--tx3); background: var(--win2); }
+tr:last-child td { border-bottom: 0; }
+td.k { font-weight: 600; white-space: nowrap; }
+td .muted { font-size: 13px; }
+
+/* Mockup frame */
+.fig { margin: 22px 0 6px; }
+.fig .cap { margin-top: 10px; color: var(--tx3); font-size: 13px; max-width: 680px; }
+.app {
+  border: 1px solid var(--sep2); border-radius: 10px; overflow: hidden; background: var(--bg);
+  display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: 560px;
+  font-size: 13.5px; line-height: 1.5;
+}
+.side { background: var(--side); border-right: 1px solid var(--sep); padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.brand { display: flex; align-items: center; gap: 8px; padding: 4px 8px 10px; font: 600 15px var(--f-disp); }
+.brand .kbd { margin-left: auto; }
+.row { display: flex; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 6px; color: var(--tx2); min-width: 0; }
+.row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.row .s { font-size: 11.5px; color: var(--tx3); white-space: nowrap; }
+.row.on { background: var(--sel); color: var(--tx); }
+.row.main { color: var(--tx); font-weight: 500; }
+.grp { display: flex; align-items: center; gap: 6px; padding: 12px 8px 4px; font: 500 10.5px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--tx3); }
+.grp.need { color: var(--ac); }
+.grp .n { margin-left: auto; }
+.sq { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.sq.ac { background: var(--ac); }
+.av { width: 18px; height: 18px; border-radius: 5px; flex: none; display: grid; place-items: center; font: 600 10px var(--f-disp); color: #fff; }
+.spin { width: 12px; flex: none; font-family: var(--f-mono); font-size: 12px; color: var(--ac); text-align: center; }
+.chk { width: 12px; flex: none; font-size: 11px; color: var(--ok); text-align: center; }
+.foot { margin-top: auto; border-top: 1px solid var(--sep); padding-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+.kbd { font: 500 10.5px var(--f-mono); color: var(--tx3); border: 1px solid var(--sep2); border-radius: 4px; padding: 0 5px; }
+.dm { width: 16px; height: 18px; flex: none; }
+
+.pane { display: flex; flex-direction: column; min-width: 0;
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 16px 16px; }
+.bar { display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-bottom: 1px solid var(--sep); background: var(--bg); min-width: 0; flex-wrap: wrap; }
+.bar .ttl { font: 600 15px var(--f-disp); }
+.bar .sub { color: var(--tx3); font-size: 12px; }
+.bar .r { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.pill { font-size: 12px; color: var(--tx2); border: 1px solid var(--sep2); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+.pill.ac { color: var(--ac); border-color: color-mix(in srgb, var(--ac) 45%, transparent); }
+.msgs { flex: 1; padding: 20px 22px 8px; display: flex; flex-direction: column; gap: 14px; max-width: 700px; width: 100%; margin: 0 auto; min-width: 0; }
+.me { align-self: flex-end; background: var(--sel); border-radius: 14px 14px 4px 14px; padding: 8px 13px; max-width: 78%; }
+.at { display: grid; grid-template-columns: 16px minmax(0,1fr); gap: 10px; }
+.at .dm { margin-top: 3px; }
+.at p { margin: 0 0 6px; }
+.rcpt { font-size: 12px; color: var(--tx3); display: flex; gap: 10px; flex-wrap: wrap; }
+.rcpt b { color: var(--tx2); font-weight: 500; }
+.tcard { border: 1px solid var(--sep2); background: var(--win); border-radius: 8px; padding: 10px 12px; display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 4px 10px; align-items: center; margin-top: 6px; }
+.tcard .tt { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcard .now { grid-column: 2 / 4; color: var(--tx3); font-size: 12.5px; }
+.tcard .go { font-size: 12px; color: var(--tx2); }
+.ask { border: 1px solid color-mix(in srgb, var(--ac) 45%, var(--sep2)); background: var(--acs); border-radius: 8px; padding: 10px 12px; margin-top: 6px; }
+.ask .opts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.opt { font-size: 12.5px; border: 1px solid var(--sep2); background: var(--win); border-radius: 6px; padding: 3px 10px; }
+.opt.pri { background: var(--btn); color: var(--btntx); border-color: var(--btn); }
+.comp { margin: 8px 22px 16px; max-width: 700px; align-self: center; width: calc(100% - 44px); border: 1px solid var(--sep2); background: var(--win); border-radius: 12px; padding: 10px 14px; color: var(--tx3); display: flex; align-items: center; gap: 10px; }
+.comp .r { margin-left: auto; display: flex; gap: 6px; }
+.moved { font-size: 12px; color: var(--tx3); border-left: 2px solid var(--sep2); padding-left: 10px; }
+.moved b { color: var(--tx2); font-weight: 500; }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; border-radius: 999px; padding: 0 8px; border: 1px solid var(--sep2); color: var(--tx2); }
+
+/* Space view */
+.spacehead { padding: 18px 22px 12px; border-bottom: 1px solid var(--sep); background: var(--bg); }
+.spacehead .who { display: flex; gap: 12px; align-items: center; }
+.spacehead .big { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font: 700 17px var(--f-disp); color: #fff; }
+.spacehead h4 { margin: 0; font: 600 19px/1.2 var(--f-disp); }
+.spacehead .what { color: var(--tx3); font-size: 12.5px; }
+.tabs { display: flex; gap: 16px; margin-top: 12px; font-size: 13px; color: var(--tx3); flex-wrap: wrap; }
+.tabs .on { color: var(--tx); box-shadow: inset 0 -2px 0 var(--tx); padding-bottom: 4px; }
+.spacebody { display: grid; grid-template-columns: minmax(0, 1fr) 230px; gap: 0; flex: 1; min-width: 0; }
+.feed { padding: 16px 22px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.rail { border-left: 1px solid var(--sep); padding: 16px; display: flex; flex-direction: column; gap: 14px; background: var(--bg); min-width: 0; }
+.rail .item { font-size: 12.5px; color: var(--tx2); }
+.rail .item b { display: block; color: var(--tx); font-weight: 500; }
+.post { display: grid; grid-template-columns: 16px minmax(0,1fr); gap: 10px; }
+.post .when { font-size: 11.5px; color: var(--tx3); }
+.post .reply { font-size: 12px; color: var(--tx3); margin-top: 4px; }
+
+/* Phone */
+.phones { display: flex; gap: 22px; flex-wrap: wrap; justify-content: flex-start; }
+.phone { width: 300px; max-width: 100%; border: 1px solid var(--sep2); border-radius: 30px; background: var(--bg); padding: 14px 0 0; overflow: hidden; font-size: 13px; line-height: 1.45; display: flex; flex-direction: column; min-height: 560px; }
+.phone .top { display: flex; align-items: center; gap: 8px; padding: 6px 16px 10px; font: 600 17px var(--f-disp); }
+.phone .top .r { margin-left: auto; font: 500 12px var(--f-ui); color: var(--tx3); }
+.phone .list { padding: 0 8px; display: flex; flex-direction: column; gap: 1px; flex: 1; }
+.phone .row { padding: 8px 8px; }
+.tabbar { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--sep); padding: 8px 0 14px; font-size: 10.5px; color: var(--tx3); text-align: center; background: var(--side); }
+.tabbar .on { color: var(--tx); font-weight: 500; }
+.tabbar .badge { color: var(--ac); }
+.tg { background: color-mix(in srgb, var(--work) 8%, var(--bg)); }
+.tg .bub { margin: 0 12px; padding: 7px 11px; border-radius: 12px; background: var(--win); border: 1px solid var(--sep); max-width: 86%; }
+.tg .bub.me2 { align-self: flex-end; background: color-mix(in srgb, var(--work) 22%, var(--win)); border-color: transparent; }
+.tg .topics { display: flex; gap: 6px; padding: 0 12px 10px; overflow-x: auto; }
+.tg .topics span { font-size: 11.5px; white-space: nowrap; border: 1px solid var(--sep2); border-radius: 999px; padding: 1px 9px; color: var(--tx2); background: var(--win); }
+.tg .topics span.on { background: var(--btn); color: var(--btntx); border-color: var(--btn); }
+
+@media (max-width: 860px) {
+  .app { grid-template-columns: 1fr; }
+  .side { border-right: 0; border-bottom: 1px solid var(--sep); }
+  .spacebody { grid-template-columns: 1fr; }
+  .rail { border-left: 0; border-top: 1px solid var(--sep); }
+}
+
+/* Smoke test */
+ol.smoke { padding-left: 22px; margin: 10px 0 14px; }
+ol.smoke li { margin: 6px 0; }
+.dec { display: grid; gap: 10px; margin-top: 14px; }
+.dec div { border: 1px solid var(--sep); background: var(--win); border-radius: 8px; padding: 12px 16px; }
+.dec b { font: 600 15px var(--f-disp); }
+.dec .rec { display: block; margin-top: 4px; font-size: 13.5px; color: var(--tx2); }
+.dec .rec::before { content: "Recommended: "; color: var(--ac); font-weight: 500; }
+.src li { font-size: 13.5px; color: var(--tx2); overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: no-preference) {
+  .spin.live { animation: blink 1.2s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="dm" viewBox="0 0 40 48">
+      <path d="M20 2 L38 24 L20 24 Z" fill="#ffb48c"/>
+      <path d="M20 2 L2 24 L20 24 Z" fill="#ff6a3d"/>
+      <path d="M2 24 L20 46 L20 24 Z" fill="#e2442a"/>
+      <path d="M38 24 L20 46 L20 24 Z" fill="#b02e1d"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="mark"><svg aria-hidden="true"><use href="#dm"/></svg></div>
+  <div style="min-width:0">
+    <div class="lab">Proposal · UX redesign · 2026-10-26</div>
+    <h1>One Atlas, many threads</h1>
+    <p class="lede">Atlas today is one endless conversation that does one thing at a time. This proposal splits the work into threads that run side by side, turns areas into spaces that feel like dedicated bots, and keeps the one mind and one memory that make Atlas worth using. Four nouns replace nine places.</p>
+  </div>
+</header>
+
+<section id="why">
+  <div class="col">
+    <div class="lab">1 · Why it feels clunky</div>
+    <h2>Everything goes through one door, one at a time</h2>
+    <p class="muted">These come from the code and from the feel audit run on the deployment this morning.</p>
+  </div>
+  <div class="why">
+    <div><b>One turn at a time</b><span>Every owner turn waits in a single line. Ask for the laptops while the video plan is being written and the second message waits for the first to finish.</span><span class="ev">core/src/agent.ts · #inLine, one queue for every run</span></div>
+    <div><b>One endless thread</b><span>Small talk, briefs, receipts, job questions and results all land in Home. "hey" was read as more of the launch video talk before it, and cost 100k tokens and five tools.</span><span class="ev">docs/M7.md · third Jarvis run</span></div>
+    <div><b>Work hides in four places</b><span>A job is a card in the thread, a count in the toolbar, an item in Inbox and rows in History. "How's it going?" answered about the wrong job, twice.</span><span class="ev">docs/M7.md · fourth Jarvis run</span></div>
+    <div><b>Areas are invisible</b><span>Areas are the best idea in the data model and the hardest one to find in the app: a scope switcher, chips, and a table in Library. Nobody opens an area to talk about it.</span><span class="ev">VISION §21.3</span></div>
+    <div><b>Nine places to learn</b><span>Home, Inbox, Agenda, Automations, Library, People, Abilities, History and settings, for a product whose home is a conversation.</span><span class="ev">docs/AUDIT-feel.md · open item 2</span></div>
+    <div><b>Atlas rarely starts anything</b><span>90 messages from the owner and 2 that Atlas started, over 40 hours. Anything it starts competes with everything else in the one thread.</span><span class="ev">docs/M7.md · stage 6d</span></div>
+  </div>
+</section>
+
+<section id="market">
+  <div class="col">
+    <div class="lab">2 · What the market does</div>
+    <h2>MARKET_PLACEHOLDER</h2>
+  </div>
+</section>
+
+<section id="model">
+  <div class="col">
+    <div class="lab">3 · The model</div>
+    <h2>Four nouns</h2>
+    <p>Everyone already knows this shape from Slack, iMessage and Claude: a person you talk to, conversations with them, rooms for parts of your life, and a list of what's waiting on you. Atlas keeps one mind, one memory and one log underneath all four.</p>
+  </div>
+  <div class="nouns">
+    <div>
+      <h3><svg class="dm" aria-hidden="true"><use href="#dm"/></svg>Atlas</h3>
+      <p>The line to Atlas itself, always at the top. Quick asks, small talk, voice, and where Atlas texts you first. It stays short because work moves out of it.</p>
+      <div class="rep">Replaces: Home's thread</div>
+    </div>
+    <div>
+      <h3><span class="spin">⠹</span>Threads</h3>
+      <p>One per piece of work or topic: "Launch video", "Lisbon trip", "Laptop under $1,500". Each has its own context and runs at the same time as the others. A job is a thread Atlas is working in.</p>
+      <div class="rep">Replaces: jobs, the jobs button, job cards</div>
+    </div>
+    <div>
+      <h3><span class="av" style="background:var(--work)">K</span>Spaces</h3>
+      <p>Your areas as rooms that feel like dedicated bots: Keyframes, School, Home, Money. Each has its own feed of what Atlas noticed and did there, its threads, its routines and its rules.</p>
+      <div class="rep">Replaces: areas, the scope switcher</div>
+    </div>
+    <div>
+      <h3><span class="sq ac"></span>Needs you</h3>
+      <p>The top of the sidebar: every thread waiting on a decision, an approval or a look. Answer it there or in its thread; it's the same message.</p>
+      <div class="rep">Replaces: Inbox as a place</div>
+    </div>
+  </div>
+  <div class="col" style="margin-top:22px">
+    <p>That's also rule 3 at work: threads are one mechanism that replaces three (jobs as their own concept, Inbox as a place, the scope switcher). Agenda and Library stay. Automations, People, Abilities and History move under one Atlas page beside settings, still one click and one question away.</p>
+  </div>
+</section>
+
+<section id="desktop">
+  <div class="col">
+    <div class="lab">4 · On the desktop</div>
+    <h2>The sidebar is mission control</h2>
+    <p>The sidebar stops being a list of pages and becomes a list of what's going on: what needs you, what Atlas is working on, your spaces, and recent threads. You can see five things running in parallel without opening any of them.</p>
+  </div>
+  <div class="fig">
+    <div class="app" role="img" aria-label="Mockup of the Atlas desktop app with the thread sidebar">
+      <aside class="side">
+        <div class="brand"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg>Atlas <span class="kbd">⌘N</span></div>
+        <div class="row main on"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg><span class="t">Atlas</span><span class="s">now</span></div>
+
+        <div class="grp need"><span class="sq ac"></span>Needs you<span class="n">2</span></div>
+        <div class="row"><span class="av" style="background:var(--work)">K</span><span class="t">Launch video · pick a track</span></div>
+        <div class="row"><span class="av" style="background:var(--home)">H</span><span class="t">Text to Mom · review</span></div>
+
+        <div class="grp">Working<span class="n">3</span></div>
+        <div class="row"><span class="spin live">⠹</span><span class="t">Laptop under $1,500</span><span class="s">4m</span></div>
+        <div class="row"><span class="spin live">⠹</span><span class="t">Lisbon trip</span><span class="s">holding</span></div>
+        <div class="row"><span class="spin live">⠹</span><span class="t">reverb · fix the export test</span><span class="s">tests</span></div>
+
+        <div class="grp">Spaces</div>
+        <div class="row"><span class="av" style="background:var(--work)">K</span><span class="t">Keyframes</span><span class="s">3</span></div>
+        <div class="row"><span class="av" style="background:var(--school)">S</span><span class="t">School</span><span class="s">1</span></div>
+        <div class="row"><span class="av" style="background:var(--home)">H</span><span class="t">Home</span></div>
+        <div class="row"><span class="av" style="background:var(--money)">M</span><span class="t">Money</span></div>
+
+        <div class="grp">Recent</div>
+        <div class="row"><span class="chk">✓</span><span class="t">Saturday plans</span><span class="s">done</span></div>
+        <div class="row"><span class="chk"></span><span class="t">Dentist to Thursday</span><span class="s">2h</span></div>
+
+        <div class="foot">
+          <div class="row"><span class="t">Agenda</span></div>
+          <div class="row"><span class="t">Library</span></div>
+          <div class="row"><span class="t">Atlas and settings</span></div>
+        </div>
+      </aside>
+      <div class="pane">
+        <div class="bar"><span class="ttl">Atlas</span><span class="sub">Sun, Oct 26 · 9:41 AM</span><span class="r"><span class="pill">Talk <span class="kbd">Space</span></span><span class="pill">Search <span class="kbd">⌘K</span></span></span></div>
+        <div class="msgs">
+          <div class="me">Find me a laptop under $1,500 for video editing. Best three.</div>
+          <div class="at"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg><div>
+            <p>On it. I'll compare export speed, the screen and battery under load, and come back with three.</p>
+            <div class="tcard"><span class="spin live">⠹</span><span class="tt">Laptop under $1,500</span><span class="go">Open ›</span><span class="now">Reading reviews, prices and battery tests at once</span></div>
+          </div></div>
+          <div class="me">also is it gonna rain on my walk to class</div>
+          <div class="at"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg><div>
+            <p>Dry until about 2. You're fine for the 10:30, but take a jacket for the walk back.</p>
+            <div class="rcpt"><span>Looked at the weather</span></div>
+          </div></div>
+          <div class="me">Lisbon: can you hold the 7:40 flight if it's still under $600</div>
+          <div class="at"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg><div>
+            <div class="moved">Went to <b>Lisbon trip</b>, where the flights are · <a href="#desktop">Undo</a></div>
+          </div></div>
+        </div>
+        <div class="comp"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg>Message Atlas<span class="r"><span class="kbd">@ space</span><span class="kbd">/</span></span></div>
+      </div>
+    </div>
+    <p class="cap">The laptop search became its own thread and runs while the weather question is answered at once. The Lisbon message went to the thread that already holds the flights, with Undo, since a wrong guess should be cheap (VISION rule 9).</p>
+  </div>
+</section>
+
+<section id="spaces">
+  <div class="col">
+    <div class="lab">5 · Spaces: the bot feel without the bot problems</div>
+    <h2>Each space feels like its own bot</h2>
+    <p>The appeal of bots is real: a named thing that owns one part of your life, has its own feed, does its job without being asked, and that you can message directly. A space gives you all of that. It has a name, an icon and a color, its own feed, its own rules ("in Money, always ask before paying"), its own routines, and you can @mention it from anywhere.</p>
+    <p>What it doesn't have is its own memory or its own character. Separate bots can't answer "can I afford Lisbon after the Keyframes invoice?", because Money doesn't know Keyframes and neither knows your trip. Under every space is the same Atlas, so it can. This keeps VISION §8.4 (one relationship, many hands) and gives it a face people already understand.</p>
+  </div>
+  <div class="fig">
+    <div class="app" role="img" aria-label="Mockup of the Keyframes space">
+      <aside class="side">
+        <div class="brand"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg>Atlas</div>
+        <div class="row main"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg><span class="t">Atlas</span></div>
+        <div class="grp need"><span class="sq ac"></span>Needs you<span class="n">2</span></div>
+        <div class="row"><span class="av" style="background:var(--work)">K</span><span class="t">Launch video · pick a track</span></div>
+        <div class="row"><span class="av" style="background:var(--home)">H</span><span class="t">Text to Mom · review</span></div>
+        <div class="grp">Spaces</div>
+        <div class="row on"><span class="av" style="background:var(--work)">K</span><span class="t">Keyframes</span><span class="s">3</span></div>
+        <div class="row"><span class="av" style="background:var(--school)">S</span><span class="t">School</span><span class="s">1</span></div>
+        <div class="row"><span class="av" style="background:var(--home)">H</span><span class="t">Home</span></div>
+        <div class="row"><span class="av" style="background:var(--money)">M</span><span class="t">Money</span></div>
+        <div class="foot">
+          <div class="row"><span class="t">Agenda</span></div>
+          <div class="row"><span class="t">Library</span></div>
+        </div>
+      </aside>
+      <div class="pane">
+        <div class="spacehead">
+          <div class="who"><span class="big" style="background:var(--work)">K</span><div><h4>Keyframes</h4><div class="what">Your studio · 3 clients · sends from max@keyframes.studio</div></div></div>
+          <div class="tabs"><span class="on">Feed</span><span>Threads 4</span><span>Page</span><span>Routines 2</span><span>Rules</span></div>
+        </div>
+        <div class="spacebody">
+          <div class="feed">
+            <div class="post"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg><div>
+              <div class="when">8:12 AM</div>
+              <p style="margin:0 0 4px">Doug moved the Riverside shoot to Friday. That clashes with your 2 PM edit review, so I held Thursday 2 PM instead. Want me to tell him?</p>
+              <div class="ask" style="margin-top:6px"><div class="opts"><span class="opt pri">Tell Doug</span><span class="opt">Keep Friday</span></div></div>
+            </div></div>
+            <div class="post"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg><div>
+              <div class="when">Yesterday</div>
+              <p style="margin:0">The teaser is ready: 14 seconds, opening on the bridge shot.</p>
+              <div class="reply">2 files · 3 replies in its thread ›</div>
+            </div></div>
+            <div class="post"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg><div>
+              <div class="when">Yesterday</div>
+              <p style="margin:0">Northwind paid invoice #014, $2,400. Nothing else is outstanding.</p>
+            </div></div>
+          </div>
+          <div class="rail">
+            <div class="lab">Working here</div>
+            <div class="item"><b>Launch video</b>Waiting on you to pick a track</div>
+            <div class="item"><b>reverb · export test</b>Tests running</div>
+            <div class="lab">Next</div>
+            <div class="item"><b>Standup · 10:30 AM</b>In 49 min, with Doug and Ana</div>
+            <div class="lab">Rules</div>
+            <div class="item">Formal with clients. Ask before any email goes out as you.</div>
+          </div>
+        </div>
+        <div class="comp"><span class="av" style="background:var(--work)">K</span>Message Keyframes<span class="r"><span class="kbd">⌘N thread</span></span></div>
+      </div>
+    </div>
+    <p class="cap">A space is the area page you already have, turned into a room you can talk in. Its feed is where Atlas posts what it noticed in Keyframes, so the main line stays quiet. Replying to a post opens a thread on it.</p>
+  </div>
+</section>
+
+<section id="rules">
+  <div class="col">
+    <div class="lab">6 · How it behaves</div>
+    <h2>Rules that keep it simple</h2>
+    <h3>Where a message goes</h3>
+    <ul class="plain">
+      <li>What you type in a thread or space goes there. No guessing.</li>
+      <li>In the Atlas line, quick asks get answered right there. Long work (what <code>job_own</code> decides today) starts a thread, shown as a card you can open.</li>
+      <li>A message that clearly continues an open thread goes to it, with "Went to Lisbon trip · Undo". One tap moves it back.</li>
+      <li><code>@Keyframes draft the invoice</code> from anywhere starts a thread in that space.</li>
+      <li>Any message has "Move to a thread", for when a chat turns into a project.</li>
+    </ul>
+    <h3>Parallel</h3>
+    <ul class="plain">
+      <li>Each thread has its own line of turns, so threads run at the same time. Within one thread, turns stay in order.</li>
+      <li>A new message in a busy thread stops its turn and keeps its work, as a job's thread already does.</li>
+      <li>A cap (proposed: four at once) keeps the brain bill and rate limits sane; past it, a thread waits and says so on its row.</li>
+    </ul>
+    <h3>One memory</h3>
+    <ul class="plain">
+      <li>Every thread writes to the one log and the same records, so a fact learned in one is known in all.</li>
+      <li>Every turn sees one line per open thread ("Launch video: waiting on the owner to pick a track"), so "how's the video going?" works from anywhere.</li>
+      <li>Each thread reads only its own recent messages and summary. That's why "hey" stops being read as video talk, and why turns get cheaper.</li>
+    </ul>
+    <h3>Staying tidy</h3>
+    <ul class="plain">
+      <li>Atlas names threads. Ones nobody touched in three days leave Recent and stay in search. Pin what you live in.</li>
+      <li>Only a question and a result notify, as jobs do today. Everything else updates the thread's row.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="phone">
+  <div class="col">
+    <div class="lab">7 · On the phone and in Telegram</div>
+    <h2>The same shape everywhere</h2>
+    <p>On the phone the sidebar is the first screen, like Messages. In Telegram, each thread can be a topic in the chat with Atlas, which Telegram's bot API has supported in private chats since version 9.3. Where topics aren't available, Atlas names the thread at the top of its message, and replying to a message routes to its thread.</p>
+  </div>
+  <div class="fig">
+    <div class="phones">
+      <div class="phone" role="img" aria-label="Phone mockup of the thread list">
+        <div class="top"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg>Atlas<span class="r">Edit</span></div>
+        <div class="list">
+          <div class="row main"><svg class="dm" aria-hidden="true"><use href="#dm"/></svg><span class="t">Atlas<br><span class="s">Dry until about 2. Take a jacket…</span></span></div>
+          <div class="grp need"><span class="sq ac"></span>Needs you<span class="n">2</span></div>
+          <div class="row"><span class="av" style="background:var(--work)">K</span><span class="t">Launch video<br><span class="s">Which track should it use?</span></span></div>
+          <div class="row"><span class="av" style="background:var(--home)">H</span><span class="t">Text to Mom<br><span class="s">Ready to send · review</span></span></div>
+          <div class="grp">Working<span class="n">3</span></div>
+          <div class="row"><span class="spin live">⠹</span><span class="t">Laptop under $1,500<br><span class="s">Reading battery tests</span></span></div>
+          <div class="row"><span class="spin live">⠹</span><span class="t">Lisbon trip<br><span class="s">Holding the 7:40 at $548</span></span></div>
+          <div class="grp">Spaces</div>
+          <div class="row"><span class="av" style="background:var(--work)">K</span><span class="t">Keyframes</span><span class="s">3</span></div>
+          <div class="row"><span class="av" style="background:var(--school)">S</span><span class="t">School</span><span class="s">1</span></div>
+        </div>
+        <div class="tabbar"><span class="on">Threads</span><span>Agenda</span><span>Library</span><span>More</span></div>
+      </div>
+      <div class="phone tg" role="img" aria-label="Telegram mockup with one topic per thread">
+        <div class="top">Atlas<span class="r">bot</span></div>
+        <div class="topics"><span>General</span><span class="on">Launch video</span><span>Lisbon trip</span><span>Laptops</span></div>
+        <div class="list" style="gap:10px; padding:0">
+          <div class="bub">I found three tracks that fit the pace of the demo. Which one?</div>
+          <div class="bub">▶ Track 1 · 0:30<br>▶ Track 2 · 0:30<br>▶ Track 3 · 0:30</div>
+          <div class="bub me2">2, but cut it faster</div>
+          <div class="bub">Got it. Recutting to 2 at 128 BPM, I'll send it here.</div>
+        </div>
+        <div class="tabbar" style="grid-template-columns:1fr; text-align:left; padding-left:14px">Message</div>
+      </div>
+    </div>
+    <p class="cap">Left: the phone's first screen. Right: a Telegram chat where each thread is its own topic, so a question about the video never lands in the middle of a chat about flights.</p>
+  </div>
+</section>
+
+<section id="edge">
+  <div class="col">
+    <div class="lab">8 · Why this beats Hermes and OpenClaw</div>
+    <h2>EDGE_PLACEHOLDER</h2>
+  </div>
+</section>
+
+<section id="build">
+  <div class="col">
+    <div class="lab">9 · How it maps to the code</div>
+    <h2>Most of it already exists, as jobs</h2>
+    <p>A job is already "a conversation of its own" (VISION §8.3): its own transcript, its notes, a card, a thread one tap away, turns that stream, and words that interrupt a turn. A thread is a job that doesn't have to be working. So the build generalizes jobs rather than adding a mechanism.</p>
+  </div>
+  <div class="tbl"><table>
+    <thead><tr><th>Stage</th><th>What changes</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td class="k">1 · Threads in the core</td><td>A thread record (title, space, state, summary, last activity); the main conversation becomes the Atlas thread; jobs become threads in a working state. Log rows carry their thread. One line of turns per thread instead of one for everything, with a cap. Each turn reads its thread's window and summary, plus one line per open thread.<br><span class="muted">The single line is <code>#inLine</code>; job threads are <code>jobThread</code> and the job's transcript; the open-work lines are <code>ownedLines</code>.</span></td><td class="mono">core/src/agent.ts<br>core/src/agent/jobs.ts<br>core/src/store/log.ts<br>core/src/compaction.ts</td></tr>
+      <tr><td class="k">2 · The sidebar and the thread view</td><td>The sidebar lists Needs you, Working, Spaces and Recent; any thread opens in the main pane, using the job thread view the app already has. ⌘N, ⌘1 to 9, and Tab to step through what needs you. Inbox's items become the Needs you group.</td><td class="mono">app/src/Shell.tsx<br>app/src/Thread.tsx<br>app/src/JobViews.tsx<br>core/src/protocol.ts</td></tr>
+      <tr><td class="k">3 · Spaces</td><td>Each area gets a space: the area page as its header, a feed of what Atlas said in it on its own (nudges, automation reports, a face's handoffs), its threads, routines and rules. The scope switcher goes; opening a space is the focus, and it still holds other spaces' pings.</td><td class="mono">core/src/agent/areas.ts<br>app/src/pages/Places.tsx</td></tr>
+      <tr><td class="k">4 · Channels and voice</td><td>Telegram topics per thread where the chat has them, else a named first line and reply routing. Voice talks in the thread on screen, or in the Atlas line from the car, and "in the Lisbon thread, …" routes.</td><td class="mono">extensions/telegram<br>core/src/outbox.ts</td></tr>
+      <tr><td class="k">5 · Fewer places</td><td>Agenda and Library stay. People moves into Library. Automations, Abilities and History go under one Atlas page beside settings.</td><td class="mono">app/src/pages/*</td></tr>
+    </tbody>
+  </table></div>
+  <div class="col">
+    <p class="muted">The VISION sections that change, in their own commit once you say yes: §8.4 (one Atlas, shown as spaces), §21.1 (the shell), §21.2 (the places), §21.3 (areas in the app) and §21.4 (jobs are threads).</p>
+  </div>
+</section>
+
+<section id="smoke">
+  <div class="col">
+    <div class="lab">10 · Smoke test, written before building</div>
+    <h2>Done when these pass on the deployment</h2>
+    <ol class="smoke">
+      <li>Asking for laptop research and then "is it gonna rain?" gets the weather answer within 2 seconds while the research runs; the sidebar shows the research as Working.</li>
+      <li>Three threads work at once (research, a coding job, a trip plan), each with its own row and state, and none waits on another.</li>
+      <li>"hey" in the Atlas line, while a video thread is working, gets a hey back, one brain call, and nothing about the video.</li>
+      <li>"How's the video going?" from the Atlas line, from another thread, and by voice each answers about the video.</li>
+      <li>A fact told in one thread ("I'm vegetarian") is used in another the same hour.</li>
+      <li>A message continuing the Lisbon plan, typed in the Atlas line, lands in Lisbon trip with Undo; Undo moves it back.</li>
+      <li>A thread's question shows under Needs you on the desktop, the phone and Telegram, and answering it in any of them clears it in all.</li>
+      <li>Keyframes' feed shows Atlas's nudge about the moved shoot; replying to it opens a thread in Keyframes, in its tone and from its email account.</li>
+      <li>"@Money can I afford the Lisbon flights?" from the Keyframes space answers with what Atlas knows of both.</li>
+      <li>In Telegram, the video's question arrives in the video's topic, and a reply there goes to that thread.</li>
+      <li>A deploy while two threads are working loses nothing in either.</li>
+      <li>A fifth thread started while four are working says it's waiting, and starts when one finishes.</li>
+    </ol>
+    <p class="muted">Regression: M7's lines C1 to C10 and W1 to W23 still pass, read with "job" meaning a working thread.</p>
+  </div>
+</section>
+
+<section id="decide">
+  <div class="col">
+    <div class="lab">11 · For you to decide</div>
+    <h2>Five choices before building</h2>
+  </div>
+  <div class="dec col">
+    <div><b>Spaces that feel like bots, or separate bots?</b><span class="rec">Spaces with one mind underneath. Separate bots split memory, which is what makes cross-area questions fail, and what OpenClaw users fight with in multi-agent setups.</span></div>
+    <div><b>Call them spaces, or keep "areas"?</b><span class="rec">Spaces in the app; "area" stays the word in the code and VISION's data model, so nothing underneath renames.</span></div>
+    <div><b>Should Atlas move messages to threads on its own?</b><span class="rec">Only for long work and for a clear continuation of an open thread, always with Undo. Everything else stays where it was typed.</span></div>
+    <div><b>How many threads at once?</b><span class="rec">Four working at once, shown in Settings → Brains with what it means for cost.</span></div>
+    <div><b>Before launch or after?</b><span class="rec">Before. It's the first thing a new user feels, and stages 1 and 2 are mostly reshaping jobs, which already work.</span></div>
+  </div>
+</section>
+
+<section id="sources">
+  <div class="col">
+    <div class="lab">Sources</div>
+    <ul class="plain src">
+      SOURCES_PLACEHOLDER
+    </ul>
+  </div>
+</section>
+
+</div>
