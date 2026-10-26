@@ -28,7 +28,8 @@ export function Services({
   const [chip, setChip] = useState("all");
   const [q, setQ] = useState("");
   const all = services(view, atlas.state.mcpServers, atlas.state.services);
-  const shown = open ? all.find((s) => s.key === open) : null;
+  // Opened by its card's key, or by its extension's id (from Inbox).
+  const shown = open ? (all.find((s) => s.key === open) ?? all.find((s) => s.ext?.id === open)) : null;
   if (shown) return <ServiceOpen atlas={atlas} s={shown} onBack={() => go("services")} />;
 
   const match = (s: Service) =>

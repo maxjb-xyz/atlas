@@ -703,7 +703,7 @@ describe("automations", () => {
     s.close();
   });
 
-  it("are suggested after the same ask three times, an hour or more apart, and not again once set aside", () =>
+  it("are suggested after the same ask on three different days, and not again once set aside", () =>
     runInDurableObject(env.PersonAgent.get(env.PersonAgent.idFromName(`s-${crypto.randomUUID()}`)), (_a, state) => {
       const sql = state.storage.sql;
       migrate(sql);
@@ -712,6 +712,8 @@ describe("automations", () => {
         sql.exec(`UPDATE log SET at = ? WHERE id = ?`, Date.now() - hoursAgo * 3600_000, row.id);
         return noticeAsk(sql, text);
       };
+      // Three times in one sitting is one occasion, not a habit.
+      for (const m of [0.3, 0.2, 0.1]) expect(ask("plan something fun for the weekend", m)).toBe(false);
       expect(ask("Send me the shoot gear checklist", 50)).toBe(false);
       // A retry a few minutes later counts as the same time.
       expect(ask("send me the shoot gear checklist please", 49.9)).toBe(false);

@@ -36,6 +36,8 @@ export interface RecordView {
   fact: string;
   details: Record<string, unknown>;
   areas: string[];
+  /** For people: when Atlas last dealt with them (a message from or to them, a face's conversation). */
+  touched_at?: number;
   learned_at: number;
   /** Whether Atlas learned it (from a conversation, a message or setup), not an import of contacts or an address seen on mail. */
   learned: boolean;
@@ -112,7 +114,7 @@ export interface ApprovalView {
 export interface InboxItem {
   /** The log row it comes from; for an approval, its id; for a question, its key. */
   id: string;
-  kind: "review" | "failed" | "approval" | "question" | "face";
+  kind: "review" | "failed" | "approval" | "question" | "face" | "service";
   title: string;
   text: string;
   at: number;
@@ -123,6 +125,8 @@ export interface InboxItem {
   question?: { key: string; yes: string; no: string };
   /** A coding job's question for the owner (§8.2): the answer goes back to its agent. */
   job?: { id: string; title: string; question: string; options: string[]; why?: string; content?: string; files?: FileRef[] };
+  /** A service Atlas uses that can't work until the owner does something: sign in again, give its key, or see why it fails. */
+  service?: { id: string; name: string; fix: "signin" | "key" | "error" };
   /** What a face handed the owner (§7.2): who it's from, the conversation, and whether it can be answered from here. */
   face?: {
     name: string;

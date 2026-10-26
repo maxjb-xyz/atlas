@@ -88,20 +88,22 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                     aria-expanded={on}
                     {...pressable(() => setOpen(i.id))}
                   >
-                    <span className={`tag ${i.kind === "failed" || i.kind === "approval" ? "ac" : ""}`}>
-                      {i.kind === "failed"
-                        ? "Didn't finish"
-                        : i.kind === "approval"
-                          ? i.approval?.hold
-                            ? "Can't be undone"
-                            : "Needs your OK"
-                          : i.kind === "question"
-                            ? "Question"
-                            : i.kind === "face"
-                              ? i.face?.urgent
-                                ? "Urgent, from a face"
-                                : "From a face"
-                              : "Ready for review"}
+                    <span className={`tag ${i.kind === "failed" || i.kind === "approval" || i.kind === "service" ? "ac" : ""}`}>
+                      {i.kind === "service"
+                        ? "Can't work"
+                        : i.kind === "failed"
+                          ? "Didn't finish"
+                          : i.kind === "approval"
+                            ? i.approval?.hold
+                              ? "Can't be undone"
+                              : "Needs your OK"
+                            : i.kind === "question"
+                              ? "Question"
+                              : i.kind === "face"
+                                ? i.face?.urgent
+                                  ? "Urgent, from a face"
+                                  : "From a face"
+                                : "Ready for review"}
                     </span>
                     <span style={{ fontWeight: 500 }} className="grow">
                       {i.title}
@@ -138,6 +140,27 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                     </div>
                   )}
                   {on && i.face && <FaceHandoff atlas={atlas} item={i} />}
+                  {on && i.service && (
+                    <div
+                      className="rise"
+                      style={{ display: "flex", flexDirection: "column", gap: 10 }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <p className="wrap-anywhere">{i.text}</p>
+                      <div className="row">
+                        <a
+                          className="btn primary"
+                          style={{ textDecoration: "none" }}
+                          href={`#/abilities/${encodeURIComponent(`services:${i.service.id}`)}`}
+                        >
+                          {i.service.fix === "signin" ? "Sign in" : i.service.fix === "key" ? "Add its key" : "See what's wrong"}
+                        </a>
+                        <button className="btn" onClick={() => atlas.send({ type: "atlas.ext.state", id: i.service!.id, on: false })}>
+                          Turn {i.service.name} off
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {on && i.job && <JobQuestion atlas={atlas} item={i} />}
                   {on && (i.job || i.approval || s.rows.some((r) => r.id === i.id)) && (
                     <span className="row small" style={{ gap: 18 }}>
@@ -151,7 +174,7 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
                       )}
                     </span>
                   )}
-                  {on && !i.approval && !i.question && !i.face && !i.job && (
+                  {on && !i.approval && !i.question && !i.face && !i.job && !i.service && (
                     <div className="rise" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       <div className="panel">{i.text ? <Markdown text={i.text} /> : "No details."}</div>
                       <div className="chain">

@@ -125,6 +125,8 @@ function Overview({
 }) {
   const s = atlas.state;
   const of = (t: string) => records.filter((r) => r.type === t).slice(0, 5);
+  // The newest places on their own: the list of everything is mostly people, so a place can fall outside it.
+  const places = useRecords(atlas, "lib:places", { record_type: "place", limit: 5 })?.records ?? of("place");
   const others = records.filter((r) => !["person", "place", "preference", "note"].includes(r.type)).slice(0, 5);
   const corrections = records.reduce((n, r) => n + r.corrections, 0);
   // Imported contacts and addresses seen on mail aren't learning: these are what Atlas wrote down itself, newest first.
@@ -181,7 +183,7 @@ function Overview({
               <Icon name="place" size={13} />
               Places<span className="count mono">{counts.place ?? 0}</span>
             </span>
-            <List list={of("place")} />
+            <List list={places} />
           </div>
           <div className="cell">
             <span className="lab">

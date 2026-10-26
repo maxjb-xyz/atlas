@@ -397,3 +397,21 @@ describe("an extension's hosts", () => {
     expect(allowedHost("workers.dev", ["workers.dev"])).toBe(true);
   });
 });
+
+describe("a service that needs the owner", () => {
+  it("is in Inbox until its key is given, and leaves it at once", async () => {
+    const s = await connect();
+    await inOwner((_a, sql) => uninstall(sql, "mapbox"));
+    s.send({ type: "atlas.ext.install", id: "mapbox" });
+    const waiting = await s.next("atlas.inbox.items", (m) => m.items.some((i) => i.id === "service:mapbox"));
+    expect(waiting.items.find((i) => i.id === "service:mapbox")).toMatchObject({
+      kind: "service",
+      title: "Mapbox needs its key",
+      service: { id: "mapbox", fix: "key" },
+    });
+    s.send({ type: "atlas.ext.secrets", id: "mapbox", secrets: { token: "pk.test_token_1234" } });
+    await s.next("atlas.inbox.items", (m) => !m.items.some((i) => i.id === "service:mapbox"));
+    // Turned off, a service doesn't need anyone.
+    await inOwner((_a, sql) => uninstall(sql, "mapbox"));
+  });
+});

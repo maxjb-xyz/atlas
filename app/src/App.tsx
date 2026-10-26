@@ -219,7 +219,13 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
       if (e.key === "Escape") setPalette(false);
       if (e.code !== "Space" || e.repeat) return;
       const t = e.target as HTMLElement | null;
-      if (t && (t.closest("input, textarea, select, button, [contenteditable]") || t.isContentEditable)) return;
+      // Space belongs to whatever has focus (a row, a link, a card that opens); it starts voice only from the page itself.
+      if (
+        t &&
+        (t.closest("input, textarea, select, button, a, label, summary, [role=button], [role=option], [tabindex], [contenteditable]") ||
+          t.isContentEditable)
+      )
+        return;
       e.preventDefault();
       void atlas.toggleCall();
     };

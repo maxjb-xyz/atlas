@@ -946,7 +946,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       run: (o) => this.#faceRun(o),
       send: (o) => this.#faceSend(o),
       push: (text, row) => this.#outbox.notify({ id: row.id, run_id: null, text }, "now", { url: "/#/inbox" }),
-      changed: () => this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) }),
+      changed: () => this.#broadcast({ type: "atlas.inbox.items", items: this.#inbox() }),
     });
     this.#channels = new ChannelDesk({
       sql: this.#sql,
@@ -960,14 +960,14 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           const text = owned?.options[option];
           if (!text) return { ok: false, text: "That question was already answered." };
           const out = await this.#owned.answer(id, text, { answers: owned!.log });
-          this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+          this.#broadcast({ type: "atlas.inbox.items", items: this.#inbox() });
           return out;
         }
         const q = getJob(this.#sql, id)?.question;
         const text = q && !q.site ? q.options[option] : undefined;
         if (!text) return { ok: false, text: "That question was already answered." };
         const out = await this.#coding.answer(id, text, "chat");
-        this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+        this.#broadcast({ type: "atlas.inbox.items", items: this.#inbox() });
         return out;
       },
       face: async (o) => this.#faces.take(o),
@@ -1483,7 +1483,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         const out = await this.#faces.answer(msg.id, msg.text);
         if (!out.ok) this.#send(connection, { type: "atlas.error", message: out.text });
         else inboxDone(this.#sql, msg.id);
-        this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+        this.#broadcast({ type: "atlas.inbox.items", items: this.#inbox() });
         return;
       }
       case "atlas.member.invite": {
@@ -1711,6 +1711,20 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
           limit: msg.limit,
           ...(msg.learned ? { learned: true } : {}),
         });
+        // People lead with who Atlas deals with: when each was last in a message, a send or a face's conversation.
+        if (msg.record_type === "person" && out.records.length) {
+          const touched = new Map(
+            this.#sql
+              .exec<{ person: string; at: number }>(
+                `SELECT json_extract(body, '$.person') AS person, MAX(at) AS at FROM log
+                 WHERE kind IN ('sense', 'delivery', 'face.in', 'face.out') AND json_extract(body, '$.person') IS NOT NULL
+                 GROUP BY person`,
+              )
+              .toArray()
+              .map((r) => [r.person, r.at]),
+          );
+          out.records = out.records.map((r) => (touched.has(r.id) ? { ...r, touched_at: touched.get(r.id)! } : r));
+        }
         this.#send(connection, { type: "atlas.records", ref: msg.ref, ...out });
         return;
       }
@@ -1789,7 +1803,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         return;
       }
       case "atlas.inbox":
-        this.#send(connection, { type: "atlas.inbox.items", items: inbox(this.#sql) });
+        this.#send(connection, { type: "atlas.inbox.items", items: this.#inbox() });
         return;
       case "atlas.presence": {
         const st = (connection.state as SocketState | null) ?? {};
@@ -1849,7 +1863,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             kind: "settings.change",
             body: { trust: msg.trusted ? "given" : "taken back", name: t.name },
           });
-        this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+        this.#broadcast({ type: "atlas.inbox.items", items: this.#inbox() });
         this.#broadcast({ type: "atlas.view", view: this.#view() });
         return;
       }
@@ -2195,7 +2209,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         return;
       case "atlas.inbox.done":
         inboxDone(this.#sql, msg.id);
-        this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+        this.#broadcast({ type: "atlas.inbox.items", items: this.#inbox() });
         return;
       case "atlas.job.stop":
         if (this.#owned.owns(msg.id)) {
@@ -2224,13 +2238,13 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             body: { text: msg.text, job: msg.id, ...(answers ? { answers } : {}) },
           });
           this.#broadcast({ type: "atlas.rows", rows: [row] });
-          this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+          this.#broadcast({ type: "atlas.inbox.items", items: this.#inbox() });
           return;
         }
         const out = await this.#coding.answer(msg.id, msg.text, "app");
         if (out.ok) append(this.#sql, { actor: "owner", kind: "settings.change", body: { job: msg.id, said: msg.text.slice(0, 300) } });
         else this.#send(connection, { type: "atlas.error", message: out.text });
-        this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+        this.#broadcast({ type: "atlas.inbox.items", items: this.#inbox() });
         return;
       }
     }
@@ -2410,7 +2424,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       chat?.stop();
       return;
     }
-    if (noticeAsk(this.#sql, text)) this.#automationsChanged();
+    if (noticeAsk(this.#sql, text, zoneOf(readSettings(this.#sql)))) this.#automationsChanged();
     this.#ownerActive();
 
     await this.#inLine(
@@ -2526,7 +2540,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         .finally(() => spoken.close());
       return spoken;
     }
-    if (noticeAsk(this.#sql, transcript)) this.#automationsChanged();
+    if (noticeAsk(this.#sql, transcript, zoneOf(readSettings(this.#sql)))) this.#automationsChanged();
     this.#ownerActive();
     const started = Date.now();
     let firstWordsMs: number | null = null;
@@ -3656,7 +3670,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   /** For tests: Inbox as the app sees it. */
   async apiInbox(): Promise<import("./protocol").InboxItem[]> {
-    return inbox(this.#sql);
+    return this.#inbox();
   }
 
   /** For tests: the owner's words for a coding job, as from the app. */
@@ -5819,7 +5833,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             .catch(() => {});
         }
       }
-      this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+      this.#broadcast({ type: "atlas.inbox.items", items: this.#inbox() });
       // Asked on a chat (§16.1): the card is a message with buttons. What needs a hold, or touches the vault, is a link to the app.
       const chat = created ? this.#chatRuns.get(c.run_id) : undefined;
       if (chat) {
@@ -6103,7 +6117,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       .toArray()[0];
     const row = r ? getRow(this.#sql, r.id) : null;
     if (row) this.#broadcast({ type: "atlas.rows", rows: [row] });
-    this.#broadcast({ type: "atlas.inbox.items", items: inbox(this.#sql) });
+    this.#broadcast({ type: "atlas.inbox.items", items: this.#inbox() });
     this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
     return row;
   }
@@ -6216,7 +6230,25 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     // Paired devices have their own protocol; the app's messages are for the app.
     const devices = [...this.getConnections()].filter((c) => (c.state as SocketState | null)?.node).map((c) => c.id);
     this.broadcast(JSON.stringify(msg), devices);
+    // A service that starts or stops needing the owner changes Inbox too.
+    if (msg.type === "atlas.view") {
+      const needs = this.#extensions
+        .needs()
+        .map((i) => i.id + i.title)
+        .join("|");
+      if (needs !== this.#serviceNeeds) {
+        this.#serviceNeeds = needs;
+        this.broadcast(JSON.stringify({ type: "atlas.inbox.items", items: this.#inbox() } satisfies ServerMessage), devices);
+      }
+    }
   }
+
+  /** Inbox (§21.2): what the log and the agenda have waiting on the owner, and the services that can't work until they act. */
+  #inbox(): import("./protocol").InboxItem[] {
+    return [...inbox(this.#sql), ...this.#extensions.needs()];
+  }
+
+  #serviceNeeds = "";
 }
 
 /**

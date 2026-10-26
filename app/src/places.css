@@ -1088,6 +1088,16 @@ button.card2:hover {
   padding: 0 4px;
   cursor: pointer;
 }
+/* The fold under the people Atlas deals with: the rest of the address book, one line. */
+button.prow.more {
+  width: 100%;
+  background: none;
+  border: 0;
+  border-top: 1px dashed var(--sep2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
 .prow.head {
   min-height: 30px;
   border-top: 0;

@@ -38,7 +38,7 @@ import { append } from "../store/log";
 import { getSecret, readSettings, setSecret, writeSettings } from "../store/settings";
 import { getState, setState } from "../store/state";
 import type { ToolContext } from "../tools/types";
-import type { ExtensionView } from "../protocol";
+import type { ExtensionView, InboxItem } from "../protocol";
 import { Icon } from "../services";
 import { EXT_ASKS, heldAs, ToolsShape } from "../tools/extensions";
 
@@ -105,6 +105,44 @@ export class ExtensionDesk {
   constructor(private readonly d: ExtensionDeps) {}
 
   // --- Settings -----------------------------------------------------------------------------------------
+
+  /**
+   * The services that can't work until the owner does something, for Inbox (§21.2): a sign-in that lapsed, a key
+   * it never got, or an error newer than its last success. The same facts Abilities shows as "needs you".
+   */
+  needs(): InboxItem[] {
+    const out: InboxItem[] = [];
+    for (const v of this.views()) {
+      if (v.state !== "on") continue;
+      const name = v.account ? `${v.name} (${v.account})` : v.name;
+      const failing = v.error != null && (v.ok_at == null || (v.error_at ?? 0) >= v.ok_at);
+      const signin = v.signin != null && !v.signin.signed_in;
+      const key = v.secrets.some((x) => !x.optional && !x.set);
+      if (!failing && !signin && !key) continue;
+      const fix = signin ? "signin" : key ? "key" : "error";
+      out.push({
+        id: `service:${v.id}`,
+        kind: "service",
+        title:
+          fix === "signin"
+            ? `${name} needs you to sign in${v.ok_at ? " again" : ""}`
+            : fix === "key"
+              ? `${name} needs its key`
+              : `${name} isn't working`,
+        text:
+          fix === "error"
+            ? `It said: ${v.error}`
+            : fix === "signin"
+              ? `Until you do, Atlas can't use ${v.name}.`
+              : `Until it has one, Atlas can't use ${v.name}.`,
+        at: v.error_at ?? Date.now(),
+        areas: [],
+        run_id: null,
+        service: { id: v.id, name, fix },
+      });
+    }
+    return out;
+  }
 
   views(): ExtensionView[] {
     const origin = this.d.origin();

@@ -57,6 +57,7 @@ export function Automations({ atlas, detail, go }: { atlas: Atlas; detail: strin
   const shown = all.filter((a) => filter === "all" || kindOf(a.when) === filter);
   // Make it on a suggestion opens the form filled in from what the owner asked.
   const [draft, setDraft] = useState<{ from: string; input: AutomationInput } | null>(null);
+  const [moreIdeas, setMoreIdeas] = useState(false);
   const suggestions = atlas.state.suggestions;
 
   return (
@@ -106,11 +107,10 @@ export function Automations({ atlas, detail, go }: { atlas: Atlas; detail: strin
           ) : (
             <>
               {filter === "all" &&
-                suggestions.map((sg) => (
+                (moreIdeas ? suggestions : suggestions.slice(0, 1)).map((sg, i) => (
                   <div key={sg.id} className="panel suggest">
-                    <span className="lab">Suggestion · asked {sg.times} times</span>
-                    <p style={{ margin: "6px 0 10px" }}>
-                      You've asked for "{sg.said}" {sg.times} times. Make it an automation, so it's one word or a time away?
+                    <p style={{ margin: "0 0 10px" }}>
+                      You've asked for "{sg.said}" on {sg.times} different days. Make it an automation, so it's one word or a time away?
                     </p>
                     <div className="row">
                       <button
@@ -128,6 +128,12 @@ export function Automations({ atlas, detail, go }: { atlas: Atlas; detail: strin
                       >
                         Not this one
                       </button>
+                      <span className="grow" />
+                      {i === 0 && suggestions.length > 1 && (
+                        <button className="link small" onClick={() => setMoreIdeas(!moreIdeas)}>
+                          {moreIdeas ? "Fewer ideas" : `${suggestions.length - 1} more ${suggestions.length === 2 ? "idea" : "ideas"}`}
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
