@@ -1,6 +1,6 @@
 # Atlas
 
-Read [VISION.md](VISION.md) first: it's the founding brief, and every change must agree with it or change it in its own commit. M0 to M6 are closed ([docs/M0.md](docs/M0.md), [docs/M1.md](docs/M1.md), [docs/M2.md](docs/M2.md), [docs/M3.md](docs/M3.md), [docs/M4.md](docs/M4.md), [docs/M5.md](docs/M5.md), [docs/M6.md](docs/M6.md)); the current milestone is M7, launch, and [docs/HANDOFF-M7.md](docs/HANDOFF-M7.md) has where M6 left things, what's still open and the plan. M7's own doc, [docs/M7.md](docs/M7.md), has its stages and smoke test.
+Read [VISION.md](VISION.md) first: it's the founding brief, and every change must agree with it or change it in its own commit. M0 to M6 are closed ([docs/M0.md](docs/M0.md), [docs/M1.md](docs/M1.md), [docs/M2.md](docs/M2.md), [docs/M3.md](docs/M3.md), [docs/M4.md](docs/M4.md), [docs/M5.md](docs/M5.md), [docs/M6.md](docs/M6.md)); the current milestone is M7, launch, and [docs/HANDOFF-M7.md](docs/HANDOFF-M7.md) has where M6 left things, what's still open and the plan. M7's own doc, [docs/M7.md](docs/M7.md), has its stages and smoke test. Why the app felt stiff, what changed, and what's left to decide is in [docs/AUDIT-feel.md](docs/AUDIT-feel.md).
 
 A milestone is done when its smoke test passes on the owner's real deployment (VISION rule 7), not after a week of use. Write the smoke test before building, and keep earlier milestones' smoke tests as regression lists.
 
