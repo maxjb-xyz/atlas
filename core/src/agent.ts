@@ -3076,6 +3076,17 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       emit: () => {},
     }).catch((err: unknown) => ({ state: "failed" as const, text: "", steps: 0, error: err instanceof Error ? err.message : String(err) }));
     const look = res.state === "replied" ? parseLook(res.text) : null;
+    // What it noticed is Atlas's first message in the conversation, so Home opens on it after setup (M7 W21).
+    if (look?.notes.length) {
+      const row = append(this.#sql, {
+        actor: "atlas",
+        kind: "message.out",
+        run_id: runId,
+        surface: "app",
+        body: { text: `I've had a first look at your next two weeks. Worth knowing:\n\n${look.notes.map((n) => `- ${n}`).join("\n")}` },
+      });
+      this.#broadcast({ type: "atlas.rows", rows: [row] });
+    }
     endRun(this.#sql, runId, look ? "replied" : "failed", res.steps, look ? {} : { error: res.error ?? "Atlas's answer wasn't readable." });
     this.#broadcast({
       type: "atlas.setup.look.result",
