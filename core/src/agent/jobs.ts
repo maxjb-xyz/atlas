@@ -1115,7 +1115,7 @@ export class JobDesk {
     const job = this.#live(id);
     if ("ok" in job) return job;
     if (job.work.some((w) => this.h.alive(w.id)))
-      return { ok: false, text: "Work you handed off is still going; wait for it, or stop it first." };
+      return { ok: false, text: "Work you handed off is still going: wait for it, or stop it now with job_stop_work, then finish." };
     const files = await this.#keep(job, o.files ?? []);
     if ("error" in files) return { ok: false, text: `${files.error}. Nothing is finished yet.` };
     await this.#end({ ...job, files: [...job.files, ...files] }, "done", o.summary, files);

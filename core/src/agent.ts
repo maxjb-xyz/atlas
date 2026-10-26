@@ -80,7 +80,7 @@ import { newSessionId, type Session, SESSION_DAYS, SESSION_HEADER } from "./auth
 import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
 import { compact, planCompaction } from "./compaction";
 import { CONTEXT_TOKENS, history, latestSummary, promptParts, systemPrompt, tokens, withMessage, withNow } from "./context";
-import { BUDGETS, type LoopEvent, type LoopResult, runLoop, type ToolGroup } from "./loop";
+import { BUDGETS, type LoopEvent, type LoopResult, runLoop, TOOLS_LOAD, type ToolGroup } from "./loop";
 import { askedOn, Outbox, type PushDevice, pushDevices, route, StreamScrubber, type Urgency } from "./outbox";
 import { vapidKeys } from "./push";
 import {
@@ -495,11 +495,14 @@ const OWNER_ONLY = new Set<string>([
 /** How long a conversation stays quiet before the review looks back over it for skills (§9.3). */
 const SKILL_REVIEW_QUIET_MS = 10 * 60_000;
 /** A stretch of talk with fewer tool calls than this took no working out, so there's nothing to learn from it. */
-const SKILL_REVIEW_MIN_TOOLS = 4;
+/** The owner's turns since the last review must have changed something this many times (not lookups) for it to run. */
+const SKILL_REVIEW_MIN_CHANGES = 2;
+/** The most of what happened since its last look that the review reads, in characters. */
+const SKILL_REVIEW_READS = 40_000;
 
 /** What the review is asked (§9.3). It's Atlas's own run, so it says what it kept in its last words, for the log. */
 const SKILL_REVIEW_NOTE = [
-  "Look back over your conversation with the owner since your last look, and keep what's worth keeping as skills, the way a person writes down how they did something. You can only read and write skills here.",
+  "Look back over what happened with the owner since your last look (below: what they said, what you said, and each tool you used with what came back), and keep what's worth keeping as skills, the way a person writes down how they did something. You can only read and write skills here.",
   "First: a skill you followed that turned out wrong or incomplete. Patch it now: skill_read it, then skill_save with a patch that replaces the passage that was wrong.",
   "Most important: the owner correcting how you work ('don't do X', 'always Y', a format they want). Put it in the skill it belongs to, or start one for that kind of task.",
   "Then: a method that took working out and that the owner was happy with. Improve the skill that covers that kind of task, or save a new one named for the kind of task, not this one case.",
@@ -542,6 +545,8 @@ interface ConverseOpts {
   chain?: BrainChoice[];
   /** What this run reaches beyond its actor's usual: a job's look gets its moves and the job's folder (§8.3). */
   context?: Partial<ToolContext>;
+  /** False for a run given what it needs in its input, without the conversation (the skill review). */
+  history?: boolean;
 }
 
 export class PersonAgent extends VoiceAgent implements HelperHost {
@@ -3302,7 +3307,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const room = o.actor === "owner" ? TURN_HISTORY_TOKENS : Math.floor(this.#window * 0.85) - tokens(system);
     const budget = room - tokens(o.input);
     const messages = withMessage(
-      history(this.#sql, { excludeRunId: o.runId, beforeSeq: o.beforeSeq, budget }),
+      o.history === false ? [] : history(this.#sql, { excludeRunId: o.runId, beforeSeq: o.beforeSeq, budget }),
       withNow(parts.now, o.input),
     );
     const via = o.actor === "atlas" ? "clock" : o.surface === "voice" ? "voice" : "chat";
@@ -5167,23 +5172,62 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
    * ends without a run. With `merge` in its detail, it's the tidy-up asking
    * it to fold skills that read like the same method into one.
    */
+  /**
+   * What the skill review reads: the owner's turns since its last look, as a transcript of what was said and each
+   * tool used with what came back (the method is in the tools, not only the words). The newest part is kept when
+   * it's long.
+   */
+  #reviewTranscript(since: number, last: number): string {
+    const cut = (v: unknown, n: number) => {
+      const t = typeof v === "string" ? v : JSON.stringify(v ?? null);
+      return t.length > n ? `${t.slice(0, n)}…` : t;
+    };
+    const lines = this.#sql
+      .exec<{ kind: string; body: string }>(
+        `SELECT kind, body FROM log WHERE seq > ? AND seq <= ? AND kind IN ('message.in', 'message.out', 'tool.call', 'tool.result')
+         AND run_id IN (SELECT id FROM runs WHERE actor = 'owner') ORDER BY seq`,
+        since,
+        last,
+      )
+      .toArray()
+      .map((r) => {
+        const b = JSON.parse(r.body) as Record<string, unknown>;
+        if (r.kind === "message.in") return `The owner: ${cut(b.text, 2_000)}`;
+        if (r.kind === "message.out") return `You: ${cut(b.text, 2_000)}`;
+        if (r.kind === "tool.call") return `  You used ${String(b.name)}: ${cut(b.input, 400)}`;
+        return `  ${b.ok === false ? "It failed" : "It gave"}: ${cut(b.output, 300)}`;
+      });
+    let text = lines.join("\n");
+    if (text.length > SKILL_REVIEW_READS) text = `(earlier left out)\n${text.slice(-SKILL_REVIEW_READS)}`;
+    return text || "(nothing)";
+  }
+
   async #reviewSkills(item: AgendaItem): Promise<void> {
     const since = getState<number>(this.#sql, "skill_review_seq") ?? 0;
     const last = this.#sql.exec<{ seq: number }>(`SELECT COALESCE(MAX(seq), 0) AS seq FROM log`).one().seq;
-    const used = this.#sql
-      .exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM log WHERE seq > ? AND kind = 'tool.call' AND run_id IN (SELECT id FROM runs WHERE actor = 'owner')`,
+    // Only work that changed something teaches a method: lookups (a search, a page, the calendar) don't, so a run of
+    // questions never sends the review rewriting a skill.
+    const looks = new Set([
+      TOOLS_LOAD,
+      ...[...TOOLS.owner, ...OWNER_GROUPS.flatMap((g) => g.tools)].filter((t) => t.kind === "look").map((t) => t.name),
+    ]);
+    const calls = this.#sql
+      .exec<{ name: string }>(
+        `SELECT json_extract(body, '$.name') AS name FROM log WHERE seq > ? AND kind = 'tool.call' AND run_id IN (SELECT id FROM runs WHERE actor = 'owner')`,
         since,
       )
-      .one().n;
+      .toArray();
+    const changes = calls.filter((c) => !looks.has(c.name)).length;
     const merge = (item.source.detail?.merge as string[][] | undefined) ?? [];
-    if (used < SKILL_REVIEW_MIN_TOOLS && !merge.length) {
+    if (changes < SKILL_REVIEW_MIN_CHANGES && !merge.length) {
       setState(this.#sql, "skill_review_seq", last);
-      finish(this.#sql, item.id, "done", null, { skipped: `${used} tool calls since the last review` });
+      finish(this.#sql, item.id, "done", null, { skipped: `${changes} changes since the last review (${calls.length} tool calls)` });
       return;
     }
     const runId = startRun(this.#sql, { actor: "atlas", trigger: "skill_review", surface: "none", role: "main" });
-    const note = merge.length ? `${SKILL_MERGE_NOTE}\n${merge.map((p) => `- ${p.join(" and ")}`).join("\n")}` : SKILL_REVIEW_NOTE;
+    const note = merge.length
+      ? `${SKILL_MERGE_NOTE}\n${merge.map((p) => `- ${p.join(" and ")}`).join("\n")}`
+      : `${SKILL_REVIEW_NOTE}\n\nWhat happened since your last look:\n\n${this.#reviewTranscript(since, last)}`;
     const res: LoopResult = await this.#converse({
       runId,
       actor: "atlas",
@@ -5197,6 +5241,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         if (e.type === "row") this.#broadcast({ type: "atlas.rows", rows: [e.row] });
       },
       tools: reviewTools,
+      history: false,
       silentOk: true,
       chain: chainFor(readSettings(this.#sql), "skill_review").chain,
     }).catch((err: unknown) => ({
