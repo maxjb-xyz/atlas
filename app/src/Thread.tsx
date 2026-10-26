@@ -37,6 +37,7 @@ import {
   startOfDay,
   stepIcon,
   useNow,
+  undoneIds,
 } from "./ui";
 
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : JSON.stringify(v));
@@ -283,7 +284,7 @@ export function Conversation({
     else onFocused?.();
   }, [focus, loaded, rows, noOlder]);
 
-  const undone = new Set(rows.filter((r) => r.body.undo_of).map((r) => String(r.body.undo_of)));
+  const undone = undoneIds(rows);
   const items = arrange(rows, live, topJobs(s.jobs), pending, { dev: at("developer"), detailed: at("detailed") });
   for (const it of items) {
     if (it.k === "live") {
@@ -725,6 +726,8 @@ export function isLook(r: LogRow): boolean {
   const rc = r.body.receipt as { look?: boolean; view?: unknown; undo?: unknown; approval?: unknown } | undefined;
   if (!rc) return false;
   if (rc.look === true) return true;
+  // Putting something on the screen changed nothing: the view is the point, not an entry in what Atlas did.
+  if (r.body.name === "show" && rc.undo == null && rc.approval == null) return true;
   return rc.view == null && rc.undo == null && rc.approval == null && (r.body.name === "web_search" || r.body.name === "web_fetch");
 }
 
@@ -992,7 +995,8 @@ function Row({
       }
       return (
         <p className="note" data-row={row.id}>
-          You undid it: {str(b.title)}. {b.kind === "promise" ? "I won't do it." : "I won't remind you."}
+          {b.undo_of ? "You undid it" : "You cancelled it"}: {str(b.title)}.{" "}
+          {b.kind === "promise" ? "I won't do it." : "I won't remind you."}
         </p>
       );
     case "record.change":

@@ -47,16 +47,17 @@ export function Inbox({ atlas }: { atlas: Atlas }) {
   return (
     <Stage
       label="Inbox"
+      // Only the kinds that have something waiting get a tab: four empty filters over an empty list is noise.
       tabs={[
         { id: "all", label: "All", badge: s.inbox?.length || null },
         { id: "approval", label: "Approvals", badge: s.inbox?.filter((i) => i.kind === "approval").length || null },
         { id: "question", label: "Questions", badge: s.inbox?.filter((i) => i.kind === "question").length || null },
         { id: "review", label: "Reviews", badge: s.inbox?.filter((i) => i.kind === "review").length || null },
         { id: "failed", label: "Didn't finish", badge: s.inbox?.filter((i) => i.kind === "failed").length || null },
-      ]}
+      ].filter((t) => t.id === "all" || t.id === tab || t.badge)}
       tab={tab}
-      onTab={setTab}
-      meta="J and K to move · ⏎ done"
+      onTab={(t) => setTab(t as typeof tab)}
+      meta={items.length ? "J and K to move · ⏎ done" : null}
       dock={
         <div className="dock slim">
           <Composer atlas={atlas} placeholder="Ask about any of these" />

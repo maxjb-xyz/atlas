@@ -55,6 +55,7 @@ export function People({ atlas, detail, go }: { atlas: Atlas; detail: string; go
   const view = s.view;
   const [head = "", rest = ""] = [detail.split(":")[0], detail.split(":").slice(1).join(":")];
   const tab: Tab = head === "members" ? "members" : head === "faces" || head === "face" ? "faces" : "contacts";
+  const { at } = useDetail();
   const people = s.records.people;
   const members = view?.members ?? [];
   const faces = view?.faces ?? [];
@@ -76,7 +77,7 @@ export function People({ atlas, detail, go }: { atlas: Atlas; detail: string; go
       ]}
       tab={tab}
       onTab={(t) => go(t === "contacts" ? "" : t)}
-      meta={meta}
+      meta={at("detailed") ? meta : null}
       dock={
         <div className="dock slim">
           <Composer atlas={atlas} placeholder="Ask about anyone, or say who a face should answer" />
@@ -153,13 +154,14 @@ function Contacts({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
   const areaOf = (r: RecordView) => s.areas.find((a) => r.areas.includes(a.id));
   const imported = s.tests.contacts;
   const from = (s.view?.extensions ?? []).filter((e) => e.state === "on" && e.provides.includes("contacts"));
+  const sorted = all.some((r) => r.trust && r.trust !== "unknown");
   return (
     <div className="sheet-in">
       <div className="map-title">
         <span className="disp">Contacts</span>
         <span className="muted">
           {all.length} {all.length === 1 ? "person" : "people"}
-          {week ? ` · ${week} new this month` : ""}
+          {week && week < all.length ? ` · ${week} new this month` : ""}
         </span>
         <span className="grow" />
         <label className="find">
@@ -168,10 +170,13 @@ function Contacts({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
         </label>
       </div>
       <div className="row" style={{ marginBottom: 10 }}>
-        <button className={`fchip ${trust === "all" ? "on" : ""}`} onClick={() => setTrust("all")}>
-          All <span className="mono aside">{all.length}</span>
-        </button>
-        {TRUSTS.map(([id, name]) => (
+        {/* A filter only once someone is in it: five chips at 0 and one at 221 say nothing. */}
+        {sorted && (
+          <button className={`fchip ${trust === "all" ? "on" : ""}`} onClick={() => setTrust("all")}>
+            All <span className="mono aside">{all.length}</span>
+          </button>
+        )}
+        {(sorted ? TRUSTS.filter(([id]) => id === trust || all.some((r) => (r.trust ?? "unknown") === id)) : []).map(([id, name]) => (
           <button key={id} className={`fchip ${trust === id ? "on" : ""}`} onClick={() => setTrust(id)}>
             {name} <span className="mono aside">{all.filter((r) => (r.trust ?? "unknown") === id).length}</span>
           </button>

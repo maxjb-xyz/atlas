@@ -102,16 +102,15 @@ export function localDate(date: Date, tz: string): string {
   return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
 }
 
-/** "Thu Oct 22, 10:00": what receipts show. */
+/** "Thu, Oct 22, 1:45 PM": what receipts show, on the same clock as everything else Atlas says. */
 export function shortLocal(date: Date, tz: string): string {
   return new Intl.DateTimeFormat("en-US", {
     timeZone: tz,
     weekday: "short",
     month: "short",
     day: "numeric",
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
-    hourCycle: "h23",
   }).format(date);
 }
 

@@ -2025,6 +2025,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         }
         await this.#clock.unschedule(item);
         finish(this.#sql, item.id, "cancelled", null, { by: "owner" });
+        // The thread hears it too, so the reminder's receipt there stops offering an Undo.
+        const said = this.#sql
+          .exec<{ id: string }>(`SELECT id FROM log WHERE kind = 'agenda.change' ORDER BY seq DESC LIMIT 1`)
+          .toArray()[0];
+        if (said) this.#broadcast({ type: "atlas.rows", rows: [getRow(this.#sql, said.id)!] });
         this.#broadcast({ type: "atlas.agenda", agenda: upcoming(this.#sql) });
         return;
       }

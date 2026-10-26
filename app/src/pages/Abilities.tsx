@@ -53,7 +53,7 @@ export function Abilities({
   const online = nodes.filter((n) => n.online).length;
   const meta =
     tab === "map"
-      ? "Live · updated now"
+      ? null
       : tab === "services"
         ? `${on} on · ${all.length - on} more`
         : tab === "skills"

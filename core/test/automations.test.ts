@@ -158,7 +158,7 @@ describe("when automations run", () => {
     expect(nextRun(every, friNoon, TZ)?.toISOString()).toBe("2026-10-23T17:00:00.000Z");
     expect(nextRun(every, new Date("2026-10-23T19:00:00-04:00"), TZ)?.toISOString()).toBe("2026-10-24T14:00:00.000Z");
     expect(runsPerDay(every)).toBe(4);
-    expect(whenText(every)).toBe("Every 3 h from 10:00 to 19:00, every day");
+    expect(whenText(every)).toBe("Every 3 h from 10 AM to 7 PM, every day");
     expect(nextRun({ kind: "absence", nothing_about: "workout", for_days: 3, at: "20:00" }, friEvening, TZ)?.toISOString()).toBe(
       "2026-10-25T00:00:00.000Z",
     );
@@ -316,7 +316,7 @@ describe("automations", () => {
     });
     expect(offered(b.requests[0]!)).toEqual(expect.arrayContaining(["automation_save", "automation_test", "automation_set"]));
     let v = await view(s, "Weekday brief");
-    expect(v).toMatchObject({ state: "paused", made_by: "atlas", can_turn_on: false, next_at: null, when_text: "At 08:00, weekdays" });
+    expect(v).toMatchObject({ state: "paused", made_by: "atlas", can_turn_on: false, next_at: null, when_text: "At 8 AM, weekdays" });
 
     // Not before a test run.
     s.send({ type: "atlas.automation.set", id: v.id, on: true });
@@ -381,7 +381,7 @@ describe("automations", () => {
     expect(moved.thread.find((r) => r.kind === "tool.result")!.body.receipt).toMatchObject({
       text: "Changed automation · Weekday brief · on",
     });
-    v = await view(s, "Weekday brief", (a) => a.when_text === "At 07:30, weekdays");
+    v = await view(s, "Weekday brief", (a) => a.when_text === "At 7:30 AM, weekdays");
     expect(v).toMatchObject({ state: "on", report: "thread" });
     expect(v.steps).toHaveLength(2);
     s.close();

@@ -67,7 +67,7 @@ export function Library({ atlas, detail, go }: { atlas: Atlas; detail: string; g
       ]}
       tab={tab}
       onTab={(t) => go(t === "overview" ? "" : t)}
-      meta={s.scope ? `Focused on ${s.areas.find((a) => a.id === s.scope)?.name ?? "an area"}` : "Every record keeps its source"}
+      meta={s.scope ? `Focused on ${s.areas.find((a) => a.id === s.scope)?.name ?? "an area"}` : null}
       dock={
         <div className="dock slim">
           <Composer atlas={atlas} placeholder="Ask what Atlas knows, or tell it something" />

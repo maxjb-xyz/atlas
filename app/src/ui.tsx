@@ -4,7 +4,7 @@
 // area's color, and the living ASCII diamond.
 
 import { createContext, type ReactNode, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { AreaView } from "../../core/src/protocol";
+import type { AreaView, LogRow } from "../../core/src/protocol";
 import { LOGOS } from "./logos";
 import { stillMotion } from "./theme";
 
@@ -1172,4 +1172,22 @@ export function stepIcon(tool: string): IconName {
     [/^owner_ask|^approve/, "hand"],
   ];
   return by.find(([re]) => re.test(t))?.[1] ?? "diamond";
+}
+
+/**
+ * The receipts whose change no longer stands: undone with Undo, or a reminder or promise cancelled since (from
+ * Agenda, or by asking), so neither offers an Undo that can't work.
+ */
+export function undoneIds(rows: LogRow[]): Set<string> {
+  const out = new Set(rows.filter((r) => r.body.undo_of).map((r) => String(r.body.undo_of)));
+  const cancelled = new Set(
+    rows.filter((r) => r.kind === "agenda.change" && r.body.change === "cancelled").map((r) => String(r.body.item_id)),
+  );
+  if (!cancelled.size) return out;
+  for (const r of rows) {
+    if (r.kind !== "tool.result" || !r.body.receipt || typeof r.body.output !== "string") continue;
+    const id = /"id":"(ag_[\w]+)"/.exec(r.body.output)?.[1];
+    if (id && cancelled.has(id)) out.add(r.id);
+  }
+  return out;
 }

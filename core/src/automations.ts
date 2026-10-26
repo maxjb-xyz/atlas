@@ -412,18 +412,25 @@ function daysText(days: number[]): string {
 }
 
 /** The trigger in a few words, for cards, receipts and the model. */
+/** "08:00" as people say it: "8 AM", and "20:30" as "8:30 PM". */
+export function clockText(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number) as [number, number];
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return hhmm;
+  return `${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""} ${h < 12 ? "AM" : "PM"}`;
+}
+
 export function whenText(t: Trigger, names: (id: string) => string | null = () => null): string {
   switch (t.kind) {
     case "request":
       return t.phrase ? `When you say "${t.phrase}", or press Run` : "When you press Run, or ask";
     case "schedule":
       return t.every_hours && t.until
-        ? `Every ${t.every_hours} h from ${t.at} to ${t.until}, ${daysText(t.days)}`
-        : `At ${t.at}, ${daysText(t.days)}`;
+        ? `Every ${t.every_hours} h from ${clockText(t.at)} to ${clockText(t.until)}, ${daysText(t.days)}`
+        : `At ${clockText(t.at)}, ${daysText(t.days)}`;
     case "watch":
       return `Every ${t.every_hours} h, looks at ${new URL(t.url).host} for: ${t.matters}`;
     case "absence":
-      return `Nothing about "${t.nothing_about}" for ${t.for_days} ${t.for_days === 1 ? "day" : "days"} (checked at ${t.at})`;
+      return `Nothing about "${t.nothing_about}" for ${t.for_days} ${t.for_days === 1 ? "day" : "days"} (checked at ${clockText(t.at)})`;
     case "event":
       if (t.on === "calendar") return t.about ? `When an event about "${t.about}" changes on your calendar` : "When your calendar changes";
       return `After ${(t.after && names(t.after)) ?? "another automation"} finishes`;

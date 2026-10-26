@@ -686,65 +686,13 @@ button.chip:hover {
   min-width: 0;
 }
 
-/* Home's focus layout (§21.1, M7 W14): the conversation on the open grid. The sidebar folds to its icons, the
-   toolbar and the stage's frame step back, and they come back on every other place. Widths and opacity only move. */
-.side {
-  transition:
-    flex-basis 0.45s cubic-bezier(0.2, 0.8, 0.2, 1),
-    padding 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
-  overflow-x: hidden;
-}
+/* Home's focus layout (§21.1, M7 W14): the conversation on the open grid. The toolbar and the stage's frame step back,
+   and they come back on every other place. The sidebar keeps its width everywhere: folding it on Home slid the whole
+   page 160px on every trip to or from it (docs/AUDIT-feel.md). */
 .side .brand .disp,
 .side .nav a > span,
-.side .pins-head,
-.side .pins,
-.side-foot a > span,
-.side .me > span:not(.avatar) {
-  transition: opacity 0.25s ease;
+.side-foot a > span {
   white-space: nowrap;
-}
-.app.focus .side {
-  flex-basis: 58px;
-  padding-left: 8px;
-  padding-right: 8px;
-}
-.app.focus .side .brand .disp,
-.app.focus .side .nav a > span:not(.badge),
-.app.focus .side .pins-head,
-.app.focus .side .pins,
-.app.focus .side-foot a > span,
-.app.focus .side .me > span:not(.avatar) {
-  opacity: 0;
-  pointer-events: none;
-}
-/* Folded, every row is just its icon, each on the rail's center line. */
-.app.focus .side .brand,
-.app.focus .side .nav a,
-.app.focus .side-foot a,
-.app.focus .side .me {
-  position: relative;
-  justify-content: center;
-  gap: 0;
-  padding-left: 0;
-  padding-right: 0;
-}
-.app.focus .side .brand .disp,
-.app.focus .side .nav a > span:not(.badge),
-.app.focus .side-foot a > span,
-.app.focus .side .me > span:not(.avatar) {
-  position: absolute;
-}
-/* Inbox's count, as a small ember square on its icon while the sidebar is folded. */
-.app.focus .side .nav a .badge {
-  position: absolute;
-  left: 25px;
-  top: 3px;
-  min-width: 8px;
-  width: 8px;
-  height: 8px;
-  padding: 0;
-  font-size: 0;
-  border-radius: 2px;
 }
 .app.focus .toolbar {
   background: transparent;
@@ -2409,11 +2357,8 @@ button.open:hover {
 .msg .when.keep {
   opacity: 1;
 }
-@media (hover: none) {
-  .msg .when {
-    opacity: 1;
-  }
-}
+/* On touch, a message's time shows when it's tapped (focus-within), as on hover on a desktop: a time under every
+   message made the thread read like a log. */
 .voice-tag {
   display: inline-flex;
   align-items: center;
@@ -5624,4 +5569,69 @@ button.front-tile:hover {
 .front-learned {
   font-size: 13.5px;
   color: var(--tx2);
+}
+
+/* --- phone fixes from the feel audit (docs/AUDIT-feel.md) ------------------------------- */
+
+/* Menu rows lay out in a row, whatever the generic .item rule says. */
+.pop .item {
+  flex-direction: row;
+  text-decoration: none;
+  color: inherit;
+}
+@media (max-width: 760px) {
+  /* Home's toolbar and its Now and Week pills get rows of their own instead of floating over the first message. */
+  .app.focus:has(.home-split:not(.open)) .toolbar,
+  .app.focus .stage.home:has(.home-split:not(.open)) > .stage-head {
+    position: static;
+  }
+  .app.focus .stage.home:has(.home-split:not(.open)) .thread-col {
+    padding-top: 8px;
+  }
+  .app.focus .stage.home:has(.home-split:not(.open)) .convo > .thread {
+    mask-image: none;
+  }
+  /* A popover from the toolbar is a sheet across the screen, not a desktop menu cut off at the left edge. */
+  .toolbar .pop {
+    position: fixed;
+    top: 52px;
+    left: 8px;
+    right: 8px !important;
+    width: auto !important;
+    min-width: 0;
+    max-height: calc(100dvh - 140px);
+    overflow-y: auto;
+    z-index: 60;
+  }
+  /* 16px stops iOS zooming the page when the composer is focused. */
+  .composer textarea,
+  .convo-dock .composer textarea {
+    font-size: 16px;
+  }
+  /* Fingers, not cursors: controls are at least 40px to tap. */
+  .tb,
+  .composer .send,
+  .composer .icon,
+  .convo-dock .composer .send,
+  .convo-dock .composer .icon,
+  .chip-tabs button,
+  .tabs button,
+  .pop .item {
+    min-height: 40px;
+  }
+  .composer .send,
+  .composer .icon {
+    min-width: 40px;
+  }
+  /* The floating composer doesn't sit on a page's last rows. */
+  .stage-body {
+    padding-bottom: 150px;
+  }
+}
+/* Keyboard hints mean nothing without a keyboard. */
+@media (hover: none) {
+  .hits-foot,
+  .kbd {
+    display: none;
+  }
 }

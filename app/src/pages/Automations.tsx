@@ -9,6 +9,7 @@ import type { AutomationInput, Step, Trigger } from "../../../core/src/automatio
 import type { AutomationView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Composer } from "../Shell";
+import { useDetail } from "../theme";
 import { AreaChip, Empty, Icon, type ICONS, Picker, Seg, Sheet, shortDay, Stage, startOfDay } from "../ui";
 
 type Filter = "all" | "request" | "schedule" | "event" | "watch";
@@ -35,7 +36,7 @@ const ICON: Record<Trigger["kind"], keyof typeof ICONS> = {
 function headLine(a: AutomationView): string {
   const t = a.when;
   if (t.kind === "request") return t.phrase ? `Say "${t.phrase}"` : "On request";
-  if (t.kind === "schedule") return a.when_text.replace(/^At (\S+), (.*)$/, "$2 · $1");
+  if (t.kind === "schedule") return a.when_text.replace(/^At (.+?), (.*)$/, "$2 · $1");
   if (t.kind === "watch") return `Watching ${new URL(t.url).host}`;
   if (t.kind === "absence") return `No "${t.nothing_about}" in ${t.for_days} days`;
   if (t.on === "calendar") return t.about ? `Calendar · "${t.about}"` : "Calendar changes";
@@ -75,7 +76,7 @@ export function Automations({ atlas, detail, go }: { atlas: Atlas; detail: strin
         setFilter(t);
         go("");
       }}
-      meta={`${runsToday.length} ${runsToday.length === 1 ? "run" : "runs"} today · ${runsToday.filter((r) => !r.ok).length} failed`}
+      meta={runsToday.some((r) => !r.ok) ? `${runsToday.filter((r) => !r.ok).length} failed today` : null}
       dock={
         <div className="dock slim">
           <Composer atlas={atlas} placeholder={`Describe an automation${all[0] ? `, or say run ${all[0].name}` : ""}`} />
@@ -190,6 +191,7 @@ function AutomationCard({ atlas, a, open }: { atlas: Atlas; a: AutomationView; o
   const last = a.runs.find((r) => !r.quiet);
   const powers = new Set(a.steps.filter((s) => s.step.kind === "webhook").map((s) => (s.step as { webhook: string }).webhook)).size;
   const asks = !a.can_turn_on;
+  const detailed = useDetail().at("detailed");
   return (
     <div className="auto-card">
       <button className="body" onClick={open}>
@@ -200,11 +202,16 @@ function AutomationCard({ atlas, a, open }: { atlas: Atlas; a: AutomationView; o
         <span className="disp" style={{ fontSize: 18 }}>
           {a.name}
         </span>
-        <span className="muted small clamp">{a.about || a.steps.map((s) => s.text).join(" · ")}</span>
-        <span className="lab faint">
-          {a.steps.length} {a.steps.length === 1 ? "step" : "steps"} · {powers} {powers === 1 ? "power" : "powers"}
-          {asks ? " · needs a test run" : a.paused_why ? " · paused itself" : ""}
-        </span>
+        {/* What it's for, in words; its steps' own text is instructions to Atlas, shown from Detailed. */}
+        {(a.about || detailed) && <span className="muted small clamp">{a.about || a.steps.map((s) => s.text).join(" · ")}</span>}
+        {detailed ? (
+          <span className="lab faint">
+            {a.steps.length} {a.steps.length === 1 ? "step" : "steps"} · {powers} {powers === 1 ? "power" : "powers"}
+            {asks ? " · needs a test run" : a.paused_why ? " · paused itself" : ""}
+          </span>
+        ) : asks || a.paused_why ? (
+          <span className="small faint">{asks ? "Needs a test run before it can turn on" : "Paused itself"}</span>
+        ) : null}
         {a.cost && <span className="faint small">{a.cost}</span>}
       </button>
       <div className="foot">

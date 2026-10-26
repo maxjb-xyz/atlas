@@ -4,7 +4,7 @@ import { type PersonAgent, seams } from "../src/agent";
 import type { ServerMessage } from "../src/protocol";
 import { getItem } from "../src/store/agenda";
 import { migrate, type Sql } from "../src/store/db";
-import type { LogRow } from "../src/store/log";
+import { type LogRow, thread } from "../src/store/log";
 import { call, env, fakeCalendar, fakeEmbedder, say, scripted, SECRET, type Step } from "./helpers";
 
 const ORIGIN = "http://atlas.test";
@@ -181,6 +181,9 @@ describe("promises", () => {
       { actor: "atlas", change: "created" },
       { actor: "owner", change: "cancelled" },
     ]);
+    // The thread shows the cancel too, so the promise's receipt there stops offering an Undo.
+    const shown = await inOwner((_a, sql) => thread(sql, 60));
+    expect(shown.some((r) => r.kind === "agenda.change" && r.body.item_id === b && r.body.change === "cancelled")).toBe(true);
 
     brain([call("promise", { what: "Look at flights again", then: "Check fares to Denver.", at: "2099-01-03T09:00" }), say("Will do.")]);
     const [made] = await turn(s, "check flights again later");

@@ -26,6 +26,7 @@ import {
   SiteMark,
   stepIcon,
   useDismiss,
+  undoneIds,
 } from "./ui";
 
 /** The eight places, in three groups: what's yours today, what Atlas knows and can do, and what it did. */
@@ -540,7 +541,7 @@ function Exchange({ atlas, runId, asked, onClose }: { atlas: Atlas; runId: strin
   const liveRun = runId ? ([runId, s.live[runId]] as const) : undefined;
   const out = runId ? s.rows.find((r) => r.kind === "message.out" && r.run_id === runId) : undefined;
   const receipts = runId ? s.rows.filter((r) => r.run_id === runId && r.kind === "tool.result" && r.body.receipt) : [];
-  const undone = new Set(s.rows.filter((r) => r.body.undo_of).map((r) => String(r.body.undo_of)));
+  const undone = undoneIds(s.rows);
   const shown = receipts.map(shownFrom).filter((v): v is Shown => v != null);
   const live = liveRun?.[1];
   const failed = !live && !out && runId ? s.rows.find((r) => r.kind === "run.end" && r.run_id === runId) : undefined;

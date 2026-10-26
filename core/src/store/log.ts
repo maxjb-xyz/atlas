@@ -250,7 +250,16 @@ export function isThreadRow(row: LogRow): boolean {
   if (row.kind === "agenda.change" && row.body.kind === "approval")
     return ["done", "cancelled", "failed"].includes(String(row.body.change));
   // An undo from a receipt shows as its own line, so the thread tells the truth.
-  if (row.kind === "agenda.change" || row.kind === "record.change") return row.body.undo_of != null;
+  if (row.kind === "agenda.change" || row.kind === "record.change") {
+    if (row.body.undo_of != null) return true;
+    // So does a reminder or promise the owner cancelled from Agenda: its receipt above stops offering an Undo.
+    return (
+      row.kind === "agenda.change" &&
+      row.actor === "owner" &&
+      row.body.change === "cancelled" &&
+      (row.body.kind === "reminder" || row.body.kind === "promise")
+    );
+  }
   // Atlas starting an area is said once, in the thread (§6.3).
   if (row.kind === "area.change") return row.body.change === "started";
   // A job's questions are messages in the thread, with their buttons (§21.4), and so is the result of a job that

@@ -327,6 +327,18 @@ const minutesText = (ms: number) => {
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`;
 };
 
+/**
+ * What History lists at the Simple level: what happened, not how Atlas weighed it. What a sense reported, what Atlas
+ * decided to leave alone, and the views it put up are Detailed's; a nudge it sent, or how you answered one, is here.
+ */
+function plain(r: LogRow): boolean {
+  if (r.kind === "sense") return false;
+  if (r.kind === "awareness") return r.body.outcome === "nudged" || r.body.reaction != null;
+  if (r.kind === "tool.result")
+    return r.body.name !== "show" && !String((r.body.receipt as { text?: string })?.text ?? "").startsWith("Showing ·");
+  return true;
+}
+
 export function History({ atlas }: { atlas: Atlas }) {
   const s = atlas.state;
   const [filter, setFilter] = useState<HistoryFilter>("everything");
@@ -347,9 +359,13 @@ export function History({ atlas }: { atlas: Atlas }) {
   const dev = at("developer");
   // A web, map or weather lookup is logged twice, as the tool's receipt and as the outbox's delivery; show it once.
   const withReceipt = new Set(rows.filter((r) => r.kind === "tool.result" && r.body.receipt && r.run_id).map((r) => r.run_id));
+  const detailed = at("detailed");
   const listed = dev
     ? rows
-    : rows.filter((r) => !(r.kind === "delivery" && LOOKUP_CHANNELS.has(String(r.body.channel)) && withReceipt.has(r.run_id)));
+    : rows.filter(
+        (r) =>
+          !(r.kind === "delivery" && LOOKUP_CHANNELS.has(String(r.body.channel)) && withReceipt.has(r.run_id)) && (detailed || plain(r)),
+      );
   const byDay = new Map<string, LogRow[]>();
   for (const r of listed)
     byDay.set(startOfDay(new Date(r.at)).toDateString(), [...(byDay.get(startOfDay(new Date(r.at)).toDateString()) ?? []), r]);
@@ -369,7 +385,6 @@ export function History({ atlas }: { atlas: Atlas }) {
         setFilter(f);
         setOpen(null);
       }}
-      meta="Append-only · kept forever"
       dock={
         <div className="dock slim">
           <Composer atlas={atlas} placeholder="Ask what happened, or undo something" />
