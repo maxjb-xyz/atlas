@@ -202,7 +202,7 @@ describe("the loop", () => {
       expect(res.text).toBe("I'm here.");
     }));
 
-  it("in voice, starts the next brain when the first is slow, uses whichever speaks first, and cools the slow one", () =>
+  it("in voice, starts the next brain when the first is slow, uses whichever speaks first, and goes to the faster one next", () =>
     withSql(async (sql) => {
       const t = setup(sql, [], { hedgeMs: 30, firstEventMs: 2_000 }, [[say("Quick answer.")]]);
       let stopped = false;
@@ -218,15 +218,15 @@ describe("the loop", () => {
       const row = t.events.find((e) => e.type === "row");
       expect(row?.type === "row" && row.row.body).toMatchObject({ from: "chatgpt:main", to: "workers-ai:backup0" });
       expect(String(row?.type === "row" && row.row.body.reason)).toMatch(/slower to start/);
-      // The slow one waits at the back of the chain for the next turn.
-      expect(
-        t.router
-          .chain([
-            { provider: "chatgpt", model: "main" },
-            { provider: "workers-ai", model: "backup0" },
-          ])
-          .map((b) => b.model),
-      ).toEqual(["backup0", "main"]);
+      // Slow isn't broken: text keeps the owner's order, and the slow one isn't cooled down.
+      const both = [
+        { provider: "chatgpt" as const, model: "main" },
+        { provider: "workers-ai" as const, model: "backup0" },
+      ];
+      expect(t.router.chain(both).map((b) => b.model)).toEqual(["main", "backup0"]);
+      expect(t.router.snapshot()["chatgpt:main"]?.ok).not.toBe(false);
+      // Voice goes to the one measured faster to start.
+      expect(t.router.chain(both, Date.now(), { fastest: true }).map((b) => b.model)).toEqual(["backup0", "main"]);
       await new Promise((r) => setTimeout(r, 450));
       expect(stopped).toBe(true);
     }));

@@ -20,6 +20,8 @@ export type StateName =
   | "events_untagged"
   /** The log's last row the skill review looked back over (§9.3). */
   | "skill_review_seq"
+  /** The groups of tools the owner's conversation has loaded since its last summary, which each turn starts with (§4.1). */
+  | "turn_groups"
   /** Pairs of skills already offered to the review to merge, as "a|b", so each is offered once. */
   | "skill_pairs_offered"
   /** Where each skill installed from a skill hub came from (§17): the hub, the folder, the commit and each file's hash. */

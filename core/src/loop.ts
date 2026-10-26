@@ -53,7 +53,7 @@ function loader(groups: ToolGroup[], load: (names: string[]) => string[]): Tool 
     kind: "look",
     status: "Getting that ready.",
     description: [
-      "You can do more than the tools you have now. Load a group by name to get its tools for the rest of this turn; calling one of a group's tools by its name loads it too. Never tell the owner you can't do something one of these covers: load it and do it.",
+      "You can do more than the tools you have now. Load a group by name to get its tools for the rest of this conversation; calling one of a group's tools by its name loads it too. Never tell the owner you can't do something one of these covers: load it and do it.",
       ...groups.map((g) => `${g.name}: ${g.about} (${g.tools.map((t) => t.name).join(", ")})`),
     ].join("\n"),
     input: z.object({ groups: z.array(z.string().min(1).max(40)).min(1).max(groups.length) }),
@@ -75,6 +75,11 @@ export interface RunSpec {
   tools: Tool[];
   /** More tools, by group, that the turn loads when it needs them; `tools` is what it starts with. */
   groups?: ToolGroup[];
+  /**
+   * Groups an earlier turn of this conversation loaded, which this one starts with, in the groups' own order: the
+   * tool list, at the very start of the prompt, then stays the same from turn to turn, so it caches (§4.1).
+   */
+  loaded?: string[];
   budget: Budget;
   signal?: AbortSignal;
   /** Put between text from separate steps: a space when spoken, a paragraph break in text. */
@@ -136,6 +141,8 @@ export interface LoopResult {
   messages?: Message[];
   /** Each model call's tokens in and how many came from the provider's cache, to see whether caching works (§4.1). */
   calls?: Array<{ input: number; cached: number; ms: number }>;
+  /** The groups of tools the run had loaded by its end, including those it started with. */
+  loaded?: string[];
 }
 
 class NoBrainError extends Error {}
@@ -156,17 +163,21 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
   // What this turn can call now: what it started with, and each group it has loaded since.
   const active: Tool[] = [...spec.tools];
   const groups = spec.groups ?? [];
+  const loadedGroups = new Set<string>();
   const load = (names: string[]): string[] => {
     const added: string[] = [];
-    for (const g of groups.filter((x) => names.includes(x.name)))
+    for (const g of groups.filter((x) => names.includes(x.name))) {
+      loadedGroups.add(g.name);
       for (const t of g.tools)
         if (!active.some((a) => a.name === t.name)) {
           active.push(t);
           added.push(t.name);
         }
+    }
     return added;
   };
   if (groups.length) active.push(loader(groups, load));
+  if (spec.loaded?.length) load(spec.loaded);
   /** A tool by name: one the turn has, or one from a group, which loads its group (a call by name is a load). */
   const find = (name: string): Tool | undefined => {
     const have = active.find((t) => t.name === name);
@@ -195,6 +206,7 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
     usage,
     messages: last ? [...messages, { role: "assistant", content: last }] : [...messages],
     calls,
+    ...(loadedGroups.size ? { loaded: [...loadedGroups] } : {}),
     ...extra,
   });
 
@@ -305,7 +317,8 @@ type Started = { attempt: Attempt; ok: true; next: IteratorResult<BrainEvent> } 
  * are stopped. Nothing reaches the owner from a brain until it has won.
  */
 async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepResult> {
-  const brains = deps.router.chain(deps.chain);
+  // Voice (hedged) goes to the brain measured fastest to start; text keeps the owner's order.
+  const brains = deps.router.chain(deps.chain, Date.now(), { fastest: spec.hedgeMs != null });
   if (brains.length === 0) {
     throw new NoBrainError("No brain is set up for this. Sign in with ChatGPT or add a Workers AI model in Settings → Brains.");
   }
@@ -378,12 +391,13 @@ async function runStep(deps: LoopDeps, spec: RunSpec, io: StepIo): Promise<StepR
       continue;
     }
 
-    // This one answered first: the rest stop, and the ones ahead of it in the chain were the slow ones.
+    // This one answered first: the rest stop, and the ones ahead of it in the chain were the slow ones. Slow isn't
+    // broken: it isn't cooled down (that would move it to the back of every chain), only timed.
     for (const o of live.splice(0)) {
       o.abort.abort();
       if (o.index < a.index) {
-        const err = new SlowBrainError(`was slower to start (nothing after ${seconds(spec.hedgeMs ?? spec.firstEventMs)})`);
-        failed(o, err);
+        deps.router.noteSlow(o.brain, Date.now() - o.at);
+        why.set(o.index, `was slower to start (nothing after ${seconds(spec.hedgeMs ?? spec.firstEventMs)})`);
       }
     }
     const { brain } = a;

@@ -294,7 +294,7 @@ describe("the gym-to-store moment", () => {
     );
     const b = brain([call("speaking_up", { quiet_about_add: ["stores on the way home"] }), say("Got it, no more store tips.")]);
     const t = await turn(s, "stop telling me about stores");
-    expect(b.requests[0]!.system).toContain("seems to be saying stop to the nudge you sent");
+    expect(b.requests[0]!.system).toContain("If they're saying stop to messages like it");
     expect(offered(b.requests[0]!)).toContain("speaking_up");
     const receipt = t.results[0]!;
     expect(receipt.body.receipt).toMatchObject({ text: "Speaking up · won't bring up stores on the way home" });

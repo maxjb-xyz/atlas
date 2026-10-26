@@ -79,7 +79,7 @@ import { type JudgeLine, judgeTranscript, runCharacterCheck, summary as characte
 import { newSessionId, type Session, SESSION_DAYS, SESSION_HEADER } from "./auth";
 import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
 import { compact, planCompaction } from "./compaction";
-import { CONTEXT_TOKENS, history, promptParts, systemPrompt, tokens, withMessage, withNow } from "./context";
+import { CONTEXT_TOKENS, history, latestSummary, promptParts, systemPrompt, tokens, withMessage, withNow } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop, type ToolGroup } from "./loop";
 import { askedOn, Outbox, type PushDevice, pushDevices, route, StreamScrubber, type Urgency } from "./outbox";
 import { vapidKeys } from "./push";
@@ -2938,7 +2938,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       return;
     }
     if (item.kind === "skill_review") {
-      await this.keepAliveWhile(() => this.#inLine(() => this.#reviewSkills(item)));
+      // The review only changes skills and reads the log as it was when it started, so it runs beside the owner's
+      // turns instead of in line ahead of them: someone coming back mid-review never waits minutes for a reply.
+      await this.keepAliveWhile(() => this.#reviewSkills(item));
       return;
     }
     if (item.kind === "situation") {
@@ -3286,7 +3288,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         : undefined;
     const tools = !groups && base.includes(mcpCall) ? [...base, ...ext()] : base;
     const every = [...tools, ...(groups ?? []).flatMap((g) => g.tools)];
-    const mcp = every.includes(mcpCall) ? await this.#mcpServers(3_000) : [];
+    // The owner's turn doesn't wait for servers still connecting: the prompt says how they are now, and mcp_call
+    // waits for one when it's used. Atlas's own runs, which nobody waits on, give them a moment first.
+    const mcp = every.includes(mcpCall) ? await this.#mcpServers(o.actor === "owner" ? 0 : 3_000) : [];
     // What's shared, and for a member's Atlas whose it is (§7.1). The owner's Atlas being unreachable doesn't stop a run.
     const shared = await this.#sharedNote();
     const extra = [o.extra ?? "", shared].filter(Boolean).join("\n\n") || undefined;
@@ -3302,7 +3306,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       withNow(parts.now, o.input),
     );
     const via = o.actor === "atlas" ? "clock" : o.surface === "voice" ? "voice" : "chat";
-    return runLoop(
+    // The groups of tools this conversation has loaded since its last summary: the turn starts with them (§4.1).
+    const since = latestSummary(this.#sql, o.beforeSeq)?.through_seq ?? 0;
+    const kept = groups ? getState<{ since: number; groups: string[] }>(this.#sql, "turn_groups") : null;
+    const loaded = kept && kept.since === since ? kept.groups : [];
+    const res = await runLoop(
       {
         log: logTo(this.#sql),
         router: this.#router,
@@ -3358,7 +3366,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         system,
         messages,
         tools,
-        ...(groups ? { groups } : {}),
+        ...(groups ? { groups, loaded } : {}),
         budget: o.budget,
         signal: o.signal,
         joiner: o.surface === "voice" ? " " : "\n\n",
@@ -3373,6 +3381,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       },
       o.emit,
     );
+    if (groups && res.loaded?.length) {
+      const order = groups.map((g) => g.name);
+      const all = [...new Set([...loaded, ...res.loaded])].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      setState(this.#sql, "turn_groups", { since, groups: all });
+    }
+    return res;
   }
 
   #toolContext(settings: Settings, now: Date, via: string, sourceLogId: string | null): Omit<ToolContext, "run_id"> {
@@ -5602,7 +5616,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
   async #mcpServers(ms: number): Promise<McpServer[]> {
     const c = this.#mcpClient();
     if (!c) return [];
-    if (c.servers().some((s) => s.state === "connecting" || s.state === "connected" || s.state === "discovering")) {
+    if (ms > 0 && c.servers().some((s) => s.state === "connecting" || s.state === "connected" || s.state === "discovering")) {
       await c.settle(ms).catch(() => {});
     }
     return c.servers();
@@ -5661,6 +5675,9 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
 
   #mcpApi: McpApi = {
     servers: () => this.#mcpClient()?.servers() ?? [],
+    settle: async (ms) => {
+      await this.#mcpServers(ms);
+    },
     call: (server, tool, args, o) => this.#mcpRun(server, tool, args, { run_id: o.run_id, by: "atlas" }),
   };
 

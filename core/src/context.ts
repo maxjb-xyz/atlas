@@ -100,9 +100,14 @@ export function promptParts(opts: {
 }): { stable: string; now: string } {
   const { settings, tz, now, surface, sql } = opts;
   const summary = latestSummary(sql, opts.beforeSeq);
+  // What changes only when the owner changes something (a page kept, a skill saved, a brain or a server set up) sits in
+  // the cached part of the owner's turns, after what never changes; Atlas's own runs and jobs don't carry it there.
+  const own = surface !== "none";
+  const settled = [pagesLine(sql), skillsLine(sql), brainsLine(settings), serversLine(opts.mcp ?? [])];
   const stable = [
     character(settings.assistant_name, settings.owner_name, settings.character),
     surface === "voice" ? voiceProfile(settings.voice) : surface === "none" ? "" : TEXT_PROFILE,
+    ...(own ? settled : []),
     facts(sql, settings.owner_name),
     summary
       ? `Earlier in this conversation (your own summary, written ${shortLocal(new Date(summary.at), tz)}; recall has the full messages):\n${summary.text}`
@@ -121,11 +126,8 @@ export function promptParts(opts: {
     situationLines(sql, settings, now.getTime()),
     nodesLine(sql),
     focusLine(sql, tz),
-    pagesLine(sql),
-    skillsLine(sql),
-    brainsLine(settings),
+    ...(own ? [] : settled),
     limitsLine(sql, settings, now.getTime(), tz),
-    serversLine(opts.mcp ?? []),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     tasksLine(sql, tz),
     loopsLine(sql, tz),
@@ -185,13 +187,32 @@ export function sinceSummary(sql: Sql, beforeSeq?: number): LogRow[] {
  */
 export function history(sql: Sql, opts: { excludeRunId?: string; beforeSeq?: number; budget?: number } = {}): Message[] {
   let rows = sinceSummary(sql, opts.beforeSeq).filter((r) => !opts.excludeRunId || r.run_id !== opts.excludeRunId);
-  if (opts.budget != null) {
-    let total = rows.reduce((n, r) => n + tokens(String(r.body.text ?? "")), 0);
-    let drop = 0;
-    while (total > opts.budget && drop < rows.length - 1) total -= tokens(String(rows[drop++]!.body.text ?? ""));
-    rows = rows.slice(drop);
-  }
+  if (opts.budget != null) rows = rows.slice(windowStart(rows, opts.budget));
   return toMessages(rows);
+}
+
+/**
+ * Where a turn's window of the conversation starts. It starts only at fixed points, every half a budget of tokens
+ * from the summary, at the first one that leaves the rest within the budget, so it stays put for several turns
+ * while the conversation grows at its end: the turns between moves read the same messages first, which caches
+ * (§4.1). The window holds between half a budget and a budget.
+ */
+export function windowStart(rows: LogRow[], budget: number): number {
+  const sizes = rows.map((r) => tokens(String(r.body.text ?? "")));
+  const total = sizes.reduce((n, x) => n + x, 0);
+  if (total <= budget) return 0;
+  const step = Math.max(1, Math.floor(budget / 2));
+  let before = 0;
+  let mark = step;
+  for (let i = 0; i < rows.length - 1; i++) {
+    before += sizes[i]!;
+    // Past a fixed point: the window may start here, if what's left fits.
+    if (before >= mark) {
+      if (total - before <= budget) return i + 1;
+      while (mark <= before) mark += step;
+    }
+  }
+  return rows.length - 1;
 }
 
 /**

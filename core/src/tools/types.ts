@@ -191,6 +191,8 @@ export interface DevicesApi {
 /** Connected MCP servers, as tools reach them (§9.2). */
 export interface McpApi {
   servers(): McpServer[];
+  /** Waits up to `ms` for servers still connecting (after Atlas woke), so a tool that needs one doesn't fail for that. */
+  settle?(ms: number): Promise<void>;
   /** Calls a tool that only reads, now, through the outbox; a tool with a page puts it on the stage. */
   call(
     server: string,
