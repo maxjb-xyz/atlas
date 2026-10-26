@@ -248,7 +248,26 @@ ol.smoke li { margin: 6px 0; }
 <section id="market">
   <div class="col">
     <div class="lab">2 · What the market does</div>
-    <h2>MARKET_PLACEHOLDER</h2>
+    <h2>Two ways to do parallel work, and one of them is losing</h2>
+    <p>"Grok bot" and "dots" are both from the last three months. Grok Bot (xAI with Cursor, beta since August 11) is a team of named bots. OpenAI's dots (DevDay, September 29) is one agent per person. Between them, Hermes and OpenClaw, every product picks one of two shapes:</p>
+    <ul class="plain">
+      <li><b>Many bots, one chat each.</b> Grok Bot, Hermes' Bot Mode and OpenClaw's multi-agent routing. Each bot has its own name, memory and endless conversation.</li>
+      <li><b>One agent, many threads.</b> OpenAI's dots, Claude's Dispatch and Cursor's agents window. You keep talking to one agent, and background work shows up as titled threads with a state.</li>
+    </ul>
+    <p>The first shape collects the loudest complaints: context mixes in the one long chat, every turn costs more, there's no way to start fresh, bots that wake each other burn the quota, and memory is split. Grok Bot's staff are now adding channels and a thread view to patch it. Atlas should take the second shape and give it what none of them have: a sidebar that shows all the work at once, and spaces with real data behind them.</p>
+  </div>
+  <div class="tbl"><table>
+    <thead><tr><th>Product</th><th>Shape</th><th>Parallel work</th><th>What users complain about</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Grok Bot</td><td>Up to 50 named bots, one continuous chat per bot, a "chief of staff" bot coordinating the rest. All bots share one cloud computer.</td><td>Group chats of 2 to 6 bots, @mentions. Your direct message overrides background work.</td><td>"Threads UI is unusable." Mixed context, no fresh sessions, a weekly allowance gone in three days, noisy bot-to-bot loops.</td></tr>
+      <tr><td class="k">OpenAI dots</td><td>One dot per person, named and drawn by you. The same dot in ChatGPT, Slack, Teams and on calls.</td><td>Background threads appear as separate conversations. An Activity view shows progress, results and requests for input.</td><td>Early reviews: slow, three yeses for one booking, one email sent without a draft.</td></tr>
+      <tr><td class="k">Hermes Agent</td><td>One continuous session per chat; Bot Mode makes each profile a bot with its own memory, skills and soul.</td><td>Sub-agents, three at a time, in a strip above the composer with Steer and Stop. Results fold into the chat as collapsed entries.</td><td>"It always thinks it did a good job." Self-learning overwrites manual tuning. Needs strong models.</td></tr>
+      <tr><td class="k">OpenClaw</td><td>One main session for all DMs by default; multi-agent routing by config, each agent with its own workspace.</td><td>Sub-agents in a panel inside the parent chat. A thread or Telegram topic per sub-agent, opt-in in config. Since 2026.8.1, a sidebar of conversations with running and needs-attention flags.</td><td>Memory pulls "from the wrong project file". Idle heartbeats cost about $19 overnight. Updates break delivery. Setup.</td></tr>
+      <tr><td class="k">Claude Dispatch</td><td>One conversation with a dispatcher that splits work into child tasks.</td><td>Each task is a sidebar row with a state: Running, Awaiting input, Completed, Error. Click to open and follow up.</td><td>Children can't spawn their own. Unanswered permission prompts are denied after 10 minutes.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="col">
+    <p class="muted">Most hands-on material on Grok Bot and dots is under three months old; the table leans on official docs and staff forum posts, with secondary sources only where marked in Sources.</p>
   </div>
 </section>
 
@@ -447,7 +466,7 @@ ol.smoke li { margin: 6px 0; }
   <div class="col">
     <div class="lab">7 · On the phone and in Telegram</div>
     <h2>The same shape everywhere</h2>
-    <p>On the phone the sidebar is the first screen, like Messages. In Telegram, each thread can be a topic in the chat with Atlas, which Telegram's bot API has supported in private chats since version 9.3. Where topics aren't available, Atlas names the thread at the top of its message, and replying to a message routes to its thread.</p>
+    <p>On the phone the sidebar is the first screen, like Messages. In Telegram, each thread can be a topic in the chat with Atlas, which Telegram's bot API has supported in private chats since version 9.3 (one open report says sends to them broke in 10.0, so this gets checked first). Where topics aren't available, Atlas names the thread at the top of its message, and replying to a message routes to its thread.</p>
   </div>
   <div class="fig">
     <div class="phones">
@@ -486,7 +505,18 @@ ol.smoke li { margin: 6px 0; }
 <section id="edge">
   <div class="col">
     <div class="lab">8 · Why this beats Hermes and OpenClaw</div>
-    <h2>EDGE_PLACEHOLDER</h2>
+    <h2>They make you choose between focus and memory. Atlas doesn't.</h2>
+  </div>
+  <div class="why">
+    <div><b>Threads without forgetting</b><span>In Hermes and OpenClaw a fresh context means <code>/new</code>, which drops what the chat knew, and a separate bot means separate memory. In Atlas every thread starts clean and still knows everything Atlas knows.</span></div>
+    <div><b>All the work in one glance</b><span>Their sub-agents live in a panel inside one chat. Atlas's sidebar shows every thread's state at once, across spaces, with what needs you on top.</span></div>
+    <div><b>Bots with something behind them</b><span>A Hermes bot is a soul file and a memory file. An Atlas space has the area's people, calendar, mail account, tone, rules and routines, because those are already records.</span></div>
+    <div><b>Proactive without the bill</b><span>OpenClaw retired its heartbeat after users paid for idle checks. Atlas posts to a space's feed from its one intake, which wakes the main brain only for what matters.</span></div>
+    <div><b>Topics in Telegram by default</b><span>OpenClaw binds threads to Telegram topics if you configure it. Atlas does it out of the box, with a fallback where topics aren't on.</span></div>
+    <div><b>An app, not a config file</b><span>Spaces, threads and their rules are made by asking or with a click. Nothing here needs a terminal (VISION rule 6).</span></div>
+  </div>
+  <div class="col" style="margin-top:18px">
+    <p>Taken from the others, because they work: a state on every thread (Dispatch, Linear), your message overriding background work (Grok Bot), results folding into the main line as one collapsed line (Hermes), approvals waiting in the thread that raised them (OpenClaw), and progress to one channel with decisions to another (dots). Left behind: bots that talk to each other, a forever chat with no fresh start, and a heartbeat that resends everything.</p>
   </div>
 </section>
 
@@ -539,7 +569,7 @@ ol.smoke li { margin: 6px 0; }
     <h2>Five choices before building</h2>
   </div>
   <div class="dec col">
-    <div><b>Spaces that feel like bots, or separate bots?</b><span class="rec">Spaces with one mind underneath. Separate bots split memory, which is what makes cross-area questions fail, and what OpenClaw users fight with in multi-agent setups.</span></div>
+    <div><b>Spaces that feel like bots, or separate bots?</b><span class="rec">Spaces with one mind underneath. Separate bots split memory, which is what makes cross-area questions fail, and it's the shape Grok Bot's users complain about most.</span></div>
     <div><b>Call them spaces, or keep "areas"?</b><span class="rec">Spaces in the app; "area" stays the word in the code and VISION's data model, so nothing underneath renames.</span></div>
     <div><b>Should Atlas move messages to threads on its own?</b><span class="rec">Only for long work and for a clear continuation of an open thread, always with Undo. Everything else stays where it was typed.</span></div>
     <div><b>How many threads at once?</b><span class="rec">Four working at once, shown in Settings → Brains with what it means for cost.</span></div>
@@ -551,7 +581,14 @@ ol.smoke li { margin: 6px 0; }
   <div class="col">
     <div class="lab">Sources</div>
     <ul class="plain src">
-      SOURCES_PLACEHOLDER
+      <li>Grok Bot: <a href="https://docs.x.ai/grok-bot/overview">overview</a>, <a href="https://docs.x.ai/grok-bot/chat-and-collaboration">chat and collaboration</a>, <a href="https://venturebeat.com/orchestration/spacexais-grok-bot-turns-agents-into-persistent-digital-coworkers-that-can-operate-your-apps-for-120-per-month">VentureBeat</a>, forum threads on <a href="https://forum.cursor.com/t/grok-bot-threads-ui-is-unusable-needs-a-slack-style-right-panel/168315">the threads UI</a>, <a href="https://forum.cursor.com/t/grok-bots-as-always-on-workers-vs-topic-threads/168183">bots vs topic threads</a> and <a href="https://forum.cursor.com/t/grok-bot-ultra-users-how-do-you-make-the-weekly-allowance-last-mine-reached-99-in-three-days/171221">usage limits</a>.</li>
+      <li>OpenAI dots: <a href="https://learn.chatgpt.com/docs/dots">docs</a>, <a href="https://techcrunch.com/2026/09/29/openai-launches-dots-its-bubbly-agentic-avatar/">TechCrunch</a>, <a href="https://www.theneuron.ai/explainer-articles/openai-dots-hands-on-review-herman/">The Neuron's review</a>, <a href="https://www.eesel.ai/blog/openai-dots-review">eesel's review</a> (secondary).</li>
+      <li>Hermes Agent: <a href="https://hermes-agent.nousresearch.com/docs/user-guide/bot-mode">Bot Mode</a>, <a href="https://hermes-agent.nousresearch.com/docs/user-guide/features/delegation">delegation</a>, <a href="https://hermes-agent.nousresearch.com/docs/user-guide/desktop">desktop</a>, <a href="https://hermes-agent.nousresearch.com/docs/user-guide/features/memory">memory</a>.</li>
+      <li>OpenClaw: <a href="https://docs.openclaw.ai/concepts/session">sessions</a>, <a href="https://docs.openclaw.ai/tools/subagents">sub-agents</a>, <a href="https://docs.openclaw.ai/concepts/multi-agent">multi-agent</a>, <a href="https://docs.openclaw.ai/channels/discord/threads-and-sessions">threads</a>, <a href="https://docs.openclaw.ai/gateway/heartbeat">heartbeat</a>, <a href="https://docs.openclaw.ai/releases/2026.8.1/the-new-web-ui">the new web UI</a>.</li>
+      <li>What users say about both: <a href="https://kilo.ai/articles/openclaw-vs-hermes-what-reddit-says">Kilo's summary of r/openclaw and Hermes threads</a> (a vendor), <a href="https://www.notebookcheck.net/Free-to-use-AI-tool-can-burn-through-hundreds-of-Dollars-per-day-OpenClaw-has-absurdly-high-token-use.1219925.0.html">Notebookcheck on OpenClaw's token use</a>.</li>
+      <li>Parallel work elsewhere: <a href="https://claude.com/docs/cowork/guide/dispatch">Claude Dispatch</a>, <a href="https://linear.app/developers/aig">Linear's agent interaction guidelines</a>, <a href="https://slack.dev/a-better-dm-experience-for-your-slack-agent/">Slack's agent DMs</a>, <a href="https://www.datacamp.com/blog/cursor-3">Cursor 3</a>.</li>
+      <li>Telegram topics in private chats with bots: <a href="https://docs.aiogram.dev/en/v3.24.0/changelog.html">Bot API 9.3 in aiogram's changelog</a>; an <a href="https://github.com/tdlib/telegram-bot-api/issues/847">open report</a> of sends to private topics failing after Bot API 10.0, to check before stage 4.</li>
+      <li>Atlas: <a href="../../../VISION.md">VISION.md</a> §8.3, §8.4, §21; <a href="../../AUDIT-feel.md">the feel audit</a>; <a href="../../M7.md">M7</a> stages 6b to 6d.</li>
     </ul>
   </div>
 </section>
