@@ -2,7 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { BrainRouter } from "../src/brains/router";
 import { BrainError } from "../src/brains/types";
-import { type LoopEvent, runLoop, type RunSpec } from "../src/loop";
+import { type LoopEvent, runLoop, type RunSpec, squeeze } from "../src/loop";
 import { upcoming } from "../src/store/agenda";
 import { migrate, type Sql } from "../src/store/db";
 import { forRun, logTo, thread } from "../src/store/log";
@@ -411,4 +411,21 @@ describe("the store", () => {
       setSecret(sql, "icloud", { username: "max@icloud.com", app_password: "abcd-efgh-ijkl-mnop" });
       expect(secretValues(sql).sort()).toEqual(["abcd-efgh-ijkl-mnop", "sk_eleven_1234567890"]);
     }));
+});
+
+describe("a long run's old tool output", () => {
+  it("is shortened all at once past the limit, keeping the newest results whole", () => {
+    const big = "x".repeat(8_000);
+    const messages = [
+      { role: "user" as const, content: "build it" },
+      ...Array.from({ length: 10 }, (_, i) => ({ role: "tool" as const, content: `${i}${big}`, call_id: `c${i}` })),
+    ] as Parameters<typeof squeeze>[0];
+    // Under the limit, nothing changes.
+    squeeze(messages, { over: 1_000_000, keep: 3 });
+    expect(messages.every((m) => m.role !== "tool" || (m.content as string).length > 8_000)).toBe(true);
+    squeeze(messages, { over: 10_000, keep: 3 });
+    const tools = messages.filter((m) => m.role === "tool").map((m) => m.content as string);
+    expect(tools.slice(0, 7).every((c) => c.length < 700 && c.endsWith("(shortened; run it again for the rest)"))).toBe(true);
+    expect(tools.slice(7).every((c) => c.length > 8_000)).toBe(true);
+  });
 });

@@ -139,7 +139,7 @@ export const STALL_MS = 90 * 60_000;
 /** How long a job with nothing at work on it still shows as working: the moment between one turn and the next. */
 export const QUIET_MS = 2 * 60_000;
 /** A transcript past this many tokens is compacted before the next turn: old tool output first, then a summary. */
-export const TRANSCRIPT_TOKENS = 60_000;
+export const TRANSCRIPT_TOKENS = 30_000;
 
 /** What no turn can do, so a job never sets itself a task it can't meet and loops on it. */
 export const JOB_LIMITS =

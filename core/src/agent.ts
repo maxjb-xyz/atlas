@@ -4001,6 +4001,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         surface: "none",
         system,
         messages,
+        // A job's turn takes many steps: past 40k tokens, old command and page output is shortened (M7 W22).
+        squeeze: { over: 40_000, keep: 6 },
         tools: [
           ...MOVES,
           folderRun,

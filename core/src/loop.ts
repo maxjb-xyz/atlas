@@ -76,6 +76,12 @@ export interface RunSpec {
   /** More tools, by group, that the turn loads when it needs them; `tools` is what it starts with. */
   groups?: ToolGroup[];
   /**
+   * For long runs (a job's turn): once the conversation passes `over` tokens, every tool result but the last `keep`
+   * is shortened to its start, all at once, so later calls don't carry every page and command output in full. Done
+   * in one go, the prompt's start changes once, not at every step, so the rest still caches.
+   */
+  squeeze?: { over: number; keep: number };
+  /**
    * Groups an earlier turn of this conversation loaded, which this one starts with, in the groups' own order: the
    * tool list, at the very start of the prompt, then stays the same from turn to turn, so it caches (§4.1).
    */
@@ -147,6 +153,20 @@ export interface LoopResult {
 
 class NoBrainError extends Error {}
 
+/** About how many tokens a message holds: four characters each, as the context's own estimate does. */
+const sizeOf = (m: Message) => Math.ceil((typeof m.content === "string" ? m.content.length : JSON.stringify(m.content).length) / 4);
+
+/** Shortens old tool results in place, once the conversation is past `over` tokens (RunSpec.squeeze). */
+export function squeeze(messages: Message[], o: { over: number; keep: number }): void {
+  if (messages.reduce((n, m) => n + sizeOf(m), 0) <= o.over) return;
+  const tools = messages.map((m, i) => (m.role === "tool" ? i : -1)).filter((i) => i >= 0);
+  for (const i of tools.slice(0, Math.max(0, tools.length - o.keep))) {
+    const m = messages[i]!;
+    if (typeof m.content === "string" && m.content.length > 600)
+      messages[i] = { ...m, content: `${m.content.slice(0, 600)}… (shortened; run it again for the rest)` } as Message;
+  }
+}
+
 const MAX_TOOL_OUTPUT = 16_000;
 
 export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent) => void): Promise<LoopResult> {
@@ -212,6 +232,7 @@ export async function runLoop(deps: LoopDeps, spec: RunSpec, emit: (e: LoopEvent
 
   try {
     while (true) {
+      if (spec.squeeze) squeeze(messages, spec.squeeze);
       const over = steps >= spec.budget.steps || Date.now() - started > spec.budget.ms;
       steps += 1;
       const callAt = Date.now();
