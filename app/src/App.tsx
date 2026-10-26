@@ -247,8 +247,16 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
       void atlas.toggleCall();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [atlas.toggleCall]);
+    // The Mac app's Option-Space (M7 X12) brings this window forward and asks it to start talking.
+    const onTalk = () => {
+      if (!atlas.inCall) void atlas.toggleCall();
+    };
+    window.addEventListener("atlas:talk", onTalk);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("atlas:talk", onTalk);
+    };
+  }, [atlas.toggleCall, atlas.inCall]);
 
   async function signOut() {
     await fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => null);

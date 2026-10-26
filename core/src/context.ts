@@ -22,6 +22,7 @@ import { accountName, installed, providing, ready } from "./extensions";
 import { links } from "./agent/channels";
 import { vault } from "./vault";
 import { type Area, getArea, getScope, listAreas } from "./store/areas";
+import { getPortrait } from "./portrait";
 import { parse, type Sql } from "./store/db";
 import { type AtlasRecord, standingFacts } from "./store/records";
 import { get as getRow, type LogRow, type Surface } from "./store/log";
@@ -111,6 +112,7 @@ export function promptParts(opts: {
     surface === "voice" ? voiceProfile(settings.voice) : surface === "none" ? "" : TEXT_PROFILE,
     ...(own ? settled : []),
     facts(sql, settings.owner_name),
+    portraitLine(sql),
     summary
       ? `Earlier in this conversation (your own summary, written ${shortLocal(new Date(summary.at), tz)}; recall has the full messages):\n${summary.text}`
       : "",
@@ -158,6 +160,17 @@ function facts(sql: Sql, ownerName: string): string {
   if (!lines.length) return "";
   const owner = ownerName.trim() || "the owner";
   return `What you know about ${owner} for good (use it quietly; pass the id to remember or forget to change one):\n${lines.join("\n")}`;
+}
+
+/** The standing facts as lines, for the night's portrait. */
+export function standingLines(sql: Sql): string {
+  return standingFacts(sql).map(factLine).filter(Boolean).join("\n");
+}
+
+/** Atlas's portrait of the owner (§5.1, §5.2), in the cached part: it changes once a night at most. */
+function portraitLine(sql: Sql): string {
+  const p = getPortrait(sql);
+  return p?.text ? `Your portrait of the owner (you rewrite it each night; they can read and correct it):\n${p.text}` : "";
 }
 
 function factLine(r: AtlasRecord): string {

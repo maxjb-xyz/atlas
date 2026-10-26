@@ -5591,3 +5591,37 @@ button.front-tile:hover {
   color: var(--tx);
   border-color: var(--ac);
 }
+
+/* --- the portrait (§5.1) --------------------------------------------------------------------- */
+
+.portrait {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  border: 1px solid var(--sep);
+  border-radius: 10px;
+  background: var(--win2, var(--win));
+}
+.portrait-text {
+  font-size: 15px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.portrait-learned {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--tx2);
+  font-size: 13.5px;
+}
+.portrait textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.front-learned {
+  font-size: 13.5px;
+  color: var(--tx2);
+}

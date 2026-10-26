@@ -440,7 +440,7 @@ function MoveInStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
 function RoutineRow({ atlas, a }: { atlas: Atlas; a: AutomationView }) {
   const t = a.when;
   const [at, setAt] = useState(t.kind === "schedule" ? t.at : "");
-  const days = a.when_text.replace(/^At \S+, /, "");
+  const days = a.when_text.replace(/^At \S+, /, "").replace(/^Every (\d+) h from \S+ to (\S+), /, "every $1 h to $2, ");
   const save = () => {
     if (t.kind !== "schedule" || !at || at === t.at) return;
     atlas.send({
@@ -455,6 +455,7 @@ function RoutineRow({ atlas, a }: { atlas: Atlas; a: AutomationView }) {
         <strong>{a.name}</strong>
         <span className="muted small" style={{ display: "block" }}>
           {a.about.replace(/^A default routine: /, "").replace(/^./, (c) => c.toUpperCase())}
+          {a.cost ? ` ${a.cost}` : ""}
         </span>
       </span>
       {t.kind === "schedule" && (

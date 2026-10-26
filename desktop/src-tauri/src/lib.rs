@@ -14,6 +14,7 @@ use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 pub struct Shared {
     pub node: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
@@ -62,6 +63,27 @@ pub fn open_main(app: &AppHandle) {
         .inner_size(1280.0, 860.0)
         .min_inner_size(400.0, 500.0)
         .build();
+}
+
+/// The shortcut that summons Atlas from any app: Option-Space.
+fn talk_shortcut() -> Shortcut {
+    Shortcut::new(Some(Modifiers::ALT), Code::Space)
+}
+
+/// Brings Atlas forward and starts talking (M7 X12): the page hears `atlas:talk` and starts a call. A window that
+/// wasn't open yet gets a moment to load first.
+pub fn summon(app: &AppHandle) {
+    let existed = app.get_webview_window("main").is_some();
+    open_main(app);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if !existed {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.eval("window.dispatchEvent(new CustomEvent('atlas:talk'))");
+        }
+    });
 }
 
 #[derive(Serialize)]
@@ -195,6 +217,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() == ShortcutState::Pressed && shortcut == &talk_shortcut() {
+                        summon(app);
+                    }
+                })
+                .build(),
+        )
         .manage(Shared {
             node: Mutex::new(None),
             status: Mutex::new(None),
@@ -209,10 +240,11 @@ pub fn run() {
             let handle = app.handle().clone();
             let status = MenuItem::with_id(app, "status", "Status: Starting", false, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "Open Atlas", true, None::<&str>)?;
+            let talk = MenuItem::with_id(app, "talk", "Talk to Atlas", true, Some("Alt+Space"))?;
             let pair = MenuItem::with_id(app, "pair", "Pair again…", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Atlas", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
-            let menu = Menu::with_items(app, &[&status, &sep, &open, &pair, &quit])?;
+            let menu = Menu::with_items(app, &[&status, &sep, &open, &talk, &pair, &quit])?;
             if let Ok(mut slot) = app.state::<Shared>().status.lock() {
                 *slot = Some(status);
             }
@@ -224,6 +256,7 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "open" => open_main(app),
+                    "talk" => summon(app),
                     "pair" => {
                         if let Ok(mut slot) = app.state::<Shared>().node.lock() {
                             if let Some(n) = slot.take() {
@@ -237,6 +270,11 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+
+            // Option-Space from anywhere: if another app already holds it, the menu bar's Talk still works.
+            if let Err(e) = app.global_shortcut().register(talk_shortcut()) {
+                eprintln!("Atlas couldn't take Option-Space for talking: {e}");
+            }
 
             match config::load(&handle) {
                 Some(cfg) => {

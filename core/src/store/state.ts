@@ -6,6 +6,8 @@
 import { parse, type Sql } from "./db";
 
 export type StateName =
+  /** Atlas's portrait of the owner (§5.1), rewritten nightly and shown in Library. */
+  | "portrait"
   /** Each brain's health (§18): when it last failed, why, and until when it waits at the back of its chain. */
   | "brain_health"
   /** What brains have cost this month and Workers AI's neurons today (§18), from the tokens each call counted. */

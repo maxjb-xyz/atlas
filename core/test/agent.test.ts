@@ -504,7 +504,7 @@ describe("setup", () => {
     brains([
       call("calendar_read", { start: "2099-01-01", end: "2099-01-15" }),
       say(
-        '{"areas": [{"name": "Keyframes", "about": "video studio"}], "people": [{"name": "Dana", "why": "producer"}], "notes": ["Two clashes Thursday."]}',
+        '{"areas": [{"name": "Keyframes", "about": "video studio"}], "people": [{"name": "Dana", "why": "producer"}], "notes": ["Two clashes Thursday."], "question": "What matters most to you this month?"}',
       ),
     ]);
     seams.fetch = (async (url: string) => {
@@ -535,7 +535,15 @@ describe("setup", () => {
       areas: [{ name: "Keyframes", about: "video studio" }],
       people: [{ name: "Dana", why: "producer" }],
       notes: ["Two clashes Thursday."],
+      question: "What matters most to you this month?",
     });
+    // The first message ends with the question.
+    const first = await runInDurableObject(owner(), (_i: PersonAgent, state) =>
+      state.storage.sql
+        .exec<{ t: string }>(`SELECT json_extract(body, '$.text') AS t FROM log WHERE kind = 'message.out' ORDER BY seq DESC LIMIT 1`)
+        .one(),
+    );
+    expect(first.t).toMatch(/Two clashes Thursday\.\n\nWhat matters most to you this month\?$/);
     s.send({ type: "atlas.setup.people", people: [{ name: "Dana", why: "producer" }] });
     // Saved as it's taken in; any view that comes meanwhile says nothing about it, so the records are asked until they have it.
     let people: Array<{ name: string }> = [];

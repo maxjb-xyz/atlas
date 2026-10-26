@@ -542,6 +542,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
       .optional(),
   }),
   /** Move an item to other areas by tapping its chip (§6.3): a message (`log:<id>`), a record (`rec:<id>`) or a job (`job:<id>`). */
+  /** The owner's own words for their portrait (§5.1): Atlas keeps them as true from then on. */
+  z.object({ type: z.literal("atlas.portrait.set"), text: z.string().max(2_000) }),
   z.object({
     type: z.literal("atlas.areas.set"),
     ref: z.string().regex(/^(log|rec|job|aut|file|page):[\w-]+$/),
@@ -930,6 +932,8 @@ export interface SettingsView {
   /** Focus in force, if any (§14). */
   focus: { until: number; about: string } | null;
   setup: { done: string[]; skipped: string[]; finished: boolean };
+  /** Atlas's portrait of the owner (§5.1) and what it learned the day it was written, for Library and the front page. */
+  portrait: { text: string; learned: string[]; at: number; by: "atlas" | "owner" } | null;
   /** Location (Abilities → Devices, §10.1): whether OwnTracks is set up, the last fix and place, and the last refused post. */
   location: LocationView;
   /** Paired devices (Abilities → Devices, §16.3). */

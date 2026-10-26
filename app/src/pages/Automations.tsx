@@ -205,6 +205,7 @@ function AutomationCard({ atlas, a, open }: { atlas: Atlas; a: AutomationView; o
           {a.steps.length} {a.steps.length === 1 ? "step" : "steps"} · {powers} {powers === 1 ? "power" : "powers"}
           {asks ? " · needs a test run" : a.paused_why ? " · paused itself" : ""}
         </span>
+        {a.cost && <span className="faint small">{a.cost}</span>}
       </button>
       <div className="foot">
         <RunStrip a={a} />
@@ -673,6 +674,27 @@ function AutomationForm({
       {t.kind === "schedule" && (
         <div className="row">
           <input type="time" value={t.at} onChange={(e) => e.target.value && setT({ at: e.target.value })} style={{ width: 130 }} />
+          <select
+            value={t.every_hours ?? 0}
+            aria-label="How often in a day"
+            onChange={(e) => {
+              const every = Number(e.target.value);
+              setT(every ? { every_hours: every, until: t.until ?? "20:00" } : { every_hours: undefined, until: undefined });
+            }}
+          >
+            <option value={0}>Once</option>
+            {[1, 2, 3, 4, 6].map((h) => (
+              <option key={h} value={h}>
+                Every {h} h
+              </option>
+            ))}
+          </select>
+          {t.every_hours ? (
+            <label className="row small" style={{ gap: 6 }}>
+              until
+              <input type="time" value={t.until ?? "20:00"} onChange={(e) => e.target.value && setT({ until: e.target.value })} />
+            </label>
+          ) : null}
           {DAYS.map((d, i) => (
             <button
               type="button"

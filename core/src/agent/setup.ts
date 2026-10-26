@@ -85,13 +85,17 @@ export interface FirstLook {
   areas: Array<{ name: string; about: string }>;
   people: Array<{ name: string; why: string }>;
   notes: string[];
+  /** One question that would most help Atlas know the owner, which its first message ends with (M7 X10). */
+  question?: string;
 }
 
 export const LOOK_NOTE = `[Setup, not the owner] This is your first look at the owner's world. Read their calendar from today through the next two weeks with calendar_read, and recall anything you already know. Then propose:
 - the areas of their life you can see (a job, a business, school, family, health, a hobby), each with one short sentence;
 - the key people, each with why they matter;
 - three to five things worth knowing about the next two weeks, the way you'd mention them ("Two clashes on Thursday", "Your 9 am Friday has no travel time").
-Only what the calendar and what you know actually show; fewer is fine. Reply with JSON only: {"areas": [{"name": "...", "about": "..."}], "people": [{"name": "...", "why": "..."}], "notes": ["..."]}`;
+Only what the calendar and what you know actually show; fewer is fine.
+Last, one question to the owner, in your own voice, whose answer would most help you be useful to them from now on: about them, not about setup ("What's the one thing this semester you most want to get right?"). Their answer comes in the conversation, where you'll save it.
+Reply with JSON only: {"areas": [{"name": "...", "about": "..."}], "people": [{"name": "...", "why": "..."}], "notes": ["..."], "question": "..."}`;
 
 /** Reads the brain's proposal. What doesn't parse is left out, not guessed. */
 export function parseLook(text: string): FirstLook | null {
@@ -99,7 +103,7 @@ export function parseLook(text: string): FirstLook | null {
   const end = text.lastIndexOf("}");
   if (start < 0 || end < start) return null;
   try {
-    const d = JSON.parse(text.slice(start, end + 1)) as { areas?: unknown; people?: unknown; notes?: unknown };
+    const d = JSON.parse(text.slice(start, end + 1)) as { areas?: unknown; people?: unknown; notes?: unknown; question?: unknown };
     const list = (v: unknown) => (Array.isArray(v) ? v : []);
     return {
       areas: list(d.areas)
@@ -114,6 +118,7 @@ export function parseLook(text: string): FirstLook | null {
         .filter((n): n is string => typeof n === "string")
         .map((n) => n.slice(0, 300))
         .slice(0, 5),
+      ...(typeof d.question === "string" && d.question.trim() ? { question: d.question.trim().slice(0, 300) } : {}),
     };
   } catch {
     return null;

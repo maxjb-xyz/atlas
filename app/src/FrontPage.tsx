@@ -77,6 +77,8 @@ export function FrontPage({ atlas, opens }: { atlas: Atlas; opens: Opens }) {
   const tMin = Math.min(...hours.map((h) => h.temp_c), 0);
   const u = wx?.units ?? sit?.units ?? "metric";
   const ask = inbox.find((i) => i.kind === "approval") ?? inbox[0];
+  const portrait = s.view?.portrait;
+  const learned = portrait && portrait.by === "atlas" && now - portrait.at < 30 * 3_600_000 ? portrait.learned[0] : undefined;
 
   return (
     <section className="front" aria-label="Today">
@@ -93,6 +95,12 @@ export function FrontPage({ atlas, opens }: { atlas: Atlas; opens: Opens }) {
             {owner ? `, ${owner}` : ""}.
           </h1>
           <p className="front-line">{line}</p>
+          {/* What it learned about the owner last night (§5.1), when it's fresh. */}
+          {learned && (
+            <p className="front-learned">
+              <span className="lab">Noted yesterday</span> {learned}
+            </p>
+          )}
         </div>
       </div>
 

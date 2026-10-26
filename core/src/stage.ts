@@ -381,6 +381,8 @@ export interface PersonPage {
 export interface AutomationView {
   id: string;
   name: string;
+  /** What it costs to keep on, for one that runs Atlas on a clock (§19.3: said before it's turned on). */
+  cost?: string;
   /** The areas it's in (§6.4), which its chip moves. */
   areas: string[];
   about: string;

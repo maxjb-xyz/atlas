@@ -1,6 +1,7 @@
 // What Settings shows (values, whether each secret is set, sign-in state and
 // brain health) and its live tests (§22: every check is a live test).
 
+import { getPortrait } from "../portrait";
 import { dataKeyView } from "../store/sealed";
 import { sensesView } from "../intake";
 import { openTasks, taskView } from "../tasks";
@@ -131,6 +132,10 @@ export function settingsView(
     brains: brainsView(settings, parts.router),
     passkeys,
     setup: setupView(sql),
+    portrait: (() => {
+      const p = getPortrait(sql);
+      return p ? { text: p.text, learned: p.learned, at: p.at, by: p.by } : null;
+    })(),
     location: locationView(sql),
     nodes: nodes(sql).map(nodeView),
     senses: sensesView(sql),
