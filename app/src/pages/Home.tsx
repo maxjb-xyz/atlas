@@ -65,6 +65,8 @@ function identity(s: Shown): string | null {
       return `mcp_app:${v.call}`;
     case "place":
       return `place:${v.place}`;
+    case "day":
+      return `day:${v.date}`;
     case "weather":
     case "situation":
     case "senses":

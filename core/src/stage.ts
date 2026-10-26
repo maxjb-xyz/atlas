@@ -265,6 +265,15 @@ export const PlaceStage = z.object({
 /** The weather near the owner (§21.6): now, the next hours, and what matters. */
 export const WeatherStage = z.object({ kind: z.literal("weather") });
 
+/** A day at a glance (M7 W18): its events to scale, the walk or drive between them, the weather over it, and when to leave. */
+export const DayStage = z.object({
+  kind: z.literal("day"),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .describe("The day, as YYYY-MM-DD in the owner's time zone."),
+});
+
 /** The situation (§10.2, §21.6): where the owner is, what they're doing, what's next and when to leave, weather and devices. */
 export const SituationStage = z.object({ kind: z.literal("situation") });
 
@@ -311,6 +320,7 @@ export const StageView = z.discriminatedUnion("kind", [
   MapStage,
   PlaceStage,
   WeatherStage,
+  DayStage,
   SituationStage,
   SensesStage,
   AbilitiesStage,
@@ -600,6 +610,8 @@ export function stageTitle(
       return names.place ?? v.place;
     case "weather":
       return "Weather";
+    case "day":
+      return new Date(`${v.date}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
     case "situation":
       return "Situation";
     case "senses":

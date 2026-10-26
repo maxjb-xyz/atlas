@@ -4,6 +4,7 @@
 // opens it on Home's stage. Library's area and person pages are these same
 // views (§21.2).
 
+import { DayStrip } from "./DayView";
 import { useEffect, useRef, useState } from "react";
 import type { Segment } from "../../core/src/pages";
 import type { LogRow, RecordView } from "../../core/src/protocol";
@@ -135,6 +136,7 @@ function ViewBody({
   return (
     <>
       {v.kind === "area" && <AreaView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
+      {v.kind === "day" && <DayStrip atlas={atlas} date={v.date} big />}
       {v.kind === "abilities" && <AbilitiesView atlas={atlas} view={v} onClose={onClose} />}
       {v.kind === "person" && <PersonView atlas={atlas} view={v} onOpen={onOpen} onClose={onClose} />}
       {v.kind === "list" && <ListView view={v} onClose={onClose} />}
@@ -1197,6 +1199,7 @@ function viewLabel(atlas: Atlas, v: StageView): string {
   if (v.kind === "file") return atlas.state.files?.find((f) => f.id === v.file)?.name ?? "A file";
   if (v.kind === "place") return "A place";
   if (v.kind === "weather") return "The weather";
+  if (v.kind === "day") return "A day";
   if (v.kind === "situation") return "The situation";
   if (v.kind === "senses") return "What Atlas noticed";
   if (v.kind === "abilities") return "What Atlas can do";
@@ -1423,6 +1426,7 @@ const KIND: Record<StageView["kind"], string> = {
   map: "Map",
   place: "Place",
   weather: "Weather",
+  day: "Day",
   situation: "Situation",
   senses: "Noticed",
   abilities: "Abilities",
@@ -1436,6 +1440,20 @@ const KIND: Record<StageView["kind"], string> = {
  */
 export function StageCard({ atlas, shown, onOpen, row }: { atlas: Atlas; shown: Shown; onOpen: () => void; row?: LogRow }) {
   const v = shown.view;
+  // A day is drawn in the message itself, to scale (M7 W18); tapped, it opens large on the stage.
+  if (v.kind === "day")
+    return (
+      <button
+        className="day-inline"
+        onClick={(e) => {
+          morphOrigin(e.currentTarget);
+          onOpen();
+        }}
+        title="Open on the stage"
+      >
+        <DayStrip atlas={atlas} date={v.date} />
+      </button>
+    );
   const preview =
     v.kind === "list"
       ? v.items
