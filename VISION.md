@@ -361,14 +361,15 @@ Any long piece of work can be a job Atlas owns: "make the launch video", "plan t
 - **It has a budget** (time, turns and money) and the brain it runs on (§18); past the budget it asks before going on.
 - **It lands as things you keep:** files and pages (§21.7), with a receipt, and the result in the thread.
 
-### 8.4 One Atlas, not many bots
+### 8.4 One Atlas, shown as many
 
-Many people split their assistant into several separate bots. Atlas doesn't: you keep one relationship, and Atlas gets many hands.
+Many people split their assistant into several separate bots, and the bots people like are named, own one part of life and get on with it. Atlas gives that feel without the split (changed 2026-10-26, after the threads proposal, [docs/ui/source/threads.html](docs/ui/source/threads.html)): you keep one relationship, and Atlas gets many hands and many rooms.
+- **Threads** keep work apart: each piece of work or topic has its own conversation, and they run at the same time (§21.1).
+- **Spaces** are areas shown as rooms that feel like dedicated bots, each with its name, color, feed, rules and routines (§21.3). They have no memory or character of their own, so a question that crosses them ("can I afford Lisbon after the Keyframes invoice?") just works.
 - **Helpers** keep context clean.
-- **Areas** handle focus and access.
 - **Faces** handle other people.
 
-Underneath, each is Atlas, writing to one log.
+Underneath, each is Atlas, with one memory, writing to one log. Separate bots with their own memory, and bots that talk to each other, are what this rules out: they split what Atlas knows, and in the products that have them they loop and burn quota.
 
 ---
 
@@ -925,48 +926,56 @@ UI v1 was locked on Oct 21, 2026. The screens, screenshots and source are in [`d
 
 ![UI v1](docs/ui/screenshots/00-overview.png)
 
-### 21.1 The shell: the conversation, with the stage it opens
+### 21.1 The shell: threads, with the stage they open
+
+Changed 2026-10-26 (the threads proposal, [docs/ui/source/threads.html](docs/ui/source/threads.html), decided with the owner): one endless conversation that ran one turn at a time became threads that run side by side.
 
 ```
-┌────────────────┬─────────────────────────────────────────────────────────────┐
-│ ◆ Atlas        │ [●●●● All areas ▾]           [⠹ 1 job running] [Talk] [⌘K]  │
-│                ├─────────────────────────────────────────────────────────────┤
-│ ▢ Home         │   You: Move my dentist to Thursday and tell Mom.            │
-│ ▢ Inbox     2  │   Done. Thursday at 10. ✓ Dentist → Thu 10:00 · Undo        │
-│ ▢ Agenda       │                                                             │
-│                │   You: Make a launch video for X.                           │
-│ ▢ Automations  │   ┌ Launch video ─────────────────────────────── Stop ┐     │
-│ ▢ Library      │   │ ⠹ Cutting the opening to the beat · 3 files       │     │
-│ ▢ People       │   └───────────────────────────────────────────────────┘     │
-│ ▢ Abilities    │   Atlas: Three tracks to pick from. ▶ ▶ ▶  [1] [2] [3]      │
-│ ▢ History      │                                                             │
-│ Pinned       + │   ┌ Needs you: pick the track · 1 more ─────────────────┐   │
-│ Atlas settings │   │ Message Atlas                              🎙  ↑     │   │
-└────────────────┴─────────────────────────────────────────────────────────────┘
+┌──────────────────────────┬───────────────────────────────────────────────────┐
+│ ◆ Atlas            ⌘N    │ Today · Mon, Oct 26                   Talk  ⌘K    │
+│ ◆ Today            now   ├───────────────────────────────────────────────────┤
+│ NEEDS YOU · 2            │   You: Find me a laptop under $1,500. Best three. │
+│ K Launch video · a track │   On it. ┌ ⠹ Laptop under $1,500 ───── Open ┐     │
+│ H Text to Mom · review   │          └ Reading reviews and prices ──────┘     │
+│ WORKING · 2              │   You: is it gonna rain on my walk?               │
+│ ⠹ Laptop under $1,500    │   Dry until about 2. Take a jacket back.          │
+│ ⠹ reverb · export test   │   You: hold the 7:40 Lisbon flight under $600     │
+│ SPACES                   │   Went to Lisbon trip, where the flights are·Undo │
+│ K Keyframes  S School    │                                                   │
+│ RECENT                   │   ┌──────────────────────────────────────────┐    │
+│ Calendar · Library · ⚙   │   │ Message Atlas                  Talk   ↑  │    │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 ```
 
-- **Sidebar:**
-  - the diamond and the eight places, with icons;
-  - **Pinned:** any area, person, project or automation you live in;
-  - **Atlas settings** at the bottom.
-- **Toolbar:**
-  - the area scope switcher (§21.3);
-  - the jobs button (§21.4);
-  - **Talk** (Space);
-  - **Search** (⌘K).
-- **The conversation is Home** (decided 2026-10-25, replacing the console docked under the stage). The whole thread fills Home: every message, receipt, question and job, by text or voice, with the composer at the bottom. Talking to Atlas is the product; nothing about how Atlas works has to be learned first.
-- **Stage:** one sheet that shows the work itself: a week, a draft, a job, a route, a table, a live browser. It opens from the conversation when Atlas shows something or a message is tapped, large and beside or over the thread, and closes back to it.
+- **Four things in the sidebar,** which is also where all the work can be seen at once:
+  - **Today:** the line to Atlas itself, always at the top. Quick asks, small talk, voice, and where Atlas speaks first. It starts fresh each morning; yesterday's folds into one line that opens. Messages that come with no thread chosen (a chat app, the hotkey, a call) land here.
+  - **Needs you:** every thread waiting on a decision, an approval or a look, with what it waits on. It replaces Inbox as a place (§21.2).
+  - **Working** and **Recent:** threads (§21.4), each with its state: working, waiting on you, done, or quiet. Atlas names them. One nobody touched in three days leaves Recent and stays in search; a pinned one stays.
+  - **Spaces** (§21.3).
+  - At the bottom: Calendar, Library and Settings (§21.2).
+- **No toolbar.** Search (⌘K) is in the sidebar, Talk (Space) is in the message box, and the area focus is a space's own button.
+- **Where a message goes.** What you type in a thread or space goes there. In Today, a quick ask is answered there; long work starts a thread and leaves a card; a message that clearly continues an open thread goes to it, with "Went to Lisbon trip · Undo". `@` a space starts a thread in it. Any message can be moved to a thread.
+- **Threads run at the same time,** each with its own line of turns; within a thread, turns keep their order, and your new message stops its turn and keeps its work. At most four work at once (shown under Settings → Brains with what it means for cost); a fifth says it's waiting and starts when one finishes.
+- **One memory.** Every thread writes to the one log and the same records. Each turn reads its own thread's recent messages and summary, plus a line for each open thread, so "how's the video going?" works from anywhere and "hey" isn't read as video talk.
+- **Keys:** ⌘N a new thread, ⌘1 to ⌘9 the sidebar's rows, Tab steps through what needs you.
+- **Stage:** one sheet that shows the work itself: a week, a draft, a job, a route, a table, a live browser. It opens from the thread when Atlas shows something or a message is tapped, large and beside or over the thread, and closes back to it.
   - Detail opens in place: rows expand and cards open into their flow.
   - There are no inspectors or side panes.
 - **Receipts** for everything Atlas just did sit under its message ("✓ Dentist → Thu 10:00 · Undo", "Text to Mom waiting · Review").
-- **Needs you:** a strip above the composer when something waits on the owner, which opens the list (Inbox).
-  - **Promises** show as receipts too. No receipt means no reminder.
-  - **`/` commands** and **`@` mentions** work in the composer.
+- **Promises** show as receipts too. No receipt means no reminder.
+- **`/` commands** and **`@` mentions** (a space, a person) work in the composer.
 - **Composer (every other page):** one line, with a hint that fits the page. Anything you can click, you can also ask for.
 
-### 21.2 Eight places
+### 21.2 Places
 
-UI v1 had six places, with faces, members, extensions, skills and devices in Atlas settings. M7 makes them places (decided 2026-10-24): they're who Atlas deals with and what it can do, not settings, and Atlas settings keeps only settings.
+**Changed 2026-10-26, with threads (§21.1):** nine places to learn was too much app for something whose home is a conversation. The sidebar keeps Today, threads and spaces, and three places at its foot:
+- **Calendar** (was Agenda): everything on a clock.
+- **Library:** everything Atlas knows and made, with **People** as one of its sections.
+- **Settings:** Atlas, **Routines** (was Automations), **Connections** (was Abilities), Brains, Notifications, Permissions, **Activity** (was History) and Account.
+
+Inbox's items are the sidebar's Needs you; each still answers in one place and is answered everywhere. Every old place's link still opens its new home, and everything stays askable. The table below says what each holds; where it lives is as above.
+
+UI v1 had six places, with faces, members, extensions, skills and devices in Atlas settings. M7 made them places (decided 2026-10-24): they're who Atlas deals with and what it can do, not settings.
 
 | Place | What it holds |
 |---|---|
@@ -993,10 +1002,17 @@ UI v1 had six places, with faces, members, extensions, skills and devices in Atl
 
 Pages and stage views are built from the same components, so asking "What's going on with Keyframes?" puts the Keyframes area on the stage.
 
-### 21.3 Areas in the app: one memory, no profiles
+### 21.3 Areas in the app: spaces
 
-- **Areas aren't places in the sidebar.** They show up as a scope switcher, as chips on everything, and as one table in Library.
-- **The scope switcher is a focus, not a profile.** Picking an area does three things:
+Changed 2026-10-26: areas were the best idea in the data model and the hardest to find in the app. In the app they're **spaces**; "area" stays the word in the code and the data (§6).
+- **Each space is a room in the sidebar** that feels like its own bot: the area's name, icon and color, and Atlas wearing that area's hat (§6.2). It has:
+  - **a feed** of what Atlas noticed and did there on its own (a nudge, a routine's report, a face's handoff), so Today stays quiet;
+  - **its threads,** and its message box starts a new one in the space;
+  - **its page** (§6.4), **routines** and **rules** (tone, accounts, what Atlas does alone);
+  - **Focus:** the space's own button, which does what the scope switcher did, below.
+  Replying to a feed post opens a thread on it. A space never has its own memory or character (§8.4).
+- **Chips on everything** and **one table in Library** stay as they were.
+- **Focus is not a profile.** Focusing a space does three things:
   - the pages filter to it;
   - Atlas leads with that area's context, accounts and tone;
   - non-urgent pings from other areas wait;
@@ -1006,13 +1022,13 @@ Pages and stage views are built from the same components, so asking "What's goin
 - **You see the guess.** The composer shows the area Atlas guessed before you send, and tapping any chip moves the item.
 - **Library → Areas holds the settings that control what leaves Atlas:** sends from, shared with, faces, what Atlas does alone, and private (§6.2).
 
-### 21.4 Jobs: background work
+### 21.4 Threads, and jobs as threads at work
 
-Changed 2026-10-25: a job lives in the conversation, not on a board.
-- **A card in the thread,** where it was asked for. It shows the job in a sentence, what Atlas is doing on it right now (only while something is), what it has made so far, and Stop. It updates in place, so a job's progress never pushes the conversation away.
-- **Its own thread,** one tap from the card: everything Atlas said on it and the owner said to it. What the owner says there goes straight to the job, and the job answers.
-- **Its questions and its result** are messages in the main thread, with their buttons and files, and in Inbox while they wait.
-- **"2 jobs running"** in the toolbar counts only jobs something is at work on, and opens the list.
+Changed 2026-10-26: a job is a thread Atlas is working in (§8.3), so background work and conversations are one kind of thing in the app.
+- **A thread** is a conversation of its own about one piece of work or topic, with a name, a state, and the space it's in. It opens in the main pane like Today.
+- **A card where it was asked for,** when long work starts from another thread. It shows the work in a sentence, what Atlas is doing right now (only while something is), what it has made so far, and Open. It updates in place.
+- **Its questions and its result** are messages in its own thread, with their buttons and files, and under Needs you while they wait. Only a question and a result notify; everything else updates its row.
+- **Working** in the sidebar lists only threads something is at work on, each with what it's doing in a word.
 - **Detail on demand:** at Detailed and Developer levels (§21.5) the card opens into its steps, its notes, the coding agent's terminal and what it has cost.
 
 ### 21.5 Detail levels, from casual to technical
@@ -1110,8 +1126,9 @@ Atlas should feel like the future: alive, fast, a little magical.
   - It is never an orb, a glow or a gradient: only characters and their color. Reduced motion shows one still frame.
   - **At the size of a glyph** (added 2026-10-25) it's the flat mark, lit the same way by its facets in ember, by opacity alone: beside Atlas's words only on the message being written, and in the composer as the large one is (a sweep while idle, a shimmer while a turn runs, a ripple while listening).
   - **In the grid while Atlas works** (added 2026-10-26): while Atlas works on a reply, the stage grid's dots near its mark turn into the diamond's characters, in ember, and ripple outward from it; when the answer lands they settle back into dots. Still only characters and their opacity, never a glow, and still with reduced motion.
+- **A premium Mac app** (decided 2026-10-26, from the owner's UI v2 mockups, "Atlas UI v2 mockups"): the app should feel like the best native Mac apps, fluid and quiet. Pages are plain: the system font, soft rounded surfaces, a frosted message box, hairline separators, no mono labels or dashed rails. Motion is springy and continuous: rows slide between sidebar groups as their state changes, a thread opens from its row or card, the stage grows out of what was tapped, and switching threads cross-fades without a flash. The browser, code and terminal appear inside the thread or task that's using them, not on a page of their own. The frame below is kept for the stage, voice and Atlas's mark, where it means "Atlas at work".
 - **Visual language** (details in [docs/ui/README.md](docs/ui/README.md#5-visual-language)):
-  - **The frame:** a dotted stage grid between dashed rails, with square nodes at intersections.
+  - **The frame:** a dotted stage grid between dashed rails, with square nodes at intersections, on the stage only.
   - **Atlas's selection:** an ember outline with square handles and a mono tag (for example "MOVED · WAS WED 3 PM") marks what Atlas just changed.
   - **Chains and flows:** checks chains, and boxes joined by dashed connectors for flows (automations, helpers, brains).
   - **Meters:** ASCII meters.
@@ -1159,7 +1176,7 @@ Atlas should feel like the future: alive, fast, a little magical.
 
 - **Web app first,** installable to your home screen, with push notifications.
 - **Desktop app** (Tauri): the same app, plus a node and a voice overlay you open with a hotkey.
-- **Phone:** the web app at first, with OwnTracks for location. It uses a tab bar (Home, Inbox, Agenda, Library), with the other places and settings under More; this isn't drawn yet. A native app comes later, for location, health data, lock-screen voice and widgets.
+- **Phone:** the web app at first, with OwnTracks for location. Its first screen is the sidebar, like Messages: Today, Needs you, Working, Spaces and Recent, and a thread opens over it (changed 2026-10-26). A tab bar holds Threads, Calendar, Library and Settings. A native app comes later, for location, health data, lock-screen voice and widgets.
 - **Text channels** (SMS, iMessage, Telegram, Discord, Signal, WhatsApp, email): stage views arrive in the richest form the channel carries (§16.1): images, files, text, and links for what has to be used in the app.
 
 ---
