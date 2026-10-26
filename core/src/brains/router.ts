@@ -57,9 +57,12 @@ export class BrainRouter {
    * left out. Ones cooling down after a failure go last rather than vanishing,
    * so a chain whose every brain failed recently still gets one more try. A
    * paid brain past this month's cap stays in the chain, refusing in words,
-   * so the run and a job see why.
+   * so the run and a job see why. With `fastest` (voice, where the first word
+   * is what matters, §11.3), the ready ones go in the order they've been
+   * measured to start, a brain not measured yet first once so it gets
+   * measured; the order the owner set breaks ties.
    */
-  chain(choices: BrainChoice[], now = Date.now()): Brain[] {
+  chain(choices: BrainChoice[], now = Date.now(), o: { fastest?: boolean } = {}): Brain[] {
     this.#load();
     const ready: Brain[] = [];
     const cooling: Brain[] = [];
@@ -76,7 +79,24 @@ export class BrainRouter {
       }
       (h?.until && h.until > now ? cooling : ready).push(brain);
     }
+    if (o.fastest) {
+      const start = (b: Brain) => this.health.get(brainKey(b))?.speed?.first_ms ?? 0;
+      ready.sort((a, b) => start(a) - start(b));
+    }
     return [...ready, ...cooling];
+  }
+
+  /**
+   * A brain the next one beat to its first word (voice's hedge): not a failure, only slow this time. Its speed
+   * takes how long it had waited by then, so the order `fastest` gives follows what was seen.
+   */
+  noteSlow(brain: { provider: string; model: string }, waited_ms: number): void {
+    this.#load();
+    const key = brainKey(brain);
+    const was = this.health.get(key);
+    const speed = blend(was?.speed, { first_ms: waited_ms });
+    this.health.set(key, { ...(was ?? { ok: true, checked_at: Date.now() }), ...(speed ? { speed } : {}) });
+    this.#save();
   }
 
   markOk(brain: { provider: string; model: string }, facts: CallFacts = {}): void {

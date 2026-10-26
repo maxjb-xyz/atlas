@@ -9,7 +9,7 @@ import type { AutomationInput, Step, Trigger } from "../../../core/src/automatio
 import type { AutomationView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Composer } from "../Shell";
-import { Empty, Icon, type ICONS, Picker, Seg, Sheet, shortDay, Stage, startOfDay } from "../ui";
+import { AreaChip, Empty, Icon, type ICONS, Picker, Seg, Sheet, shortDay, Stage, startOfDay } from "../ui";
 
 type Filter = "all" | "request" | "schedule" | "event" | "watch";
 
@@ -57,6 +57,7 @@ export function Automations({ atlas, detail, go }: { atlas: Atlas; detail: strin
   const shown = all.filter((a) => filter === "all" || kindOf(a.when) === filter);
   // Make it on a suggestion opens the form filled in from what the owner asked.
   const [draft, setDraft] = useState<{ from: string; input: AutomationInput } | null>(null);
+  const [moreIdeas, setMoreIdeas] = useState(false);
   const suggestions = atlas.state.suggestions;
 
   return (
@@ -106,11 +107,10 @@ export function Automations({ atlas, detail, go }: { atlas: Atlas; detail: strin
           ) : (
             <>
               {filter === "all" &&
-                suggestions.map((sg) => (
+                (moreIdeas ? suggestions : suggestions.slice(0, 1)).map((sg, i) => (
                   <div key={sg.id} className="panel suggest">
-                    <span className="lab">Suggestion · asked {sg.times} times</span>
-                    <p style={{ margin: "6px 0 10px" }}>
-                      You've asked for "{sg.said}" {sg.times} times. Make it an automation, so it's one word or a time away?
+                    <p style={{ margin: "0 0 10px" }}>
+                      You've asked for "{sg.said}" on {sg.times} different days. Make it an automation, so it's one word or a time away?
                     </p>
                     <div className="row">
                       <button
@@ -128,6 +128,12 @@ export function Automations({ atlas, detail, go }: { atlas: Atlas; detail: strin
                       >
                         Not this one
                       </button>
+                      <span className="grow" />
+                      {i === 0 && suggestions.length > 1 && (
+                        <button className="link small" onClick={() => setMoreIdeas(!moreIdeas)}>
+                          {moreIdeas ? "Fewer ideas" : `${suggestions.length - 1} more ${suggestions.length === 2 ? "idea" : "ideas"}`}
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -199,9 +205,17 @@ function AutomationCard({ atlas, a, open }: { atlas: Atlas; a: AutomationView; o
           {a.steps.length} {a.steps.length === 1 ? "step" : "steps"} · {powers} {powers === 1 ? "power" : "powers"}
           {asks ? " · needs a test run" : a.paused_why ? " · paused itself" : ""}
         </span>
+        {a.cost && <span className="faint small">{a.cost}</span>}
       </button>
       <div className="foot">
         <RunStrip a={a} />
+        {atlas.state.areas.length > 0 && (
+          <AreaChip
+            ids={a.areas}
+            areas={atlas.state.areas}
+            onMove={(ids) => atlas.send({ type: "atlas.areas.set", ref: `aut:${a.id}`, areas: ids })}
+          />
+        )}
         <span className="muted small grow">{last ? shortDay(last.at) : a.next_at ? `Next ${shortDay(a.next_at)}` : "Not run yet"}</span>
         {a.when.kind === "request" ? (
           <button className="btn sm" onClick={() => (inputsOf(a).length ? open() : atlas.send({ type: "atlas.automation.run", id: a.id }))}>
@@ -660,6 +674,27 @@ function AutomationForm({
       {t.kind === "schedule" && (
         <div className="row">
           <input type="time" value={t.at} onChange={(e) => e.target.value && setT({ at: e.target.value })} style={{ width: 130 }} />
+          <select
+            value={t.every_hours ?? 0}
+            aria-label="How often in a day"
+            onChange={(e) => {
+              const every = Number(e.target.value);
+              setT(every ? { every_hours: every, until: t.until ?? "20:00" } : { every_hours: undefined, until: undefined });
+            }}
+          >
+            <option value={0}>Once</option>
+            {[1, 2, 3, 4, 6].map((h) => (
+              <option key={h} value={h}>
+                Every {h} h
+              </option>
+            ))}
+          </select>
+          {t.every_hours ? (
+            <label className="row small" style={{ gap: 6 }}>
+              until
+              <input type="time" value={t.until ?? "20:00"} onChange={(e) => e.target.value && setT({ until: e.target.value })} />
+            </label>
+          ) : null}
           {DAYS.map((d, i) => (
             <button
               type="button"

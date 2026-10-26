@@ -16,15 +16,21 @@ export function weekStart(d: Date): Date {
   return addDays(s, -((s.getDay() + 6) % 7));
 }
 
-/** Asks for the calendar in a range under `ref`, again whenever the calendar might have changed. */
-export function useCalendar(atlas: Atlas, ref: string, start: Date, end: Date): CalendarState | undefined {
+/**
+ * Asks for the calendar in a range under `ref`, again whenever the calendar might have changed. A page passes `scoped`
+ * so that, focused on an area (§21.3), it shows that area's events and those with no area.
+ */
+export function useCalendar(atlas: Atlas, ref: string, start: Date, end: Date, o: { scoped?: boolean } = {}): CalendarState | undefined {
   const connected = Boolean(atlas.state.view?.calendar.provider);
   const key = `${localDate(start)}|${localDate(end)}`;
   useEffect(() => {
     if (!atlas.voice.connected) return;
     atlas.send({ type: "atlas.calendar", ref, start: localDate(start), end: localDate(end) });
   }, [key, connected, atlas.voice.connected, atlas.state.calendarVersion]);
-  return atlas.state.calendar[ref];
+  const cal = atlas.state.calendar[ref];
+  const scope = o.scoped ? atlas.state.scope : null;
+  if (!cal || !scope) return cal;
+  return { ...cal, events: cal.events.filter((e) => !e.areas?.length || e.areas.includes(scope)) };
 }
 
 /** Under a calendar: why it couldn't be read, or that it's Atlas's copy from earlier because iCloud couldn't be asked. */

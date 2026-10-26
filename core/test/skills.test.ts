@@ -300,10 +300,12 @@ describe("skills learned better (M7)", () => {
     expect(commands.at(-1)).toBe("python3 scripts/receipts.py");
   });
 
-  it("looks back over a conversation once it goes quiet, with only the skill tools, and skips talk that took no working out", async () => {
+  it("looks back over what happened once it goes quiet, with only the skill tools, and skips talk that changed nothing", async () => {
     const s = await connect();
     const recall = (n: number) => call("recall", { query: `expenses ${n}` }, `call_recall_${n}`);
-    brain([recall(1), recall(2), recall(3), recall(4), say("Done: filed, with the dates the right way round.")]);
+    const note = (n: number) =>
+      call("remember", { type: "note", name: `Expense ${n}`, fields: { fact: `Filed expense ${n}` } }, `call_note_${n}`);
+    brain([recall(1), note(1), note(2), say("Done: filed, with the dates the right way round.")]);
     await turn(s, "file this week's expenses, and the dates go year first now");
     const item = await inOwner((_a, sql) =>
       sql.exec<{ id: string; due_at: number }>(`SELECT id, due_at FROM agenda WHERE kind = 'skill_review' AND state = 'scheduled'`).one(),
@@ -325,7 +327,11 @@ describe("skills learned better (M7)", () => {
     });
     expect(b.requests[0]!.tools.map((t) => t.name).sort()).toEqual(["skill_file", "skill_merge", "skill_read", "skill_save"]);
     expect(JSON.stringify(b.requests[0]!.messages)).toContain("the dates go year first now");
-    expect(JSON.stringify(b.requests[0]!.messages)).toContain("Look back over your conversation with the owner");
+    expect(JSON.stringify(b.requests[0]!.messages)).toContain("Look back over what happened with the owner");
+    // It reads the method too: each tool used, and only since its last look, not the whole conversation.
+    expect(JSON.stringify(b.requests[0]!.messages)).toContain("You used remember");
+    // The conversation comes as the transcript in its one message, not as the history before it.
+    expect(b.requests[0]!.messages[0]).toMatchObject({ role: "user", content: expect.stringContaining("The owner: file this week") });
     const after = await inOwner((_a, sql) => ({
       skill: findSkill(sql, "file-reimbursements"),
       run: sql.exec<{ actor: string; state: string }>(`SELECT actor, state FROM runs WHERE trigger = 'skill_review'`).one(),
@@ -335,9 +341,9 @@ describe("skills learned better (M7)", () => {
     expect(after.run).toEqual({ actor: "atlas", state: "replied" });
     expect(after.item).toBe("done");
 
-    // A stretch of talk with no working out is skipped without a run.
-    brain([say("Sure.")]);
-    await turn(s, "thanks");
+    // A stretch of lookups with nothing changed (news, a question) is skipped without a run.
+    brain([recall(5), recall(6), recall(7), recall(8), say("Here's the news.")]);
+    await turn(s, "any news today?");
     const quiet = await inOwner((_a, sql) =>
       sql.exec<{ id: string }>(`SELECT id FROM agenda WHERE kind = 'skill_review' AND state = 'scheduled'`).one(),
     );

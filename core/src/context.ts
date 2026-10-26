@@ -22,6 +22,7 @@ import { accountName, installed, providing, ready } from "./extensions";
 import { links } from "./agent/channels";
 import { vault } from "./vault";
 import { type Area, getArea, getScope, listAreas } from "./store/areas";
+import { getPortrait } from "./portrait";
 import { parse, type Sql } from "./store/db";
 import { type AtlasRecord, standingFacts } from "./store/records";
 import { get as getRow, type LogRow, type Surface } from "./store/log";
@@ -97,13 +98,21 @@ export function promptParts(opts: {
   extra?: string;
   /** Connected MCP servers, for runs that can use them (§9.2). */
   mcp?: McpServer[];
+  /** False for a job's turns: a job has its own conversation, and the owner's would only cost tokens and break its cache. */
+  conversation?: boolean;
 }): { stable: string; now: string } {
   const { settings, tz, now, surface, sql } = opts;
-  const summary = latestSummary(sql, opts.beforeSeq);
+  const summary = opts.conversation === false ? null : latestSummary(sql, opts.beforeSeq);
+  // What changes only when the owner changes something (a page kept, a skill saved, a brain or a server set up) sits in
+  // the cached part of the owner's turns, after what never changes; Atlas's own runs and jobs don't carry it there.
+  const own = surface !== "none";
+  const settled = [pagesLine(sql), skillsLine(sql), brainsLine(settings), serversLine(opts.mcp ?? [])];
   const stable = [
     character(settings.assistant_name, settings.owner_name, settings.character),
     surface === "voice" ? voiceProfile(settings.voice) : surface === "none" ? "" : TEXT_PROFILE,
+    ...(own ? settled : []),
     facts(sql, settings.owner_name),
+    portraitLine(sql),
     summary
       ? `Earlier in this conversation (your own summary, written ${shortLocal(new Date(summary.at), tz)}; recall has the full messages):\n${summary.text}`
       : "",
@@ -121,11 +130,8 @@ export function promptParts(opts: {
     situationLines(sql, settings, now.getTime()),
     nodesLine(sql),
     focusLine(sql, tz),
-    pagesLine(sql),
-    skillsLine(sql),
-    brainsLine(settings),
+    ...(own ? [] : settled),
     limitsLine(sql, settings, now.getTime(), tz),
-    serversLine(opts.mcp ?? []),
     reminders.length ? `Upcoming reminders and promises:\n${reminders.join("\n")}` : "No upcoming reminders or promises.",
     tasksLine(sql, tz),
     loopsLine(sql, tz),
@@ -154,6 +160,17 @@ function facts(sql: Sql, ownerName: string): string {
   if (!lines.length) return "";
   const owner = ownerName.trim() || "the owner";
   return `What you know about ${owner} for good (use it quietly; pass the id to remember or forget to change one):\n${lines.join("\n")}`;
+}
+
+/** The standing facts as lines, for the night's portrait. */
+export function standingLines(sql: Sql): string {
+  return standingFacts(sql).map(factLine).filter(Boolean).join("\n");
+}
+
+/** Atlas's portrait of the owner (§5.1, §5.2), in the cached part: it changes once a night at most. */
+function portraitLine(sql: Sql): string {
+  const p = getPortrait(sql);
+  return p?.text ? `Your portrait of the owner (you rewrite it each night; they can read and correct it):\n${p.text}` : "";
 }
 
 function factLine(r: AtlasRecord): string {
@@ -185,13 +202,32 @@ export function sinceSummary(sql: Sql, beforeSeq?: number): LogRow[] {
  */
 export function history(sql: Sql, opts: { excludeRunId?: string; beforeSeq?: number; budget?: number } = {}): Message[] {
   let rows = sinceSummary(sql, opts.beforeSeq).filter((r) => !opts.excludeRunId || r.run_id !== opts.excludeRunId);
-  if (opts.budget != null) {
-    let total = rows.reduce((n, r) => n + tokens(String(r.body.text ?? "")), 0);
-    let drop = 0;
-    while (total > opts.budget && drop < rows.length - 1) total -= tokens(String(rows[drop++]!.body.text ?? ""));
-    rows = rows.slice(drop);
-  }
+  if (opts.budget != null) rows = rows.slice(windowStart(rows, opts.budget));
   return toMessages(rows);
+}
+
+/**
+ * Where a turn's window of the conversation starts. It starts only at fixed points, every half a budget of tokens
+ * from the summary, at the first one that leaves the rest within the budget, so it stays put for several turns
+ * while the conversation grows at its end: the turns between moves read the same messages first, which caches
+ * (§4.1). The window holds between half a budget and a budget.
+ */
+export function windowStart(rows: LogRow[], budget: number): number {
+  const sizes = rows.map((r) => tokens(String(r.body.text ?? "")));
+  const total = sizes.reduce((n, x) => n + x, 0);
+  if (total <= budget) return 0;
+  const step = Math.max(1, Math.floor(budget / 2));
+  let before = 0;
+  let mark = step;
+  for (let i = 0; i < rows.length - 1; i++) {
+    before += sizes[i]!;
+    // Past a fixed point: the window may start here, if what's left fits.
+    if (before >= mark) {
+      if (total - before <= budget) return i + 1;
+      while (mark <= before) mark += step;
+    }
+  }
+  return rows.length - 1;
 }
 
 /**
@@ -236,7 +272,7 @@ export function hat(sql: Sql, beforeSeq?: number): Area[] {
   if (scope) return [getArea(sql, scope)!];
   const r = sql
     .exec<{ areas: string }>(
-      `SELECT areas FROM log WHERE kind = 'message.in' AND areas != '[]' AND seq <= ? AND at > ? ORDER BY seq DESC LIMIT 1`,
+      `SELECT areas FROM log WHERE kind = 'message.in' AND areas != '[]' AND json_extract(body, '$.job') IS NULL AND seq <= ? AND at > ? ORDER BY seq DESC LIMIT 1`,
       beforeSeq ?? Number.MAX_SAFE_INTEGER,
       Date.now() - 30 * 60_000,
     )
@@ -489,12 +525,15 @@ function reachContext(sql: Sql, settings: Settings): string {
 function areaContext(sql: Sql, beforeSeq?: number): string {
   const all = listAreas(sql).filter((a) => a.state !== "archived");
   if (!all.length) return "";
-  const worn = hat(sql, beforeSeq);
+  return wornLines(sql, hat(sql, beforeSeq), all);
+}
+
+/** The areas a run acts in, with their tone and accounts, and the owner's others (a job's own areas use it too). */
+export function wornLines(sql: Sql, worn: Area[], all = listAreas(sql).filter((a) => a.state !== "archived")): string {
+  if (!all.length) return "";
   const lines: string[] = [];
-  if (worn.length) {
-    for (const a of worn) {
-      lines.push(`You're acting in ${a.name}${a.about ? ` (${a.about})` : ""}.${a.settings.tone ? ` Tone here: ${a.settings.tone}.` : ""}`);
-    }
+  for (const a of worn) {
+    lines.push(`You're acting in ${a.name}${a.about ? ` (${a.about})` : ""}.${a.settings.tone ? ` Tone here: ${a.settings.tone}.` : ""}`);
   }
   lines.push(`The owner's areas: ${all.map((a) => a.name).join(", ")}. You can talk about any of them at any time.`);
   const accounts = accountsLine(sql, worn);

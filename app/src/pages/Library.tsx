@@ -125,6 +125,8 @@ function Overview({
 }) {
   const s = atlas.state;
   const of = (t: string) => records.filter((r) => r.type === t).slice(0, 5);
+  // The newest places on their own: the list of everything is mostly people, so a place can fall outside it.
+  const places = useRecords(atlas, "lib:places", { record_type: "place", limit: 5 })?.records ?? of("place");
   const others = records.filter((r) => !["person", "place", "preference", "note"].includes(r.type)).slice(0, 5);
   const corrections = records.reduce((n, r) => n + r.corrections, 0);
   // Imported contacts and addresses seen on mail aren't learning: these are what Atlas wrote down itself, newest first.
@@ -168,6 +170,7 @@ function Overview({
             {total} {total === 1 ? "record" : "records"} in one memory
           </span>
         </div>
+        <Portrait atlas={atlas} />
         <div className="cells">
           <div className="cell">
             <span className="lab">
@@ -181,7 +184,7 @@ function Overview({
               <Icon name="place" size={13} />
               Places<span className="count mono">{counts.place ?? 0}</span>
             </span>
-            <List list={of("place")} />
+            <List list={places} />
           </div>
           <div className="cell">
             <span className="lab">
@@ -931,6 +934,15 @@ function Pages({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
                     </span>
                   )}
                 </span>
+                {s.areas.length > 0 && (
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <AreaChip
+                      ids={f.areas ?? []}
+                      areas={s.areas}
+                      onMove={(ids) => atlas.send({ type: "atlas.areas.set", ref: `file:${f.id}`, areas: ids })}
+                    />
+                  </span>
+                )}
                 <span className="lab faint hide-phone">{f.made_by === "owner" ? "You" : "Atlas"}</span>
                 <span className="mono faint small" style={{ flex: "none" }}>
                   {sizeOf(f.size)} · {shortDay(f.updated_at)}
@@ -943,5 +955,71 @@ function Pages({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
         )}
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * Atlas's portrait of the owner (§5.1): what it carries into every conversation, rewritten each night from what it
+ * learned. The owner can read it and put it in their own words, which Atlas then keeps as true.
+ */
+function Portrait({ atlas }: { atlas: Atlas }) {
+  const p = atlas.state.view?.portrait ?? null;
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(p?.text ?? "");
+  const name = atlas.state.view?.settings.assistant_name || "Atlas";
+  return (
+    <div className="portrait">
+      <div className="row" style={{ alignItems: "baseline" }}>
+        <span className="lab">What I carry about you</span>
+        <span className="grow" />
+        {p && !editing && <span className="mono faint small">{p.by === "owner" ? "In your words" : `Rewritten ${shortDay(p.at)}`}</span>}
+        {!editing && (
+          <button
+            className="btn sm"
+            onClick={() => {
+              setText(p?.text ?? "");
+              setEditing(true);
+            }}
+          >
+            {p ? "Correct it" : "Write it"}
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <>
+          <textarea value={text} maxLength={2000} rows={6} onChange={(e) => setText(e.target.value)} autoFocus />
+          <div className="row">
+            <button
+              className="btn sm primary"
+              onClick={() => {
+                atlas.send({ type: "atlas.portrait.set", text });
+                setEditing(false);
+              }}
+            >
+              Save
+            </button>
+            <button className="btn sm" onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+            <span className="faint small">{name} keeps your words as true, and adds what it learns each night.</span>
+          </div>
+        </>
+      ) : p ? (
+        <>
+          <p className="portrait-text">{p.text}</p>
+          {p.learned.length > 0 && (
+            <ul className="portrait-learned">
+              {p.learned.map((l) => (
+                <li key={l}>{l}</li>
+              ))}
+            </ul>
+          )}
+        </>
+      ) : (
+        <p className="muted small">
+          Nothing yet. Each night {name} writes down what it's learned about you from your conversations, and it shows here.
+        </p>
+      )}
+    </div>
   );
 }

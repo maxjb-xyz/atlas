@@ -7,6 +7,7 @@ import type { HistoryFilter, LogRow } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Markdown } from "../Markdown";
 import { Composer } from "../Shell";
+import { useDetail } from "../theme";
 import { openOnStage, shownFrom } from "../StageViews";
 import { AreaChip, clock, dayName, Diamond, Empty, pressable, Sheet, Stage, startOfDay } from "../ui";
 
@@ -14,6 +15,19 @@ import { AreaChip, clock, dayName, Diamond, Empty, pressable, Sheet, Stage, star
 const yours = (what: string) => what.replace(/^The owner /, "You ");
 
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : JSON.stringify(v));
+
+/** A brain by the name people know it by: "chatgpt:gpt-6-luna" is ChatGPT, "workers-ai:@cf/…" is Workers AI. */
+function brainName(key: string): string {
+  const provider = key.split(":")[0] ?? "";
+  return (
+    ({ chatgpt: "ChatGPT", codex: "ChatGPT", "workers-ai": "Workers AI", anthropic: "Claude", openai: "OpenAI" } as Record<string, string>)[
+      provider
+    ] ?? key
+  );
+}
+
+/** Lookups that the outbox records beside the receipt of the tool that made them: one entry is enough below Developer. */
+const LOOKUP_CHANNELS = new Set(["web", "maps", "weather"]);
 
 function describe(r: LogRow): { who: string; what: string; kind: string } {
   const b = r.body as Record<string, unknown>;
@@ -65,7 +79,11 @@ function describe(r: LogRow): { who: string; what: string; kind: string } {
     case "run.end":
       return { who: "Atlas", what: `Didn't finish: ${str(b.error)}`, kind: "run.failed" };
     case "brain.fallback":
-      return { who: "Atlas", what: `Answered with ${str(b.to)} because ${str(b.from)} failed`, kind: "brain.fallback" };
+      return {
+        who: "Atlas",
+        what: `${brainName(str(b.to))} answered, because ${brainName(str(b.from))} ${str(b.reason) ? `couldn't: ${str(b.reason)}` : "couldn't"}`,
+        kind: "brain.fallback",
+      };
     case "context.summary":
       return {
         who: "Atlas",
@@ -325,8 +343,15 @@ export function History({ atlas }: { atlas: Atlas }) {
   const stats = h?.stats;
   const max = Math.max(1, ...(stats?.per_hour ?? [0]));
   const hourNow = new Date().getHours();
+  const { at } = useDetail();
+  const dev = at("developer");
+  // A web, map or weather lookup is logged twice, as the tool's receipt and as the outbox's delivery; show it once.
+  const withReceipt = new Set(rows.filter((r) => r.kind === "tool.result" && r.body.receipt && r.run_id).map((r) => r.run_id));
+  const listed = dev
+    ? rows
+    : rows.filter((r) => !(r.kind === "delivery" && LOOKUP_CHANNELS.has(String(r.body.channel)) && withReceipt.has(r.run_id)));
   const byDay = new Map<string, LogRow[]>();
-  for (const r of rows)
+  for (const r of listed)
     byDay.set(startOfDay(new Date(r.at)).toDateString(), [...(byDay.get(startOfDay(new Date(r.at)).toDateString()) ?? []), r]);
 
   return (
@@ -405,7 +430,14 @@ export function History({ atlas }: { atlas: Atlas }) {
               </div>
               <div className="rows">
                 {list.map((r) => (
-                  <Entry key={r.id} atlas={atlas} row={r} open={open === r.id} onToggle={() => setOpen(open === r.id ? null : r.id)} />
+                  <Entry
+                    key={r.id}
+                    atlas={atlas}
+                    row={r}
+                    dev={dev}
+                    open={open === r.id}
+                    onToggle={() => setOpen(open === r.id ? null : r.id)}
+                  />
                 ))}
               </div>
             </div>
@@ -423,7 +455,7 @@ export function History({ atlas }: { atlas: Atlas }) {
   );
 }
 
-function Entry({ atlas, row, open, onToggle }: { atlas: Atlas; row: LogRow; open: boolean; onToggle: () => void }) {
+function Entry({ atlas, row, dev, open, onToggle }: { atlas: Atlas; row: LogRow; dev: boolean; open: boolean; onToggle: () => void }) {
   const s = atlas.state;
   const d = describe(row);
   const receipt = row.body.receipt as { text?: string; undo?: unknown } | undefined;
@@ -481,9 +513,11 @@ function Entry({ atlas, row, open, onToggle }: { atlas: Atlas; row: LogRow; open
         <span className="hide-phone">
           <AreaChip ids={row.areas} areas={s.areas} />
         </span>
-        <span className="mono faint small hide-phone" style={{ width: 130, textAlign: "right" }}>
-          {d.kind}
-        </span>
+        {dev && (
+          <span className="mono faint small hide-phone" style={{ width: 130, textAlign: "right" }}>
+            {d.kind}
+          </span>
+        )}
         <span style={{ width: 60, textAlign: "right" }}>
           {receipt?.undo != null && !undone ? (
             <button
@@ -542,7 +576,7 @@ function Entry({ atlas, row, open, onToggle }: { atlas: Atlas; row: LogRow; open
                 d.what
               )}
             </span>
-            {run?.detail?.brain && (
+            {dev && run?.detail?.brain && (
               <>
                 <span className="lab">Brain</span>
                 <span className="mono small">
@@ -553,7 +587,7 @@ function Entry({ atlas, row, open, onToggle }: { atlas: Atlas; row: LogRow; open
             )}
             <span className="lab">Undo</span>
             <span className="mono small">{receipt?.undo != null ? (undone ? "Done" : "Available") : "Nothing to undo"}</span>
-            {row.run_id && (
+            {dev && row.run_id && (
               <>
                 <span className="lab">Run</span>
                 <span className="mono small">

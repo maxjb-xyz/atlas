@@ -15,8 +15,9 @@ import { getItem } from "./store/agenda";
 import { append, get as getRow, type LogRow, type Surface, type Undo } from "./store/log";
 import { readSettings, secretValues } from "./store/settings";
 import { getState, setState } from "./store/state";
+import { getArea, getScope } from "./store/areas";
 import { deleteRecord, findRecords } from "./store/records";
-import { hostOf, type LookOut } from "./web";
+import { hostOf, iconHost, type LookOut, siteIcon } from "./web";
 import type { BrowserDriver } from "./browser";
 import { findServer, type McpClient, type McpResult, type McpServer, resultText } from "./mcp";
 import { FIELDS, fillsOn, findEntry, hiddenValues, siteFor, touchEntry, valueOf } from "./vault";
@@ -24,6 +25,8 @@ import { quietUntil, shortLocal, startOfLocalDay, zoneOf } from "./time";
 import { callWebhook, webhooks, webhookView } from "./webhooks";
 
 export const HIDDEN = "[hidden]";
+/** The longest a notification about another area waits for the owner's focus to move (§21.3). */
+export const SCOPE_HOLD_MS = 12 * 3_600_000;
 
 /** Replaces any stored secret that appears in outgoing text. */
 export function scrub(text: string, secrets: string[]): string {
@@ -257,7 +260,8 @@ export interface Channels {
   /** Whether the owner has Atlas open and in view on some device right now. */
   looking(): boolean;
   /** Puts a held notification on the one clock (§4.3), to be released at `at`. */
-  hold(at: Date, note: Note): Promise<void>;
+  /** Holds a notification on the clock until `at`; `why` "scope" ones go out as soon as the owner's focus moves. */
+  hold(at: Date, note: Note, why?: "scope"): Promise<void>;
   /** Puts a follow-up on the clock (§14): at `at`, if the owner hasn't been seen since, `note` goes to the next of `rest`. */
   followUp?(at: Date, note: Note, rest: string[]): Promise<void>;
   fetch: typeof fetch;
@@ -396,6 +400,20 @@ export class Outbox {
         ok: true,
         held_until: until,
         note: `Held for ${why}, until ${shortLocal(new Date(until), tz)}.`,
+      });
+      return;
+    }
+    // Focused on an area (§21.3), what's about another one waits until the focus moves, unless it's urgent.
+    const scope = urgency === "now" ? null : getScope(this.sql);
+    const areas = scope ? (getRow(this.sql, row.id)?.areas ?? []) : [];
+    if (scope && areas.length && !areas.includes(scope)) {
+      await this.channels.hold(new Date(Date.now() + SCOPE_HOLD_MS), row, "scope");
+      this.receipt(row.run_id, {
+        of: [row.id],
+        channel: "push",
+        ok: true,
+        held_until: Date.now() + SCOPE_HOLD_MS,
+        note: `Held while you're focused on ${getArea(this.sql, scope)?.name ?? "another area"}; it goes out when you switch back.`,
       });
       return;
     }
@@ -577,6 +595,15 @@ export class Outbox {
     });
     if (!out.ok) console.error(JSON.stringify({ at: `web.${o.what}`, to: o.to, status: out.status, error: out.error }));
     return out;
+  }
+
+  /**
+   * A site's icon, for a source shown in the thread (M7 W17). Only a public host leaves, one Atlas already read or
+   * found in a search, so there's nothing to check it for and no receipt: the look that found the site has one.
+   */
+  async icon(host: string): Promise<{ type: string; bytes: ArrayBuffer } | null> {
+    if (!iconHost(host)) return null;
+    return siteIcon(this.channels.fetch, host).catch(() => null);
   }
 
   /**

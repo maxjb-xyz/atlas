@@ -51,7 +51,8 @@ export function Setup({ atlas, onDone }: { atlas: Atlas; onDone: () => void }) {
   const status = (s: Step) => (setup.done.includes(s) ? "done" : setup.skipped.includes(s) ? "skipped" : "open");
 
   return (
-    <div className="center">
+    <div className="center setup-page">
+      <DataKey sealed={view.secrets.sealed} />
       <div className="setup rise">
         <nav className="setup-steps" aria-label="Setup steps">
           <div className="row" style={{ padding: "0 10px 14px", gap: 8 }}>
@@ -247,13 +248,18 @@ function ConnectStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
   const view = atlas.state.view!;
   const tested = atlas.state.tests.calendar;
   const connected = Boolean(view.calendar.provider);
-  // A calendar is an extension (§17); iCloud ships with Atlas, so it's offered here.
+  // A calendar is an extension (§17); iCloud and Google ship with Atlas, so both are offered here, each with what it takes.
   const icloud = view.extensions.find((e) => e.id === "icloud");
+  const google = view.extensions.find((e) => e.id === "gmail");
   return (
     <>
       <h1 className="disp">Your calendar</h1>
-      <p className="muted">So I can see your week. iCloud ships with Atlas; others you can add any time in Abilities.</p>
+      <p className="muted">
+        So I can see your week. iCloud takes an app-specific password, about two minutes. Google takes a sign-in client of your own from
+        Google Cloud, about ten minutes, once; it brings your mail too. Others you can add any time in Abilities.
+      </p>
       {icloud && <ExtensionCard atlas={atlas} e={icloud} />}
+      {google && <ExtensionCard atlas={atlas} e={google} />}
       <TestRow
         label="Test calendar"
         k="calendar"
@@ -434,7 +440,7 @@ function MoveInStep({ atlas, onNext }: { atlas: Atlas; onNext: Next }) {
 function RoutineRow({ atlas, a }: { atlas: Atlas; a: AutomationView }) {
   const t = a.when;
   const [at, setAt] = useState(t.kind === "schedule" ? t.at : "");
-  const days = a.when_text.replace(/^At \S+, /, "");
+  const days = a.when_text.replace(/^At \S+, /, "").replace(/^Every (\d+) h from \S+ to (\S+), /, "every $1 h to $2, ");
   const save = () => {
     if (t.kind !== "schedule" || !at || at === t.at) return;
     atlas.send({
@@ -449,6 +455,7 @@ function RoutineRow({ atlas, a }: { atlas: Atlas; a: AutomationView }) {
         <strong>{a.name}</strong>
         <span className="muted small" style={{ display: "block" }}>
           {a.about.replace(/^A default routine: /, "").replace(/^./, (c) => c.toUpperCase())}
+          {a.cost ? ` ${a.cost}` : ""}
         </span>
       </span>
       {t.kind === "schedule" && (
@@ -465,6 +472,56 @@ function RoutineRow({ atlas, a }: { atlas: Atlas; a: AutomationView }) {
         </span>
       )}
       <Switch on={a.state === "on"} onChange={(on) => atlas.send({ type: "atlas.automation.set", id: a.id, on })} />
+    </div>
+  );
+}
+
+/** 32 random bytes as letters and digits: a key nobody has to make up. */
+function newKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/[+/=]/g, "")
+    .slice(0, 40);
+}
+
+/**
+ * When the deployment has no data key of its own (§20, M7 W21), setup makes one for the owner to paste into
+ * Cloudflare, with exactly where, so locking their keys needs no terminal. It's made here, in the browser, and
+ * never sent anywhere.
+ */
+function DataKey({ sealed }: { sealed: { state: "on" | "missing" | "short"; unreadable: string | null } }) {
+  const [key] = useState(newKey);
+  const [later, setLater] = useState(false);
+  const [copied, setCopied] = useState(false);
+  if (sealed.state === "on" || later) return null;
+  return (
+    <div className="setup-key rise">
+      <span className="lab">Lock your keys</span>
+      <p className="small">
+        {sealed.state === "short" ? "Your ATLAS_DATA_KEY is too short to use. " : ""}
+        Atlas locks your sign-ins, keys and vault with a key of its own, on top of Cloudflare's. Here's one, made in this browser:
+      </p>
+      <div className="row" style={{ gap: 8, flexWrap: "nowrap" }}>
+        <code className="setup-key-value mono">{key}</code>
+        <button
+          className="btn sm"
+          onClick={() =>
+            navigator.clipboard
+              ?.writeText(key)
+              .then(() => setCopied(true))
+              .catch(() => setCopied(false))
+          }
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <p className="small muted">
+        Keep a copy somewhere safe. In Cloudflare: Workers &amp; Pages, your Atlas, Settings, Variables and Secrets, Add, type Secret, name
+        ATLAS_DATA_KEY, paste it, then Deploy. Atlas locks everything on its next start.
+      </p>
+      <button className="link small" onClick={() => setLater(true)}>
+        Later
+      </button>
     </div>
   );
 }

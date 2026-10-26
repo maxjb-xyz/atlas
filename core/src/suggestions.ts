@@ -1,5 +1,5 @@
 // Atlas suggests automations (§13.4): when the owner has asked for much the
-// same thing three times, on three different occasions, a suggestion appears
+// same thing on three different days, a suggestion appears
 // at the top of Automations. This compares the owner's own words with each
 // other, in code; it never touches what the model says (rule 1). Make it
 // opens the form filled in, and the owner decides the rest.
@@ -17,14 +17,18 @@ export interface Suggestion {
   times: number;
   last_at: number;
   state: "open" | "dismissed" | "made";
+  /** Counted by days (since 2026-10-26); one counted by hours before then isn't shown until it's asked for again. */
+  days?: boolean;
 }
 
 /** The suggestion as the app shows it. */
 export type SuggestionView = Pick<Suggestion, "id" | "said" | "times" | "last_at">;
 
-/** Asks this many times, at least an hour apart, before Atlas suggests it. */
+/**
+ * Asks on this many different days, in the owner's time zone, before Atlas suggests it. A habit shows over days;
+ * asking a few times in one sitting (a retry, a test, the Jarvis bar's runs) is one occasion.
+ */
 export const SUGGEST_AFTER = 3;
-const APART_MS = 3_600_000;
 const LOOK_BACK_MS = 30 * 86_400_000;
 const ALIKE = 0.6;
 
@@ -66,7 +70,7 @@ export const suggestions = (sql: Sql): Suggestion[] => getState<Suggestion[]>(sq
 
 export const openSuggestions = (sql: Sql): SuggestionView[] =>
   suggestions(sql)
-    .filter((s) => s.state === "open" && !ABOUT_THE_PAST.test(norm(s.said)))
+    .filter((s) => s.state === "open" && s.days && !ABOUT_THE_PAST.test(norm(s.said)))
     .sort((a, b) => b.last_at - a.last_at)
     .map(({ id, said, times, last_at }) => ({ id, said, times, last_at }));
 
@@ -76,7 +80,7 @@ export const openSuggestions = (sql: Sql): SuggestionView[] =>
  * suggestion the owner set aside, or too short or long to be a request, are
  * left alone.
  */
-export function noticeAsk(sql: Sql, text: string, now = Date.now()): boolean {
+export function noticeAsk(sql: Sql, text: string, tz = "UTC", now = Date.now()): boolean {
   if (ABOUT_THE_PAST.test(norm(text))) return false;
   const words = wordsOf(text);
   if (words.length < 2 || words.length > 14 || text.length > 200) return false;
@@ -94,19 +98,12 @@ export function noticeAsk(sql: Sql, text: string, now = Date.now()): boolean {
     )
     .toArray()
     .filter((r) => typeof r.text === "string" && alike(wordsOf(r.text), words) >= ALIKE);
-  // Asking again within the hour (a retry, a follow-up) counts once.
-  let times = 0;
-  let last = Infinity;
-  for (const r of past) {
-    if (last - r.at >= APART_MS) {
-      times += 1;
-      last = r.at;
-    }
-  }
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+  const times = new Set(past.map((r) => day.format(r.at))).size;
   if (times < SUGGEST_AFTER) return false;
   const s: Suggestion = known
-    ? { ...known, said: text.trim(), words, times, last_at: now }
-    : { id: `sg_${now.toString(36)}`, said: text.trim(), words, times, last_at: now, state: "open" };
+    ? { ...known, said: text.trim(), words, times, last_at: now, days: true }
+    : { id: `sg_${now.toString(36)}`, said: text.trim(), words, times, last_at: now, state: "open", days: true };
   setState(sql, "suggestions", [...all.filter((x) => x.id !== s.id), s].slice(-50));
   return true;
 }

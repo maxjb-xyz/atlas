@@ -140,6 +140,15 @@ function Contacts({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
   const data = usePeople(atlas, text.trim());
   const all = data?.records ?? [];
   const list = all.filter((r) => trust === "all" || (r.trust ?? "unknown") === trust);
+  // Who Atlas deals with comes first, newest first; the rest of the address book folds under one line,
+  // unless a search or a filter is narrowing the list already.
+  const [everyone, setEveryone] = useState(false);
+  const flat = Boolean(text.trim()) || trust !== "all";
+  const when = (r: RecordView) => r.touched_at ?? (r.learned ? r.learned_at : 0);
+  const dealt = list.filter((r) => when(r) > 0).sort((a, b) => when(b) - when(a));
+  const book = list.filter((r) => when(r) === 0);
+  const folded = !flat && dealt.length > 0 && book.length > 0;
+  const shown = flat || !dealt.length ? list : everyone ? [...dealt, ...book] : dealt;
   const week = all.filter((r) => r.learned_at > Date.now() - 30 * 86_400_000).length;
   const areaOf = (r: RecordView) => s.areas.find((a) => r.areas.includes(a.id));
   const imported = s.tests.contacts;
@@ -206,9 +215,9 @@ function Contacts({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
             <span className="lab">Trust</span>
             <span className="lab hide-phone">Reach on</span>
             <span className="lab hide-phone">Areas</span>
-            <span className="lab hide-phone">Updated</span>
+            <span className="lab hide-phone">Last in touch</span>
           </div>
-          {list.map((r) => (
+          {shown.map((r) => (
             <div key={r.id} className="prow" {...pressable(() => go(`person:${r.id}`))}>
               <Avatar name={r.name} area={areaOf(r)} photo={r.photo} size={28} />
               <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
@@ -218,9 +227,9 @@ function Contacts({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
                 <span className="aside clip">{r.fact}</span>
               </span>
               <span>
-                <span className={`trust ${r.trust ?? "unknown"}`}>
-                  {(r.trust ?? "unknown")[0]!.toUpperCase() + (r.trust ?? "unknown").slice(1)}
-                </span>
+                {r.trust && r.trust !== "unknown" && (
+                  <span className={`trust ${r.trust}`}>{r.trust[0]!.toUpperCase() + r.trust.slice(1)}</span>
+                )}
               </span>
               <span className="row hide-phone" style={{ gap: 8, color: "var(--tx2)" }}>
                 {[...new Set((r.channels ?? []).map((c) => c.kind))].map((k) => (
@@ -236,18 +245,28 @@ function Contacts({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
                 ))}
               </span>
               <span className="hide-phone" onClick={(e) => e.stopPropagation()}>
-                <AreaChip
-                  ids={r.areas}
-                  areas={s.areas}
-                  onMove={s.areas.length ? (ids) => atlas.send({ type: "atlas.areas.set", ref: `rec:${r.id}`, areas: ids }) : undefined}
-                />
+                {(r.areas.length > 0 || at("detailed")) && (
+                  <AreaChip
+                    ids={r.areas}
+                    areas={s.areas}
+                    onMove={s.areas.length ? (ids) => atlas.send({ type: "atlas.areas.set", ref: `rec:${r.id}`, areas: ids }) : undefined}
+                  />
+                )}
               </span>
               <span className="small muted hide-phone">
-                {shortDay(r.updated_at)}
+                {r.touched_at ? shortDay(r.touched_at) : ""}
                 {at("developer") && <span className="mono aside"> · {r.id}</span>}
               </span>
             </div>
           ))}
+          {folded && (
+            <button className="prow more" onClick={() => setEveryone(!everyone)} aria-expanded={everyone}>
+              <span />
+              <span className="muted">
+                {everyone ? "Show only the people you deal with" : `Everyone else in your address book · ${book.length}`}
+              </span>
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -139,7 +139,8 @@ export function getArea(sql: Sql, id: string): Area | null {
 }
 
 export function areaByName(sql: Sql, name: string): Area | null {
-  const r = sql.exec<RawArea>(`SELECT * FROM areas WHERE name = ?`, name.trim()).toArray()[0];
+  // Names are the owner's words: "Gym" and "gym" are one area.
+  const r = sql.exec<RawArea>(`SELECT * FROM areas WHERE lower(name) = lower(?) ORDER BY state = 'archived'`, name.trim()).toArray()[0];
   return r ? fromRaw(r) : null;
 }
 
@@ -185,7 +186,8 @@ export function updateArea(sql: Sql, id: string, patch: AreaPatch, by: "owner" |
   if (!before) throw new Error(`There's no area ${id}.`);
   const settings = AreaSettings.parse({ ...before.settings, ...(patch.settings ?? {}) });
   const name = patch.name?.trim() || before.name;
-  if (name.toLowerCase() !== before.name.toLowerCase() && areaByName(sql, name)) throw new Error(`There's already an area called ${name}.`);
+  const clash = areaByName(sql, name);
+  if (clash && clash.id !== id) throw new Error(`There's already an area called ${clash.name}.`);
   sql.exec(
     `UPDATE areas SET name = ?, about = ?, state = ?, settings = ?, updated_at = ? WHERE id = ?`,
     name.slice(0, 60),
@@ -203,12 +205,16 @@ export function updateArea(sql: Sql, id: string, patch: AreaPatch, by: "owner" |
   return getArea(sql, id)!;
 }
 
-/** Folds one area into another: every tag and example moves, and the old one is archived. */
+/**
+ * Folds one area into another: every tag (messages, records, automations, files, pages, skills, calendar events the
+ * owner placed) and example moves, settings the target doesn't have yet come with it, and the old one is archived.
+ * Jobs keep their areas in their own state, so the agent moves those.
+ */
 export function mergeAreas(sql: Sql, fromId: string, intoId: string, by: "owner" | "atlas"): Area {
   const from = getArea(sql, fromId);
   const into = getArea(sql, intoId);
   if (!from || !into || from.id === into.id) throw new Error("Pick two different areas to merge.");
-  for (const table of ["log", "records"] as const) {
+  for (const table of ["log", "records", "automations", "files", "pages", "skills"] as const) {
     const rows = sql
       .exec<{ id: string; areas: string }>(
         `SELECT id, areas FROM ${table} WHERE EXISTS (SELECT 1 FROM json_each(areas) WHERE value = ?)`,
@@ -221,17 +227,48 @@ export function mergeAreas(sql: Sql, fromId: string, intoId: string, by: "owner"
     }
   }
   sql.exec(`UPDATE area_examples SET area_id = ? WHERE area_id = ?`, into.id, from.id);
+  // Events sorted into it (by Clef or the owner) follow it.
+  const events = getState<Record<string, { areas: string[] }>>(sql, "event_areas");
+  if (events) {
+    for (const t of Object.values(events)) t.areas = [...new Set(t.areas.map((a) => (a === from.id ? into.id : a)))];
+    setState(sql, "event_areas", events);
+  }
+  // Settings it had that the target doesn't: tone, mail, calendars and who it's shared with.
+  const a = from.settings;
+  const b = into.settings;
+  updateArea(
+    sql,
+    into.id,
+    {
+      about: into.about || from.about,
+      settings: {
+        tone: b.tone || a.tone,
+        mail: b.mail || a.mail,
+        calendars: [...new Set([...b.calendars, ...a.calendars])].slice(0, 20),
+        shared_with: [...new Set([...b.shared_with, ...a.shared_with])].slice(0, 20),
+      },
+    },
+    by,
+  );
   updateArea(sql, from.id, { state: "archived" }, by, { merged_into: into.id });
-  return into;
+  return getArea(sql, into.id)!;
 }
 
 // --- tags ----------------------------------------------------------------------------
 
-/** A tagged thing: a log row (`log:<id>`) or a record (`rec:<id>`). */
-export type Tagged = `log:${string}` | `rec:${string}`;
+/** A tagged thing: a log row (`log:<id>`), a record (`rec:<id>`), an automation (`aut:<id>`), a file or a page. */
+export type Tagged = `log:${string}` | `rec:${string}` | `aut:${string}` | `file:${string}` | `page:${string}`;
+
+const TABLES = { log: "log", rec: "records", aut: "automations", file: "files", page: "pages" } as const;
+
+/** The table and id a tag reference names. */
+export function tableOf(ref: Tagged): [(typeof TABLES)[keyof typeof TABLES], string] {
+  const at = ref.indexOf(":");
+  return [TABLES[ref.slice(0, at) as keyof typeof TABLES], ref.slice(at + 1)];
+}
 
 export function tagsOf(sql: Sql, ref: Tagged): string[] {
-  const [table, id] = ref.startsWith("log:") ? ["log", ref.slice(4)] : ["records", ref.slice(4)];
+  const [table, id] = tableOf(ref);
   const r = sql.exec<{ areas: string }>(`SELECT areas FROM ${table} WHERE id = ?`, id).toArray()[0];
   return r ? parse<string[]>(r.areas, []) : [];
 }
@@ -248,7 +285,7 @@ export function threadAreas(sql: Sql, thread: string): string[] {
 }
 
 export function setTags(sql: Sql, ref: Tagged, areas: string[]): void {
-  const [table, id] = ref.startsWith("log:") ? ["log", ref.slice(4)] : ["records", ref.slice(4)];
+  const [table, id] = tableOf(ref);
   sql.exec(`UPDATE ${table} SET areas = ? WHERE id = ?`, JSON.stringify([...new Set(areas)]), id);
   if (table === "records") sql.exec(`UPDATE records SET tagged = 1 WHERE id = ?`, id);
   const now = Date.now();

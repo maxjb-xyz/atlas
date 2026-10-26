@@ -66,6 +66,10 @@ export interface Receipt {
   approval?: string;
   /** The address it's about, for a page read or opened: its card shows the host. */
   link?: string;
+  /** A lookup that changed nothing and shows nothing (a search, a page read): the thread folds these into one line. */
+  look?: boolean;
+  /** What the owner might want next, under a view Atlas showed: each a tap that asks Atlas to do it (M7 W18). */
+  next?: string[];
 }
 
 /** What Undo on a receipt does. `history` names the correction to roll back. */

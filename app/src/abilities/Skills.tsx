@@ -54,6 +54,7 @@ export function Skills({ atlas }: { atlas: Atlas }) {
     URL.revokeObjectURL(a.href);
   };
 
+  const QUIET_MS = 14 * 86_400_000;
   const row = (k: SkillView) => {
     const f = fresh(k);
     const check = k.checked
@@ -77,9 +78,15 @@ export function Skills({ atlas }: { atlas: Atlas }) {
             <span className="aside clip">{k.description}</span>
           </span>
           {/* TODO(core): each skill's area (SkillView has none yet), shown as its tinted chip in this column. */}
-          <span className="row" style={{ gap: 8, flexWrap: "nowrap" }}>
+          <span
+            className="row"
+            style={{ gap: 8, flexWrap: "nowrap" }}
+            title={k.last_used ? `Last used ${shortDay(k.last_used)}` : "Not used yet"}
+          >
             <span className="mono small muted">{meter(k.uses, max)}</span>
             <span className="mono aside">{k.uses}×</span>
+            {/* Unused for two weeks, it's quiet; after four months Atlas archives it (§9.3). */}
+            {k.state === "active" && Date.now() - (k.last_used ?? k.updated_at) > QUIET_MS && <span className="tag">Quiet</span>}
           </span>
           <span className="small muted clip">
             {k.from ? k.from.name : k.made_by === "owner" ? "You" : "Atlas"}

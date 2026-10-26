@@ -1,18 +1,35 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, lazy, Suspense, useEffect, useState } from "react";
 import { type Atlas, useAtlas } from "./connection";
 import { addPasskey, deviceName, inviteName, joinWithPasskey, passkeysSupported, signInWithCode, signInWithPasskey } from "./passkey";
-import { History } from "./pages/History";
 import { Home } from "./pages/Home";
-import { Library } from "./pages/Library";
-import { Agenda, Inbox } from "./pages/Places";
-import { Automations } from "./pages/Automations";
-import { Pair } from "./abilities/Devices";
-import { Abilities } from "./pages/Abilities";
-import { People } from "./pages/People";
 import { MOVED, SettingsPage } from "./settings";
 import { Setup } from "./Setup";
 import { openConversation, Palette, Sidebar, TabBar, Toolbar } from "./Shell";
 import { areaColor, AsciiDiamond, Diamond, ScopeColor, useRoute } from "./ui";
+
+// Every place but Home loads when first opened, and its code is fetched in the background once the app is idle,
+// so opening one is instant.
+const pages = {
+  history: () => import("./pages/History"),
+  library: () => import("./pages/Library"),
+  places: () => import("./pages/Places"),
+  automations: () => import("./pages/Automations"),
+  devices: () => import("./abilities/Devices"),
+  abilities: () => import("./pages/Abilities"),
+  people: () => import("./pages/People"),
+};
+const History = lazy(() => pages.history().then((m) => ({ default: m.History })));
+const Library = lazy(() => pages.library().then((m) => ({ default: m.Library })));
+const Agenda = lazy(() => pages.places().then((m) => ({ default: m.Agenda })));
+const Inbox = lazy(() => pages.places().then((m) => ({ default: m.Inbox })));
+const Automations = lazy(() => pages.automations().then((m) => ({ default: m.Automations })));
+const Pair = lazy(() => pages.devices().then((m) => ({ default: m.Pair })));
+const Abilities = lazy(() => pages.abilities().then((m) => ({ default: m.Abilities })));
+const People = lazy(() => pages.people().then((m) => ({ default: m.People })));
+const idle = (f: () => void) => ("requestIdleCallback" in window ? window.requestIdleCallback(f, { timeout: 4000 }) : setTimeout(f, 2000));
+idle(() => {
+  for (const load of Object.values(pages)) void load().catch(() => {});
+});
 
 type Session = {
   signed_in: boolean;
@@ -219,13 +236,27 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
       if (e.key === "Escape") setPalette(false);
       if (e.code !== "Space" || e.repeat) return;
       const t = e.target as HTMLElement | null;
-      if (t && (t.closest("input, textarea, select, button, [contenteditable]") || t.isContentEditable)) return;
+      // Space belongs to whatever has focus (a row, a link, a card that opens); it starts voice only from the page itself.
+      if (
+        t &&
+        (t.closest("input, textarea, select, button, a, label, summary, [role=button], [role=option], [tabindex], [contenteditable]") ||
+          t.isContentEditable)
+      )
+        return;
       e.preventDefault();
       void atlas.toggleCall();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [atlas.toggleCall]);
+    // The Mac app's Option-Space (M7 X12) brings this window forward and asks it to start talking.
+    const onTalk = () => {
+      if (!atlas.inCall) void atlas.toggleCall();
+    };
+    window.addEventListener("atlas:talk", onTalk);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("atlas:talk", onTalk);
+    };
+  }, [atlas.toggleCall, atlas.inCall]);
 
   async function signOut() {
     await fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => null);
@@ -246,7 +277,8 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
 
   return (
     <ScopeColor.Provider value={scoped ? areaColor(scoped) : null}>
-      <div className="app">
+      {/* Home is the conversation on the open grid: the shell steps back there (M7 W14). */}
+      <div className={`app ${place === "home" ? "focus" : ""}`}>
         <Sidebar atlas={atlas} place={place} go={go} />
         <div className="main">
           <Toolbar atlas={atlas} go={go} onSearch={() => setPalette(true)} />
@@ -259,15 +291,17 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
             </div>
           )}
           {place === "home" && <Home atlas={atlas} detail={detail} go={sub} place={(p) => go(p)} />}
-          {place === "inbox" && <Inbox atlas={atlas} />}
-          {place === "agenda" && <Agenda atlas={atlas} />}
-          {place === "automations" && <Automations atlas={atlas} detail={detail} go={sub} />}
-          {place === "library" && <Library atlas={atlas} detail={detail} go={sub} />}
-          {place === "people" && <People atlas={atlas} detail={detail} go={sub} />}
-          {place === "abilities" && <Abilities atlas={atlas} detail={detail} go={sub} place={go} />}
-          {place === "history" && <History atlas={atlas} />}
-          {place === "settings" && <SettingsPage atlas={atlas} detail={detail} go={sub} onSignOut={signOut} onSetup={onSetup} />}
-          {place === "pair" && <Pair atlas={atlas} code={detail} />}
+          <Suspense fallback={<div className="stage" aria-busy="true" />}>
+            {place === "inbox" && <Inbox atlas={atlas} />}
+            {place === "agenda" && <Agenda atlas={atlas} />}
+            {place === "automations" && <Automations atlas={atlas} detail={detail} go={sub} />}
+            {place === "library" && <Library atlas={atlas} detail={detail} go={sub} />}
+            {place === "people" && <People atlas={atlas} detail={detail} go={sub} />}
+            {place === "abilities" && <Abilities atlas={atlas} detail={detail} go={sub} place={go} />}
+            {place === "history" && <History atlas={atlas} />}
+            {place === "settings" && <SettingsPage atlas={atlas} detail={detail} go={sub} onSignOut={signOut} onSetup={onSetup} />}
+            {place === "pair" && <Pair atlas={atlas} code={detail} />}
+          </Suspense>
         </div>
         <TabBar atlas={atlas} place={place} />
         {palette && <Palette atlas={atlas} go={go} onClose={() => setPalette(false)} />}

@@ -4,7 +4,7 @@
 // change is a row in the log. Atlas makes text files itself, and copies
 // anything else out of the workspace.
 
-import { newId, type Sql } from "./store/db";
+import { newId, parse, type Sql } from "./store/db";
 import { append } from "./store/log";
 import type { FileRow, FileStagePage } from "./stage";
 
@@ -52,7 +52,7 @@ export const keyOf = (f: Pick<FileRow, "id">) => `files/${f.id}`;
 /** The most a file may be: R2 takes more, but Atlas's files are documents, not archives. */
 export const MAX_FILE_BYTES = 50_000_000;
 
-const fromRow = (r: Record<string, unknown>): FileRow => r as unknown as FileRow;
+const fromRow = (r: Record<string, unknown>): FileRow => ({ ...r, areas: parse<string[]>(r.areas as string, []) }) as unknown as FileRow;
 
 export function listFiles(sql: Sql): FileRow[] {
   return sql.exec(`SELECT * FROM files ORDER BY updated_at DESC`).toArray().map(fromRow);
@@ -66,8 +66,10 @@ export function getFile(sql: Sql, id: string): FileRow | null {
 export function findFile(sql: Sql, nameOrId: string): FileRow | null {
   return (
     getFile(sql, nameOrId) ??
-    (sql.exec(`SELECT * FROM files WHERE lower(name) = lower(?) ORDER BY updated_at DESC LIMIT 1`, nameOrId.trim()).toArray()[0] as
-      FileRow | undefined) ??
+    sql
+      .exec(`SELECT * FROM files WHERE lower(name) = lower(?) ORDER BY updated_at DESC LIMIT 1`, nameOrId.trim())
+      .toArray()
+      .map(fromRow)[0] ??
     null
   );
 }
@@ -112,6 +114,8 @@ export async function saveFile(
   const file: FileRow = {
     id: old?.id ?? newId("file"),
     name,
+    // A new version of a file keeps the areas it was in.
+    areas: old?.areas ?? [],
     type,
     size: bytes.byteLength,
     made_by: o.made_by,
@@ -126,7 +130,7 @@ export async function saveFile(
     throw new Error(`R2 wouldn't keep ${name}: ${err instanceof Error ? err.message : String(err)}`);
   }
   sql.exec(
-    `INSERT OR REPLACE INTO files (id, name, type, size, made_by, note, run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO files (id, name, type, size, made_by, note, run_id, created_at, updated_at, areas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     file.id,
     file.name,
     file.type,
@@ -136,6 +140,7 @@ export async function saveFile(
     file.run_id,
     file.created_at,
     file.updated_at,
+    JSON.stringify(file.areas),
   );
   append(sql, {
     actor: o.made_by,

@@ -46,6 +46,24 @@ export const ROUTINES: AutomationInput[] = [
     report: "worth",
   },
   {
+    name: "Check-ins",
+    about:
+      "A default routine: a quick look a few times a day at what changed, which says something only when it's worth it. Each look is one short turn on your main brain.",
+    when: { kind: "schedule", at: "10:00", days: [], every_hours: 3, until: "19:00" },
+    do: [
+      {
+        kind: "atlas",
+        instructions: [
+          "Take a quick look at what changed for the owner since your last look, the way a great assistant glances up between tasks.",
+          "Look at the calendar's next few hours (a clash, something moved, when to leave given where they are), what came in that could wait, open tasks that fit where they are or what's next, work of yours waiting on them, and the weather if something outdoors is coming up.",
+          "If there's one thing they'd want to know now, tell them in a line or two, the way you'd lean over and say it: lead with it, no greeting, no recap of what they already know.",
+          "Most looks find nothing worth saying, and then you stay quiet. Never repeat what you or another routine already told them today.",
+        ].join(" "),
+      },
+    ],
+    report: "worth",
+  },
+  {
     name: "Weekly review",
     about: "A default routine: the week behind and the week ahead, on Sunday evenings.",
     when: { kind: "schedule", at: "18:00", days: [0] },
@@ -73,12 +91,26 @@ export function seedRoutines(sql: Sql): string[] {
   const kept = getState<{ made_at: number; ids: string[]; v?: number }>(sql, "routines");
   if (kept) {
     if ((kept.v ?? 1) < 2) upgrade(sql, kept);
+    if ((kept.v ?? 1) < 3) return addCheckIns(sql);
     return [];
   }
   const taken = new Set(listAutomations(sql).map((a) => a.name.toLowerCase()));
   const made = ROUTINES.filter((r) => !taken.has(r.name.toLowerCase())).map((r) => saveAutomation(sql, r, "default").id);
   for (const id of made) if (getAutomation(sql, id)?.name === "Morning brief") setAutomationState(sql, id, true, "atlas");
-  setState(sql, "routines", { made_at: Date.now(), ids: made, v: 2 });
+  setState(sql, "routines", { made_at: Date.now(), ids: made, v: 3 });
+  return made;
+}
+
+/**
+ * Once, on a deployment made before check-ins (2026-10-26): adds them, off like every routine but the morning brief,
+ * unless the owner already has an automation by that name.
+ */
+function addCheckIns(sql: Sql): string[] {
+  const kept = getState<{ made_at: number; ids: string[]; v?: number }>(sql, "routines")!;
+  const taken = listAutomations(sql).some((a) => a.name.toLowerCase() === "check-ins");
+  const routine = ROUTINES.find((r) => r.name === "Check-ins")!;
+  const made = taken ? [] : [saveAutomation(sql, routine, "default").id];
+  setState(sql, "routines", { ...kept, ids: [...kept.ids, ...made], v: 3 });
   return made;
 }
 

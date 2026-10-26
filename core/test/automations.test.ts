@@ -1,7 +1,16 @@
 import { runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type PersonAgent, seams } from "../src/agent";
-import { type AutomationInput, getAutomation, matchPhrase, nextRun, saveAutomation, setAutomationState } from "../src/automations";
+import {
+  type AutomationInput,
+  getAutomation,
+  matchPhrase,
+  nextRun,
+  runsPerDay,
+  saveAutomation,
+  setAutomationState,
+  whenText,
+} from "../src/automations";
 import type { Decider } from "../src/brains/decide";
 import type { AutomationView, ServerMessage } from "../src/protocol";
 import { migrate, type Sql } from "../src/store/db";
@@ -143,6 +152,13 @@ describe("when automations run", () => {
       "2026-10-26T12:00:00.000Z",
     );
     expect(nextRun({ kind: "schedule", at: "23:30", days: [] }, friEvening, TZ)?.toISOString()).toBe("2026-10-24T03:30:00.000Z");
+    // Several times a day: every 3 hours from 10:00 up to 19:00, then the next day's first.
+    const every = { kind: "schedule" as const, at: "10:00", days: [], every_hours: 3, until: "19:00" };
+    const friNoon = new Date("2026-10-23T12:00:00-04:00");
+    expect(nextRun(every, friNoon, TZ)?.toISOString()).toBe("2026-10-23T17:00:00.000Z");
+    expect(nextRun(every, new Date("2026-10-23T19:00:00-04:00"), TZ)?.toISOString()).toBe("2026-10-24T14:00:00.000Z");
+    expect(runsPerDay(every)).toBe(4);
+    expect(whenText(every)).toBe("Every 3 h from 10:00 to 19:00, every day");
     expect(nextRun({ kind: "absence", nothing_about: "workout", for_days: 3, at: "20:00" }, friEvening, TZ)?.toISOString()).toBe(
       "2026-10-25T00:00:00.000Z",
     );
@@ -525,6 +541,10 @@ describe("automations", () => {
     s.send({ type: "atlas.automation.set", id: wrap.id, on: true });
     expect((await view(s, "Evening wrap-up", (a) => a.state === "on")).next_at).not.toBeNull();
     expect((await view(s, "Weekly review")).when).toMatchObject({ kind: "schedule", days: [0] });
+    // Check-ins start off, and say what they'd cost before they're turned on.
+    const checks = await view(s, "Check-ins");
+    expect(checks).toMatchObject({ state: "paused", report: "worth", when: { every_hours: 3, until: "19:00" } });
+    expect(checks.cost).toMatch(/120 looks/);
     s.send({ type: "atlas.automation.delete", id: wrap.id });
     await s.next("atlas.automations", (m) => !m.automations.some((a) => a.name === "Evening wrap-up"));
     // Starting again doesn't make a deleted routine again.
@@ -703,7 +723,7 @@ describe("automations", () => {
     s.close();
   });
 
-  it("are suggested after the same ask three times, an hour or more apart, and not again once set aside", () =>
+  it("are suggested after the same ask on three different days, and not again once set aside", () =>
     runInDurableObject(env.PersonAgent.get(env.PersonAgent.idFromName(`s-${crypto.randomUUID()}`)), (_a, state) => {
       const sql = state.storage.sql;
       migrate(sql);
@@ -712,6 +732,8 @@ describe("automations", () => {
         sql.exec(`UPDATE log SET at = ? WHERE id = ?`, Date.now() - hoursAgo * 3600_000, row.id);
         return noticeAsk(sql, text);
       };
+      // Three times in one sitting is one occasion, not a habit.
+      for (const m of [0.3, 0.2, 0.1]) expect(ask("plan something fun for the weekend", m)).toBe(false);
       expect(ask("Send me the shoot gear checklist", 50)).toBe(false);
       // A retry a few minutes later counts as the same time.
       expect(ask("send me the shoot gear checklist please", 49.9)).toBe(false);

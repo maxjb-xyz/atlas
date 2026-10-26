@@ -23,21 +23,26 @@ export const show = defineTool({
     "Put a view on the stage of the owner's app, beside your reply.",
     "Use it when the owner asks to see something, when they ask what's going on with one of their areas or who someone is, and when the answer is several items that read better as a list or a table than as sentences.",
     "Show a view for what this turn is about; don't put back a view from an earlier turn that nobody asked for again.",
+    "Asked what a day looks like (today, tomorrow, Saturday), put up `day` with its date: it draws the day to scale with the weather over it and when to leave, so you answer in a line about what it's like.",
     "Asked about the weather, put up `weather`; about where they are or what's next, `situation`; about what you've noticed, `senses` (never a list you put together yourself); about what you can do, or how you do something (send email, make calls, reach them), `abilities`, with the group it's in: the stage shows it while you answer in a line.",
     "Views: `area` (an area's page: what it is, its people, plans and recent conversation), `person` (what you know about someone), `automation` (one of the owner's automations, as When → Do → Report with its runs), `page` (one of the owner's kept pages), `list` and `table` (things you've put together in this turn), `draft` (words for the owner to copy and send themselves, such as an email or a post), `plan` (steps toward something, each with whether it's to do, under way, done or waiting) `research` (an answer from the web, with the sources you searched or read), `browser` (your browser, live), `file` (one of the files you made, to look at and download), `document` (a longer write-up to read, in Markdown), `code` (code, with its language), `chart` (bars or lines of numbers you have), `compare` (options side by side on what matters, with your pick), `kit` (a layout of parts: text, headline stats, a list, a table, a chart, a compare), `app` (a small interactive HTML app, sandboxed with no network, for things like a checklist or a calculator), `map` (saved places marked on a map; for a route, use route with show: true), `place` (a saved place: its details, a map and the owner's visits), `weather` (the weather near the owner, hour by hour), `situation` (where the owner is, what's next and when to leave, weather and devices) `senses` (what your senses took in today and what you decided: the funnel, each source's state, what's waiting for a look) and `abilities` (what you can do and what does it, live: the whole map, or one group of it with its services and their settings).",
     "A view isn't a file: when the owner asks for a spreadsheet or a document to keep or download, make a file (file_save, or the workspace for .xlsx, .docx or PDF), which opens on the stage by itself.",
     "Fill a list, table or research view only with what you've looked up or what's in the conversation, never with guesses, and say where it came from in `source` (for research, in its `sources`).",
     "The owner sees the view as you answer, so don't read the view out, but always say at least a line: what matters most in it. In a voice conversation, say a sentence or two and let the stage show the rest.",
+    "In `next`, offer up to three things the owner is likely to want next that you can do, each a short instruction in their words ('Block 1 to 3 for French', 'Remind me when to leave'). They show under the view, and a tap asks you to do it. Leave it out when nothing is likely.",
   ].join(" "),
-  input: z.object({ view: StageViewSchema }),
-  async run({ view }, ctx) {
+  input: z.object({
+    view: StageViewSchema,
+    next: z.array(z.string().min(2).max(60)).max(3).optional().describe("Up to three likely next steps, each in the owner's words."),
+  }),
+  async run({ view, next }, ctx) {
     const shown = resolve(ctx.sql, view);
     if ("error" in shown) return fail(shown.error);
     const name = stageTitle(shown.view, shown.names);
     const out: ToolResult = {
       ok: true,
       output: { shown: shown.view.kind, title: name, ...(shown.what ? { on_the_stage: shown.what } : {}) },
-      receipt: { text: `Showing · ${name}`, view: shown.view },
+      receipt: { text: `Showing · ${name}`, view: shown.view, ...(next?.length ? { next } : {}) },
     };
     return out;
   },
@@ -161,6 +166,7 @@ export function resolve(sql: Parameters<typeof getArea>[0], view: StageView): Re
     case "situation":
     case "senses":
     case "abilities":
+    case "day":
       return { view, names: {} };
     case "place": {
       const r = savedPlaceOf(sql, view.place);

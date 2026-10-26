@@ -3,6 +3,8 @@
 // add a filter around the model (rule 1).
 
 import { z } from "zod";
+import { hat } from "../context";
+import { setTags } from "../store/areas";
 import type { Action, ToolKind } from "../approvals";
 import type { Automation } from "../automations";
 import type { RunOutcome } from "../agent/automations";
@@ -36,6 +38,8 @@ export interface FaceRun {
 
 export interface ToolContext {
   sql: Sql;
+  /** The areas this run acts in when they aren't the conversation's (a job's own, §6.2): its accounts follow them. */
+  areas?: import("../store/areas").Area[];
   /** Set only in a face's run: the face and its conversation. */
   face?: FaceRun;
   /** The areas shared between the owner and members (§7.1), kept in the owner's Atlas. */
@@ -191,6 +195,8 @@ export interface DevicesApi {
 /** Connected MCP servers, as tools reach them (§9.2). */
 export interface McpApi {
   servers(): McpServer[];
+  /** Waits up to `ms` for servers still connecting (after Atlas woke), so a tool that needs one doesn't fail for that. */
+  settle?(ms: number): Promise<void>;
   /** Calls a tool that only reads, now, through the outbox; a tool with a page puts it on the stage. */
   call(
     server: string,
@@ -380,3 +386,9 @@ function withoutPropertyNames(v: unknown): unknown {
 
 /** Plain-words failure the model can act on. */
 export const fail = (message: string): ToolResult => ({ ok: false, output: { error: message } });
+
+/** Puts something a run made in the areas the run acts in (§6.4): a job's own, else the conversation's. */
+export function placeMade(ctx: ToolContext, ref: import("../store/areas").Tagged): void {
+  const areas = (ctx.areas ?? hat(ctx.sql)).map((a) => a.id);
+  if (areas.length) setTags(ctx.sql, ref, areas);
+}

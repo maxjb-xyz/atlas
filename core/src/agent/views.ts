@@ -18,7 +18,7 @@ import { sensesPage } from "../intake";
 import { webhooks, webhookView } from "../webhooks";
 import type { AreaPage, AutomationView, PersonPage, PlacePage, StageMessage, StagePage, StageView } from "../stage";
 import { type Automation, getAutomation, needsTest, stepText, whenText } from "../automations";
-import { getArea } from "../store/areas";
+import { getArea, tagsOf } from "../store/areas";
 import { parse, type Sql } from "../store/db";
 import { get as getRow, type LogKind, type LogRow } from "../store/log";
 import { indexNewMessages, keywordSearch } from "../store/memory";
@@ -223,6 +223,7 @@ export function automationView(sql: Sql, a: Automation): AutomationView {
   return {
     id: a.id,
     name: a.name,
+    areas: tagsOf(sql, `aut:${a.id}`),
     about: a.about,
     state: a.state,
     made_by: a.made_by,
@@ -266,13 +267,56 @@ export function areaPage(sql: Sql, id: string): StagePage {
     .one().n;
   const page: AreaPage = {
     kind: "area",
-    area: { id: a.id, name: a.name, about: a.about, state: a.state, color: a.color, tone: a.settings.tone },
+    area: {
+      id: a.id,
+      name: a.name,
+      about: a.about,
+      state: a.state,
+      color: a.color,
+      custom_color: a.custom_color,
+      icon: a.icon,
+      tone: a.settings.tone,
+    },
     people: of(["person"]),
     plans: of(["goal", "task", "commitment", "event"]),
     places: of(["place", "organization"]),
     notes: of(["note", "preference", "document"]),
     recent,
     counts: { messages, records: records.length },
+    jobs: ownedJobs(sql, Date.now() - 30 * 86_400_000)
+      .filter((j) => (j.areas ?? []).includes(a.id))
+      .slice(0, PAGE_GROUP)
+      .map((j) => ({
+        id: j.id,
+        title: j.title,
+        state: j.phase === "done" ? "done" : j.phase === "failed" ? "failed" : j.phase === "cancelled" ? "cancelled" : "running",
+        at: j.progress_at,
+      })),
+    routines: sql
+      .exec<{ id: string }>(`SELECT id FROM automations WHERE ${TAGGED} ORDER BY created_at`, a.id)
+      .toArray()
+      .map((r) => getAutomation(sql, r.id)!)
+      .map((x) => ({ id: x.id, name: x.name, when: whenText(x.when), on: x.state === "on" })),
+    made: [
+      ...sql
+        .exec<{ id: string; name: string; type: string; at: number }>(
+          `SELECT id, name, type, updated_at AS at FROM files WHERE ${TAGGED} ORDER BY updated_at DESC LIMIT ?`,
+          a.id,
+          PAGE_GROUP,
+        )
+        .toArray()
+        .map((f) => ({ kind: "file" as const, ...f })),
+      ...sql
+        .exec<{ id: string; name: string; at: number }>(
+          `SELECT id, name, updated_at AS at FROM pages WHERE ${TAGGED} ORDER BY updated_at DESC LIMIT ?`,
+          a.id,
+          PAGE_GROUP,
+        )
+        .toArray()
+        .map((p) => ({ kind: "page" as const, ...p })),
+    ]
+      .sort((x, y) => y.at - x.at)
+      .slice(0, PAGE_GROUP),
   };
   return page;
 }

@@ -138,6 +138,18 @@ describe("the thread", () => {
     s.ws.close();
   });
 
+  it("draws a day it read under the reply when asked what the day looks like", async () => {
+    brains([call("calendar_read", { start: "2099-03-03", show: true }), say("A quiet one.")]);
+    const s = await connect();
+    s.send({ type: "atlas.hello", tz: "America/New_York" });
+    await s.next("atlas.snapshot");
+    s.send({ type: "atlas.say", text: "what does that Tuesday look like?", client_id: "cd" });
+    const msg = await s.next("atlas.rows", (m) => rowsOf(m, "tool.result").length > 0);
+    expect(rowsOf(msg, "tool.result")[0]!.body.receipt).toMatchObject({ view: { kind: "day", date: "2099-03-03" } });
+    await s.next("atlas.run", (m) => m.state === "replied");
+    s.ws.close();
+  });
+
   it("sets a reminder, lets the owner undo it, and says so in the thread", async () => {
     brains([call("reminder_create", { text: "Stretch", at: "2099-01-01T09:00" }), say("Set for 9.")]);
     const s = await connect();
@@ -492,7 +504,7 @@ describe("setup", () => {
     brains([
       call("calendar_read", { start: "2099-01-01", end: "2099-01-15" }),
       say(
-        '{"areas": [{"name": "Keyframes", "about": "video studio"}], "people": [{"name": "Dana", "why": "producer"}], "notes": ["Two clashes Thursday."]}',
+        '{"areas": [{"name": "Keyframes", "about": "video studio"}], "people": [{"name": "Dana", "why": "producer"}], "notes": ["Two clashes Thursday."], "question": "What matters most to you this month?"}',
       ),
     ]);
     seams.fetch = (async (url: string) => {
@@ -523,7 +535,15 @@ describe("setup", () => {
       areas: [{ name: "Keyframes", about: "video studio" }],
       people: [{ name: "Dana", why: "producer" }],
       notes: ["Two clashes Thursday."],
+      question: "What matters most to you this month?",
     });
+    // The first message ends with the question.
+    const first = await runInDurableObject(owner(), (_i: PersonAgent, state) =>
+      state.storage.sql
+        .exec<{ t: string }>(`SELECT json_extract(body, '$.text') AS t FROM log WHERE kind = 'message.out' ORDER BY seq DESC LIMIT 1`)
+        .one(),
+    );
+    expect(first.t).toMatch(/Two clashes Thursday\.\n\nWhat matters most to you this month\?$/);
     s.send({ type: "atlas.setup.people", people: [{ name: "Dana", why: "producer" }] });
     // Saved as it's taken in; any view that comes meanwhile says nothing about it, so the records are asked until they have it.
     let people: Array<{ name: string }> = [];

@@ -8,6 +8,7 @@ import { migrate, type Sql } from "../src/store/db";
 import { append, type LogRow } from "../src/store/log";
 import { readSettings, Settings, setSecret, writeSettings } from "../src/store/settings";
 import { setState } from "../src/store/state";
+import { createArea, setScope } from "../src/store/areas";
 import { quietUntil } from "../src/time";
 import { setFocus } from "../src/tools/focus";
 import { env } from "./helpers";
@@ -230,6 +231,29 @@ describe("focus and the budget", () => {
       });
       await setFocus(sql, clock, 0, "", "owner");
       expect(scheduled).toEqual([item.id]);
+    }));
+
+  it("focused on an area, what's about another one waits; what's urgent, or about no area, doesn't", () =>
+    withSql(async (sql) => {
+      const phone = await fakeBrowser();
+      setState(sql, "push_devices", [device("phone", phone.sub, 1)]);
+      const school = createArea(sql, { name: "School", by: "owner" });
+      const work = createArea(sql, { name: "Work", by: "owner" });
+      setScope(sql, school.id);
+      const net = fakeNet();
+      const { box, held, shown } = outbox(sql, net.f);
+      const about = (text: string, areas: string[]) => {
+        const r = append(sql, { actor: "atlas", kind: "message.out", areas, body: { text } });
+        return { id: r.id, run_id: null, text };
+      };
+      await box.notify(about("The client wrote back.", [work.id]), "soon");
+      expect(held).toHaveLength(1);
+      expect(String(receipts(shown)[0]!.note)).toContain("focused on School");
+      await box.notify(about("The server is down.", [work.id]), "now");
+      await box.notify(about("Your essay is due at 5.", [school.id]), "soon");
+      await box.notify(about("Your package came.", []), "soon");
+      expect(held).toHaveLength(1);
+      expect(net.calls).toHaveLength(3);
     }));
 
   it("past the day's budget, what can wait stays in the app", () =>

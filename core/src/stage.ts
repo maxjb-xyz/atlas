@@ -265,6 +265,15 @@ export const PlaceStage = z.object({
 /** The weather near the owner (§21.6): now, the next hours, and what matters. */
 export const WeatherStage = z.object({ kind: z.literal("weather") });
 
+/** A day at a glance (M7 W18): its events to scale, the walk or drive between them, the weather over it, and when to leave. */
+export const DayStage = z.object({
+  kind: z.literal("day"),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .describe("The day, as YYYY-MM-DD in the owner's time zone."),
+});
+
 /** The situation (§10.2, §21.6): where the owner is, what they're doing, what's next and when to leave, weather and devices. */
 export const SituationStage = z.object({ kind: z.literal("situation") });
 
@@ -311,6 +320,7 @@ export const StageView = z.discriminatedUnion("kind", [
   MapStage,
   PlaceStage,
   WeatherStage,
+  DayStage,
   SituationStage,
   SensesStage,
   AbilitiesStage,
@@ -330,7 +340,16 @@ export interface StageMessage {
 /** An area's page, built live from its records and the log (§6.4). */
 export interface AreaPage {
   kind: "area";
-  area: { id: string; name: string; about: string; state: string; color: number; tone: string };
+  area: {
+    id: string;
+    name: string;
+    about: string;
+    state: string;
+    color: number;
+    custom_color: string | null;
+    icon: string | null;
+    tone: string;
+  };
   people: RecordView[];
   /** Goals, tasks, commitments and events. */
   plans: RecordView[];
@@ -340,6 +359,10 @@ export interface AreaPage {
   notes: RecordView[];
   recent: StageMessage[];
   counts: { messages: number; records: number };
+  /** Work in it (§6.4): jobs going and lately ended, its routines, and what was made in it. */
+  jobs: Array<{ id: string; title: string; state: "running" | "done" | "failed" | "cancelled"; at: number }>;
+  routines: Array<{ id: string; name: string; when: string; on: boolean }>;
+  made: Array<{ kind: "file" | "page"; id: string; name: string; type?: string; at: number }>;
 }
 
 /** A person's page: what Atlas knows, where it learned it, and where they come up. */
@@ -358,6 +381,10 @@ export interface PersonPage {
 export interface AutomationView {
   id: string;
   name: string;
+  /** What it costs to keep on, for one that runs Atlas on a clock (§19.3: said before it's turned on). */
+  cost?: string;
+  /** The areas it's in (§6.4), which its chip moves. */
+  areas: string[];
   about: string;
   state: "on" | "paused";
   made_by: import("./automations").Maker;
@@ -441,6 +468,8 @@ export interface WorkspaceStagePage {
 export interface FileRow {
   id: string;
   name: string;
+  /** The areas it's in (§6.4): what made it, until the owner moves it. */
+  areas: string[];
   type: string;
   size: number;
   made_by: "owner" | "atlas";
@@ -519,7 +548,17 @@ export interface SituationPage {
     title: string;
     start: number;
     location: string | null;
-    travel: { s: number; traffic: boolean; leave_by: number; from: "here" | "home"; at: number } | null;
+    travel: {
+      s: number;
+      traffic: boolean;
+      leave_by: number;
+      from: "here" | "home";
+      at: number;
+      /** The trip on a map: where it starts and ends, and its line as [lon, lat] pairs, at most 200. */
+      a?: { lat: number; lon: number };
+      b?: { lat: number; lon: number };
+      line?: Array<[number, number]>;
+    } | null;
     travel_error: string | null;
   } | null;
   calendar_error: string | null;
@@ -590,6 +629,8 @@ export function stageTitle(
       return names.place ?? v.place;
     case "weather":
       return "Weather";
+    case "day":
+      return new Date(`${v.date}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
     case "situation":
       return "Situation";
     case "senses":

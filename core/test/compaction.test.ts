@@ -4,7 +4,7 @@ import { type PersonAgent, seams } from "../src/agent";
 import type { Brain, BrainEvent, BrainRequest } from "../src/brains/types";
 import { BrainRouter } from "../src/brains/router";
 import { compact, KEEP_MESSAGES, planCompaction, SAVE_NOTE, SUMMARY_NOTE } from "../src/compaction";
-import { history, latestSummary, systemPrompt } from "../src/context";
+import { history, latestSummary, systemPrompt, windowStart } from "../src/context";
 import { migrate, type Sql } from "../src/store/db";
 import { append, logTo, thread } from "../src/store/log";
 import { standingFacts } from "../src/store/records";
@@ -264,4 +264,24 @@ describe("the thread", () => {
       for (let i = 0; i < 400; i++) append(sql, { actor: "atlas", kind: "tool.result", body: { ok: true } });
       expect(thread(sql, 10).filter((r) => r.kind.startsWith("message.")).length).toBe(6);
     }));
+});
+
+describe("a turn's window of the conversation", () => {
+  const row = (i: number, words: number) =>
+    ({ id: `r${i}`, seq: i, kind: i % 2 ? "message.out" : "message.in", body: { text: "word ".repeat(words) } }) as never;
+
+  it("starts at the same message for several turns as the conversation grows, so it caches", () => {
+    const rows = Array.from({ length: 40 }, (_, i) => row(i, 300));
+    const starts = new Set<number>();
+    // Each new pair of messages is a turn; the window's first message moves only now and then.
+    for (let n = 20; n <= 40; n += 2) starts.add(windowStart(rows.slice(0, n), 6_000));
+    expect(starts.size).toBeLessThanOrEqual(4);
+    // Whatever the start, what's left fits the budget and isn't cut to almost nothing.
+    for (let n = 20; n <= 40; n += 2) {
+      const left = rows.slice(windowStart(rows.slice(0, n), 6_000), n).length;
+      expect(left).toBeGreaterThan(2);
+    }
+    // A short conversation is all there.
+    expect(windowStart(rows.slice(0, 4), 6_000)).toBe(0);
+  });
 });

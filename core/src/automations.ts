@@ -22,7 +22,19 @@ export const Trigger = z.discriminatedUnion("kind", [
       .optional()
       .describe("What the owner says or types to run it, like 'goodnight' or 'focus for $duration'. Words starting with $ are inputs."),
   }),
-  z.object({ kind: z.literal("schedule"), at: HHMM.describe("Local time, HH:mm."), days: Days }),
+  z.object({
+    kind: z.literal("schedule"),
+    at: HHMM.describe("Local time, HH:mm: the first run of the day."),
+    days: Days,
+    every_hours: z
+      .number()
+      .int()
+      .min(1)
+      .max(12)
+      .optional()
+      .describe("To run several times a day: every this many hours from `at`, up to `until`."),
+    until: HHMM.optional().describe("With every_hours: the last time of the day it may run, HH:mm."),
+  }),
   z.object({
     kind: z.literal("watch"),
     url: z.string().url().startsWith("https://").max(500).describe("The page to watch."),
@@ -334,11 +346,20 @@ export function nextRun(t: Trigger, from: Date, tz: string): Date | null {
   if (t.kind !== "schedule" && t.kind !== "absence") return null;
   const days = t.kind === "schedule" ? t.days : [];
   const [h, m] = t.at.split(":").map(Number) as [number, number];
+  // The day's times: `at`, then every few hours up to `until` when it runs several times a day.
+  const times: Array<[number, number]> = [[h, m]];
+  if (t.kind === "schedule" && t.every_hours && t.until) {
+    const [uh, um] = t.until.split(":").map(Number) as [number, number];
+    for (let x = h * 60 + m + t.every_hours * 60; x <= uh * 60 + um; x += t.every_hours * 60) times.push([Math.floor(x / 60), x % 60]);
+  }
   for (let i = 0; i <= 8; i++) {
     const day = zonedParts(addLocalDays(from, i, tz), tz);
-    const at = zonedToUtc(day.year, day.month, day.day, h, m, 0, tz);
     const weekday = new Date(Date.UTC(day.year, day.month - 1, day.day)).getUTCDay();
-    if (at.getTime() > from.getTime() && (!days.length || days.includes(weekday))) return at;
+    if (days.length && !days.includes(weekday)) continue;
+    for (const [th, tm] of times) {
+      const at = zonedToUtc(day.year, day.month, day.day, th, tm, 0, tz);
+      if (at.getTime() > from.getTime()) return at;
+    }
   }
   return null;
 }
@@ -396,7 +417,9 @@ export function whenText(t: Trigger, names: (id: string) => string | null = () =
     case "request":
       return t.phrase ? `When you say "${t.phrase}", or press Run` : "When you press Run, or ask";
     case "schedule":
-      return `At ${t.at}, ${daysText(t.days)}`;
+      return t.every_hours && t.until
+        ? `Every ${t.every_hours} h from ${t.at} to ${t.until}, ${daysText(t.days)}`
+        : `At ${t.at}, ${daysText(t.days)}`;
     case "watch":
       return `Every ${t.every_hours} h, looks at ${new URL(t.url).host} for: ${t.matters}`;
     case "absence":
@@ -416,4 +439,13 @@ export function stepText(s: Step): string {
     case "atlas":
       return `Atlas: ${s.instructions}`;
   }
+}
+
+/** How many times a day a schedule runs, on the days it runs. */
+export function runsPerDay(t: Trigger): number {
+  if (t.kind !== "schedule") return t.kind === "watch" ? 24 / t.every_hours : t.kind === "absence" ? 1 : 0;
+  if (!t.every_hours || !t.until) return 1;
+  const [h, m] = t.at.split(":").map(Number) as [number, number];
+  const [uh, um] = t.until.split(":").map(Number) as [number, number];
+  return 1 + Math.max(0, Math.floor((uh * 60 + um - (h * 60 + m)) / (t.every_hours * 60)));
 }

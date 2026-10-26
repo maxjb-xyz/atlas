@@ -49,6 +49,9 @@ export const mcpTools = defineTool({
   }),
   async run(input, ctx) {
     if (!ctx.mcp) return fail("Connected servers can't be used from here.");
+    // Servers still connecting since Atlas woke: wait for them here, where their tools are needed.
+    if (ctx.mcp.settle && ctx.mcp.servers().some((x) => ["connecting", "connected", "discovering"].includes(x.state)))
+      await ctx.mcp.settle(10_000);
     const all = ctx.mcp.servers();
     let servers = all;
     if (input.server) {
@@ -105,8 +108,14 @@ export const mcpCall = defineTool({
   }),
   async run(input, ctx) {
     if (!ctx.mcp) return fail("Connected servers can't be used from here.");
-    const s = pickServer(ctx.mcp.servers(), input.server);
+    let s = pickServer(ctx.mcp.servers(), input.server);
     if ("missing" in s) return fail(s.missing);
+    // Still connecting since Atlas woke: wait for it here, where it's needed, rather than before every turn.
+    if (["connecting", "connected", "discovering"].includes(s.state) && ctx.mcp.settle) {
+      await ctx.mcp.settle(10_000);
+      s = pickServer(ctx.mcp.servers(), input.server);
+      if ("missing" in s) return fail(s.missing);
+    }
     if (s.state !== "ready") {
       return fail(
         s.state === "authenticating"

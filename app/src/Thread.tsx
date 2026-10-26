@@ -7,9 +7,12 @@
 // what needs the owner just above it. Messages carry their area chip; tapping
 // it moves the message (§6.3).
 
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { InboxItem, JobView, LogRow } from "../../core/src/protocol";
 import { ApprovalCard } from "./Approval";
+import { FrontPage } from "./FrontPage";
+import { NextSteps } from "./InlineViews";
+import { useVoiceFull, VoiceStage } from "./VoiceStage";
 import type { Atlas, Live, Pending } from "./connection";
 import { isOpen, JobCard, questionFromRow, QuestionBody, ResultBody, topJobs } from "./JobViews";
 import { jobNow } from "./jobs";
@@ -17,7 +20,7 @@ import { InlineText, Markdown } from "./Markdown";
 import { eventEnd, eventStart, useCalendar } from "./pages/Week";
 import { Composer, Receipt, VoiceStrip } from "./Shell";
 import { type Shown, shownFrom, StageCard } from "./StageViews";
-import { useDetail } from "./theme";
+import { stillMotion, useDetail } from "./theme";
 import {
   addDays,
   AreaChip,
@@ -26,10 +29,13 @@ import {
   CountUp,
   type DiamondState,
   elapsed,
+  hostOf,
   Icon,
   LiveMark,
   morphOrigin,
+  SiteMark,
   startOfDay,
+  stepIcon,
   useNow,
 } from "./ui";
 
@@ -52,15 +58,22 @@ type Item =
   | { k: "job"; job: JobView; run: string | null; at: number }
   | { k: "pending"; p: Pending; run: null; at: number };
 
+/** How much of the plumbing the thread shows: brain fallbacks only at Developer, Atlas's silent runs from Detailed (§21.5). */
+interface Shows {
+  dev: boolean;
+  detailed: boolean;
+}
+
 /** Whether a row is a message in the conversation. A job's updates aren't: they're on its card and in its own thread. */
-function shows(r: LogRow): boolean {
+function shows(r: LogRow, at: Shows): boolean {
   // A job's own rows (the owner's words and answers to it, what its turns did) are its thread's, not the main one (§21.4).
   if ((r.kind === "message.in" || r.kind === "tool.result") && r.body.job != null) return false;
   switch (r.kind) {
+    case "brain.fallback":
+      return at.dev;
     case "message.in":
     case "message.out":
     case "voice.problem":
-    case "brain.fallback":
     case "agenda.change":
     case "record.change":
     case "area.change":
@@ -77,8 +90,8 @@ function shows(r: LogRow): boolean {
 }
 
 /** The thread, in order: messages with their receipts, what's being said now, and each job's card where it was asked for. */
-function arrange(rows: LogRow[], live: Record<string, Live>, jobs: JobView[], pending: Pending[]): Item[] {
-  const visible = rows.filter(shows);
+function arrange(rows: LogRow[], live: Record<string, Live>, jobs: JobView[], pending: Pending[], at: Shows): Item[] {
+  const visible = rows.filter((r) => shows(r, at));
   const lastOut = new Map<string, string>();
   for (const r of visible) if (r.kind === "message.out" && r.run_id) lastOut.set(r.run_id, r.id);
   // Receipts sit under the message of the run that made them, or under what it's saying now.
@@ -89,6 +102,9 @@ function arrange(rows: LogRow[], live: Record<string, Live>, jobs: JobView[], pe
   for (const r of visible) {
     if (r.kind === "tool.result") {
       if (sits(r.run_id)) continue;
+      // What one of Atlas's own runs did without saying anything (a skill review, a silent automation) is History's,
+      // not the conversation's: what matters from those, Atlas brings into the thread in its own words (§21.2).
+      if (r.surface === "none" && !at.detailed) continue;
       const prev = items.at(-1);
       if (prev?.k === "receipts" && prev.run === r.run_id) prev.rows.push(r);
       else items.push({ k: "receipts", rows: [r], run: r.run_id, at: r.at });
@@ -196,6 +212,8 @@ export function Conversation({
   onFocused?: () => void;
 }) {
   const s = atlas.state;
+  const { at } = useDetail();
+  const [full, setFull] = useVoiceFull();
   const { rows, pending, live, loaded, noOlder } = s;
   const name = s.view?.settings.assistant_name ?? "Atlas";
   const box = useRef<HTMLDivElement>(null);
@@ -266,7 +284,7 @@ export function Conversation({
   }, [focus, loaded, rows, noOlder]);
 
   const undone = new Set(rows.filter((r) => r.body.undo_of).map((r) => String(r.body.undo_of)));
-  const items = arrange(rows, live, topJobs(s.jobs), pending);
+  const items = arrange(rows, live, topJobs(s.jobs), pending, { dev: at("developer"), detailed: at("detailed") });
   for (const it of items) {
     if (it.k === "live") {
       seenLive.add(it.run);
@@ -290,18 +308,33 @@ export function Conversation({
   const todayAt = startOfDay(new Date()).getTime();
   // Today opens with Atlas's presence, in place of the day's marker; with nothing yet today, it's the newest thing here.
   const heroAt = items.findIndex((it) => it.at >= todayAt);
-  const hero = loaded ? <Presence key="presence" atlas={atlas} opens={opens} empty={empty} /> : null;
+  // Until the owner says something today, the day opens on the front page; then its presence in the thread.
+  const spokeToday = items.some((it) => it.at >= todayAt && (it.k === "pending" || (it.k === "row" && it.row.kind === "message.in")));
+  const hero = !loaded ? null : spokeToday ? (
+    <Presence key="presence" atlas={atlas} opens={opens} empty={empty} />
+  ) : (
+    <FrontPage key="front" atlas={atlas} opens={opens} />
+  );
   let day = "";
 
   return (
     <div className="sheet convo">
+      <GridRipple active={diamondState(atlas) === "thinking"} />
       <span className="node" aria-hidden />
       <span className="node" aria-hidden />
       <span className="node" aria-hidden />
       <span className="node" aria-hidden />
       <div className="thread" ref={box} onScroll={onScroll}>
         <div className="thread-col">
-          {!loaded && <p className="faint thread-hint">Connecting to {name}.</p>}
+          {!loaded && (
+            // Loading is the page's shape with the mark at rest, never a sentence (M7 W16).
+            <div className="thread-loading" aria-busy="true" aria-label={`Connecting to ${name}`}>
+              <AsciiDiamond height={84} state="idle" />
+              <span className="sk" style={{ width: "62%" }} />
+              <span className="sk" style={{ width: "78%" }} />
+              <span className="sk own" style={{ width: "34%" }} />
+            </div>
+          )}
           {loaded && noOlder && items.length > 0 && <p className="faint thread-hint">The start of your conversation with {name}.</p>}
           {[
             ...items.flatMap((it, i) => {
@@ -326,9 +359,20 @@ export function Conversation({
           ]}
         </div>
       </div>
+      {atlas.inCall && full && (
+        <VoiceStage
+          atlas={atlas}
+          onShrink={() => setFull(false)}
+          onOpen={(v) => {
+            setFull(false);
+            opens.view(v);
+          }}
+        />
+      )}
       <div className="convo-dock">
-        {atlas.inCall && <VoiceStrip atlas={atlas} />}
-        <NeedsYou atlas={atlas} onOpen={opens.inbox} />
+        {atlas.inCall && !full && <VoiceStrip atlas={atlas} onExpand={() => setFull(true)} />}
+        {/* The front page shows what needs the owner in its own tile, so the strip waits until they've spoken. */}
+        {(spokeToday || !loaded) && <NeedsYou atlas={atlas} onOpen={opens.inbox} />}
         <Composer atlas={atlas} placeholder={`Message ${name}`} reply={false} />
       </div>
     </div>
@@ -450,6 +494,107 @@ function Presence({ atlas, opens, empty }: { atlas: Atlas; opens: Opens; empty: 
   );
 }
 
+/** The diamond's ramp, lightest to densest, for the grid while Atlas works. */
+const RAMP = ".:-=+*#%@";
+
+/**
+ * The grid while Atlas works (VISION §21.8, M7 W17): the stage's dots near Atlas's mark on the reply it's writing
+ * turn into the diamond's characters in ember and ripple outward; when it's done they settle back into dots. A
+ * canvas over the stage's own dots, lined up with them, at most 30 frames a second, only near the mark, and nothing
+ * with reduced motion.
+ */
+function GridRipple({ active }: { active: boolean }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const state = useRef({ active, since: 0, ended: 0 });
+  useEffect(() => {
+    const st = state.current;
+    if (active && !st.active) st.since = performance.now();
+    if (!active && st.active) st.ended = performance.now();
+    st.active = active;
+  }, [active]);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv || stillMotion()) return;
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    const ember = getComputedStyle(document.documentElement).getPropertyValue("--ac").trim() || "#ff6a3d";
+    let raf = 0;
+    let last = 0;
+    let drawn = false;
+    const frame = (t: number) => {
+      raf = requestAnimationFrame(frame);
+      if (t - last < 33) return;
+      last = t;
+      const st = state.current;
+      const settling = !st.active && t - st.ended < 900;
+      if (!st.active && !settling) {
+        if (drawn) {
+          ctx.clearRect(0, 0, cv.width, cv.height);
+          drawn = false;
+        }
+        return;
+      }
+      const box = cv.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      if (cv.width !== Math.round(box.width * dpr) || cv.height !== Math.round(box.height * dpr)) {
+        cv.width = Math.round(box.width * dpr);
+        cv.height = Math.round(box.height * dpr);
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, box.width, box.height);
+      drawn = true;
+      const mark = cv.parentElement?.querySelector(".msg.live .mark")?.getBoundingClientRect();
+      // The reply being written stays clear: the ripple goes around its words, never under them.
+      const words = cv.parentElement?.querySelector(".msg.live .body")?.getBoundingClientRect();
+      const stage = cv.closest(".stage")?.getBoundingClientRect();
+      if (!mark || !stage) return;
+      const ox = mark.left + mark.width / 2 - box.left;
+      const oy = mark.top + mark.height / 2 - box.top;
+      // The stage's dots sit at the middle of each 16 px tile from its corner.
+      const x0 = ((((stage.left - box.left + 8) % 16) + 16) % 16) - 16;
+      const y0 = ((((stage.top - box.top + 8) % 16) + 16) % 16) - 16;
+      const sec = (t - st.since) / 1000;
+      const fade = settling ? 1 - (t - st.ended) / 900 : Math.min(1, sec / 0.4);
+      ctx.font = '500 10px "Geist Mono", ui-monospace, monospace';
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = ember;
+      const R = 440;
+      for (let y = Math.max(y0, oy - R); y < Math.min(box.height, oy + R); y += 16) {
+        const gy = y0 + Math.round((y - y0) / 16) * 16;
+        for (let x = Math.max(x0, ox - R); x < Math.min(box.width, ox + R); x += 16) {
+          const gx = x0 + Math.round((x - x0) / 16) * 16;
+          const d = Math.hypot(gx - ox, (gy - oy) * 1.15);
+          if (d > R) continue;
+          if (
+            words &&
+            gx + box.left > words.left - 6 &&
+            gx + box.left < words.right + 6 &&
+            gy + box.top > words.top - 6 &&
+            gy + box.top < words.bottom + 6
+          )
+            continue;
+          let lit = 0;
+          for (let k = 0; k < 3; k++) {
+            const r = (sec * 170 + k * 140) % 420;
+            lit = Math.max(lit, Math.exp(-Math.pow((d - r) / 22, 2)) * (1 - r / 420));
+          }
+          lit = lit * (1 - d / R) + 0.08 * Math.exp(-d / 40);
+          lit *= fade;
+          if (lit < 0.07) continue;
+          const ch = RAMP[Math.min(RAMP.length - 1, Math.max(0, Math.round(lit * (RAMP.length - 1))))]!;
+          ctx.globalAlpha = Math.min(0.55, lit * 0.8);
+          ctx.fillText(ch, gx, gy);
+        }
+      }
+      ctx.globalAlpha = 1;
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return <canvas ref={ref} className="grid-ripple" aria-hidden />;
+}
+
 /** What waits on the owner, in one slim line above the composer (§21.1): it opens Inbox. */
 function NeedsYou({ atlas, onOpen }: { atlas: Atlas; onOpen: () => void }) {
   // An answer sent from here leaves the strip at once, before Inbox catches up.
@@ -477,18 +622,54 @@ function Glyph({ state }: { state?: DiamondState }) {
   );
 }
 
-/** What Atlas is doing on a reply, before and between its words: a tool's status in mono, with the seconds it has taken. */
-function Working({ run, status }: { run: string; status: string | null }) {
+/** A finished step of a reply, in a word or two, for its node: "search", "reuters.com", "reminder". */
+function nodeLabel(r: LogRow): string {
+  const rc = r.body.receipt as { text?: string; link?: string } | undefined;
+  if (rc?.link) return hostOf(rc.link) || "page";
+  if (r.body.name === "web_search") return "search";
+  return (rc?.text ?? String(r.body.name ?? "")).split(" · ")[0]!.toLowerCase().slice(0, 24);
+}
+
+/**
+ * What Atlas is doing on a reply, before and between its words (M7 W17): one line whose verb changes in place, with
+ * the seconds it has taken, and a node for each step it has finished on a short rail, the one under way in ember.
+ */
+function Working({ run, status, done = [] }: { run: string; status: string | null; done?: LogRow[] }) {
   const now = useNow(1000);
   const since = liveSince.get(run) ?? now;
+  const steps = done.slice(-4);
   return (
-    <p className="working" aria-live="polite">
-      <span className="mono spin" aria-hidden />
-      <span className="w-text" key={status ?? "thinking"}>
-        {status ?? "Thinking"}
-      </span>
-      <span className="w-time mono">{elapsed(now - since)}</span>
-    </p>
+    <div className="working-wrap">
+      <p className="working" aria-live="polite">
+        <span className="mono spin" aria-hidden />
+        <span className="w-text" key={status ?? "thinking"}>
+          {status ?? "Thinking"}
+        </span>
+        <span className="w-time mono">{elapsed(now - since)}</span>
+      </p>
+      {steps.length > 0 && (
+        <span className="w-nodes" aria-hidden>
+          {done.length > steps.length && <span className="w-more mono">+{done.length - steps.length}</span>}
+          {steps.map((r) => {
+            const link = (r.body.receipt as { link?: string } | undefined)?.link;
+            return (
+              <span key={r.id} className={`w-node done ${r.body.ok === false ? "bad" : ""}`}>
+                {link && hostOf(link) ? (
+                  <SiteMark host={hostOf(link)} size={14} />
+                ) : (
+                  <Icon name={stepIcon(String(r.body.name ?? ""))} size={12} />
+                )}
+                {nodeLabel(r)}
+                <span className="w-link" />
+              </span>
+            );
+          })}
+          <span className="w-node live">
+            <i />
+          </span>
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -510,9 +691,11 @@ function ItemView({ atlas, item, undone, opens }: { atlas: Atlas; item: Item; un
         <div className="msg atlas live">
           <Glyph state={atlas.inCall && item.live.surface === "voice" ? (atlas.voice.status as DiamondState) : "thinking"} />
           <div className="body">
-            {(item.live.status || !item.live.text) && <Working run={item.run} status={item.live.status} />}
+            {(item.live.status || !item.live.text) && <Working run={item.run} status={item.live.status} done={item.receipts} />}
             {item.live.text && <Markdown className="said streaming" text={item.live.text} />}
-            {item.receipts.length > 0 && <Receipts atlas={atlas} rows={item.receipts} undone={undone} opens={opens} />}
+            {item.receipts.length > 0 && (
+              <Receipts atlas={atlas} rows={item.receipts} undone={undone} opens={opens} said={item.live.text} />
+            )}
           </div>
         </div>
       );
@@ -537,11 +720,111 @@ function ItemView({ atlas, item, undone, opens }: { atlas: Atlas; item: Item; un
   }
 }
 
+/** A receipt for a lookup that changed nothing: a search or a page read (receipts saved before `look` was kept are known by their tool). */
+export function isLook(r: LogRow): boolean {
+  const rc = r.body.receipt as { look?: boolean; view?: unknown; undo?: unknown; approval?: unknown } | undefined;
+  if (!rc) return false;
+  if (rc.look === true) return true;
+  return rc.view == null && rc.undo == null && rc.approval == null && (r.body.name === "web_search" || r.body.name === "web_fetch");
+}
+
+/** The pages a search found, best first, from its output (kept clipped in the log, so read by pattern). */
+function resultsOf(r: LogRow): string[] {
+  return [...String(r.body.output ?? "").matchAll(/"url":"(https?:[^"]+)"/g)].map((m) => m[1]!);
+}
+
+/**
+ * The sites behind a reply, one per site: those its words link to and the pages Atlas read; only when there are
+ * none, what its searches found.
+ */
+export function sourcesOf(rows: LogRow[], said = ""): Array<{ host: string; url: string; title: string }> {
+  const out = new Map<string, { host: string; url: string; title: string }>();
+  const add = (url: string, title = "") => {
+    const host = hostOf(url);
+    if (host && /^https?:/.test(url) && !out.has(host)) out.set(host, { host, url, title });
+  };
+  for (const m of said.matchAll(/\]\((https?:\/\/[^\s)]+)\)|(?<![(\w])(https?:\/\/[^\s)<>\]]+)/g)) add(m[1] ?? m[2]!);
+  for (const r of rows) {
+    const rc = r.body.receipt as { link?: string; text?: string } | undefined;
+    if (rc?.link) add(rc.link, (rc.text ?? "").replace(/^Read · /, ""));
+  }
+  if (out.size === 0) for (const r of rows) if (r.body.name === "web_search") for (const url of resultsOf(r).slice(0, 3)) add(url);
+  return [...out.values()];
+}
+
+/**
+ * What Atlas looked at for a reply (§21.5 at Simple, M7 W17): the sites behind it, each with its own icon, which open
+ * the page; a search that found nothing to show as one quiet pill. "Details" opens each search and page as its receipt.
+ */
+function Lookups({ atlas, rows, undone, said }: { atlas: Atlas; rows: LogRow[]; undone: Set<string>; said?: string }) {
+  const [open, setOpen] = useState(false);
+  const sources = sourcesOf(rows, said);
+  const searches = rows.filter((r) => r.body.name === "web_search").length;
+  if (open)
+    return (
+      <>
+        {rows.map((r, i) => (
+          <span key={r.id} data-row={r.id} style={{ "--i": i } as React.CSSProperties}>
+            <Receipt row={r} atlas={atlas} undone={undone.has(r.id)} />
+          </span>
+        ))}
+        <button className="src more" onClick={() => setOpen(false)}>
+          Fewer
+        </button>
+      </>
+    );
+  return (
+    <span className="sources" data-row={rows[0]!.id}>
+      {sources.slice(0, 4).map((x, i) => (
+        <a
+          key={x.host}
+          className="src"
+          href={x.url}
+          target="_blank"
+          rel="noreferrer"
+          title={x.title ? `${x.title}\n${x.url}` : x.url}
+          style={{ "--i": i } as React.CSSProperties}
+        >
+          <SiteMark host={x.host} />
+          {x.host}
+        </a>
+      ))}
+      {sources.length === 0 && searches > 0 && (
+        <span className="src">
+          <span className="site-mark" aria-hidden>
+            <Icon name="search" size={10} />
+          </span>
+          {searches === 1 ? "Searched the web" : `Searched the web ${searches} times`}
+        </span>
+      )}
+      <button className="src more" onClick={() => setOpen(true)} title="Each search and page">
+        {sources.length > 4 ? `+${sources.length - 4} · Details` : "Details"}
+      </button>
+    </span>
+  );
+}
+
 /** The receipts for what Atlas did, under its message: views it showed as cards, approvals waiting as their card, the rest as chips. */
-function Receipts({ atlas, rows, undone, opens }: { atlas: Atlas; rows: LogRow[]; undone: Set<string>; opens: Opens }) {
+function Receipts({
+  atlas,
+  rows,
+  undone,
+  opens,
+  said,
+}: {
+  atlas: Atlas;
+  rows: LogRow[];
+  undone: Set<string>;
+  opens: Opens;
+  said?: string;
+}) {
   const inbox = atlas.state.inbox ?? [];
+  const { at } = useDetail();
   const shown = rows.map((r) => [r, shownFrom(r)] as const);
-  const chips = shown.filter(([, v]) => !v).map(([r]) => r);
+  const all = shown.filter(([, v]) => !v).map(([r]) => r);
+  // At Simple, lookups (searches, pages read) fold into one line; what changed something keeps its own receipt.
+  const looks = at("detailed") ? [] : all.filter(isLook);
+  const chips = all.filter((r) => !looks.includes(r));
   const cards = shown.filter((x): x is readonly [LogRow, Shown] => x[1] != null);
   const waiting = chips
     .map((r) => {
@@ -552,8 +835,9 @@ function Receipts({ atlas, rows, undone, opens }: { atlas: Atlas; rows: LogRow[]
     .filter((x) => x != null);
   return (
     <>
-      {chips.length > 0 && (
+      {(chips.length > 0 || looks.length > 0) && (
         <div className="receipts">
+          {looks.length > 0 && <Lookups atlas={atlas} rows={looks} undone={undone} said={said} />}
           {chips.map((r, i) => (
             <span
               key={r.id}
@@ -583,11 +867,15 @@ function Receipts({ atlas, rows, undone, opens }: { atlas: Atlas; rows: LogRow[]
           <ApprovalCard atlas={atlas} a={item.approval!} />
         </div>
       ))}
-      {cards.map(([r, v]) => (
-        <div key={r.id} data-row={r.id}>
-          <StageCard atlas={atlas} shown={v} row={r} onOpen={() => opens.view(v)} />
-        </div>
-      ))}
+      {cards.map(([r, v]) => {
+        const next = (r.body.receipt as { next?: string[] } | undefined)?.next;
+        return (
+          <div key={r.id} data-row={r.id}>
+            <StageCard atlas={atlas} shown={v} row={r} onOpen={() => opens.view(v)} />
+            {next && next.length > 0 && <NextSteps atlas={atlas} next={next} />}
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -608,8 +896,9 @@ function Row({
   const b = row.body as Record<string, unknown>;
   const s = atlas.state;
   const { at } = useDetail();
+  // At Simple a message carries only its time, on hover: the area chip only when it has an area, the voice tag from Detailed.
   const voiceTag =
-    row.surface === "voice" ? (
+    row.surface === "voice" && at("detailed") ? (
       <span className="voice-tag" title="Said out loud">
         <Icon name="mic" size={11} /> Voice
       </span>
@@ -626,9 +915,9 @@ function Row({
       return (
         <div className="msg owner" data-row={row.id}>
           <p className="bubble">{str(b.text)}</p>
-          <span className={`when ${row.areas.length || row.surface === "voice" ? "keep" : ""}`}>
+          <span className={`when ${row.areas.length || voiceTag ? "keep" : ""}`}>
             {voiceTag}
-            {s.areas.length > 0 && chip}
+            {s.areas.length > 0 && (row.areas.length > 0 || at("detailed")) && chip}
             <span className="mono">{clock(row.at)}</span>
           </span>
         </div>
@@ -640,8 +929,8 @@ function Row({
           <Glyph />
           <div className="body">
             <Markdown className="said" text={str(b.text)} />
-            {receipts.length > 0 && <Receipts atlas={atlas} rows={receipts} undone={undone} opens={opens} />}
-            <span className={`when ${row.surface === "voice" || b.interrupted ? "keep" : ""}`}>
+            {receipts.length > 0 && <Receipts atlas={atlas} rows={receipts} undone={undone} opens={opens} said={str(b.text)} />}
+            <span className={`when ${voiceTag || b.interrupted ? "keep" : ""}`}>
               {voiceTag}
               {b.interrupted ? <span>Interrupted</span> : null}
               {at("developer") && <Timing timing={b.timing} />}

@@ -36,6 +36,8 @@ export interface RecordView {
   fact: string;
   details: Record<string, unknown>;
   areas: string[];
+  /** For people: when Atlas last dealt with them (a message from or to them, a face's conversation). */
+  touched_at?: number;
   learned_at: number;
   /** Whether Atlas learned it (from a conversation, a message or setup), not an import of contacts or an address seen on mail. */
   learned: boolean;
@@ -112,7 +114,7 @@ export interface ApprovalView {
 export interface InboxItem {
   /** The log row it comes from; for an approval, its id; for a question, its key. */
   id: string;
-  kind: "review" | "failed" | "approval" | "question" | "face";
+  kind: "review" | "failed" | "approval" | "question" | "face" | "service";
   title: string;
   text: string;
   at: number;
@@ -123,6 +125,8 @@ export interface InboxItem {
   question?: { key: string; yes: string; no: string };
   /** A coding job's question for the owner (§8.2): the answer goes back to its agent. */
   job?: { id: string; title: string; question: string; options: string[]; why?: string; content?: string; files?: FileRef[] };
+  /** A service Atlas uses that can't work until the owner does something: sign in again, give its key, or see why it fails. */
+  service?: { id: string; name: string; fix: "signin" | "key" | "error" };
   /** What a face handed the owner (§7.2): who it's from, the conversation, and whether it can be answered from here. */
   face?: {
     name: string;
@@ -153,9 +157,31 @@ export interface AreaView {
 }
 
 /** A helper's job as the app shows it (§21.4). */
+/** What ⌘K found (M7 W20): one thing Atlas keeps that matched, by its kind. */
+export type SearchGroup = "files" | "pages" | "jobs" | "skills" | "automations" | "people" | "places" | "memory" | "conversation";
+
+export interface SearchHit {
+  group: SearchGroup;
+  id: string;
+  title: string;
+  /** A line under it: when, what kind, what it said. */
+  sub: string;
+  at: number;
+  /** A file's type, so its row can show a frame or its mark. */
+  type?: string;
+  /** A job at work now. */
+  live?: boolean;
+  /** A person's photo, when the address book has one. */
+  photo?: string | null;
+  /** A moment in the conversation: who said it. */
+  by?: "owner" | "atlas";
+}
+
 export interface JobView {
   id: string;
   title: string;
+  /** The areas it's in (§6), for its chip, the area's page and the scope; empty when it has none. */
+  areas?: string[];
   state: "running" | "done" | "failed" | "cancelled";
   /**
    * While it hasn't ended, whether anything is at work on it right now: a look or a step's helper or coding agent
@@ -515,10 +541,12 @@ export const ClientMessage = z.discriminatedUnion("type", [
       })
       .optional(),
   }),
-  /** Move an item to other areas by tapping its chip (§6.3): a message (`log:<id>`) or a record (`rec:<id>`). */
+  /** Move an item to other areas by tapping its chip (§6.3): a message (`log:<id>`), a record (`rec:<id>`) or a job (`job:<id>`). */
+  /** The owner's own words for their portrait (§5.1): Atlas keeps them as true from then on. */
+  z.object({ type: z.literal("atlas.portrait.set"), text: z.string().max(2_000) }),
   z.object({
     type: z.literal("atlas.areas.set"),
-    ref: z.string().regex(/^(log|rec):[\w-]+$/),
+    ref: z.string().regex(/^(log|rec|job|aut|file|page):[\w-]+$/),
     areas: z.array(z.string().max(64)).max(10),
   }),
   /** Move a calendar event to other areas: every event in its series follows. */
@@ -551,6 +579,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("atlas.passkey.remove"), id: z.string().max(512) }),
   /** Sign out everywhere. */
   z.object({ type: z.literal("atlas.sessions.end") }),
+  /** ⌘K (M7 W20): everything Atlas keeps that matches the owner's words. */
+  z.object({ type: z.literal("atlas.search"), text: z.string().max(200) }),
   /** Library: records, by type, area or text. `ref` is echoed back. */
   z.object({
     type: z.literal("atlas.records.list"),
@@ -902,6 +932,8 @@ export interface SettingsView {
   /** Focus in force, if any (§14). */
   focus: { until: number; about: string } | null;
   setup: { done: string[]; skipped: string[]; finished: boolean };
+  /** Atlas's portrait of the owner (§5.1) and what it learned the day it was written, for Library and the front page. */
+  portrait: { text: string; learned: string[]; at: number; by: "atlas" | "owner" } | null;
   /** Location (Abilities → Devices, §10.1): whether OwnTracks is set up, the last fix and place, and the last refused post. */
   location: LocationView;
   /** Paired devices (Abilities → Devices, §16.3). */
@@ -1235,6 +1267,7 @@ export type ServerMessage =
   | { type: "atlas.stage.page"; ref: string; page: StagePage | null }
   | { type: "atlas.automations"; automations: AutomationView[]; suggestions: SuggestionView[] }
   | { type: "atlas.pages"; pages: PageSummary[] }
+  | { type: "atlas.search.results"; text: string; hits: SearchHit[] }
   | { type: "atlas.files"; files: import("./stage").FileRow[] }
   | { type: "atlas.skills"; skills: SkillView[] }
   /** Get skills (§17): the catalog's skill hubs and what each holds. Sent when asked and after a read or an install. */

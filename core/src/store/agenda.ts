@@ -16,6 +16,8 @@ export type AgendaKind =
   | "approval"
   | "automation"
   | "skills"
+  /** The nightly rewrite of Atlas's portrait of the owner (§5.1). */
+  | "portrait"
   /** A look back over a conversation that went quiet, keeping what's worth keeping as skills (§9.3). */
   | "skill_review"
   /** Something to do when you're near the right kind of place (§10.3), with no time unless it has a deadline. */

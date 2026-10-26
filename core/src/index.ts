@@ -26,6 +26,7 @@ interface OwnerApi {
   apiApprove(id: string): Promise<{ ok: boolean; text: string }>;
   apiFile(id: string): Promise<{ key: string; name: string; type: string } | null>;
   apiPhoto(id: string): Promise<{ key: string; type: string } | null>;
+  apiIcon(host: string): Promise<{ type: string; bytes: ArrayBuffer } | null>;
   apiSkillFolder(id: string): Promise<{ name: string; zip: Uint8Array } | null>;
   apiWorkspaceGate(): Promise<{ allow: string[]; inject: Record<string, string> }>;
   apiReaction(id: string, how: "opened" | "dismissed"): Promise<void>;
@@ -289,6 +290,32 @@ export default {
             "content-security-policy": "sandbox",
             "x-content-type-options": "nosniff",
             "cache-control": "private, max-age=31536000, immutable",
+          },
+        });
+      }
+      // A source's site icon (M7 W17), kept in R2 once fetched; a site with none is remembered for a week.
+      const icon = /^\/api\/icons\/([a-z0-9.-]{4,253})$/.exec(path);
+      if (icon && request.method === "GET") {
+        const host = icon[1]!;
+        const key = `icons/${host}`;
+        const kept = await env.FILES.get(key);
+        const fresh = kept && (kept.size > 0 || Date.now() - kept.uploaded.getTime() < 7 * 86_400_000);
+        let body: ArrayBuffer | null = fresh ? await kept.arrayBuffer() : null;
+        let type = kept?.httpMetadata?.contentType ?? "";
+        if (!fresh) {
+          const got = await agent.apiIcon(host);
+          body = got?.bytes ?? new ArrayBuffer(0);
+          type = got?.type ?? "";
+          await env.FILES.put(key, body, { httpMetadata: { contentType: type || "application/octet-stream" } });
+        }
+        if (!body || body.byteLength === 0)
+          return new Response(null, { status: 404, headers: { "cache-control": "private, max-age=86400" } });
+        return new Response(body, {
+          headers: {
+            "content-type": type,
+            "content-security-policy": "sandbox",
+            "x-content-type-options": "nosniff",
+            "cache-control": "private, max-age=604800",
           },
         });
       }

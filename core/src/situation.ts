@@ -441,7 +441,18 @@ export function situationPage(sql: Sql, settings: Settings, now = Date.now(), de
           title: n.title,
           start: startOf(n),
           location: placeOf(n),
-          travel: t ? { s: t.s, traffic: t.traffic, leave_by: t.leave_by, from: t.from_what, at: t.at } : null,
+          travel: t
+            ? {
+                s: t.s,
+                traffic: t.traffic,
+                leave_by: t.leave_by,
+                from: t.from_what,
+                at: t.at,
+                a: { lat: t.from.lat, lon: t.from.lon },
+                b: { lat: t.to.lat, lon: t.to.lon },
+                ...(t.line?.length ? { line: thin(t.line, 200) } : {}),
+              }
+            : null,
           travel_error: placeOf(n) && !t ? (c.travel_error ?? null) : null,
         }
       : null,
@@ -488,4 +499,11 @@ export function weatherPage(sql: Sql, settings: Settings, now = Date.now()): Wea
             "Atlas hasn't looked at the weather yet: it needs to know roughly where you are (location, or a pinned Home).",
         }),
   };
+}
+
+/** Every nth point of a line, ends kept, so it's at most `max` points: enough to draw, small enough to send. */
+function thin<T>(line: T[], max: number): T[] {
+  if (line.length <= max) return line;
+  const step = (line.length - 1) / (max - 1);
+  return Array.from({ length: max }, (_, i) => line[Math.round(i * step)]!);
 }

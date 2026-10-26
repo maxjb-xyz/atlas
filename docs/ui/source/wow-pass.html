@@ -1,0 +1,1157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atlas Wow Pass</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Layout: a long proposal in Atlas's own Graphite look. Text column at ~680px; each move opens into a full-width live mockup. */
+:root {
+  color-scheme: dark;
+  --bg: #141413; --win: #1b1a19; --win2: #211f1d; --side: #181716;
+  --sep: #2c2a28; --sep2: #3a3835; --dash: #3f3c37;
+  --tx: #f1efea; --tx2: #aaa69e; --tx3: #918d86;
+  --ac: #ff6a3d; --actx: #1a0d07;
+  --d1: #ffb48c; --d2: #ff6a3d; --d3: #e2442a; --d4: #b02e1d;
+  --school: #10b981; --personal: #f5a524; --work: #3b82f6; --fun: #f0458a;
+  --ok: #3fbf7f;
+  --dot: rgba(241,239,234,.07);
+  --f-ui: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-disp: "Inter Tight", Inter, system-ui, sans-serif;
+  --f-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ease: cubic-bezier(.2,.8,.2,1);
+  --spring: cubic-bezier(.34,1.4,.64,1);
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  background: var(--bg); color: var(--tx); font: 15px/1.6 var(--f-ui);
+  -webkit-font-smoothing: antialiased; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 80px;
+}
+a { color: var(--tx); text-decoration-color: var(--sep2); text-underline-offset: 3px; }
+a:hover { text-decoration-color: var(--tx2); }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.mono { font-family: var(--f-mono); }
+.lab { font-family: var(--f-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--tx3); }
+.wrap { max-width: 1080px; margin: 0 auto; }
+.col { max-width: 680px; }
+
+/* Hero */
+.hero { display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center; padding-block: 56px 32px; border-bottom: 1px dashed var(--dash); }
+.hero pre { margin: 0; font: 500 4.2px/4.2px var(--f-mono); white-space: pre; user-select: none; }
+.hero h1 { font: 600 clamp(34px, 6vw, 56px)/1.02 var(--f-disp); letter-spacing: -.035em; margin: 6px 0 14px; text-wrap: balance; }
+.hero p { color: var(--tx2); margin: 0; max-width: 620px; font-size: 16px; }
+@media (max-width: 640px) { .hero { grid-template-columns: 1fr; } }
+
+/* Diagnosis */
+.diag { padding-block: 36px 8px; }
+h2 { font: 600 28px/1.15 var(--f-disp); letter-spacing: -.025em; margin: 0 0 10px; text-wrap: balance; }
+h3 { font: 600 16px/1.3 var(--f-disp); margin: 0 0 6px; }
+.why { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--sep); border: 1px solid var(--sep); border-radius: 8px; overflow: hidden; margin-top: 22px; }
+.why > div { background: var(--win); padding: 18px 18px 20px; }
+.why p { margin: 0; color: var(--tx2); font-size: 14px; }
+.why .lab { display: block; margin-bottom: 8px; }
+@media (max-width: 820px) { .why { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .why { grid-template-columns: 1fr; } }
+
+/* Move sections */
+.move { padding-block: 64px 8px; border-top: 1px dashed var(--dash); margin-top: 56px; }
+.move-head { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px 20px; align-items: start; }
+.move-num { font: 500 13px var(--f-mono); color: var(--ac); padding-top: 9px; letter-spacing: .06em; }
+.move-head p { color: var(--tx2); margin: 0; }
+.move-body { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 20px; margin-top: 20px; }
+.move-body > .spacer { }
+@media (max-width: 640px) { .move-head, .move-body { grid-template-columns: 1fr; } .move-body > .spacer { display: none; } .move-num { padding-top: 0; } }
+.notes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; margin-top: 26px; }
+.notes ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.notes li { position: relative; padding-left: 16px; color: var(--tx2); font-size: 14px; }
+.notes li::before { content: ""; position: absolute; left: 0; top: .62em; width: 6px; height: 6px; background: var(--sep2); }
+.notes li b { color: var(--tx); font-weight: 500; }
+.notes .lab { display: block; margin-bottom: 10px; }
+@media (max-width: 760px) { .notes { grid-template-columns: 1fr; } }
+
+/* A mockup screen */
+.screen {
+  position: relative; border: 1px solid var(--sep2); border-radius: 12px; overflow: hidden;
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1.2px); background-size: 16px 16px;
+}
+.screen-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--sep); background: var(--side); }
+.screen-bar .lab { font-size: 10.5px; }
+.replay { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 1px solid var(--sep2); border-radius: 6px; background: var(--win); color: var(--tx2); font-size: 12px; cursor: pointer; }
+.replay:hover { color: var(--tx); border-color: var(--dash); }
+.replay svg { width: 12px; height: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--sep2); border-radius: 6px; overflow: hidden; background: var(--win); }
+.seg button { height: 26px; padding: 0 10px; border: 0; border-left: 1px solid var(--sep2); background: transparent; color: var(--tx2); font-size: 12px; cursor: pointer; }
+.seg button:first-child { border-left: 0; }
+.seg button.on { background: #2c2a27; color: var(--tx); }
+
+/* Shared thread bits */
+.thread { max-width: 680px; margin: 0 auto; padding: 28px 22px 26px; display: flex; flex-direction: column; gap: 18px; }
+.you { align-self: flex-end; background: #262422; border-radius: 16px 16px 4px 16px; padding: 9px 14px; max-width: 80%; font-size: 15px; }
+.atl { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px; }
+.mark { width: 12px; height: 18px; margin-top: 4px; }
+.say { font-size: 16px; line-height: 1.62; }
+.say .w { opacity: 0; display: inline-block; transform: translateY(3px); transition: opacity .35s var(--ease), transform .35s var(--ease); white-space: pre-wrap; }
+.say .w.in { opacity: 1; transform: none; }
+.status { font: 500 11px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--tx3); display: flex; align-items: center; gap: 8px; height: 18px; }
+.status .t { color: var(--tx3); opacity: .7; }
+.status .verb { display: inline-block; transition: opacity .25s, transform .25s var(--ease); }
+.status .verb.swap { opacity: 0; transform: translateY(-4px); }
+.spin { color: var(--ac); width: 10px; }
+
+/* Move 1: day strip */
+.day { margin-top: 14px; border: 1px solid var(--sep); border-radius: 10px; background: var(--win); padding: 16px 16px 14px; overflow: hidden; }
+.day-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.day-head .big { font: 600 22px/1 var(--f-disp); letter-spacing: -.02em; }
+.day-head .leave { font: 500 12px var(--f-mono); color: var(--ac); letter-spacing: .04em; }
+.strip { position: relative; height: 150px; }
+.hours, .wx { position: absolute; left: 0; right: 0; display: flex; }
+.hours { bottom: 0; height: 16px; }
+.hours span { flex: 1; font: 10px var(--f-mono); color: var(--tx3); border-left: 1px solid var(--sep); padding-left: 3px; }
+.wx { top: 0; height: 40px; }
+.wx div { flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding-left: 3px; opacity: 0; transform: translateY(4px); transition: opacity .4s, transform .4s var(--ease); }
+.wx div.in { opacity: 1; transform: none; }
+.wx svg { width: 16px; height: 16px; }
+.wx b { font: 500 11px var(--f-mono); color: var(--tx2); }
+.lane { position: absolute; left: 0; right: 0; top: 52px; height: 56px; border-top: 1px dashed var(--sep); border-bottom: 1px dashed var(--sep); }
+.ev { position: absolute; top: 8px; height: 40px; border-radius: 6px; padding: 5px 8px; overflow: hidden; transform-origin: left center; transform: scaleX(0); transition: transform .55s var(--spring); }
+.ev.in { transform: scaleX(1); }
+.ev .n { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.ev .s { font: 10px var(--f-mono); opacity: .8; white-space: nowrap; }
+.ev.school { background: color-mix(in srgb, var(--school) 18%, var(--win)); border: 1px solid color-mix(in srgb, var(--school) 55%, transparent); }
+.ev.personal { background: color-mix(in srgb, var(--personal) 16%, var(--win)); border: 1px solid color-mix(in srgb, var(--personal) 55%, transparent); }
+.leg { position: absolute; top: 26px; height: 0; border-top: 2px dashed var(--tx3); transform-origin: left; transform: scaleX(0); transition: transform .5s var(--ease); }
+.leg.in { transform: scaleX(1); }
+.leg i { position: absolute; top: -20px; left: 0; font: normal 10px var(--f-mono); color: var(--tx2); white-space: nowrap; }
+.free { position: absolute; top: 20px; font: 10px var(--f-mono); color: var(--tx3); opacity: 0; transition: opacity .4s; }
+.free.in { opacity: 1; }
+.due { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--school); opacity: 0; transition: opacity .4s; }
+.due.in { opacity: 1; }
+.due i { position: absolute; top: -18px; right: 6px; font: normal 10px var(--f-mono); color: var(--school); white-space: nowrap; }
+.needle { position: absolute; top: 44px; bottom: 16px; width: 0; border-left: 1px solid var(--ac); transform: translateX(0); opacity: 0; transition: opacity .4s; }
+.needle.in { opacity: 1; }
+.needle::before { content: ""; position: absolute; top: -3px; left: -4px; width: 7px; height: 7px; background: var(--ac); }
+.day-foot { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.chip { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 10px; border: 1px solid var(--sep2); border-radius: 7px; background: var(--win2); font-size: 12.5px; color: var(--tx2); cursor: pointer; opacity: 0; transform: translateY(4px); transition: opacity .35s, transform .35s var(--ease), border-color .2s; }
+.chip.in { opacity: 1; transform: none; }
+.chip:hover { border-color: var(--dash); color: var(--tx); }
+.chip svg { width: 13px; height: 13px; }
+.compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 0; }
+.compare > div { min-width: 0; }
+.compare .before { border-right: 1px dashed var(--dash); }
+.compare .tag { padding: 14px 22px 0; }
+.old-list { margin: 14px 0 0; border: 1px solid var(--sep); border-radius: 8px; padding: 12px 14px; background: var(--win); }
+.old-list .lab { font-size: 10px; }
+.old-list ul { margin: 8px 0 0; padding-left: 16px; font-size: 13px; color: var(--tx2); }
+.old-list li::marker { content: "▪  "; color: var(--tx3); }
+@media (max-width: 860px) { .compare { grid-template-columns: 1fr; } .compare .before { border-right: 0; border-bottom: 1px dashed var(--dash); } }
+
+/* Move 2: alive grid */
+.alive { position: relative; height: 400px; }
+.alive canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.alive .thread { position: relative; z-index: 1; }
+.sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.src { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 9px 0 4px; border: 1px solid var(--sep); border-radius: 999px; background: var(--win); font-size: 12px; color: var(--tx2); opacity: 0; transform: translateY(4px) scale(.96); transition: opacity .35s, transform .45s var(--spring); }
+.src.in { opacity: 1; transform: none; }
+.fav { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font: 600 9px var(--f-ui); color: #fff; }
+.rail-nodes { display: flex; gap: 10px; margin-top: 8px; align-items: center; }
+.rn { display: flex; align-items: center; gap: 6px; font: 10.5px var(--f-mono); color: var(--tx3); opacity: 0; transition: opacity .3s; }
+.rn.in { opacity: 1; }
+.rn i { width: 6px; height: 6px; border: 1px solid var(--tx3); display: inline-block; }
+.rn.done i { background: var(--ok); border-color: var(--ok); }
+.rn.live i { background: var(--ac); border-color: var(--ac); }
+.dash-link { flex: 0 0 14px; border-top: 1px dashed var(--sep2); }
+
+/* Move 3: voice */
+.voice { position: relative; min-height: 560px; display: grid; grid-template-rows: auto 1fr auto; background: #11100f; }
+.voice-top { display: flex; justify-content: center; padding-top: 34px; }
+.voice pre { margin: 0; font: 500 6px/6px var(--f-mono); white-space: pre; user-select: none; }
+.cap { text-align: center; padding: 18px 24px 0; max-width: 820px; margin: 0 auto; }
+.cap .heard { color: var(--tx3); font-size: 15px; min-height: 24px; transition: opacity .4s; }
+.cap .spoken { font: 600 clamp(22px, 3.4vw, 34px)/1.22 var(--f-disp); letter-spacing: -.02em; margin-top: 10px; min-height: 84px; text-wrap: balance; }
+.cap .spoken .w { opacity: .14; transition: opacity .18s; }
+.cap .spoken .w.on { opacity: 1; }
+.vstate { font: 500 11px var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--tx3); text-align: center; margin-top: 14px; }
+.vstate b { color: var(--ac); font-weight: 500; }
+.vcards { display: flex; justify-content: center; gap: 12px; padding: 18px 20px 26px; flex-wrap: wrap; }
+.vc { width: 230px; border: 1px solid var(--sep2); border-radius: 10px; background: var(--win); padding: 12px 14px; opacity: 0; transform: translateY(14px) scale(.97); transition: opacity .45s, transform .6s var(--spring); }
+.vc.in { opacity: 1; transform: none; }
+.vc .big { font: 600 30px/1 var(--f-disp); letter-spacing: -.03em; margin: 6px 0 4px; }
+.vc p { margin: 0; color: var(--tx2); font-size: 12.5px; }
+.vbars { display: flex; align-items: flex-end; gap: 3px; height: 30px; margin-top: 8px; }
+.vbars i { flex: 1; background: var(--personal); opacity: .8; transform-origin: bottom; transform: scaleY(0); transition: transform .5s var(--spring); }
+.vc.in .vbars i { transform: scaleY(var(--h)); }
+.vbars i.rain { background: var(--work); }
+.wave { display: flex; justify-content: center; gap: 3px; height: 26px; align-items: center; padding-bottom: 6px; }
+.wave i { width: 3px; height: 26px; background: var(--tx3); border-radius: 2px; transform: scaleY(.1); opacity: .7; }
+
+/* Move 4: home briefing */
+.brief { padding: 34px 28px 30px; }
+.brief-top { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 24px; align-items: center; }
+.brief-top pre { margin: 0; font: 500 3.6px/3.6px var(--f-mono); white-space: pre; user-select: none; }
+.brief h4 { font: 600 clamp(30px, 4.6vw, 46px)/1.02 var(--f-disp); letter-spacing: -.035em; margin: 0 0 8px; }
+.brief .line { color: var(--tx2); font-size: 16px; max-width: 560px; }
+.brief .line b { color: var(--tx); font-weight: 500; }
+.tiles { display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 12px; margin-top: 26px; }
+.tile { border: 1px solid var(--sep); border-radius: 10px; background: var(--win); padding: 14px; min-width: 0; position: relative; overflow: hidden; }
+.tile .lab { display: block; margin-bottom: 8px; }
+.tile .ttl { font: 600 18px/1.2 var(--f-disp); letter-spacing: -.015em; }
+.tile .sub { font-size: 12.5px; color: var(--tx2); }
+.map { position: relative; height: 128px; margin: 10px -14px -14px; border-top: 1px solid var(--sep); background: #191816; overflow: hidden; }
+.map svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.route { stroke-dasharray: 340; stroke-dashoffset: 340; }
+.route.in { animation: draw 1.6s var(--ease) forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.count { font: 600 34px/1 var(--f-disp); letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.count small { font-size: 14px; color: var(--tx2); font-weight: 500; letter-spacing: 0; }
+.hourly { display: flex; align-items: flex-end; gap: 2px; height: 56px; margin-top: 12px; }
+.hourly i { flex: 1; background: var(--personal); opacity: .75; transform-origin: bottom; transform: scaleY(0); transition: transform .6s var(--spring); }
+.hourly i.rain { background: var(--work); }
+.hourly.in i { transform: scaleY(var(--h)); }
+.ask { border: 1px solid var(--ac); border-radius: 8px; padding: 10px 11px; background: color-mix(in srgb, var(--ac) 7%, var(--win)); position: relative; transition: opacity .35s, transform .45s var(--ease); }
+.ask.gone { opacity: 0; transform: translateY(-14px); }
+.ask .q { font-size: 13px; line-height: 1.45; }
+.ask .who { font: 10px var(--f-mono); color: var(--ac); letter-spacing: .08em; text-transform: uppercase; }
+.hold { position: relative; margin-top: 9px; height: 30px; width: 100%; border: 1px solid var(--sep2); border-radius: 6px; background: var(--win2); overflow: hidden; cursor: pointer; font-size: 12.5px; user-select: none; touch-action: none; }
+.hold .fill { position: absolute; inset: 0; background: var(--ac); transform-origin: left; transform: scaleX(0); }
+.hold span { position: relative; z-index: 1; }
+.hold.holding span { color: var(--actx); }
+.receipt { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; border: 1px solid var(--sep2); border-radius: 7px; font-size: 12.5px; color: var(--tx2); background: var(--win2); }
+.receipt svg { width: 13px; height: 13px; color: var(--ok); }
+.receipt u { text-decoration: none; color: var(--tx); border-left: 1px solid var(--sep2); padding-left: 8px; cursor: pointer; }
+.since { display: grid; grid-template-columns: 132px minmax(0, 1fr) auto; gap: 14px; align-items: center; margin-top: 12px; border: 1px solid var(--sep); border-radius: 10px; background: var(--win); padding: 10px; }
+.thumb { position: relative; aspect-ratio: 16/9; border-radius: 6px; background: #0e0d0c; overflow: hidden; display: grid; place-items: center; max-width: 100%; }
+.thumb pre { margin: 0; font: 500 2.2px/2.2px var(--f-mono); white-space: pre; }
+.thumb .play { position: absolute; right: 6px; bottom: 6px; width: 22px; height: 22px; border-radius: 50%; background: rgba(241,239,234,.92); display: grid; place-items: center; }
+.thumb .play svg { width: 9px; height: 9px; color: #141413; margin-left: 1px; }
+.thumb .dur { position: absolute; left: 6px; bottom: 6px; font: 9.5px var(--f-mono); color: var(--tx); background: rgba(0,0,0,.55); padding: 1px 4px; border-radius: 3px; }
+@media (max-width: 860px) { .tiles { grid-template-columns: 1fr; } .since { grid-template-columns: 96px minmax(0, 1fr); } .since .replay { grid-column: 1 / -1; justify-self: start; } }
+@media (max-width: 560px) { .brief-top { grid-template-columns: 1fr; } }
+
+/* Move 5: chrome */
+.chrome { display: grid; grid-template-columns: minmax(0, 1fr); }
+.app { position: relative; height: 420px; display: grid; grid-template-columns: var(--sw, 190px) minmax(0, 1fr); transition: grid-template-columns .5s var(--ease); overflow: hidden; }
+.app .sb { background: var(--side); border-right: 1px solid var(--sep); padding: 14px 10px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+.sb .it { display: flex; align-items: center; gap: 10px; height: 28px; padding: 0 8px; border-radius: 6px; color: var(--tx2); font-size: 13px; white-space: nowrap; }
+.sb .it.on { background: #252321; color: var(--tx); }
+.sb .it i { width: 14px; height: 14px; border: 1.5px solid currentColor; border-radius: 3px; flex: 0 0 14px; opacity: .8; }
+.sb .it span { transition: opacity .3s; }
+.app.focus .sb .it span { opacity: 0; }
+.app .main { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.tb { height: 40px; border-bottom: 1px solid var(--sep); display: flex; align-items: center; gap: 8px; padding: 0 12px; transition: opacity .4s, height .4s var(--ease), border-color .4s; }
+.tb .pill { height: 22px; border: 1px solid var(--sep2); border-radius: 6px; padding: 0 8px; font-size: 11px; color: var(--tx2); display: inline-flex; align-items: center; }
+.app.focus .tb { opacity: 0; height: 0; border-color: transparent; }
+.tabs { height: 36px; display: flex; align-items: center; gap: 6px; padding: 0 22px; border-bottom: 1px dashed var(--dash); transition: opacity .4s, height .4s var(--ease); overflow: hidden; }
+.tabs .pill { height: 22px; border: 1px solid var(--sep2); border-radius: 999px; padding: 0 9px; font-size: 11px; color: var(--tx2); display: inline-flex; align-items: center; }
+.app.focus .tabs { opacity: 0; height: 0; }
+.frame { position: absolute; inset: 86px 16px 70px; border: 1px dashed var(--dash); transition: opacity .4s; pointer-events: none; }
+.app.focus .frame { opacity: 0; }
+.conv { flex: 1; padding: 18px 26px 0; display: flex; flex-direction: column; gap: 12px; max-width: 560px; width: 100%; margin: 0 auto; transition: transform .5s var(--ease); }
+.app.focus .conv { transform: translateY(-6px); }
+.bar-l { height: 9px; border-radius: 3px; background: #2c2a27; }
+.composer { margin: 0 auto 14px; width: min(560px, calc(100% - 32px)); height: 42px; border: 1px solid var(--sep2); border-radius: 12px; background: var(--win); display: flex; align-items: center; padding: 0 12px; gap: 10px; color: var(--tx3); font-size: 13px; }
+.peek { position: absolute; top: 10px; right: 12px; display: flex; gap: 6px; opacity: 0; transition: opacity .4s .1s; }
+.app.focus .peek { opacity: 1; }
+.peek span { height: 22px; padding: 0 8px; border-radius: 6px; font-size: 11px; color: var(--tx3); display: inline-flex; align-items: center; border: 1px solid var(--sep); }
+.stage-sheet { position: absolute; top: 10px; bottom: 10px; right: 10px; width: 52%; border: 1px solid var(--sep2); border-radius: 12px; background: var(--win); transform: translateX(110%); transition: transform .55s var(--spring); padding: 16px; }
+.app.staged .stage-sheet { transform: none; }
+.app.staged .conv { transform: translateX(-22%); }
+@media (max-width: 640px) { .app { --sw: 52px !important; } .sb .it span { opacity: 0; } .stage-sheet { width: 86%; } }
+
+/* Move 6: command bar */
+.cmd { padding: 28px 20px 30px; }
+.palette { max-width: 640px; margin: 0 auto; border: 1px solid var(--sep2); border-radius: 12px; background: var(--win); overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.35); }
+.palette .in { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--sep); }
+.palette input { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0; color: var(--tx); font: 16px var(--f-ui); }
+.palette input::placeholder { color: var(--tx3); }
+.res { max-height: 380px; overflow: auto; padding: 6px; }
+.grp-l { padding: 10px 10px 4px; }
+.r { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 7px 10px; border-radius: 8px; cursor: pointer; animation: rise .35s var(--ease) both; }
+.r.sel { background: #262422; }
+.r .ic { width: 44px; height: 30px; border-radius: 5px; background: #0e0d0c; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--sep); }
+.r .ic.round { width: 30px; height: 30px; border-radius: 50%; margin-left: 7px; font: 600 11px var(--f-ui); color: #fff; border: 0; }
+.r .ic pre { margin: 0; font: 500 1.3px/1.3px var(--f-mono); white-space: pre; }
+.r .t { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r .t mark { background: transparent; color: var(--ac); }
+.r .m { font-size: 12px; color: var(--tx3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r .k { font: 10.5px var(--f-mono); color: var(--tx3); }
+.r .live { color: var(--ac); }
+@keyframes rise { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+.kbd { font: 10.5px var(--f-mono); color: var(--tx3); border: 1px solid var(--sep2); border-radius: 4px; padding: 1px 5px; }
+.palette .foot { display: flex; gap: 14px; padding: 9px 14px; border-top: 1px solid var(--sep); font-size: 11.5px; color: var(--tx3); flex-wrap: wrap; }
+
+/* Move 7: craft list */
+.craft { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--sep); border: 1px solid var(--sep); border-radius: 10px; overflow: hidden; }
+.craft > div { background: var(--win); padding: 18px; }
+.craft p { margin: 4px 0 0; color: var(--tx2); font-size: 14px; }
+.craft .demo { margin-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+@media (max-width: 700px) { .craft { grid-template-columns: 1fr; } }
+.num-demo { font: 600 26px var(--f-disp); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.springbox { width: 38px; height: 38px; border-radius: 8px; border: 1px solid var(--sep2); background: var(--win2); transition: transform .6s var(--spring); }
+.springbox.go { transform: translateX(120px) rotate(8deg); }
+.lift { display: inline-flex; height: 30px; align-items: center; padding: 0 12px; border-radius: 15px; background: #262422; font-size: 13px; transition: transform .5s var(--ease), opacity .5s; }
+.lift.go { transform: translateY(-26px) scale(.96); opacity: 0; }
+
+/* Plan */
+.plan { margin-top: 22px; border: 1px solid var(--sep); border-radius: 10px; overflow: hidden; }
+.plan-row { display: grid; grid-template-columns: 120px minmax(0, 1fr) minmax(0, 1.1fr); gap: 16px; padding: 14px 18px; border-top: 1px solid var(--sep); background: var(--win); font-size: 14px; }
+.plan-row:first-child { border-top: 0; }
+.plan-row .lab { padding-top: 3px; }
+.plan-row div:last-child { color: var(--tx2); }
+@media (max-width: 720px) { .plan-row { grid-template-columns: 1fr; gap: 4px; } }
+.refs { columns: 2; column-gap: 28px; font-size: 13.5px; color: var(--tx2); margin-top: 16px; }
+.refs p { margin: 0 0 8px; break-inside: avoid; }
+@media (max-width: 640px) { .refs { columns: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header class="hero">
+  <pre id="heroD" aria-hidden="true"></pre>
+  <div>
+    <div class="lab">Atlas · UI proposal · Oct 26, 2026</div>
+    <h1>From a well-made tool to a presence.</h1>
+    <p>Atlas is tidy, consistent and calm, and that's the problem: every answer is text in a box, every page is a list in a dashed frame, and the only thing alive is a small mark. Seven moves below, each with a live mockup in Atlas's own look. Press Replay on any of them. Names, places and numbers in the mockups are examples.</p>
+  </div>
+</header>
+
+<section class="diag">
+  <div class="col">
+    <h2>Why it reads as stiff</h2>
+    <p style="color:var(--tx2);margin:0">From the live deployment and the locked UI. None of these break the design language; they're about how it's used.</p>
+  </div>
+  <div class="why">
+    <div><span class="lab">One weight</span><p>Body text at 16px, mono labels at 11px, hairline boxes around everything. Nothing is ever big, so nothing feels like a moment.</p></div>
+    <div><span class="lab">Answers are text</span><p>Atlas has hourly weather, routes, the calendar, videos and tracks, but shows them as sentences or a bulleted list in a card.</p></div>
+    <div><span class="lab">Chrome first</span><p>Sidebar of eight places, a toolbar, page tabs, dashed rails, a frame and a floating composer. Home looks like software before it looks like Atlas.</p></div>
+    <div><span class="lab">Logs as UI</span><p>Mono chips with raw search queries, "Answered by chatgpt:gpt-6-luna", "No area" on every message. The work is visible, but as a log.</p></div>
+    <div><span class="lab">Small motion</span><p>Chips tick in and a spinner turns. There's no orchestrated moment where the screen itself changes because Atlas did something.</p></div>
+    <div><span class="lab">No real things</span><p>No map, no faces, no site icons, no video frames, no cover art. VISION asks for real things; the screens are still grey and type.</p></div>
+  </div>
+</section>
+
+<!-- MOVE 1 -->
+<section class="move" id="answers">
+  <div class="move-head">
+    <div class="move-num">01</div>
+    <div class="col">
+      <h2>Answers are things, not sentences</h2>
+      <p>When the answer has a shape, draw the shape. "What does tomorrow look like?" should give one line of judgment and a day you can read in a second: time to scale, the walk between things, the weather over it, the free gaps, and "leave by" in ember. This is generative UI built on the typed views Atlas already has (`show`), drawn inline in the thread instead of as a list card.</p>
+    </div>
+  </div>
+  <div class="move-body">
+    <div class="spacer"></div>
+    <div style="min-width:0">
+      <div class="screen">
+        <div class="screen-bar"><span class="lab">Home · the conversation</span><button class="replay" data-replay="m1" type="button"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2.5v3h3"/></svg>Replay</button></div>
+        <div class="compare">
+          <div class="before">
+            <div class="tag lab">Today</div>
+            <div class="thread" style="padding-top:12px">
+              <div class="you" style="font-size:13.5px">what does tomorrow look like?</div>
+              <div class="atl"><svg class="mark" viewBox="0 0 12 18"><use href="#m"/></svg><div class="say" style="font-size:14px">Tomorrow's calendar has three things. Monday, October 26:
+                <div class="old-list"><span class="lab">List · 3 items</span><ul><li>Scope and Methods of PoliSci, 4:00 PM</li><li>Gym, 6:30 PM</li><li>French Homework Due, 11:55 PM</li></ul></div></div></div>
+            </div>
+          </div>
+          <div>
+            <div class="tag lab" style="color:var(--ac)">Proposed</div>
+            <div class="thread" style="padding-top:12px;max-width:none">
+              <div class="you">what does tomorrow look like?</div>
+              <div class="atl"><svg class="mark" viewBox="0 0 12 18"><use href="#m"/></svg>
+                <div style="min-width:0">
+                  <div class="say" id="m1say"></div>
+                  <div class="day" id="m1day">
+                    <div class="day-head"><span class="big">Mon, Oct 26</span><span class="leave" id="m1leave">LEAVE BY 3:42 PM</span></div>
+                    <div class="strip" id="m1strip"></div>
+                    <div class="day-foot" id="m1foot">
+                      <span class="chip"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5v13M1.5 8h13"/></svg>Block 1 to 3 for French</span>
+                      <span class="chip"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h10M9 4l4 4-4 4"/></svg>Route to PoliSci</span>
+                      <span class="chip"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2.5h8v11H4zM6 6h4M6 9h4"/></svg>Open the week</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <div><span class="lab">What changes</span><ul>
+          <li><b>A small set of inline views</b> that render in the message, not on a card: day, route, weather, compare, sources, media. The thread is the stage until you tap to enlarge.</li>
+          <li><b>One sentence of judgment first</b> ("Busy afternoon; the evening's yours"), then the view. The character's text profile says so.</li>
+          <li><b>Follow-ups as chips</b> under the view: the next likely actions, each one a real tool call.</li>
+          <li><b>Time to scale everywhere</b> time is shown: day strip, Week, Agenda's day headers.</li>
+        </ul></div>
+        <div><span class="lab">Borrowed from</span><ul>
+          <li><b>Gemini's dynamic view and visual layout</b> (Nov 2025): the model builds a layout for each answer, maps and timelines included.</li>
+          <li><b>ChatGPT apps</b>: one object at three sizes. Inline card, picture in picture, full screen.</li>
+          <li><b>Apple Weather and Fantastical</b>: data to scale, read in a glance.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MOVE 2 -->
+<section class="move" id="alive">
+  <div class="move-head">
+    <div class="move-num">02</div>
+    <div class="col">
+      <h2>The grid comes alive when Atlas works</h2>
+      <p>The dotted stage grid is Atlas's medium; let it be the thing that moves. While Atlas thinks, the dots near its mark turn into characters from the diamond's ramp and ripple out, like the mark is radiating into the page. Each tool lights a node on a short rail, one status line swaps verbs, and the answer arrives word by word with sources as real site marks. Still characters and opacity only: no glow, no orb.</p>
+    </div>
+  </div>
+  <div class="move-body">
+    <div class="spacer"></div>
+    <div style="min-width:0">
+      <div class="screen">
+        <div class="screen-bar"><span class="lab">Home · a lookup</span><button class="replay" data-replay="m2" type="button"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2.5v3h3"/></svg>Replay</button></div>
+        <div class="alive" id="m2">
+          <canvas id="m2c" aria-hidden="true"></canvas>
+          <div class="thread">
+            <div class="you">Any major world news today I should know about?</div>
+            <div class="atl"><svg class="mark" id="m2mark" viewBox="0 0 12 18"><use href="#m"/></svg>
+              <div style="min-width:0">
+                <div class="status" id="m2status"><span class="spin" id="m2spin">⠋</span><span class="verb" id="m2verb">Thinking</span><span class="t" id="m2t">0.0s</span></div>
+                <div class="rail-nodes" id="m2rail">
+                  <span class="rn" data-i="0"><i></i>search</span><span class="dash-link"></span>
+                  <span class="rn" data-i="1"><i></i>read 3 pages</span><span class="dash-link"></span>
+                  <span class="rn" data-i="2"><i></i>check today</span>
+                </div>
+                <div class="say" id="m2say" style="margin-top:10px"></div>
+                <div class="sources" id="m2src">
+                  <span class="src"><span class="fav" style="background:#c8102e">R</span>Reuters · 2 h</span>
+                  <span class="src"><span class="fav" style="background:#bb1919">B</span>BBC · 3 h</span>
+                  <span class="src"><span class="fav" style="background:#1a1a1a;border:1px solid #444">AP</span>AP News · 1 h</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <div><span class="lab">What changes</span><ul>
+          <li><b>One status line</b> with a verb that swaps in place ("Searching", "Reading three pages", "Checking today") replaces a stack of mono chips.</li>
+          <li><b>Sources as site marks</b> with how fresh they are, folded into one row. Raw queries go to Detailed.</li>
+          <li><b>Words rise in</b> a few at a time with a short fade, instead of characters appearing behind a caret.</li>
+          <li><b>The grid ripple</b> is a canvas behind the thread, capped at 30 fps, off with reduced motion.</li>
+          <li><b>VISION change:</b> §21.8 limits the diamond to Now, the day's presence and voice. This extends its characters into the grid while Atlas works.</li>
+        </ul></div>
+        <div><span class="lab">Borrowed from</span><ul>
+          <li><b>Claude Code's spinner</b>: one line, a verb that changes, a timer. Only one glyph moves, so it stays calm.</li>
+          <li><b>Linear's agent sessions</b>: one explicit state and the latest thought, updated in place, never a log.</li>
+          <li><b>Streamdown</b>: each word fades in over about 150 ms with a 4 px rise.</li>
+          <li><b>Codrops' shape-aware ASCII renderer</b> (Sep 2026): characters as a live medium, not a font.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MOVE 3 -->
+<section class="move" id="voice">
+  <div class="move-head">
+    <div class="move-num">03</div>
+    <div class="col">
+      <h2>Voice is the demo, so make it the hero</h2>
+      <p>This is the moment people film. In the conversation, voice shows live captions and the cards it looks up, which is where ChatGPT moved its voice mode in late 2025. Then give it a full-screen mode for hands-free use: the diamond large and reacting to the real audio, your words faint above, Atlas's words typeset huge and lighting up as they're spoken, and the things it looked up assembling underneath. Pair it with the latency fixes from the audit: none of this lands at 3.5 seconds to first word.</p>
+    </div>
+  </div>
+  <div class="move-body">
+    <div class="spacer"></div>
+    <div style="min-width:0">
+      <div class="screen">
+        <div class="screen-bar"><span class="lab">Voice · full screen</span><button class="replay" data-replay="m3" type="button"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2.5v3h3"/></svg>Replay</button></div>
+        <div class="voice" id="m3">
+          <div>
+            <div class="voice-top"><pre id="m3d" aria-hidden="true"></pre></div>
+            <div class="vstate" id="m3state"><b>●</b> Listening</div>
+          </div>
+          <div class="cap">
+            <div class="heard" id="m3heard"></div>
+            <div class="spoken" id="m3spoken"></div>
+          </div>
+          <div>
+            <div class="vcards">
+              <div class="vc" id="m3c1"><span class="lab">Saturday · Orlando</span><div class="big">84° <span style="font-size:15px;color:var(--tx2);font-weight:500">clear</span></div><p>Rain moves in after 6 PM</p>
+                <div class="vbars"><i style="--h:.55"></i><i style="--h:.62"></i><i style="--h:.75"></i><i style="--h:.86"></i><i style="--h:.92"></i><i style="--h:.88"></i><i style="--h:.7"></i><i class="rain" style="--h:.45"></i><i class="rain" style="--h:.6"></i><i class="rain" style="--h:.4"></i></div></div>
+              <div class="vc" id="m3c2"><span class="lab">Idea · 11 AM to 4 PM</span><div class="big" style="font-size:22px;line-height:1.15">Wekiwa Springs</div><p>34 min drive · kayaks open 9 AM · $6 entry</p></div>
+            </div>
+            <div class="wave" id="m3wave" aria-hidden="true"></div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <div><span class="lab">What changes</span><ul>
+          <li><b>Full-screen voice</b> from Talk or Space, with the composer gone and the stage below the words.</li>
+          <li><b>Captions as the hero type,</b> 34px Inter Tight, lit word by word in step with the speech (ElevenLabs returns word timings).</li>
+          <li><b>Cards rise in as tools return,</b> so you see the weather while it's still saying the sentence.</li>
+          <li><b>Interrupt is obvious:</b> talking over it dims the caption and the diamond switches to ripples at once.</li>
+        </ul></div>
+        <div><span class="lab">Borrowed from</span><ul>
+          <li><b>ChatGPT voice in the chat</b> (Nov 2025): the orb screen is gone, replaced by captions and cards as it speaks.</li>
+          <li><b>Sesame</b>: presence comes from timing, backchannels and yielding the moment you speak.</li>
+          <li><b>Siri on Apple Intelligence</b>: motion starts where you triggered it. Here the diamond rises from the mic.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MOVE 4 -->
+<section class="move" id="briefing">
+  <div class="move-head">
+    <div class="move-num">04</div>
+    <div class="col">
+      <h2>Home opens like a front page</h2>
+      <p>The first screen of the day is the strongest sell Atlas has, and today it's a small strip in the thread. Make the presence big: the living diamond, one line that's actually useful, then three real things. A map whose route draws itself with a countdown to leave, the weather to scale, and what needs you with hold to confirm. Then what happened while you were away, as the thing itself: the video's first frame, ready to play.</p>
+    </div>
+  </div>
+  <div class="move-body">
+    <div class="spacer"></div>
+    <div style="min-width:0">
+      <div class="screen">
+        <div class="screen-bar"><span class="lab">Home · first open of the day</span><button class="replay" data-replay="m4" type="button"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2.5v3h3"/></svg>Replay</button></div>
+        <div class="brief" id="m4">
+          <div class="brief-top">
+            <pre id="m4d" aria-hidden="true"></pre>
+            <div>
+              <div class="lab" style="margin-bottom:8px">Mon, Oct 26 · 8:14 AM</div>
+              <h4>Morning, Maximus.</h4>
+              <div class="line">A light day until <b>PoliSci at 4</b>. French is due tonight, and the launch video finished overnight.</div>
+            </div>
+          </div>
+          <div class="tiles">
+            <div class="tile">
+              <span class="lab">Next</span>
+              <div class="ttl">Scope and Methods of PoliSci</div>
+              <div class="sub">4:00 PM · Howard Phillips Hall 107 · 14 min walk</div>
+              <div class="map">
+                <svg viewBox="0 0 400 128" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+                  <g stroke="#2a2826" stroke-width="7" fill="none"><path d="M-10 92 C 80 80, 140 110, 220 86 S 360 40, 420 52"/><path d="M60 -10 C 70 40, 90 80, 84 140"/><path d="M250 -10 C 240 40, 270 90, 300 140"/></g>
+                  <g stroke="#222120" stroke-width="3" fill="none"><path d="M-10 30 L 420 22"/><path d="M150 -10 L 170 140"/><path d="M330 -10 L 350 140"/></g>
+                  <path class="route" id="m4route" d="M48 104 C 90 96, 120 70, 160 66 S 240 58, 270 40 S 330 30, 352 34" stroke="#ff6a3d" stroke-width="3" fill="none" stroke-linecap="round"/>
+                  <rect x="44" y="100" width="8" height="8" fill="#f1efea"/>
+                  <rect x="348" y="30" width="8" height="8" fill="#10b981"/>
+                  <text x="60" y="122" fill="#918d86" font-family="Geist Mono, monospace" font-size="9">YOU · LIBRARY</text>
+                  <text x="300" y="22" fill="#10b981" font-family="Geist Mono, monospace" font-size="9">HPH 107</text>
+                </svg>
+              </div>
+            </div>
+            <div class="tile">
+              <span class="lab">Leave in</span>
+              <div class="count" id="m4count">7 h 28 <small>min</small></div>
+              <div class="sub" style="margin-top:4px">84° and clear until 6 PM, then rain</div>
+              <div class="hourly" id="m4hourly"></div>
+              <div style="display:flex;justify-content:space-between;font:10px var(--f-mono);color:var(--tx3);margin-top:4px"><span>NOW</span><span>NOON</span><span>6 PM</span><span>10 PM</span></div>
+            </div>
+            <div class="tile">
+              <span class="lab">Needs you · 2</span>
+              <div id="m4asks" style="display:grid;gap:8px">
+                <div class="ask" data-ask="0"><div class="who">Reply to Prof. Alvarez</div><div class="q">"Can you move your midterm review to Wednesday?" I drafted: Wednesday works, see you at 2.</div><button class="hold" type="button"><span class="fill"></span><span>Hold to send</span></button></div>
+              </div>
+              <div id="m4receipt" style="margin-top:8px"></div>
+            </div>
+          </div>
+          <div class="since">
+            <div class="thumb"><pre id="m4thumb" aria-hidden="true"></pre><span class="dur">0:58</span><span class="play"><svg viewBox="0 0 10 10" fill="currentColor"><path d="M2 1l7 4-7 4z"/></svg></span></div>
+            <div style="min-width:0"><div class="lab" style="margin-bottom:4px">While you were away</div><div style="font-weight:500">The launch video is done, landscape and portrait.</div><div class="sub" style="color:var(--tx2);font-size:13px">58 seconds, cut to the track you picked. Ready to post.</div></div>
+            <button class="replay" type="button" style="height:30px">Watch</button>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <div><span class="lab">What changes</span><ul>
+          <li><b>The day's presence becomes the empty state of Home,</b> at full size, and shrinks into the thread once you start talking.</li>
+          <li><b>Every number counts up</b> and every bar grows from zero on arrival; the route draws itself (all in VISION §21.8 already).</li>
+          <li><b>Hold to confirm</b> with a filling bar, then the card lifts away and leaves a receipt with Undo.</li>
+          <li><b>Media is itself:</b> a video shows its frame and plays in place; files Atlas made never appear as a generic icon.</li>
+        </ul></div>
+        <div><span class="lab">Borrowed from</span><ul>
+          <li><b>Apple StandBy</b>: big type read from across the room, and a deep red look at night.</li>
+          <li><b>TRMNL and the Nothing Phone's Glyph Matrix</b>: calm because little moves, and a dot grid as the whole aesthetic.</li>
+          <li><b>Superhuman</b>: one decision at a time, fast to clear.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MOVE 5 -->
+<section class="move" id="chrome">
+  <div class="move-head">
+    <div class="move-num">05</div>
+    <div class="col">
+      <h2>Less chrome around the conversation</h2>
+      <p>On Home, the frame, rails, toolbar and page tabs all say "app" before Atlas says anything. Give Home a focus layout: the sidebar folds to an icon rail, the toolbar and frame fade, and the conversation sits on the open grid. When Atlas shows something, the stage slides in as one full-height sheet and the thread steps aside, sharing the element you tapped. The frame and rails stay where they mean something: the stage.</p>
+    </div>
+  </div>
+  <div class="move-body">
+    <div class="spacer"></div>
+    <div style="min-width:0">
+      <div class="screen">
+        <div class="screen-bar"><span class="lab">The shell</span>
+          <div class="seg" id="m5seg"><button type="button" class="on" data-m="now">Today</button><button type="button" data-m="focus">Focus</button><button type="button" data-m="staged">Focus + stage</button></div>
+        </div>
+        <div class="app" id="m5">
+          <div class="sb">
+            <div class="it on"><i></i><span>Home</span></div><div class="it"><i></i><span>Inbox</span></div><div class="it"><i></i><span>Agenda</span></div>
+            <div class="it" style="margin-top:8px"><i></i><span>Automations</span></div><div class="it"><i></i><span>Library</span></div><div class="it"><i></i><span>People</span></div><div class="it"><i></i><span>Abilities</span></div>
+            <div class="it" style="margin-top:8px"><i></i><span>History</span></div>
+          </div>
+          <div class="main">
+            <div class="tb"><span class="pill">All areas</span><span style="flex:1"></span><span class="pill">Jobs</span><span class="pill">Talk</span><span class="pill">Search ⌘K</span></div>
+            <div class="tabs"><span class="lab" style="font-size:10px">Home</span><span style="flex:1"></span><span class="pill">Now</span><span class="pill">Week</span></div>
+            <div class="frame"></div>
+            <div class="peek"><span>⌘K</span><span>Talk</span></div>
+            <div class="conv">
+              <div class="bar-l" style="width:40%;align-self:flex-end;height:26px;border-radius:13px"></div>
+              <div class="bar-l" style="width:92%"></div><div class="bar-l" style="width:84%"></div><div class="bar-l" style="width:60%"></div>
+              <div style="height:54px;border:1px solid var(--sep2);border-radius:10px;background:var(--win);width:80%"></div>
+              <div class="bar-l" style="width:48%;align-self:flex-end;height:26px;border-radius:13px;margin-top:8px"></div>
+              <div class="bar-l" style="width:88%"></div><div class="bar-l" style="width:70%"></div>
+            </div>
+            <div class="composer">◆ Message Atlas</div>
+            <div class="stage-sheet"><span class="lab">This week</span><div style="font:600 18px var(--f-disp);margin:6px 0 12px">Oct 26 to Nov 1</div>
+              <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;height:70%">
+                <div style="background:#1f1e1c;border-radius:4px;position:relative"><i style="position:absolute;left:3px;right:3px;top:52%;height:14%;background:color-mix(in srgb,var(--school) 40%,transparent);border-radius:3px"></i></div>
+                <div style="background:#1f1e1c;border-radius:4px;position:relative"><i style="position:absolute;left:3px;right:3px;top:40%;height:12%;background:color-mix(in srgb,var(--school) 40%,transparent);border-radius:3px"></i></div>
+                <div style="background:#1f1e1c;border-radius:4px;position:relative"><i style="position:absolute;left:3px;right:3px;top:58%;height:14%;background:color-mix(in srgb,var(--school) 40%,transparent);border-radius:3px"></i></div>
+                <div style="background:#1f1e1c;border-radius:4px;position:relative"><i style="position:absolute;left:3px;right:3px;top:10%;height:8%;background:color-mix(in srgb,var(--personal) 50%,transparent);border-radius:3px"></i><i style="position:absolute;left:3px;right:3px;top:52%;height:14%;background:color-mix(in srgb,var(--school) 40%,transparent);border-radius:3px"></i></div>
+                <div style="background:#1f1e1c;border-radius:4px"></div><div style="background:#1f1e1c;border-radius:4px;position:relative"><i style="position:absolute;left:3px;right:3px;top:30%;height:30%;background:color-mix(in srgb,var(--fun) 45%,transparent);border-radius:3px"></i></div><div style="background:#1f1e1c;border-radius:4px"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <div><span class="lab">What changes</span><ul>
+          <li><b>Home gets a focus layout:</b> icon rail, no toolbar, no frame. Search and Talk float top right and are always one key away.</li>
+          <li><b>The stage is one sheet</b> that grows out of the card you tapped, with a spring, and the thread shifts left with it. On the phone it rises from the bottom.</li>
+          <li><b>Other places keep the frame,</b> where it organizes dense data.</li>
+          <li><b>The area switcher moves into the composer,</b> next to where Atlas shows its guess (VISION §21.3 already puts the guess there).</li>
+        </ul></div>
+        <div><span class="lab">Borrowed from</span><ul>
+          <li><b>Claude's artifacts</b>: the thing gets a stable home beside the chat and updates in place, instead of copies down the thread.</li>
+          <li><b>ChatGPT apps</b>: the same object inline, in picture in picture, or full screen.</li>
+          <li><b>FLIP transforms</b> for the morph, so it can be interrupted. React's view transitions can't be.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MOVE 6 -->
+<section class="move" id="command">
+  <div class="move-head">
+    <div class="move-num">06</div>
+    <div class="col">
+      <h2>One command bar that knows everything</h2>
+      <p>⌘K is where a power user decides whether a product is serious, and today "launch" finds nothing. Make it search everything Atlas has (files with their frames, jobs with live state, skills, people with faces, moments in the conversation) and offer actions in words. Try typing below: "launch", "french", "alvarez" or "quiet".</p>
+    </div>
+  </div>
+  <div class="move-body">
+    <div class="spacer"></div>
+    <div style="min-width:0">
+      <div class="screen">
+        <div class="screen-bar"><span class="lab">⌘K · try it</span><button class="replay" data-replay="m6" type="button"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 2.5v3h3"/></svg>Replay</button></div>
+        <div class="cmd">
+          <div class="palette">
+            <div class="in"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--tx3)"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg><input id="m6in" type="text" placeholder="Search everything, or ask Atlas" aria-label="Search everything" autocomplete="off"><span class="kbd">esc</span></div>
+            <div class="res" id="m6res" role="listbox" aria-label="Results"></div>
+            <div class="foot"><span><span class="kbd">↑↓</span> move</span><span><span class="kbd">↵</span> open</span><span><span class="kbd">⌘↵</span> ask Atlas</span><span><span class="kbd">tab</span> act on it</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <div><span class="lab">What changes</span><ul>
+          <li><b>One index</b> over records, files, pages, jobs, skills, automations, services and the log, using the recall Atlas already has.</li>
+          <li><b>Results show the thing:</b> a video's frame, a person's photo or initials in their area color, a job's live state.</li>
+          <li><b>Actions in words:</b> "quiet" offers "Quiet until 9 AM", "new auto" offers making an automation.</li>
+          <li><b>Ask is always last,</b> with ⌘↵, and the answer opens in the conversation.</li>
+        </ul></div>
+        <div><span class="lab">Borrowed from</span><ul>
+          <li><b>Raycast and Linear</b>: everything and every action from one bar.</li>
+          <li><b>Superhuman</b>: the command bar teaches the keyboard shortcuts.</li>
+          <li><b>Spotlight</b>: rich previews in the results.</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MOVE 7 -->
+<section class="move" id="craft">
+  <div class="move-head">
+    <div class="move-num">07</div>
+    <div class="col">
+      <h2>Small things that signal craft</h2>
+      <p>None of these is a feature. Together they're why an app feels expensive. Each one is cheap and stays inside the motion budget (transforms and opacity).</p>
+    </div>
+  </div>
+  <div class="move-body">
+    <div class="spacer"></div>
+    <div class="craft" style="min-width:0">
+      <div><h3>Springs, not easings</h3><p>Sheets, cards and selections settle with a little overshoot. One spring curve for the whole app.</p><div class="demo"><button class="replay" type="button" id="c1">Try</button><div class="springbox" id="c1b"></div></div></div>
+      <div><h3>Numbers count to their value</h3><p>Counts and costs roll up on arrival with tabular figures so nothing jitters. Times and temperatures can decode instead: characters cycle briefly, then lock in, which suits the ASCII mark.</p><div class="demo"><button class="replay" type="button" id="c2">Try</button><span class="num-demo" id="c2n">$0.00</span></div></div>
+      <div><h3>A sent message lifts away</h3><p>Your words rise from the composer into the thread, and a sent email lifts off its card. VISION lists it; it isn't built.</p><div class="demo"><button class="replay" type="button" id="c3">Try</button><span class="lift" id="c3b">Wednesday works, see you at 2.</span></div></div>
+      <div><h3>Sound and haptics, quiet</h3><p>A soft tick when a receipt lands, a low note when something needs you, a click on hold to confirm. Off by default on desktop, on with haptics on the phone.</p><div class="demo"><button class="replay" type="button" id="c4">Play the tick</button><span class="lab" id="c4l"></span></div></div>
+      <div><h3>Loading is never a sentence</h3><p>"Connecting to Atlas." becomes the diamond at rest and the thread's shape in skeleton, so the page has its layout from the first frame.</p></div>
+      <div><h3>Undo rewinds</h3><p>Undo plays the change backward (the event slides back to Wednesday) instead of the item just reappearing.</p></div>
+      <div><h3>Real things in every list</h3><p>Site icons on sources, photos and area-colored initials on people, service logos, video frames, map tiles. Grey squares and file glyphs only when there's truly nothing.</p></div>
+      <div><h3>Type with a scale</h3><p>One display size for moments (46px), one for answers that are numbers (30px), body at 16px, mono only for times and tags. Today almost everything is 16px or 11px mono.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="move" id="order">
+  <div class="move-head">
+    <div class="move-num">→</div>
+    <div class="col">
+      <h2>Order of work</h2>
+      <p>Start with what everyone sees in the first minute, and fix the audit's speed and plumbing items alongside, since motion can't hide a 4-second wait or a model id in the thread.</p>
+    </div>
+  </div>
+  <div class="move-body">
+    <div class="spacer"></div>
+    <div style="min-width:0">
+      <div class="plan">
+        <div class="plan-row"><span class="lab">Week 1</span><div>Focus layout on Home (05), the front page as Home's empty state (04), springs and count-ups everywhere (07).</div><div>Mostly `app/src/Shell.tsx`, `pages/Home.tsx` and `styles.css`. No core changes.</div></div>
+        <div class="plan-row"><span class="lab">Week 2</span><div>Status line, sources with site marks, words rising in, then the living grid (02).</div><div>Receipts carry a host and a favicon; the thread groups lookups per run. One VISION change for the grid.</div></div>
+        <div class="plan-row"><span class="lab">Week 3</span><div>Inline views: day, route, weather, compare, media (01), with follow-up chips.</div><div>Views exist as typed contracts; this adds compact inline renderers and a line in the character about leading with judgment.</div></div>
+        <div class="plan-row"><span class="lab">Week 4</span><div>Full-screen voice with timed captions (03), after the voice latency fix. Then ⌘K over everything (06).</div><div>Word timings from ElevenLabs; a search route over records, files, jobs, skills and the log.</div></div>
+      </div>
+      <h3 style="margin-top:34px">Sources</h3>
+      <div class="refs" id="refs">
+        <p>Atlas: VISION §21, docs/ui/README.md §5 and §9, and the live deployment on Oct 25 and 26, 2026.</p>
+        <p><a href="https://research.google/blog/generative-ui-a-rich-custom-visual-interactive-user-experience-for-any-prompt/">Google Research: generative UI and Gemini's dynamic view</a></p>
+        <p><a href="https://developers.openai.com/apps-sdk/concepts/ui-guidelines">OpenAI Apps SDK: display modes and UI guidelines</a></p>
+        <p><a href="https://www.androidauthority.com/chatgpt-voice-mode-in-chat-3619633">ChatGPT voice moves into the chat</a></p>
+        <p><a href="https://linear.app/developers/agent-interaction">Linear: agent interaction and session states</a></p>
+        <p><a href="https://alexop.dev/posts/claude-code-spinner-verbs-one-piece/">Claude Code's spinner verbs</a></p>
+        <p><a href="https://streamdown.ai/docs/animation">Streamdown: streaming text animation</a></p>
+        <p><a href="https://sequoiacap.com/article/partnering-with-sesame-a-new-era-for-voice">Sesame's voice and timing</a></p>
+        <p><a href="https://www.slashgear.com/1865686/iphone-glowing-around-edges-reason/">Siri's directional animation</a></p>
+        <p><a href="https://macstories.net/stories/ios-and-ipados-17-the-macstories-review/5">Apple StandBy</a></p>
+        <p><a href="https://the-gadgeteer.com/2025/07/21/trmnl-e-ink-dashboard-display-review-better-than-onscreen-widgets/">TRMNL e-ink dashboard</a></p>
+        <p><a href="https://design-milk.com/the-nothing-phone-3s-glyph-matrix-turns-notifications-into-pixel-art/">Nothing Phone (3) Glyph Matrix</a></p>
+        <p><a href="https://react.dev/reference/react/ViewTransition">React ViewTransition</a> and <a href="https://motion.dev/blog/reacts-experimental-view-transition-api">Motion on its limits</a></p>
+        <p><a href="https://tympanus.net/codrops/2026/09/04/beyond-the-luminance-ramp-a-shape-aware-ascii-renderer-in-three-js/">Codrops: a shape-aware ASCII renderer</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="m" viewBox="0 0 12 18">
+      <polygon points="6,0 0,7.5 6,9.8" fill="#ffb48c"/><polygon points="6,0 6,9.8 12,7.5" fill="#ff6a3d"/>
+      <polygon points="6,18 0,7.5 6,9.8" fill="#e2442a"/><polygon points="6,18 6,9.8 12,7.5" fill="#b02e1d"/>
+    </symbol>
+  </defs>
+</svg>
+
+<script>
+(function () {
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var $ = function (id) { return document.getElementById(id); };
+  var timers = {};
+  function later(key, fn, ms) { (timers[key] = timers[key] || []).push(setTimeout(fn, reduce ? 0 : ms)); }
+  function clear(key) { (timers[key] || []).forEach(clearTimeout); timers[key] = []; }
+
+  /* ---------- The ASCII diamond, from docs/ui/source/diamond.html ---------- */
+  var TOP = [0.5, 0], LEFT = [0, 0.378], RIGHT = [1, 0.378], BOT = [0.5, 1], MID = [0.5, 0.491];
+  var FACETS = [[TOP, LEFT, MID], [TOP, MID, RIGHT], [BOT, LEFT, MID], [BOT, MID, RIGHT]];
+  var NORMALS = [[-0.62, -0.52, 0.6], [0.62, -0.52, 0.6], [-0.5, 0.62, 0.6], [0.5, 0.62, 0.6]];
+  var RAMP = '.:-=+*#%@', SHADE = [1, 0.8, 0.6, 0.46], COL = ['#ffb48c', '#ff6a3d', '#e2442a', '#b02e1d'];
+  function side(p, a, b) { return (p[0] - b[0]) * (a[1] - b[1]) - (a[0] - b[0]) * (p[1] - b[1]); }
+  function inside(p, t) { var d1 = side(p, t[0], t[1]), d2 = side(p, t[1], t[2]), d3 = side(p, t[2], t[0]); return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0)); }
+  function hash(n, t) { var h = (n ^ (t * 2654435761)) >>> 0; h = (h ^ (h >>> 15)) * 2246822519 >>> 0; return ((h ^ (h >>> 13)) >>> 0) / 4294967296; }
+  function makeDiamond(el, ROWS, getState, getLevel) {
+    var COLS = Math.round(ROWS * 0.98), SEAMS = [[MID, TOP], [MID, LEFT], [MID, RIGHT], [MID, BOT]];
+    function seamDist(px, py) {
+      var best = 9;
+      SEAMS.forEach(function (sg) {
+        var ax = sg[0][0] * COLS * 0.6, ay = sg[0][1] * ROWS, bx = sg[1][0] * COLS * 0.6, by = sg[1][1] * ROWS;
+        var dx = bx - ax, dy = by - ay, x = px * 0.6, l2 = dx * dx + dy * dy;
+        var t = Math.max(0, Math.min(1, ((x - ax) * dx + (py - ay) * dy) / l2));
+        best = Math.min(best, Math.hypot(x - (ax + t * dx), py - (ay + t * dy)));
+      });
+      return best;
+    }
+    var cells = [];
+    for (var y = 0; y < ROWS; y++) {
+      var row = [];
+      for (var x = 0; x < COLS; x++) {
+        var p = [(x + 0.5) / COLS, (y + 0.5) / ROWS], f = -1;
+        for (var i = 0; i < 4; i++) if (inside(p, FACETS[i])) { f = i; break; }
+        if (f >= 0 && seamDist(x + 0.5, y + 0.5) < 0.34 * ROWS / 56 + 0.1) f = -1;
+        row.push({ f: f, u: p[0], v: p[1], r: Math.hypot(p[0] - MID[0], (p[1] - MID[1]) * 1.6), seed: (x * 73856093 ^ y * 19349663) >>> 0 });
+      }
+      cells.push(row);
+    }
+    var whole = function (x, y) { var p = [(x + 0.5) / COLS, (y + 0.5) / ROWS]; return inside(p, [TOP, LEFT, BOT]) || inside(p, [TOP, RIGHT, BOT]); };
+    for (var yy = 0; yy < ROWS; yy++) for (var xx = 0; xx < COLS; xx++) {
+      var cc = cells[yy][xx]; if (cc.f < 0) continue;
+      var lh = cc.u < 0.5, up = cc.v < LEFT[1];
+      if (lh ? !whole(xx - 1, yy) : !whole(xx + 1, yy)) cc.edge = (lh === up) ? '/' : '\\';
+    }
+    function frame(ms) {
+      var t = ms / 1000, s = getState();
+      var a = t * (s === 'Thinking' ? 1.1 : 0.32);
+      var L = [Math.cos(a), Math.sin(a) * 0.8, 1.05], ln = Math.hypot(L[0], L[1], L[2]);
+      L = [L[0] / ln, L[1] / ln, L[2] / ln];
+      var breathe = 0.88 + 0.12 * Math.sin(t * 1.25);
+      var lv = (s === 'Listening' || s === 'Speaking') ? getLevel(t) : 0;
+      var tick = Math.floor(t * (s === 'Thinking' ? 14 : 5)), sweep = ((t % 7) / 1.6) * 1.8 - 0.4, html = '';
+      for (var y = 0; y < ROWS; y++) {
+        var out = '';
+        for (var x = 0; x < COLS; x++) {
+          var c = cells[y][x];
+          if (c.f < 0) { out += ' '; continue; }
+          var N = NORMALS[c.f], b = Math.max(0, N[0] * L[0] + N[1] * L[1] + N[2] * L[2]);
+          b = SHADE[c.f] * (0.78 + 0.3 * b) * breathe;
+          if (s === 'Idle' && t % 7 < 1.6) { var d = (c.u + c.v) - sweep; b += 0.55 * Math.exp(-(d * d) / 0.012); }
+          if (s === 'Listening') b += 0.36 * lv * Math.sin(c.r * 22 - t * 7) * Math.exp(-c.r * 1.4);
+          if (s === 'Speaking') b *= 0.62 + 0.62 * lv;
+          b += (hash(c.seed, tick) - 0.5) * (s === 'Thinking' ? 0.5 : 0.14);
+          b = Math.min(1, Math.max(0, b));
+          var ch = c.edge || RAMP[Math.min(RAMP.length - 1, Math.max(1, Math.round(b * (RAMP.length - 1))))];
+          out += '<span style="color:' + COL[c.f] + ';opacity:' + (c.edge ? 1 : (0.55 + 0.45 * b)).toFixed(2) + '">' + ch + '</span>';
+        }
+        html += out + '\n';
+      }
+      el.innerHTML = html;
+    }
+    return frame;
+  }
+  function level(t) { return Math.max(0, 0.45 + 0.35 * Math.sin(t * 7.1) * Math.sin(t * 2.3) + 0.2 * Math.sin(t * 13.7)); }
+
+  // Run animations only while their section is on screen.
+  var loops = [];
+  function addLoop(el, fn, fps) { var o = { el: el, fn: fn, gap: 1000 / (fps || 30), last: 0, vis: false }; loops.push(o); io.observe(el); return o; }
+  var io = new IntersectionObserver(function (es) { es.forEach(function (e) { loops.forEach(function (o) { if (o.el === e.target) o.vis = e.isIntersecting; }); }); });
+  function tick(ms) { loops.forEach(function (o) { if (o.vis && ms - o.last > o.gap) { o.last = ms; o.fn(ms); } }); requestAnimationFrame(tick); }
+
+  var heroF = makeDiamond($('heroD'), 40, function () { return 'Idle'; }, level);
+  var m4F = makeDiamond($('m4d'), 40, function () { return 'Idle'; }, level);
+  var thumbF = makeDiamond($('m4thumb'), 26, function () { return 'Idle'; }, level);
+  var thumbOnce = false;
+  if (reduce) { heroF(1200); m4F(1200); thumbF(1200); }
+  else { addLoop($('heroD'), heroF, 24); addLoop($('m4d'), m4F, 24); }
+  thumbF(5200);
+
+  /* ---------- Shared: words that rise in ---------- */
+  function words(el, text, gap, key, done) {
+    el.innerHTML = '';
+    var parts = text.split(/(\s+)/), spans = [];
+    parts.forEach(function (p) { var s = document.createElement('span'); s.className = 'w'; s.textContent = p; el.appendChild(s); spans.push(s); });
+    spans.forEach(function (s, i) { later(key, function () { s.classList.add('in'); }, i * gap); });
+    later(key, function () { if (done) done(); }, spans.length * gap + 200);
+  }
+
+  /* ---------- Move 1: the day strip ---------- */
+  var START = 12, END = 24;
+  function pct(h) { return ((h - START) / (END - START)) * 100; }
+  var WX = [['sun', 83], ['sun', 85], ['cloud', 84], ['rain', 76], ['rain', 73], ['cloud', 71]];
+  var ICON = {
+    sun: '<svg viewBox="0 0 16 16" fill="none" stroke="#f5a524" stroke-width="1.4"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M3.4 12.6l1.3-1.3M11.3 4.7l1.3-1.3"/></svg>',
+    cloud: '<svg viewBox="0 0 16 16" fill="none" stroke="#aaa69e" stroke-width="1.4"><path d="M4.5 12.5h7a2.7 2.7 0 0 0 .3-5.4A3.8 3.8 0 0 0 4.4 8 2.3 2.3 0 0 0 4.5 12.5z"/></svg>',
+    rain: '<svg viewBox="0 0 16 16" fill="none" stroke="#3b82f6" stroke-width="1.4"><path d="M4.5 10h7a2.6 2.6 0 0 0 .3-5.2A3.6 3.6 0 0 0 4.4 5.7 2.2 2.2 0 0 0 4.5 10z"/><path d="M5.5 12l-.8 2M8.5 12l-.8 2M11.5 12l-.8 2"/></svg>'
+  };
+  function buildStrip() {
+    var s = $('m1strip');
+    var hrs = '';
+    for (var h = START; h < END; h += 2) hrs += '<span>' + (h === 12 ? '12P' : h > 12 ? (h - 12) + 'P' : h + 'A') + '</span>';
+    var wx = '';
+    WX.forEach(function (w) { wx += '<div>' + ICON[w[0]] + '<b>' + w[1] + '°</b></div>'; });
+    s.innerHTML =
+      '<div class="wx">' + wx + '</div>' +
+      '<div class="lane">' +
+        '<span class="free" style="left:' + pct(12.3) + '%">FREE UNTIL 3:45</span>' +
+        '<span class="leg" style="left:' + pct(15.7) + '%;width:' + (pct(16) - pct(15.7)) + '%"><i>WALK 14 MIN</i></span>' +
+        '<div class="ev school" style="left:' + pct(16) + '%;width:' + (pct(17.25) - pct(16)) + '%"><span class="n">PoliSci</span><span class="s">4:00</span></div>' +
+        '<div class="ev personal" style="left:' + pct(17.5) + '%;width:' + (pct(18.75) - pct(17.5)) + '%"><span class="n">Gym</span><span class="s">5:30</span></div>' +
+        '<span class="free" style="left:' + pct(20.2) + '%">EVENING FREE</span>' +
+        '<span class="due" style="left:' + pct(23.9) + '%"><i>FRENCH DUE 11:55</i></span>' +
+      '</div>' +
+      
+      '<div class="hours">' + hrs + '</div>';
+  }
+  function playM1() {
+    clear('m1'); buildStrip();
+    var day = $('m1day'); day.style.opacity = 0; day.style.transform = 'translateY(6px)'; day.style.transition = 'opacity .4s, transform .5s cubic-bezier(.2,.8,.2,1)';
+    [].forEach.call($('m1foot').children, function (c) { c.classList.remove('in'); });
+    words($('m1say'), 'Busy afternoon, free evening. Rain starts around 6, so the gym fits at 5:30, before it. French is due at 11:55.', 45, 'm1', function () {});
+    later('m1', function () { day.style.opacity = 1; day.style.transform = 'none'; }, 700);
+    var s = $('m1strip');
+    later('m1', function () { [].forEach.call(s.querySelectorAll('.wx div'), function (d, i) { later('m1', function () { d.classList.add('in'); }, i * 70); }); }, 950);
+    later('m1', function () { [].forEach.call(s.querySelectorAll('.ev'), function (d, i) { later('m1', function () { d.classList.add('in'); }, i * 160); }); }, 1300);
+    later('m1', function () { [].forEach.call(s.querySelectorAll('.leg,.free,.due,.needle'), function (d) { d.classList.add('in'); }); }, 1750);
+    later('m1', function () { [].forEach.call($('m1foot').children, function (c, i) { later('m1', function () { c.classList.add('in'); }, i * 90); }); }, 2300);
+  }
+
+  /* ---------- Move 2: the living grid ---------- */
+  var cv = $('m2c'), ctx = cv.getContext('2d'), m2 = { state: 'idle', t0: 0 };
+  function sizeCanvas() { var r = cv.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1); cv.width = r.width * dpr; cv.height = r.height * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+  sizeCanvas(); addEventListener('resize', sizeCanvas);
+  function drawGrid(ms) {
+    var w = cv.clientWidth, h = cv.clientHeight; ctx.clearRect(0, 0, w, h);
+    var mk = $('m2mark').getBoundingClientRect(), box = cv.getBoundingClientRect();
+    var ox = mk.left - box.left + 6, oy = mk.top - box.top + 9;
+    var t = (ms - m2.t0) / 1000, thinking = m2.state === 'think';
+    ctx.font = '500 10px "Geist Mono", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (var y = 8; y < h; y += 16) for (var x = 8; x < w; x += 16) {
+      var d = Math.hypot(x - ox, (y - oy) * 1.15), lit = 0;
+      if (thinking) {
+        for (var k = 0; k < 3; k++) { var R = ((t * 170 + k * 140) % 420); lit = Math.max(lit, Math.exp(-Math.pow((d - R) / 22, 2)) * Math.max(0, 1 - R / 420)); }
+        lit *= Math.max(0, 1 - d / 460);
+        lit += 0.18 * Math.exp(-d / 40) * (0.6 + 0.4 * Math.sin(t * 6));
+      } else if (m2.state === 'settle') {
+        var R2 = t * 260; lit = Math.exp(-Math.pow((d - R2) / 30, 2)) * Math.max(0, 1 - R2 / 600) * 0.7;
+      }
+      if (lit > 0.06) {
+        var n = (hash(((x * 31) ^ (y * 17)) >>> 0, Math.floor(t * 10)) - 0.5) * 0.2;
+        var ch = RAMP[Math.min(RAMP.length - 1, Math.max(0, Math.round((lit + n) * (RAMP.length - 1))))];
+        ctx.fillStyle = 'rgba(255,' + Math.round(106 + 70 * (1 - lit)) + ',61,' + Math.min(0.85, lit * 0.9).toFixed(3) + ')';
+        ctx.fillText(ch, x, y);
+      } else {
+        ctx.fillStyle = 'rgba(241,239,234,.07)'; ctx.fillRect(x - 0.6, y - 0.6, 1.4, 1.4);
+      }
+    }
+  }
+  var SPIN = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
+  function playM2() {
+    clear('m2'); $('m2say').innerHTML = '';
+    [].forEach.call(document.querySelectorAll('#m2src .src'), function (s) { s.classList.remove('in'); });
+    [].forEach.call(document.querySelectorAll('#m2rail .rn'), function (s) { s.classList.remove('in', 'done', 'live'); });
+    $('m2status').style.opacity = 1;
+    m2.state = 'think'; m2.t0 = performance.now();
+    var verbs = [['Searching the news', 0], ['Reading three pages', 1100], ['Checking what matters to you', 2300]];
+    var rn = document.querySelectorAll('#m2rail .rn');
+    verbs.forEach(function (v, i) {
+      later('m2', function () {
+        var vb = $('m2verb'); vb.classList.add('swap');
+        later('m2', function () { vb.textContent = v[0]; vb.classList.remove('swap'); }, 180);
+        if (i > 0) { rn[i - 1].classList.remove('live'); rn[i - 1].classList.add('done'); }
+        rn[i].classList.add('in', 'live');
+      }, v[1] + 200);
+    });
+    later('m2', function () {
+      rn[2].classList.remove('live'); rn[2].classList.add('done');
+      m2.state = 'settle'; m2.t0 = performance.now();
+      $('m2verb').textContent = 'Done'; $('m2status').style.opacity = 0.6;
+      words($('m2say'), 'Two worth knowing. Kim Jong Un arrived in China today, and the reason for the visit isn’t public yet. And violence in the West Bank escalated after a shooting attack. Nothing touches your week.', 32, 'm2', function () {
+        [].forEach.call(document.querySelectorAll('#m2src .src'), function (s, i) { later('m2', function () { s.classList.add('in'); }, i * 110); });
+        later('m2', function () { m2.state = 'idle'; }, 1600);
+      });
+    }, 3500);
+    var st = performance.now();
+    (function tickSpin() {
+      if (m2.state !== 'think') return;
+      var e = (performance.now() - st) / 1000; $('m2t').textContent = e.toFixed(1) + 's';
+      $('m2spin').textContent = SPIN[Math.floor(e * 12) % SPIN.length];
+      later('m2', tickSpin, 80);
+    })();
+  }
+  addLoop($('m2'), function (ms) { if (!reduce) drawGrid(ms); }, 30);
+  if (reduce) { m2.state = 'think'; m2.t0 = performance.now() - 900; drawGrid(performance.now()); }
+
+  /* ---------- Move 3: voice ---------- */
+  var m3 = { state: 'Listening' };
+  var m3F = makeDiamond($('m3d'), 48, function () { return m3.state; }, level);
+  if (reduce) m3F(1200); else addLoop($('m3'), function (ms) { m3F(ms); waveTick(ms); }, 30);
+  var wave = $('m3wave'), bars = [];
+  for (var i = 0; i < 36; i++) { var b = document.createElement('i'); wave.appendChild(b); bars.push(b); }
+  function waveTick(ms) {
+    var t = ms / 1000, on = m3.state === 'Listening' || m3.state === 'Speaking';
+    bars.forEach(function (b, i) { var v = on ? 0.15 + 0.85 * level(t + i * 0.07) * (0.5 + 0.5 * Math.sin(i * 0.9 + t * 3)) : 0.08; b.style.transform = 'scaleY(' + v.toFixed(2) + ')'; b.style.background = m3.state === 'Speaking' ? '#ff6a3d' : '#918d86'; });
+  }
+  function setV(s, label) { m3.state = s; $('m3state').innerHTML = '<b>●</b> ' + label; }
+  function playM3() {
+    clear('m3'); $('m3c1').classList.remove('in'); $('m3c2').classList.remove('in'); $('m3spoken').innerHTML = ''; $('m3heard').innerHTML = '';
+    setV('Listening', 'Listening');
+    var heard = 'What should I do Saturday? Something outside.', hw = heard.split(' ');
+    hw.forEach(function (w, i) { later('m3', function () { $('m3heard').textContent = hw.slice(0, i + 1).join(' '); }, 250 + i * 230); });
+    later('m3', function () { setV('Thinking', 'Checking Saturday'); }, 250 + hw.length * 230 + 200);
+    later('m3', function () { $('m3c1').classList.add('in'); }, 250 + hw.length * 230 + 700);
+    var said = 'Saturday is clear until six, then rain. Go kayaking at Wekiwa Springs, it’s 34 minutes away and the water stays at 72. Want me to block the morning?';
+    var startSpeak = 250 + hw.length * 230 + 1000;
+    later('m3', function () {
+      setV('Speaking', 'Speaking');
+      var el = $('m3spoken'); el.innerHTML = '';
+      var ws = said.split(' ').map(function (w) { var s = document.createElement('span'); s.className = 'w'; s.textContent = w + ' '; el.appendChild(s); return s; });
+      ws.forEach(function (s, i) { later('m3', function () { s.classList.add('on'); }, i * 210); if (i === 12) later('m3', function () { $('m3c2').classList.add('in'); }, i * 210); });
+      later('m3', function () { setV('Listening', 'Your turn'); }, ws.length * 210 + 300);
+    }, startSpeak);
+  }
+
+  /* ---------- Move 4: briefing ---------- */
+  var HOURLY = [.55, .6, .68, .74, .8, .86, .9, .92, .9, .86, .8, .45, .5, .42, .38];
+  (function () { var h = $('m4hourly'); HOURLY.forEach(function (v, i) { var b = document.createElement('i'); b.style.setProperty('--h', v); if (i >= 11) b.className = 'rain'; h.appendChild(b); }); })();
+  function countTo(el, from, to, ms, fmt, key) {
+    var st = performance.now();
+    (function step() { var p = Math.min(1, (performance.now() - st) / ms), e = 1 - Math.pow(1 - p, 3); el.innerHTML = fmt(from + (to - from) * e); if (p < 1) later(key, step, 16); })();
+  }
+  function askCard() {
+    return '<div class="ask" data-ask="0"><div class="who">Reply to Prof. Alvarez</div><div class="q">"Can you move your midterm review to Wednesday?" I drafted: Wednesday works, see you at 2.</div><button class="hold" type="button"><span class="fill"></span><span>Hold to send</span></button></div>';
+  }
+  function wireHold() {
+    var btn = document.querySelector('#m4asks .hold'); if (!btn) return;
+    var fill = btn.querySelector('.fill'), raf = 0, st = 0, done = false;
+    function stop() { cancelAnimationFrame(raf); btn.classList.remove('holding'); if (!done) { fill.style.transition = 'transform .25s'; fill.style.transform = 'scaleX(0)'; } }
+    function go() {
+      if (done) return; st = performance.now(); btn.classList.add('holding'); fill.style.transition = 'none';
+      (function f() { var p = Math.min(1, (performance.now() - st) / 900); fill.style.transform = 'scaleX(' + p + ')'; if (p < 1) raf = requestAnimationFrame(f); else finish(); })();
+    }
+    function finish() {
+      done = true; var card = btn.closest('.ask'); card.classList.add('gone');
+      setTimeout(function () { card.remove(); $('m4receipt').innerHTML = '<span class="receipt"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8.5l3 3 7-7"/></svg>Sent to Prof. Alvarez<u>Undo</u></span>'; }, 380);
+    }
+    btn.addEventListener('pointerdown', function (e) { e.preventDefault(); go(); });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (n) { btn.addEventListener(n, stop); });
+    btn.addEventListener('keydown', function (e) { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); go(); } });
+    btn.addEventListener('keyup', function (e) { if (e.key === ' ' || e.key === 'Enter') stop(); });
+  }
+  function playM4() {
+    clear('m4'); $('m4asks').innerHTML = askCard(); $('m4receipt').innerHTML = ''; wireHold();
+    var r = $('m4route'); r.classList.remove('in'); void r.getBoundingClientRect(); later('m4', function () { r.classList.add('in'); }, 300);
+    $('m4hourly').classList.remove('in'); later('m4', function () { $('m4hourly').classList.add('in'); }, 400);
+    countTo($('m4count'), 0, 448, 1300, function (v) { var m = Math.round(v); return Math.floor(m / 60) + ' h ' + (m % 60) + ' <small>min</small>'; }, 'm4');
+  }
+
+  /* ---------- Move 5: chrome ---------- */
+  var app = $('m5');
+  [].forEach.call(document.querySelectorAll('#m5seg button'), function (b) {
+    b.addEventListener('click', function () {
+      [].forEach.call(document.querySelectorAll('#m5seg button'), function (x) { x.classList.toggle('on', x === b); });
+      var m = b.dataset.m;
+      app.classList.toggle('focus', m !== 'now'); app.classList.toggle('staged', m === 'staged');
+      app.style.setProperty('--sw', m === 'now' ? '190px' : '52px');
+    });
+  });
+
+  /* ---------- Move 6: command bar ---------- */
+  function thumb(rows) { var pre = document.createElement('pre'); var f = makeDiamond(pre, rows || 20, function () { return 'Idle'; }, level); f(3000 + Math.random() * 4000); return pre.outerHTML; }
+  var VID = thumb(20);
+  var INDEX = [
+    { g: 'Files', ic: 'vid', t: 'Atlas X launch, landscape.mp4', m: '58 s · made Sun 4:47 AM · 18 MB', k: 'Play' },
+    { g: 'Files', ic: 'vid', t: 'Atlas X launch, portrait.mp4', m: '58 s · made Sun 4:47 AM · 14.8 MB', k: 'Play' },
+    { g: 'Jobs', ic: 'job', t: 'Atlas X launch video', m: 'Done · 6 cuts · you approved cut 4', k: 'Open' },
+    { g: 'Skills', ic: 'skill', t: 'Launch video production', m: 'Learned by Atlas · improved 6 times', k: 'Open' },
+    { g: 'In the conversation', ic: 'msg', t: '“Make a launch video for Atlas to post on X”', m: 'You, Sat 8:53 AM', k: 'Jump' },
+    { g: 'People', ic: 'p', c: '#10b981', i: 'MA', t: 'Prof. Marisol Alvarez', m: 'School · PoliSci · last wrote Fri', k: 'Open' },
+    { g: 'In the conversation', ic: 'msg', t: '“Can you move your midterm review to Wednesday?”', m: 'Prof. Alvarez, by mail, Fri', k: 'Jump' },
+    { g: 'Agenda', ic: 'cal', t: 'French homework due', m: 'Tonight 11:55 PM · School', k: 'Open' },
+    { g: 'Agenda', ic: 'cal', t: 'French homework due', m: 'Thu 11:55 PM · School · repeats weekly', k: 'Open' },
+    { g: 'Automations', ic: 'auto', t: 'Morning brief', m: 'Every day at 8 AM · ran today', k: 'Run' },
+    { g: 'Actions', ic: 'act', t: 'Quiet until 9 AM', m: 'Hold everything that isn’t urgent', k: 'Do it', q: ['quiet', 'dnd', 'focus', 'silence'] },
+    { g: 'Actions', ic: 'act', t: 'Quiet for the rest of the day', m: 'Until midnight', k: 'Do it', q: ['quiet', 'dnd', 'focus'] },
+    { g: 'Actions', ic: 'act', t: 'Post the launch video to X', m: 'Asks before it posts', k: 'Do it', q: ['launch', 'post', 'video'] },
+    { g: 'Places', ic: 'place', t: 'UCF Recreation and Wellness Center', m: 'Pinned · 4000 Central Florida Blvd', k: 'Open', q: ['gym', 'rwc'] }
+  ];
+  var IC = {
+    job: '<span class="live mono" style="font-size:12px">✓</span>',
+    skill: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#aaa69e" stroke-width="1.4"><path d="M3 2.5h7l3 3v8H3z"/><path d="M5.5 8h5M5.5 10.5h3"/></svg>',
+    msg: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#aaa69e" stroke-width="1.4"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>',
+    cal: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#10b981" stroke-width="1.4"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/></svg>',
+    auto: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#aaa69e" stroke-width="1.4"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"/></svg>',
+    act: '<svg viewBox="0 0 12 18" width="10" height="15"><use href="#m"/></svg>',
+    place: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#f5a524" stroke-width="1.4"><path d="M8 14s4.5-4.2 4.5-7.5a4.5 4.5 0 0 0-9 0C3.5 9.8 8 14 8 14z"/><circle cx="8" cy="6.5" r="1.5"/></svg>'
+  };
+  var sel = 0, shown = [];
+  function esc(s) { return s.replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function hi(t, q) { if (!q) return esc(t); var i = t.toLowerCase().indexOf(q); return i < 0 ? esc(t) : esc(t.slice(0, i)) + '<mark>' + esc(t.slice(i, i + q.length)) + '</mark>' + esc(t.slice(i + q.length)); }
+  function render() {
+    var q = $('m6in').value.trim().toLowerCase(), res = $('m6res');
+    shown = !q ? INDEX.filter(function (r) { return ['Jobs', 'Agenda', 'Actions'].indexOf(r.g) >= 0; }).slice(0, 5)
+      : INDEX.filter(function (r) { return (r.t + ' ' + r.m).toLowerCase().indexOf(q) >= 0 || (r.q || []).some(function (k) { return k.indexOf(q) === 0 || q.indexOf(k) === 0; }); });
+    if (sel >= shown.length + 1) sel = 0;
+    var html = '', last = '', n = 0;
+    shown.forEach(function (r, i) {
+      if (r.g !== last) { html += '<div class="grp-l lab">' + (q ? r.g : (i === 0 ? 'Right now' : '')) + '</div>'; last = r.g; if (!q) last = 'x'; }
+      var ic = r.ic === 'vid' ? '<span class="ic">' + VID + '</span>' : r.ic === 'p' ? '<span class="ic round" style="background:' + r.c + '">' + r.i + '</span>' : '<span class="ic">' + IC[r.ic] + '</span>';
+      html += '<div class="r' + (i === sel ? ' sel' : '') + '" role="option" style="animation-delay:' + (n++ * 30) + 'ms" data-i="' + i + '">' + ic + '<div style="min-width:0"><div class="t">' + hi(r.t, q) + '</div><div class="m">' + esc(r.m) + '</div></div><span class="k">' + r.k + '</span></div>';
+    });
+    var ask = q ? '“' + esc($('m6in').value.trim()) + '”' : 'anything';
+    html += '<div class="grp-l lab"></div><div class="r' + (sel === shown.length ? ' sel' : '') + '" role="option" style="animation-delay:' + (n * 30) + 'ms"><span class="ic" style="border:0;background:transparent"><svg viewBox="0 0 12 18" width="11" height="16"><use href="#m"/></svg></span><div><div class="t">Ask Atlas ' + ask + '</div><div class="m">The answer opens in the conversation</div></div><span class="k">⌘↵</span></div>';
+    res.innerHTML = html;
+  }
+  $('m6in').addEventListener('input', function () { sel = 0; render(); });
+  $('m6in').addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(shown.length, sel + 1); render(); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(0, sel - 1); render(); }
+    if (e.key === 'Escape') { $('m6in').value = ''; render(); }
+  });
+  $('m6res').addEventListener('mousemove', function (e) { var r = e.target.closest('.r'); if (r && r.dataset.i && +r.dataset.i !== sel) { sel = +r.dataset.i; [].forEach.call($('m6res').querySelectorAll('.r'), function (x) { x.classList.toggle('sel', x === r); }); } });
+  function playM6() {
+    clear('m6'); var inp = $('m6in'); inp.value = ''; sel = 0; render();
+    'launch'.split('').forEach(function (c, i) { later('m6', function () { inp.value += c; render(); }, 500 + i * 120); });
+  }
+
+  /* ---------- Move 7: craft ---------- */
+  $('c1').addEventListener('click', function () { $('c1b').classList.toggle('go'); });
+  $('c2').addEventListener('click', function () { countTo($('c2n'), 0, 4.82, 1100, function (v) { return '$' + v.toFixed(2); }, 'c2'); });
+  $('c3').addEventListener('click', function () { var b = $('c3b'); b.classList.add('go'); setTimeout(function () { b.style.transition = 'none'; b.classList.remove('go'); b.style.opacity = 0; void b.offsetWidth; b.style.transition = ''; b.style.opacity = ''; }, 900); });
+  var actx = null;
+  $('c4').addEventListener('click', function () {
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      var t = actx.currentTime;
+      [[1760, 0], [2349, 0.06]].forEach(function (n) {
+        var o = actx.createOscillator(), g = actx.createGain();
+        o.type = 'sine'; o.frequency.value = n[0]; g.gain.setValueAtTime(0, t + n[1]); g.gain.linearRampToValueAtTime(0.06, t + n[1] + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + n[1] + 0.14);
+        o.connect(g).connect(actx.destination); o.start(t + n[1]); o.stop(t + n[1] + 0.16);
+      });
+      $('c4l').textContent = 'Receipt landed';
+    } catch (e) { $('c4l').textContent = 'Sound is blocked here'; }
+  });
+
+  /* ---------- Replay buttons and first play when seen ---------- */
+  var plays = { m1: playM1, m2: playM2, m3: playM3, m4: playM4, m6: playM6 };
+  [].forEach.call(document.querySelectorAll('[data-replay]'), function (b) { b.addEventListener('click', function () { plays[b.dataset.replay](); }); });
+  // Each mockup starts in its finished state, so the page reads at rest, then plays once when it scrolls into view.
+  function finishAll() {
+    buildStrip();
+    [].forEach.call(document.querySelectorAll('#m1strip .wx div, #m1strip .ev, #m1strip .leg, #m1strip .free, #m1strip .due, #m1strip .needle, #m1foot .chip'), function (d) { d.classList.add('in'); });
+    $('m1say').innerHTML = '<span class="w in">Busy afternoon, free evening. Rain starts around 6, so the gym fits at 5:30, before it. French is due at 11:55.</span>';
+    $('m2say').innerHTML = '<span class="w in">Two worth knowing. Kim Jong Un arrived in China today, and the reason for the visit isn’t public yet. And violence in the West Bank escalated after a shooting attack. Nothing touches your week.</span>';
+    [].forEach.call(document.querySelectorAll('#m2src .src'), function (s) { s.classList.add('in'); });
+    [].forEach.call(document.querySelectorAll('#m2rail .rn'), function (s) { s.classList.add('in', 'done'); });
+    $('m2verb').textContent = 'Done'; $('m2t').textContent = '3.4s'; $('m2spin').textContent = '✓'; $('m2status').style.opacity = 0.6;
+    $('m3heard').textContent = 'What should I do Saturday? Something outside.';
+    $('m3spoken').innerHTML = '<span class="w on">Saturday is clear until six, then rain. Go kayaking at Wekiwa Springs, it’s 34 minutes away and the water stays at 72. Want me to block the morning?</span>';
+    $('m3c1').classList.add('in'); $('m3c2').classList.add('in'); setV('Listening', 'Your turn');
+    $('m4route').classList.add('in'); $('m4hourly').classList.add('in'); $('m4count').innerHTML = '7 h 28 <small>min</small>'; wireHold();
+    render();
+  }
+  finishAll();
+  if (!reduce) {
+    var seen = {};
+    var io2 = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { var k = e.target.dataset.play; if (e.isIntersecting && !seen[k]) { seen[k] = true; setTimeout(plays[k], 250); } });
+    }, { threshold: 0.45 });
+    [['m1day', 'm1'], ['m2', 'm2'], ['m3', 'm3'], ['m4', 'm4'], ['m6res', 'm6']].forEach(function (p) { var el = $(p[0]); el.dataset.play = p[1]; io2.observe(el); });
+    requestAnimationFrame(tick);
+  }
+})();
+</script>
+</body>
+</html>

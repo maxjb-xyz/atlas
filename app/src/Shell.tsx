@@ -2,8 +2,9 @@
 // (scope switcher, jobs, Talk, search), and the composer. Home is the
 // conversation; every other page has the composer at its foot. No side panes.
 
+import { useDetail } from "./theme";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import type { LogRow, RecordView } from "../../core/src/protocol";
+import type { LogRow, SearchHit } from "../../core/src/protocol";
 import type { Atlas } from "./connection";
 import { jobNow, liveJobs } from "./jobs";
 import { Markdown } from "./Markdown";
@@ -12,14 +13,18 @@ import {
   AreaChip,
   AreaDot,
   areaColor,
+  Avatar,
   AsciiDiamond,
   Diamond,
+  hostOf,
   Icon,
   LiveMark,
   type IconName,
   initials,
   type Place,
   shortDay,
+  SiteMark,
+  stepIcon,
   useDismiss,
 } from "./ui";
 
@@ -58,6 +63,7 @@ export function Sidebar({ atlas, place, go }: { atlas: Atlas; place: Place; go: 
             href={`#/${n.id}`}
             className={`${place === n.id ? "on" : ""} ${n.gap ? "gap" : ""}`}
             aria-current={place === n.id ? "page" : undefined}
+            title={n.label}
           >
             <Icon name={n.icon} />
             <span>{n.label}</span>
@@ -118,7 +124,7 @@ export function Sidebar({ atlas, place, go }: { atlas: Atlas; place: Place; go: 
         )}
       </div>
       <div className="side-foot">
-        <a href="#/settings" className={place === "settings" ? "on" : ""}>
+        <a href="#/settings" className={place === "settings" ? "on" : ""} title="Atlas settings">
           <Icon name="settings" />
           <span>Atlas settings</span>
         </a>
@@ -264,30 +270,33 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
               <div className="head">
                 <span className="lab">{running.length ? "Running now" : "Lately"}</span>
               </div>
-              {s.jobs.map((j) => (
-                <button
-                  key={j.id}
-                  className="item"
-                  style={{ flexDirection: "column", alignItems: "stretch", gap: 3 }}
-                  onClick={() => {
-                    go("home", `job:${j.id}`);
-                    setJobsOpen(false);
-                  }}
-                >
-                  <span style={{ fontWeight: 500 }}>{j.title}</span>
-                  <span className="row small" style={{ gap: 10 }}>
-                    <span className={`${jobNow(j).tone} mono`}>{jobNow(j).label}</span>
-                    <span className="muted grow clip">
-                      {j.owned && j.activity === "working" && j.owned.now
-                        ? j.owned.now
-                        : j.state === "running"
-                          ? jobNow(j).status
-                          : (j.status ?? `${j.steps} lookups`)}
+              {/* Focused on an area (§21.3), the list is that area's work, and work that has no area. */}
+              {s.jobs
+                .filter((j) => !s.scope || !j.areas?.length || j.areas.includes(s.scope))
+                .map((j) => (
+                  <button
+                    key={j.id}
+                    className="item"
+                    style={{ flexDirection: "column", alignItems: "stretch", gap: 3 }}
+                    onClick={() => {
+                      go("home", `job:${j.id}`);
+                      setJobsOpen(false);
+                    }}
+                  >
+                    <span style={{ fontWeight: 500 }}>{j.title}</span>
+                    <span className="row small" style={{ gap: 10 }}>
+                      <span className={`${jobNow(j).tone} mono`}>{jobNow(j).label}</span>
+                      <span className="muted grow clip">
+                        {j.owned && j.activity === "working" && j.owned.now
+                          ? j.owned.now
+                          : j.state === "running"
+                            ? jobNow(j).status
+                            : (j.status ?? `${j.steps} lookups`)}
+                      </span>
+                      <span className="mono faint">{shortDay(j.started_at)}</span>
                     </span>
-                    <span className="mono faint">{shortDay(j.started_at)}</span>
-                  </span>
-                </button>
-              ))}
+                  </button>
+                ))}
               <div className="foot">Open one for everything I've said and done on it.</div>
             </div>
           )}
@@ -618,10 +627,10 @@ export function Receipt({
           </svg>
         ) : waiting ? (
           <i className="sq-ac" />
+        ) : receipt.link && hostOf(receipt.link) ? (
+          <SiteMark host={hostOf(receipt.link)} size={14} />
         ) : (
-          <svg width="11" height="10" viewBox="0 0 11 10">
-            <path d="M1.5 5.2 4.3 8 9.6 1.8" />
-          </svg>
+          <Icon name={stepIcon(String(row.body.name ?? ""))} size={11} />
         )}
       </span>
       {onOpen ? (
@@ -655,8 +664,9 @@ export function Receipt({
 
 // --- voice --------------------------------------------------------------------------------
 
-export function VoiceStrip({ atlas }: { atlas: Atlas }) {
+export function VoiceStrip({ atlas, onExpand }: { atlas: Atlas; onExpand?: () => void }) {
   const { status, interim, level, latencyMs } = atlas.voice;
+  const dev = useDetail().at("developer");
   const label = status === "idle" ? "Starting" : status[0]!.toUpperCase() + status.slice(1);
   const live = Object.values(atlas.state.live)
     .filter((l) => !l.job)
@@ -678,81 +688,243 @@ export function VoiceStrip({ atlas }: { atlas: Atlas }) {
           ))}
         </div>
       </div>
-      <span className="lab">{latencyMs != null ? `${Math.round(latencyMs)} ms` : ""}</span>
+      <span className="lab">{latencyMs != null && dev ? `${Math.round(latencyMs)} ms` : ""}</span>
+      {onExpand && (
+        <button className="icon" onClick={onExpand} aria-label="Full screen" title="Full screen">
+          <Icon name="expand" size={14} />
+        </button>
+      )}
     </div>
   );
 }
 
 // --- ⌘K ------------------------------------------------------------------------------
 
-/** ⌘K: jump to a place, find a record, or ask Atlas. */
+/** What ⌘K offers to do, in words: each one is asked of Atlas, and matches when the owner types any of its words. */
+const ACTIONS: Array<{ say: string; words: string[] }> = [
+  { say: "Quiet until 9 AM", words: ["quiet", "focus", "dnd", "silence", "mute"] },
+  { say: "Quiet for the rest of the day", words: ["quiet", "focus", "dnd", "silence"] },
+  { say: "What does today look like?", words: ["today", "day", "schedule", "agenda"] },
+  { say: "What does tomorrow look like?", words: ["tomorrow", "schedule"] },
+  { say: "Remind me ", words: ["remind", "reminder"] },
+  { say: "Make an automation that ", words: ["automation", "routine", "auto", "every"] },
+];
+
+const GROUPS: Record<SearchHit["group"], string> = {
+  files: "Files",
+  pages: "Pages",
+  jobs: "Jobs",
+  skills: "Skills",
+  automations: "Automations",
+  people: "People",
+  places: "Places",
+  memory: "Memory",
+  conversation: "In the conversation",
+};
+
+/** A hit's picture: a video's frame, an image, a person's face, a job at work, or its kind's icon. */
+function HitMark({ h }: { h: SearchHit }) {
+  if (h.group === "files" && h.type?.startsWith("video/"))
+    return (
+      <span className="hit-mark media">
+        <video src={`/api/files/${h.id}?inline=1#t=0.5`} preload="metadata" muted playsInline />
+      </span>
+    );
+  if (h.group === "files" && h.type?.startsWith("image/"))
+    return (
+      <span className="hit-mark media">
+        <img src={`/api/files/${h.id}?inline=1`} alt="" loading="lazy" />
+      </span>
+    );
+  if (h.group === "files")
+    return <span className="hit-mark mono">{(h.title.split(".").pop() ?? "").slice(0, 4).toUpperCase() || "FILE"}</span>;
+  if (h.group === "people") return <Avatar name={h.title} photo={h.photo} size={30} />;
+  if (h.group === "jobs" && h.live)
+    return (
+      <span className="hit-mark">
+        <span className="mono spin" aria-hidden style={{ color: "var(--ac)" }} />
+      </span>
+    );
+  const icon: IconName =
+    h.group === "pages"
+      ? "file"
+      : h.group === "jobs"
+        ? "jobs"
+        : h.group === "skills"
+          ? "skills"
+          : h.group === "automations"
+            ? "automations"
+            : h.group === "places"
+              ? "place"
+              : h.group === "conversation"
+                ? "chat"
+                : "memory";
+  return (
+    <span className="hit-mark">
+      <Icon name={icon} size={14} />
+    </span>
+  );
+}
+
+/** ⌘K (M7 W20): find anything Atlas keeps, go to a place, do something in words, or ask Atlas. */
 export function Palette({ atlas, go, onClose }: { atlas: Atlas; go: (p: Place, d?: string) => void; onClose: () => void }) {
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
+  const text = q.trim();
   useEffect(() => {
-    if (q.trim().length >= 2) atlas.send({ type: "atlas.records.list", ref: "palette", text: q.trim(), limit: 6 });
-  }, [q]);
-  const found: RecordView[] = q.trim().length >= 2 ? (atlas.state.records.palette?.records ?? []) : [];
+    if (text.length < 2) return;
+    const t = setTimeout(() => atlas.send({ type: "atlas.search", text }), 120);
+    return () => clearTimeout(t);
+  }, [text]);
+  const hits = text.length >= 2 && atlas.state.search?.text === text ? atlas.state.search.hits : [];
+  const lower = text.toLowerCase();
   const places: Array<[Place, string]> = [...PLACES.map((p) => [p.id, p.label] as [Place, string]), ["settings", "Atlas settings"]];
-  const items: Array<{ label: ReactNode; run: () => void }> = [
-    ...places
-      .filter(([, l]) => l.toLowerCase().includes(q.trim().toLowerCase()))
-      .map(([p, l]) => ({ label: <>Go to {l}</>, run: () => go(p) })),
-    ...found.map((r) => ({
-      label: (
-        <>
-          <span className="lab">{r.type}</span> {r.name}
-          {r.fact ? <span className="muted"> · {r.fact}</span> : null}
-        </>
-      ),
-      run: () => (r.type === "person" ? go("people", `person:${r.id}`) : go("library", `memory:${r.id}`)),
+  const ask = (words: string) => {
+    atlas.say(words);
+    openConversation();
+  };
+  const open = (h: SearchHit) => {
+    if (h.group === "files") go("library", `file:${h.id}`);
+    else if (h.group === "pages") go("library", `page:${h.id}`);
+    else if (h.group === "jobs") go("home", `job:${h.id}`);
+    else if (h.group === "skills") go("abilities", "skills");
+    else if (h.group === "automations") go("automations", h.id);
+    else if (h.group === "people") go("people", `person:${h.id}`);
+    else if (h.group === "places") go("library", `place:${h.id}`);
+    else if (h.group === "memory") go("library", `memory:${h.id}`);
+    else go("home", `at:${h.id}`);
+  };
+  type Row = { key: string; group?: string; mark: ReactNode; title: ReactNode; sub?: string; act: string; run: () => void };
+  const rows: Row[] = [
+    ...(lower
+      ? places
+          .filter(([, l]) => l.toLowerCase().startsWith(lower))
+          .map(([p, l]) => ({
+            key: `place:${p}`,
+            group: "Go to",
+            mark: (
+              <span className="hit-mark">
+                <Icon name={PLACES.find((x) => x.id === p)?.icon ?? "settings"} size={14} />
+              </span>
+            ),
+            title: l,
+            act: "Go",
+            run: () => go(p),
+          }))
+      : []),
+    ...hits.map((h) => ({
+      key: `${h.group}:${h.id}`,
+      group: GROUPS[h.group],
+      mark: <HitMark h={h} />,
+      title: h.group === "conversation" ? `“${h.title}”` : h.title,
+      sub: h.group === "conversation" ? `${h.sub}, ${shortDay(h.at)}` : h.sub || shortDay(h.at),
+      act: h.group === "conversation" ? "Jump" : "Open",
+      run: () => open(h),
     })),
-    // Asked from search: the conversation opens, so the answer is in view wherever this was asked.
-    ...(q.trim()
+    ...(lower
+      ? ACTIONS.filter((a) => a.words.some((w) => w.startsWith(lower) || lower.startsWith(w))).map((a) => ({
+          key: `do:${a.say}`,
+          group: "Do",
+          mark: (
+            <span className="hit-mark">
+              <Diamond size={12} />
+            </span>
+          ),
+          title: a.say.trim(),
+          act: "Ask",
+          run: () => (a.say.endsWith(" ") ? (setQ(a.say), setSel(0)) : ask(a.say)),
+        }))
+      : []),
+    ...(text
       ? [
           {
-            label: <>Ask: “{q.trim()}”</>,
-            run: () => {
-              atlas.say(q.trim());
-              openConversation();
-            },
+            key: "ask",
+            group: "",
+            mark: (
+              <span className="hit-mark">
+                <Diamond size={12} />
+              </span>
+            ),
+            title: <>Ask Atlas “{text}”</>,
+            sub: "The answer opens in the conversation",
+            act: "⌘↵",
+            run: () => ask(text),
           },
         ]
       : []),
   ];
   const pick = (i: number) => {
-    items[i]?.run();
-    onClose();
+    const r = rows[i];
+    if (!r) return;
+    r.run();
+    if (!r.key.startsWith("do:") || !ACTIONS.find((a) => `do:${a.say}` === r.key)?.say.endsWith(" ")) onClose();
   };
+  let last = "";
   return (
     <div className="overlay" onClick={onClose}>
-      <div className="sheet rise" style={{ height: "auto", maxHeight: "70vh" }} onClick={(e) => e.stopPropagation()}>
+      <div className="sheet rise palette" style={{ height: "auto", maxHeight: "72vh" }} onClick={(e) => e.stopPropagation()}>
         <div className="overlay-head">
           <Icon name="search" />
           <input
             autoFocus
             value={q}
-            placeholder="Go to a place, find something, or ask"
+            placeholder="Find anything, go somewhere, or ask Atlas"
             style={{ flex: 1, border: 0, boxShadow: "none", background: "transparent" }}
             onChange={(e) => {
               setQ(e.target.value);
               setSel(0);
             }}
             onKeyDown={(e) => {
-              if (e.key === "ArrowDown") setSel((i) => Math.min(items.length - 1, i + 1));
+              if (e.key === "ArrowDown") setSel((i) => Math.min(rows.length - 1, i + 1));
               else if (e.key === "ArrowUp") setSel((i) => Math.max(0, i - 1));
-              else if (e.key === "Enter") pick(sel);
+              else if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text) {
+                ask(text);
+                onClose();
+              } else if (e.key === "Enter") pick(sel);
               else if (e.key === "Escape") onClose();
             }}
           />
           <span className="kbd">Esc</span>
         </div>
-        <div className="pop" style={{ position: "static", border: 0, boxShadow: "none", overflowY: "auto" }}>
-          {items.map((it, i) => (
-            <button key={i} className={`item ${i === sel ? "on" : ""}`} onMouseEnter={() => setSel(i)} onClick={() => pick(i)}>
-              {it.label}
-            </button>
-          ))}
+        <div className="hits" role="listbox" aria-label="Results">
+          {!text && (
+            <p className="hits-empty faint small">Files, pages, jobs, skills, people, places and anything said in the conversation.</p>
+          )}
+          {rows.map((r, i) => {
+            const head = r.group != null && r.group !== last ? r.group : null;
+            if (r.group != null) last = r.group;
+            return (
+              <div key={r.key}>
+                {head && <p className="lab hits-group">{head}</p>}
+                <button
+                  role="option"
+                  aria-selected={i === sel}
+                  className={`hit ${i === sel ? "on" : ""}`}
+                  style={{ "--i": i } as React.CSSProperties}
+                  onMouseEnter={() => setSel(i)}
+                  onClick={() => pick(i)}
+                >
+                  {r.mark}
+                  <span className="hit-words">
+                    <span className="hit-title clip">{r.title}</span>
+                    {r.sub && <span className="hit-sub clip">{r.sub}</span>}
+                  </span>
+                  <span className="hit-act mono">{r.act}</span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <div className="hits-foot faint small">
+          <span>
+            <span className="kbd">↑↓</span> move
+          </span>
+          <span>
+            <span className="kbd">↵</span> open
+          </span>
+          <span>
+            <span className="kbd">⌘↵</span> ask Atlas
+          </span>
         </div>
       </div>
     </div>

@@ -270,3 +270,69 @@ export async function cloudflareSearch(binding: WebSearchBinding | null, q: Sear
     return { ok: false, status: 0, error: `Couldn't reach ${name}: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
+
+// --- site icons ----------------------------------------------------------------------------------
+// A source in the thread shows its site's own mark (M7 W17). Only the host leaves Atlas: the site's front page is
+// read for the icon it names, or its /favicon.ico is asked for. Nothing about the owner goes with it.
+
+/** A host worth asking: a plain public domain name, no port, no address, no login. */
+export const iconHost = (host: string) =>
+  /^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host) && !/(^|\.)(localhost|local|internal|arpa)$/.test(host);
+
+const ICON_BYTES = 200_000;
+const UA = "Mozilla/5.0 (compatible; Atlas/1.0; personal assistant)";
+
+/** The icons a page names, best first: big enough to stay sharp at twice the size shown, and not much bigger. */
+export function iconLinks(html: string, base: string): string[] {
+  const found: Array<{ url: string; score: number }> = [];
+  for (const m of html.slice(0, 200_000).matchAll(/<link\b[^>]*>/gi)) {
+    const tag = m[0];
+    const rel = /\brel\s*=\s*["']?([^"'>]+)/i.exec(tag)?.[1]?.toLowerCase() ?? "";
+    if (!/\bicon\b|apple-touch-icon/.test(rel) || /mask-icon/.test(rel)) continue;
+    const href = /\bhref\s*=\s*["']?([^"'\s>]+)/i.exec(tag)?.[1];
+    if (!href || href.startsWith("data:") || /\.svg(\?|$)/i.test(href)) continue;
+    const size = Number(/\bsizes\s*=\s*["']?(\d+)/i.exec(tag)?.[1] ?? (rel.includes("apple") ? 180 : 16));
+    let url: string;
+    try {
+      url = new URL(decode(href), base).toString();
+    } catch {
+      continue;
+    }
+    if (/^https:/.test(url) && !found.some((x) => x.url === url))
+      found.push({ url, score: size >= 48 ? 2000 - Math.abs(size - 96) : size * 10 });
+  }
+  return found.sort((x, y) => y.score - x.score).map((x) => x.url);
+}
+
+async function iconAt(f: typeof fetch, url: string): Promise<{ type: string; bytes: ArrayBuffer } | null> {
+  const res = await f(url, {
+    redirect: "follow",
+    headers: { "user-agent": UA, accept: "image/*" },
+    signal: AbortSignal.timeout(6000),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  const type = (res.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  const kind = type.startsWith("image/") ? type : /\.ico(\?|$)/.test(url) ? "image/x-icon" : /\.png(\?|$)/.test(url) ? "image/png" : "";
+  if (!kind || kind === "image/svg+xml") return null;
+  const bytes = await res.arrayBuffer().catch(() => null);
+  if (!bytes || bytes.byteLength < 40 || bytes.byteLength > ICON_BYTES) return null;
+  return { type: kind, bytes };
+}
+
+/** A site's icon, or null when it has none Atlas can show. Never throws. */
+export async function siteIcon(f: typeof fetch, host: string): Promise<{ type: string; bytes: ArrayBuffer } | null> {
+  if (!iconHost(host)) return null;
+  const base = `https://${host}/`;
+  const res = await f(base, {
+    redirect: "follow",
+    headers: { "user-agent": UA, accept: "text/html" },
+    signal: AbortSignal.timeout(6000),
+  }).catch(() => null);
+  const html = res?.ok && (res.headers.get("content-type") ?? "").includes("html") ? await readCapped(res).catch(() => "") : "";
+  if (res && !html) await res.body?.cancel().catch(() => {});
+  for (const url of html ? iconLinks(html, res!.url || base).slice(0, 3) : []) {
+    const got = await iconAt(f, url);
+    if (got) return got;
+  }
+  return iconAt(f, new URL("/favicon.ico", res?.url || base).toString());
+}

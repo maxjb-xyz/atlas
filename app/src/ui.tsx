@@ -22,6 +22,7 @@ export const ICONS = {
   search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-3.5-3.5",
   mic: "M9 2h6v12H9zM5 10a7 7 0 0 0 14 0M12 17v4",
   up: "M12 19V5M5 12l7-7 7 7",
+  expand: "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",
   down: "M6 9l6 6 6-6",
   back: "M15 18l-6-6 6-6",
   left: "M19 12H5M12 19l-7-7 7-7",
@@ -310,6 +311,7 @@ export function Stage<T extends string>({
   meta,
   actions,
   bodyClass,
+  home,
   children,
   dock,
 }: {
@@ -322,7 +324,7 @@ export function Stage<T extends string>({
   actions?: ReactNode;
   /** A class for the body, for a page that lays out its own (Home's conversation and the stage beside it). */
   bodyClass?: string;
-  /** Home's stage; kept for callers, the space under the body now follows the dock itself. */
+  /** Home's stage, which steps its frame back in the focus layout (M7 W14). */
   home?: boolean;
   children: ReactNode;
   dock?: ReactNode;
@@ -347,7 +349,7 @@ export function Stage<T extends string>({
   });
   return (
     <section
-      className={`stage ${scope ? "scoped" : ""}`}
+      className={`stage ${scope ? "scoped" : ""} ${home ? "home" : ""}`}
       aria-label={label}
       ref={section}
       style={scope ? ({ "--rail": scope } as React.CSSProperties) : undefined}
@@ -1023,4 +1025,151 @@ export function QrCode({ text, size = 200 }: { text: string; size?: number }) {
       <path fill="#191817" d={cells.flatMap((row, r) => row.map((dark, c) => (dark ? `M${c + 2} ${r + 2}h1v1h-1z` : ""))).join("")} />
     </svg>
   );
+}
+
+/**
+ * Hold to confirm (§21.8): a bar fills while it's held, and lets go when released early; held through, it's done.
+ * Space or Enter held on it does the same. Reduced motion confirms on a plain press.
+ */
+export function HoldButton({
+  children,
+  onDone,
+  ms = 900,
+  className = "",
+}: {
+  children: ReactNode;
+  onDone: () => void;
+  ms?: number;
+  className?: string;
+}) {
+  const fill = useRef<HTMLSpanElement>(null);
+  const raf = useRef(0);
+  const done = useRef(false);
+  const [holding, setHolding] = useState(false);
+  const go = () => {
+    if (done.current) return;
+    if (stillMotion()) {
+      done.current = true;
+      onDone();
+      return;
+    }
+    const start = performance.now();
+    setHolding(true);
+    const step = (t: number) => {
+      const k = Math.min(1, (t - start) / ms);
+      if (fill.current) fill.current.style.transform = `scaleX(${k})`;
+      if (k < 1) raf.current = requestAnimationFrame(step);
+      else {
+        done.current = true;
+        setHolding(false);
+        onDone();
+      }
+    };
+    raf.current = requestAnimationFrame(step);
+  };
+  const stop = () => {
+    cancelAnimationFrame(raf.current);
+    setHolding(false);
+    if (!done.current && fill.current) fill.current.style.transform = "scaleX(0)";
+  };
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+  return (
+    <button
+      type="button"
+      className={`hold ${holding ? "holding" : ""} ${className}`}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        go();
+      }}
+      onPointerUp={stop}
+      onPointerLeave={stop}
+      onPointerCancel={stop}
+      onKeyDown={(e) => {
+        if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+          e.preventDefault();
+          go();
+        }
+      }}
+      onKeyUp={(e) => {
+        if (e.key === " " || e.key === "Enter") stop();
+      }}
+    >
+      <span className="hold-fill" ref={fill} aria-hidden />
+      <span className="hold-label">{children}</span>
+    </button>
+  );
+}
+
+// --- what a step is, at a glance (M7 W17) -----------------------------------------------------------
+
+/** A link's site, without "www.": "reuters.com". Empty when it isn't a web address. */
+export const hostOf = (url: string) => {
+  try {
+    const u = new URL(url);
+    return /^https?:$/.test(u.protocol) ? u.hostname.replace(/^www\./, "") : "";
+  } catch {
+    return "";
+  }
+};
+
+/** Sites whose icon didn't load in this session, so their letter shows at once. */
+const noIcon = new Set<string>();
+
+/** A site's own icon, fetched once by Atlas and kept; its first letter until it comes, or when it has none. */
+export function SiteMark({ host, size = 18 }: { host: string; size?: number }) {
+  const h = host.toLowerCase().replace(/^www\./, "");
+  const [failed, setFailed] = useState(() => noIcon.has(h));
+  const [loaded, setLoaded] = useState(false);
+  const letter = (h.replace(/^(m|en|news|edition|amp)\./, "")[0] ?? "?").toUpperCase();
+  return (
+    <span
+      className={`site-mark ${loaded && !failed ? "has" : ""}`}
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.5) }}
+      aria-hidden
+    >
+      {!(loaded && !failed) && letter}
+      {!failed && /^[a-z0-9.-]{4,253}$/.test(h) && (
+        <img
+          src={`/api/icons/${h}`}
+          alt=""
+          loading="lazy"
+          onLoad={() => setLoaded(true)}
+          onError={() => {
+            noIcon.add(h);
+            setFailed(true);
+          }}
+        />
+      )}
+    </span>
+  );
+}
+
+/** The icon for a kind of step Atlas took, by its tool's name. */
+export function stepIcon(tool: string): IconName {
+  const t = tool.toLowerCase();
+  const by: Array<[RegExp, IconName]> = [
+    [/^web_search|^skill_find|^recall|_look$|^jobs_look|^agenda_list|^free_busy/, "search"],
+    [/^web_fetch|^page_read|^site_ask/, "globe"],
+    [/^calendar_|^hold_time/, "calendar"],
+    [/^reminder_|^agenda_|^promise|^loop_/, "bell"],
+    [/^task_/, "check"],
+    [/^remember|^forget|^delete_for_good/, "memory"],
+    [/^email_|^mail_/, "mail"],
+    [/^skill_/, "skills"],
+    [/^job_|^delegate|^code_job/, "jobs"],
+    [/^file_|^page_save|^folder_/, "file"],
+    [/^place_|^route/, "place"],
+    [/^weather/, "sun"],
+    [/^person|^contact_|^face_/, "user"],
+    [/^browser_/, "browser"],
+    [/^code_|^workspace_|^packages_/, "terminal"],
+    [/^automation_/, "automations"],
+    [/^settings_|^focus/, "settings"],
+    [/^vault_/, "key"],
+    [/^mcp_|^extension_|^webhook_/, "plug"],
+    [/^device_/, "devices"],
+    [/^show/, "eye"],
+    [/^owner_ask|^approve/, "hand"],
+  ];
+  return by.find(([re]) => re.test(t))?.[1] ?? "diamond";
 }

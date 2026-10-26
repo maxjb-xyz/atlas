@@ -10,7 +10,22 @@ import { jobNow } from "./jobs";
 import { Markdown } from "./Markdown";
 import { BusyEdge, Receipt } from "./Shell";
 import { stillMotion, useDetail } from "./theme";
-import { clock, Diamond, elapsed, Empty, Icon, LiveMark, morphOrigin, Selected, Sheet, shortDay, stopClick, took, useNow } from "./ui";
+import {
+  AreaChip,
+  clock,
+  Diamond,
+  elapsed,
+  Empty,
+  Icon,
+  LiveMark,
+  morphOrigin,
+  Selected,
+  Sheet,
+  shortDay,
+  stopClick,
+  took,
+  useNow,
+} from "./ui";
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
@@ -641,6 +656,16 @@ export function JobCard({ atlas, job, onOpen }: { atlas: Atlas; job: JobView; on
                   : "")}
           </span>
           <span className="grow" />
+          {/* Its area (§6), which the owner moves by tapping; only jobs Atlas owns carry one. */}
+          {job.owned && atlas.state.areas.length > 0 && (
+            <span onClick={(e) => e.stopPropagation()}>
+              <AreaChip
+                ids={job.areas ?? []}
+                areas={atlas.state.areas}
+                onMove={(ids) => atlas.send({ type: "atlas.areas.set", ref: `job:${job.id}`, areas: ids })}
+              />
+            </span>
+          )}
           {running && (
             <button
               className="jc-act"

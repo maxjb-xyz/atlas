@@ -780,10 +780,12 @@ export class SenseDesk {
   }
 
   /**
-   * The owner said something: if a nudge is waiting for a reaction, this is
-   * it. On "stop", Atlas is told, and decides with `speaking_up` what the
-   * owner meant to stop: that one subject, or a whole moment. Returns the
-   * note for the run, if any.
+   * The owner said something: if a nudge is waiting for a reaction, this may
+   * be it. The turn doesn't wait to find out: it's told about the nudge at
+   * once, and decides with `speaking_up` whether the owner meant to stop it,
+   * and what (that one subject, or a whole moment). Whether it was a reply, a
+   * thanks or a stop is worked out beside the turn, for what Atlas learns
+   * about its nudges. Returns the note for the run, if any.
    */
   async reacted(text: string, now = Date.now()): Promise<string | null> {
     const all = nudges(this.d.sql);
@@ -792,6 +794,18 @@ export class SenseDesk {
       .reverse()
       .find((x) => (!x.reaction || x.reaction === "opened" || x.reaction === "dismissed") && now - x.at < REACT_MS);
     if (!n) return null;
+    void this.#classify(n, text);
+    const moment =
+      n.from === "routine"
+        ? ` It came from one of the owner's automations (id ${n.ref ?? "?"}): if they mean that whole routine, turn it off or change it with automation_set or automation_save, not speaking_up.`
+        : n.from === "leave"
+          ? ` It came from ${NUDGE_WORDS.leave}, which has its own switch.`
+          : "";
+    return `${Math.max(1, Math.round((now - n.at) / 60_000))} min ago you sent the owner this on your own: "${n.text.slice(0, 200)}"${n.about ? ` (about ${n.about})` : ""}. Their message may be about it, or about something else. If they're saying stop to messages like it, work out what they want to stop, as narrow or as broad as they meant it, and change it with speaking_up; ask only if you truly can't tell, then say what you changed in a few words.${moment}`;
+  }
+
+  /** Whether the owner's words were a reply to a nudge, a thanks or a stop, for what Atlas learns about its nudges. */
+  async #classify(n: Nudge, text: string): Promise<void> {
     let reaction: Nudge["reaction"] = "replied";
     const decider = this.d.decider();
     if (decider) {
@@ -803,26 +817,18 @@ export class SenseDesk {
             stop: { instructions: "Is the owner asking Atlas to stop sending messages like this one?" },
             thanks: { instructions: "Is the owner thanking Atlas, or saying the message was useful?" },
           },
-          AbortSignal.timeout(3_000),
+          AbortSignal.timeout(10_000),
         );
         // Something else entirely isn't a reaction to the nudge; it may still come.
-        if ((p.about ?? 1) < 0.4 && (p.stop ?? 0) < 0.6 && (p.thanks ?? 0) < 0.6) return null;
+        if ((p.about ?? 1) < 0.4 && (p.stop ?? 0) < 0.6 && (p.thanks ?? 0) < 0.6) return;
         reaction = (p.stop ?? 0) >= 0.6 ? "stop" : (p.thanks ?? 0) >= 0.6 ? "thanks" : "replied";
       } catch (err) {
         // Without decide's word, a reply can't be told from one about something else, so it isn't counted.
         console.error(JSON.stringify({ at: "awareness.reaction", error: err instanceof Error ? err.message : String(err) }));
-        return null;
+        return;
       }
     }
     this.#react(n, reaction);
-    if (reaction !== "stop") return null;
-    const moment =
-      n.from === "routine"
-        ? ` It came from one of the owner's automations (id ${n.ref ?? "?"}): if they mean that whole routine, turn it off or change it with automation_set or automation_save, not speaking_up.`
-        : n.from === "leave"
-          ? ` It came from ${NUDGE_WORDS.leave}, which has its own switch.`
-          : "";
-    return `The owner seems to be saying stop to the nudge you sent: "${n.text.slice(0, 200)}"${n.about ? ` (about ${n.about})` : ""}.${moment} Work out what they want to stop, as narrow or as broad as they meant it, and change it with speaking_up; ask only if you truly can't tell. Then say what you changed in a few words.`;
   }
 
   /** A push for a nudge was opened or dismissed on a device. */
