@@ -10,6 +10,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { InboxItem, JobView, LogRow } from "../../core/src/protocol";
 import { ApprovalCard } from "./Approval";
+import { FrontPage } from "./FrontPage";
 import type { Atlas, Live, Pending } from "./connection";
 import { isOpen, JobCard, questionFromRow, QuestionBody, ResultBody, topJobs } from "./JobViews";
 import { jobNow } from "./jobs";
@@ -301,7 +302,13 @@ export function Conversation({
   const todayAt = startOfDay(new Date()).getTime();
   // Today opens with Atlas's presence, in place of the day's marker; with nothing yet today, it's the newest thing here.
   const heroAt = items.findIndex((it) => it.at >= todayAt);
-  const hero = loaded ? <Presence key="presence" atlas={atlas} opens={opens} empty={empty} /> : null;
+  // Until the owner says something today, the day opens on the front page; then its presence in the thread.
+  const spokeToday = items.some((it) => it.at >= todayAt && (it.k === "pending" || (it.k === "row" && it.row.kind === "message.in")));
+  const hero = !loaded ? null : spokeToday ? (
+    <Presence key="presence" atlas={atlas} opens={opens} empty={empty} />
+  ) : (
+    <FrontPage key="front" atlas={atlas} opens={opens} />
+  );
   let day = "";
 
   return (
@@ -312,7 +319,15 @@ export function Conversation({
       <span className="node" aria-hidden />
       <div className="thread" ref={box} onScroll={onScroll}>
         <div className="thread-col">
-          {!loaded && <p className="faint thread-hint">Connecting to {name}.</p>}
+          {!loaded && (
+            // Loading is the page's shape with the mark at rest, never a sentence (M7 W16).
+            <div className="thread-loading" aria-busy="true" aria-label={`Connecting to ${name}`}>
+              <AsciiDiamond height={84} state="idle" />
+              <span className="sk" style={{ width: "62%" }} />
+              <span className="sk" style={{ width: "78%" }} />
+              <span className="sk own" style={{ width: "34%" }} />
+            </div>
+          )}
           {loaded && noOlder && items.length > 0 && <p className="faint thread-hint">The start of your conversation with {name}.</p>}
           {[
             ...items.flatMap((it, i) => {
@@ -339,7 +354,8 @@ export function Conversation({
       </div>
       <div className="convo-dock">
         {atlas.inCall && <VoiceStrip atlas={atlas} />}
-        <NeedsYou atlas={atlas} onOpen={opens.inbox} />
+        {/* The front page shows what needs the owner in its own tile, so the strip waits until they've spoken. */}
+        {(spokeToday || !loaded) && <NeedsYou atlas={atlas} onOpen={opens.inbox} />}
         <Composer atlas={atlas} placeholder={`Message ${name}`} reply={false} />
       </div>
     </div>

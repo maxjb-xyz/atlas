@@ -310,6 +310,7 @@ export function Stage<T extends string>({
   meta,
   actions,
   bodyClass,
+  home,
   children,
   dock,
 }: {
@@ -322,7 +323,7 @@ export function Stage<T extends string>({
   actions?: ReactNode;
   /** A class for the body, for a page that lays out its own (Home's conversation and the stage beside it). */
   bodyClass?: string;
-  /** Home's stage; kept for callers, the space under the body now follows the dock itself. */
+  /** Home's stage, which steps its frame back in the focus layout (M7 W14). */
   home?: boolean;
   children: ReactNode;
   dock?: ReactNode;
@@ -347,7 +348,7 @@ export function Stage<T extends string>({
   });
   return (
     <section
-      className={`stage ${scope ? "scoped" : ""}`}
+      className={`stage ${scope ? "scoped" : ""} ${home ? "home" : ""}`}
       aria-label={label}
       ref={section}
       style={scope ? ({ "--rail": scope } as React.CSSProperties) : undefined}
@@ -1022,5 +1023,78 @@ export function QrCode({ text, size = 200 }: { text: string; size?: number }) {
       <rect width={n} height={n} fill="#ffffff" />
       <path fill="#191817" d={cells.flatMap((row, r) => row.map((dark, c) => (dark ? `M${c + 2} ${r + 2}h1v1h-1z` : ""))).join("")} />
     </svg>
+  );
+}
+
+/**
+ * Hold to confirm (§21.8): a bar fills while it's held, and lets go when released early; held through, it's done.
+ * Space or Enter held on it does the same. Reduced motion confirms on a plain press.
+ */
+export function HoldButton({
+  children,
+  onDone,
+  ms = 900,
+  className = "",
+}: {
+  children: ReactNode;
+  onDone: () => void;
+  ms?: number;
+  className?: string;
+}) {
+  const fill = useRef<HTMLSpanElement>(null);
+  const raf = useRef(0);
+  const done = useRef(false);
+  const [holding, setHolding] = useState(false);
+  const go = () => {
+    if (done.current) return;
+    if (stillMotion()) {
+      done.current = true;
+      onDone();
+      return;
+    }
+    const start = performance.now();
+    setHolding(true);
+    const step = (t: number) => {
+      const k = Math.min(1, (t - start) / ms);
+      if (fill.current) fill.current.style.transform = `scaleX(${k})`;
+      if (k < 1) raf.current = requestAnimationFrame(step);
+      else {
+        done.current = true;
+        setHolding(false);
+        onDone();
+      }
+    };
+    raf.current = requestAnimationFrame(step);
+  };
+  const stop = () => {
+    cancelAnimationFrame(raf.current);
+    setHolding(false);
+    if (!done.current && fill.current) fill.current.style.transform = "scaleX(0)";
+  };
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+  return (
+    <button
+      type="button"
+      className={`hold ${holding ? "holding" : ""} ${className}`}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        go();
+      }}
+      onPointerUp={stop}
+      onPointerLeave={stop}
+      onPointerCancel={stop}
+      onKeyDown={(e) => {
+        if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+          e.preventDefault();
+          go();
+        }
+      }}
+      onKeyUp={(e) => {
+        if (e.key === " " || e.key === "Enter") stop();
+      }}
+    >
+      <span className="hold-fill" ref={fill} aria-hidden />
+      <span className="hold-label">{children}</span>
+    </button>
   );
 }

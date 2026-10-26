@@ -1,14 +1,16 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, lazy, Suspense, useEffect, useState } from "react";
 import { type Atlas, useAtlas } from "./connection";
 import { addPasskey, deviceName, inviteName, joinWithPasskey, passkeysSupported, signInWithCode, signInWithPasskey } from "./passkey";
-import { History } from "./pages/History";
 import { Home } from "./pages/Home";
-import { Library } from "./pages/Library";
-import { Agenda, Inbox } from "./pages/Places";
-import { Automations } from "./pages/Automations";
-import { Pair } from "./abilities/Devices";
-import { Abilities } from "./pages/Abilities";
-import { People } from "./pages/People";
+// Home is what opens; every other place loads the first time it's opened, so the first paint carries only Home.
+const History = lazy(() => import("./pages/History").then((m) => ({ default: m.History })));
+const Library = lazy(() => import("./pages/Library").then((m) => ({ default: m.Library })));
+const Agenda = lazy(() => import("./pages/Places").then((m) => ({ default: m.Agenda })));
+const Inbox = lazy(() => import("./pages/Places").then((m) => ({ default: m.Inbox })));
+const Automations = lazy(() => import("./pages/Automations").then((m) => ({ default: m.Automations })));
+const Pair = lazy(() => import("./abilities/Devices").then((m) => ({ default: m.Pair })));
+const Abilities = lazy(() => import("./pages/Abilities").then((m) => ({ default: m.Abilities })));
+const People = lazy(() => import("./pages/People").then((m) => ({ default: m.People })));
 import { MOVED, SettingsPage } from "./settings";
 import { Setup } from "./Setup";
 import { openConversation, Palette, Sidebar, TabBar, Toolbar } from "./Shell";
@@ -252,7 +254,8 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
 
   return (
     <ScopeColor.Provider value={scoped ? areaColor(scoped) : null}>
-      <div className="app">
+      {/* Home is the conversation on the open grid: the shell steps back there (M7 W14). */}
+      <div className={`app ${place === "home" ? "focus" : ""}`}>
         <Sidebar atlas={atlas} place={place} go={go} />
         <div className="main">
           <Toolbar atlas={atlas} go={go} onSearch={() => setPalette(true)} />
@@ -265,15 +268,17 @@ function ShellApp({ atlas, onSetup }: { atlas: Atlas; onSetup: () => void }) {
             </div>
           )}
           {place === "home" && <Home atlas={atlas} detail={detail} go={sub} place={(p) => go(p)} />}
-          {place === "inbox" && <Inbox atlas={atlas} />}
-          {place === "agenda" && <Agenda atlas={atlas} />}
-          {place === "automations" && <Automations atlas={atlas} detail={detail} go={sub} />}
-          {place === "library" && <Library atlas={atlas} detail={detail} go={sub} />}
-          {place === "people" && <People atlas={atlas} detail={detail} go={sub} />}
-          {place === "abilities" && <Abilities atlas={atlas} detail={detail} go={sub} place={go} />}
-          {place === "history" && <History atlas={atlas} />}
-          {place === "settings" && <SettingsPage atlas={atlas} detail={detail} go={sub} onSignOut={signOut} onSetup={onSetup} />}
-          {place === "pair" && <Pair atlas={atlas} code={detail} />}
+          <Suspense fallback={<div className="stage" aria-busy="true" />}>
+            {place === "inbox" && <Inbox atlas={atlas} />}
+            {place === "agenda" && <Agenda atlas={atlas} />}
+            {place === "automations" && <Automations atlas={atlas} detail={detail} go={sub} />}
+            {place === "library" && <Library atlas={atlas} detail={detail} go={sub} />}
+            {place === "people" && <People atlas={atlas} detail={detail} go={sub} />}
+            {place === "abilities" && <Abilities atlas={atlas} detail={detail} go={sub} place={go} />}
+            {place === "history" && <History atlas={atlas} />}
+            {place === "settings" && <SettingsPage atlas={atlas} detail={detail} go={sub} onSignOut={signOut} onSetup={onSetup} />}
+            {place === "pair" && <Pair atlas={atlas} code={detail} />}
+          </Suspense>
         </div>
         <TabBar atlas={atlas} place={place} />
         {palette && <Palette atlas={atlas} go={go} onClose={() => setPalette(false)} />}

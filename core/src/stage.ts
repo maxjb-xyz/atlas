@@ -519,7 +519,17 @@ export interface SituationPage {
     title: string;
     start: number;
     location: string | null;
-    travel: { s: number; traffic: boolean; leave_by: number; from: "here" | "home"; at: number } | null;
+    travel: {
+      s: number;
+      traffic: boolean;
+      leave_by: number;
+      from: "here" | "home";
+      at: number;
+      /** The trip on a map: where it starts and ends, and its line as [lon, lat] pairs, at most 200. */
+      a?: { lat: number; lon: number };
+      b?: { lat: number; lon: number };
+      line?: Array<[number, number]>;
+    } | null;
     travel_error: string | null;
   } | null;
   calendar_error: string | null;

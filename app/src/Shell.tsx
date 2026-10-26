@@ -59,6 +59,7 @@ export function Sidebar({ atlas, place, go }: { atlas: Atlas; place: Place; go: 
             href={`#/${n.id}`}
             className={`${place === n.id ? "on" : ""} ${n.gap ? "gap" : ""}`}
             aria-current={place === n.id ? "page" : undefined}
+            title={n.label}
           >
             <Icon name={n.icon} />
             <span>{n.label}</span>
@@ -119,7 +120,7 @@ export function Sidebar({ atlas, place, go }: { atlas: Atlas; place: Place; go: 
         )}
       </div>
       <div className="side-foot">
-        <a href="#/settings" className={place === "settings" ? "on" : ""}>
+        <a href="#/settings" className={place === "settings" ? "on" : ""} title="Atlas settings">
           <Icon name="settings" />
           <span>Atlas settings</span>
         </a>
