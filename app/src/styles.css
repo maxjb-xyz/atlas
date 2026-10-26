@@ -4740,3 +4740,120 @@ button.front-tile:hover {
     animation: none;
   }
 }
+
+/* --- Atlas at work (M7 W17) ---------------------------------------------------------------- */
+
+/* The grid while Atlas works: a canvas over the stage's dots, under the thread. */
+.convo {
+  position: relative;
+}
+.grid-ripple {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+.convo > .thread,
+.convo > .convo-dock {
+  position: relative;
+  z-index: 1;
+}
+/* What a reply has done so far: a node per finished step on a short rail, the one under way in ember. */
+.working-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.w-nodes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--tx3);
+}
+.w-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  animation: rise 0.35s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+.w-node i {
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--tx3);
+  flex: none;
+}
+.w-node.done i {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+.w-node.live i {
+  background: var(--ac);
+  border-color: var(--ac);
+  animation: blink 1s steps(1) infinite;
+}
+.w-link {
+  width: 14px;
+  margin: 0 6px;
+  border-top: 1px dashed var(--sep2);
+}
+.w-more {
+  margin-right: 8px;
+}
+/* Words that arrive while Atlas writes rise into place, a paragraph or item at a time. */
+.said.streaming > *,
+.said.streaming li {
+  animation: rise 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+/* Sources: each site Atlas read, with its mark; a search as a quiet pill. */
+.sources {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+}
+.src {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 10px 0 4px;
+  border: 1px solid var(--sep);
+  border-radius: 999px;
+  background: var(--win);
+  color: var(--tx2);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: none;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: rise 0.45s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  animation-delay: calc(var(--i, 0) * 80ms);
+}
+.src:hover {
+  color: var(--tx);
+  border-color: var(--sep2);
+}
+.src.more {
+  padding: 0 10px;
+  color: var(--tx3);
+  cursor: pointer;
+}
+.src-mark {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--sel);
+  color: var(--tx);
+  display: grid;
+  place-items: center;
+  font-size: 9.5px;
+  font-weight: 600;
+  flex: none;
+}

@@ -18,7 +18,7 @@ import { InlineText, Markdown } from "./Markdown";
 import { eventEnd, eventStart, useCalendar } from "./pages/Week";
 import { Composer, Receipt, VoiceStrip } from "./Shell";
 import { type Shown, shownFrom, StageCard } from "./StageViews";
-import { useDetail } from "./theme";
+import { stillMotion, useDetail } from "./theme";
 import {
   addDays,
   AreaChip,
@@ -313,6 +313,7 @@ export function Conversation({
 
   return (
     <div className="sheet convo">
+      <GridRipple active={diamondState(atlas) === "thinking"} />
       <span className="node" aria-hidden />
       <span className="node" aria-hidden />
       <span className="node" aria-hidden />
@@ -477,6 +478,107 @@ function Presence({ atlas, opens, empty }: { atlas: Atlas; opens: Opens; empty: 
   );
 }
 
+/** The diamond's ramp, lightest to densest, for the grid while Atlas works. */
+const RAMP = ".:-=+*#%@";
+
+/**
+ * The grid while Atlas works (VISION §21.8, M7 W17): the stage's dots near Atlas's mark on the reply it's writing
+ * turn into the diamond's characters in ember and ripple outward; when it's done they settle back into dots. A
+ * canvas over the stage's own dots, lined up with them, at most 30 frames a second, only near the mark, and nothing
+ * with reduced motion.
+ */
+function GridRipple({ active }: { active: boolean }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const state = useRef({ active, since: 0, ended: 0 });
+  useEffect(() => {
+    const st = state.current;
+    if (active && !st.active) st.since = performance.now();
+    if (!active && st.active) st.ended = performance.now();
+    st.active = active;
+  }, [active]);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv || stillMotion()) return;
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    const ember = getComputedStyle(document.documentElement).getPropertyValue("--ac").trim() || "#ff6a3d";
+    let raf = 0;
+    let last = 0;
+    let drawn = false;
+    const frame = (t: number) => {
+      raf = requestAnimationFrame(frame);
+      if (t - last < 33) return;
+      last = t;
+      const st = state.current;
+      const settling = !st.active && t - st.ended < 900;
+      if (!st.active && !settling) {
+        if (drawn) {
+          ctx.clearRect(0, 0, cv.width, cv.height);
+          drawn = false;
+        }
+        return;
+      }
+      const box = cv.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      if (cv.width !== Math.round(box.width * dpr) || cv.height !== Math.round(box.height * dpr)) {
+        cv.width = Math.round(box.width * dpr);
+        cv.height = Math.round(box.height * dpr);
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, box.width, box.height);
+      drawn = true;
+      const mark = cv.parentElement?.querySelector(".msg.live .mark")?.getBoundingClientRect();
+      // The reply being written stays clear: the ripple goes around its words, never under them.
+      const words = cv.parentElement?.querySelector(".msg.live .body")?.getBoundingClientRect();
+      const stage = cv.closest(".stage")?.getBoundingClientRect();
+      if (!mark || !stage) return;
+      const ox = mark.left + mark.width / 2 - box.left;
+      const oy = mark.top + mark.height / 2 - box.top;
+      // The stage's dots sit at the middle of each 16 px tile from its corner.
+      const x0 = ((((stage.left - box.left + 8) % 16) + 16) % 16) - 16;
+      const y0 = ((((stage.top - box.top + 8) % 16) + 16) % 16) - 16;
+      const sec = (t - st.since) / 1000;
+      const fade = settling ? 1 - (t - st.ended) / 900 : Math.min(1, sec / 0.4);
+      ctx.font = '500 10px "Geist Mono", ui-monospace, monospace';
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = ember;
+      const R = 440;
+      for (let y = Math.max(y0, oy - R); y < Math.min(box.height, oy + R); y += 16) {
+        const gy = y0 + Math.round((y - y0) / 16) * 16;
+        for (let x = Math.max(x0, ox - R); x < Math.min(box.width, ox + R); x += 16) {
+          const gx = x0 + Math.round((x - x0) / 16) * 16;
+          const d = Math.hypot(gx - ox, (gy - oy) * 1.15);
+          if (d > R) continue;
+          if (
+            words &&
+            gx + box.left > words.left - 6 &&
+            gx + box.left < words.right + 6 &&
+            gy + box.top > words.top - 6 &&
+            gy + box.top < words.bottom + 6
+          )
+            continue;
+          let lit = 0;
+          for (let k = 0; k < 3; k++) {
+            const r = (sec * 170 + k * 140) % 420;
+            lit = Math.max(lit, Math.exp(-Math.pow((d - r) / 22, 2)) * (1 - r / 420));
+          }
+          lit = lit * (1 - d / R) + 0.08 * Math.exp(-d / 40);
+          lit *= fade;
+          if (lit < 0.07) continue;
+          const ch = RAMP[Math.min(RAMP.length - 1, Math.max(0, Math.round(lit * (RAMP.length - 1))))]!;
+          ctx.globalAlpha = Math.min(0.55, lit * 0.8);
+          ctx.fillText(ch, gx, gy);
+        }
+      }
+      ctx.globalAlpha = 1;
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return <canvas ref={ref} className="grid-ripple" aria-hidden />;
+}
+
 /** What waits on the owner, in one slim line above the composer (§21.1): it opens Inbox. */
 function NeedsYou({ atlas, onOpen }: { atlas: Atlas; onOpen: () => void }) {
   // An answer sent from here leaves the strip at once, before Inbox catches up.
@@ -504,18 +606,47 @@ function Glyph({ state }: { state?: DiamondState }) {
   );
 }
 
-/** What Atlas is doing on a reply, before and between its words: a tool's status in mono, with the seconds it has taken. */
-function Working({ run, status }: { run: string; status: string | null }) {
+/** A finished step of a reply, in a word or two, for its node: "search", "reuters.com", "reminder". */
+function nodeLabel(r: LogRow): string {
+  const rc = r.body.receipt as { text?: string; link?: string } | undefined;
+  if (rc?.link) return hostOf(rc.link) || "page";
+  if (r.body.name === "web_search") return "search";
+  return (rc?.text ?? String(r.body.name ?? "")).split(" · ")[0]!.toLowerCase().slice(0, 24);
+}
+
+/**
+ * What Atlas is doing on a reply, before and between its words (M7 W17): one line whose verb changes in place, with
+ * the seconds it has taken, and a node for each step it has finished on a short rail, the one under way in ember.
+ */
+function Working({ run, status, done = [] }: { run: string; status: string | null; done?: LogRow[] }) {
   const now = useNow(1000);
   const since = liveSince.get(run) ?? now;
+  const steps = done.slice(-4);
   return (
-    <p className="working" aria-live="polite">
-      <span className="mono spin" aria-hidden />
-      <span className="w-text" key={status ?? "thinking"}>
-        {status ?? "Thinking"}
-      </span>
-      <span className="w-time mono">{elapsed(now - since)}</span>
-    </p>
+    <div className="working-wrap">
+      <p className="working" aria-live="polite">
+        <span className="mono spin" aria-hidden />
+        <span className="w-text" key={status ?? "thinking"}>
+          {status ?? "Thinking"}
+        </span>
+        <span className="w-time mono">{elapsed(now - since)}</span>
+      </p>
+      {steps.length > 0 && (
+        <span className="w-nodes" aria-hidden>
+          {done.length > steps.length && <span className="w-more mono">+{done.length - steps.length}</span>}
+          {steps.map((r) => (
+            <span key={r.id} className="w-node done">
+              <i />
+              {nodeLabel(r)}
+              <span className="w-link" />
+            </span>
+          ))}
+          <span className="w-node live">
+            <i />
+          </span>
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -537,7 +668,7 @@ function ItemView({ atlas, item, undone, opens }: { atlas: Atlas; item: Item; un
         <div className="msg atlas live">
           <Glyph state={atlas.inCall && item.live.surface === "voice" ? (atlas.voice.status as DiamondState) : "thinking"} />
           <div className="body">
-            {(item.live.status || !item.live.text) && <Working run={item.run} status={item.live.status} />}
+            {(item.live.status || !item.live.text) && <Working run={item.run} status={item.live.status} done={item.receipts} />}
             {item.live.text && <Markdown className="said streaming" text={item.live.text} />}
             {item.receipts.length > 0 && <Receipts atlas={atlas} rows={item.receipts} undone={undone} opens={opens} />}
           </div>
@@ -580,15 +711,19 @@ const hostOf = (url: string) => {
   }
 };
 
-/** What Atlas looked at for a reply, as one quiet line that opens to each search and page (§21.5, Simple). */
+/**
+ * What Atlas looked at for a reply (§21.5 at Simple, M7 W17): each site it read as a source with its mark, which
+ * opens the page, and a search as one quiet pill. "Details" opens each search and page as its receipt.
+ */
 function Lookups({ atlas, rows, undone }: { atlas: Atlas; rows: LogRow[]; undone: Set<string> }) {
   const [open, setOpen] = useState(false);
-  const hosts = [...new Set(rows.map((r) => hostOf(String((r.body.receipt as { link?: string }).link ?? ""))).filter(Boolean))];
-  const label = hosts.length
-    ? `Looked at ${hosts.slice(0, 2).join(", ")}${hosts.length > 2 ? ` and ${hosts.length - 2} more` : ""}`
-    : rows.length === 1
-      ? "Searched the web"
-      : `Searched the web ${rows.length} times`;
+  const pages = new Map<string, string>();
+  for (const r of rows) {
+    const link = (r.body.receipt as { link?: string }).link;
+    const host = link ? hostOf(link) : "";
+    if (host && !pages.has(host)) pages.set(host, link!);
+  }
+  const searches = rows.filter((r) => r.body.name === "web_search").length;
   if (open)
     return (
       <>
@@ -597,20 +732,31 @@ function Lookups({ atlas, rows, undone }: { atlas: Atlas; rows: LogRow[]; undone
             <Receipt row={r} atlas={atlas} undone={undone.has(r.id)} />
           </span>
         ))}
-        <button className="receipt looks" onClick={() => setOpen(false)}>
-          <span className="open">Fewer</span>
+        <button className="src more" onClick={() => setOpen(false)}>
+          Fewer
         </button>
       </>
     );
   return (
-    <span data-row={rows[0]!.id}>
-      <button className="receipt looks" onClick={() => setOpen(true)} title="Show each search and page" aria-expanded={false}>
-        <span className="tick" aria-hidden>
-          <svg width="11" height="10" viewBox="0 0 11 10">
-            <path d="M1.5 5.2 4.3 8 9.6 1.8" />
-          </svg>
+    <span className="sources" data-row={rows[0]!.id}>
+      {[...pages].slice(0, 4).map(([host, link], i) => (
+        <a key={host} className="src" href={link} target="_blank" rel="noreferrer" title={link} style={{ "--i": i } as React.CSSProperties}>
+          <span className="src-mark" aria-hidden>
+            {host.replace(/^(m|en|news)\./, "")[0]!.toUpperCase()}
+          </span>
+          {host}
+        </a>
+      ))}
+      {pages.size === 0 && searches > 0 && (
+        <span className="src">
+          <span className="src-mark" aria-hidden>
+            <Icon name="search" size={10} />
+          </span>
+          {searches === 1 ? "Searched the web" : `Searched the web ${searches} times`}
         </span>
-        <span className="open">{label}</span>
+      )}
+      <button className="src more" onClick={() => setOpen(true)} title="Each search and page">
+        {pages.size > 4 ? `+${pages.size - 4} · Details` : "Details"}
       </button>
     </span>
   );
