@@ -332,6 +332,12 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE automations ADD COLUMN goes_to TEXT NOT NULL DEFAULT 'you';
   `,
+  // 18. M7: automations, files and pages carry areas too (§6.4: an area's page shows its routines and what was made in it).
+  `
+  ALTER TABLE automations ADD COLUMN areas TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE files ADD COLUMN areas TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE pages ADD COLUMN areas TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 /** Brings the schema up to date. Tests pass `to` to stop at an older version. */

@@ -139,7 +139,7 @@ function testDesk(sql: Sql, turns: Turn[], o: { goOn?: boolean } = {}) {
     changed: () => {},
   };
   const desk = new JobDesk(host);
-  return { desk, st };
+  return { desk, st, host };
 }
 
 const video = { title: "Launch video", goal: "A 30-second launch video for X, music only.", asked_in: null, asked_by: "row_ask" };
@@ -408,6 +408,63 @@ describe("work Atlas owns (§8.3)", () => {
       const other = await g.desk.start({ ...video, title: "Other" });
       await g.desk.wake(other.id);
       expect(getOwned(sql, other.id)).toMatchObject({ phase: "working", brain: "Quick", went_on_from: ["Main"] });
+    }));
+
+  it("keeps the area the owner gave a job over Atlas's guess, tags its rows, and follows a merge", () =>
+    withSql(async (sql) => {
+      const { desk } = testDesk(sql, [() => ({ text: "Here's the cut.", state: "replied" as const })]);
+      const job = await desk.start({ ...video, areas: [] });
+      desk.setAreas(job.id, ["area_owner"], "owner");
+      desk.setAreas(job.id, ["area_guess"], "atlas");
+      expect(getOwned(sql, job.id)!.areas).toEqual(["area_owner"]);
+      await desk.update(job.id, { text: "Script's done." });
+      const row = sql.exec<{ areas: string }>(`SELECT areas FROM log WHERE kind = 'job.update' ORDER BY seq DESC LIMIT 1`).one();
+      expect(JSON.parse(row.areas)).toEqual(["area_owner"]);
+      desk.remapArea("area_owner", "area_into");
+      expect(getOwned(sql, job.id)!.areas).toEqual(["area_into"]);
+    }));
+
+  it("pauses and asks after three turns in a row that couldn't run, instead of retrying forever", () =>
+    withSql(async (sql) => {
+      const empty = () => ({ text: "", state: "failed" as const, messages: [], error: "The brain gave an empty answer." });
+      const { desk, st } = testDesk(sql, [empty, empty, empty]);
+      const job = await desk.start(video);
+      await desk.wake(job.id);
+      await desk.wake(job.id);
+      expect(getOwned(sql, job.id)).toMatchObject({ phase: "working", stalled: 2 });
+      expect(st.asked).toHaveLength(0);
+      await desk.wake(job.id);
+      expect(getOwned(sql, job.id)).toMatchObject({ phase: "paused", stalled: 0 });
+      expect(st.asked[0]!.text).toContain("kept failing");
+      expect(st.asked[0]!.text).toContain("The brain gave an empty answer.");
+    }));
+
+  it("says so in the transcript when summarizing old work fails", () =>
+    withSql(async (sql) => {
+      const { desk, host, st } = testDesk(sql, [
+        (_d, j) => {
+          expect(j.transcript[0]!.content).toContain("summarizing it failed");
+          return "";
+        },
+      ]);
+      host.summarize = async () => {
+        throw new Error("the brain is down");
+      };
+      const job = await desk.start(video);
+      const big = "x".repeat(TRANSCRIPT_TOKENS * 2);
+      saveOwned(sql, {
+        ...getOwned(sql, job.id)!,
+        transcript: [
+          { role: "user", content: "first" },
+          { role: "assistant", content: big },
+          { role: "user", content: "second" },
+          { role: "assistant", content: big },
+          { role: "user", content: "third" },
+          { role: "assistant", content: "ok" },
+        ],
+      });
+      await desk.wake(job.id);
+      expect(st.inputs).toHaveLength(1);
     }));
 
   it("picks a turn cut off by a restart up where it was, and summarizes an old transcript, keeping its notes", () =>

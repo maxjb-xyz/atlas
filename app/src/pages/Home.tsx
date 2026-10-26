@@ -620,7 +620,7 @@ function Now({ atlas, showSituation }: { atlas: Atlas; showSituation: () => void
 function WeekTab({ atlas }: { atlas: Atlas }) {
   const [offset, setOffset] = useState(0);
   const start = addDays(weekStart(new Date()), offset * 7);
-  const cal = useCalendar(atlas, `week:${offset}`, start, addDays(start, 7));
+  const cal = useCalendar(atlas, `week:${offset}`, start, addDays(start, 7), { scoped: true });
   return (
     <Sheet>
       <div className="sheet-in">

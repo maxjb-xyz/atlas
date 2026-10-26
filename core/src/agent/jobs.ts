@@ -23,6 +23,7 @@ import type { FileRef, JobView } from "../protocol";
 import { type AgendaItem, createItem, finish, getItem } from "../store/agenda";
 import type { Sql } from "../store/db";
 import { append, type LogRow } from "../store/log";
+import { getArea } from "../store/areas";
 import { getState, setState } from "../store/state";
 
 export type JobPhase = "working" | "waiting" | "paused" | "done" | "failed" | "cancelled";
@@ -76,6 +77,9 @@ export interface Job {
   asked_in: string | null;
   /** The owner's message that asked for it, which its card sits under. */
   asked_by: string | null;
+  /** The areas it's in (§6): its asking message's when that's tagged, until the owner moves it ("owner"). */
+  areas?: string[];
+  areas_by?: "atlas" | "owner";
   folder: string;
   /** The named brain its turns run on (§18), "Main" for the main chain. */
   brain: string;
@@ -108,6 +112,8 @@ export interface Job {
   went_on_from: string[];
   /** Turns in a row that ended without a move (asking, handing off, waiting, finishing). */
   unsure: number;
+  /** Turns in a row that couldn't run at all (the brain failed before doing anything). */
+  stalled?: number;
   /** When a turn last made a move: set by the moves themselves. */
   moved_at: number;
   /** Whether the turn running now has made a move (asked, handed off, waited, finished). */
@@ -138,6 +144,8 @@ export const REMIND_AGAIN_MS = 24 * 3600_000;
 export const STALL_MS = 90 * 60_000;
 /** How long a job with nothing at work on it still shows as working: the moment between one turn and the next. */
 export const QUIET_MS = 2 * 60_000;
+/** Turns in a row that can't run at all before the job pauses and asks the owner. */
+export const STALLED_TURNS = 3;
 /** A transcript past this many tokens is compacted before the next turn: old tool output first, then a summary. */
 export const TRANSCRIPT_TOKENS = 30_000;
 
@@ -281,6 +289,7 @@ export class JobDesk {
     asked_by: string | null;
     brain?: string;
     deadline?: number | null;
+    areas?: string[];
   }): Promise<Job> {
     const now = Date.now();
     const item = createItem(this.h.sql, {
@@ -296,6 +305,8 @@ export class JobDesk {
       goal: o.goal,
       asked_in: o.asked_in,
       asked_by: o.asked_by,
+      areas: o.areas ?? [],
+      areas_by: "atlas",
       folder: folderFor(item.id),
       brain: o.brain ?? this.h.brains().work,
       phase: "working",
@@ -633,17 +644,29 @@ export class JobDesk {
     }
     if (out.state === "failed" && !out.messages.length) {
       // The turn couldn't run at all: the job is fine, so the news waits for the next turn.
-      current = { ...current, news: [...job.news, ...current.news], spent: { ...current.spent, turns: current.spent.turns - 1 } };
+      const stalled = (current.stalled ?? 0) + 1;
+      current = {
+        ...current,
+        stalled,
+        news: [...job.news, ...current.news],
+        spent: { ...current.spent, turns: current.spent.turns - 1 },
+      };
       saveOwned(this.h.sql, current);
-      if (out.error && ranOut(out.error)) await this.#pause(current, out.error);
-      else {
+      // A brain that ran out, or one that failed three turns in a row, pauses the job and asks the owner: wait, or go on
+      // with another brain. Retrying on its own forever would never tell them.
+      if (out.error && (ranOut(out.error) || stalled >= STALLED_TURNS)) {
+        await this.#pause(
+          { ...current, stalled: 0 },
+          ranOut(out.error) ? out.error : `${current.brain} failed ${stalled} turns in a row: ${out.error}`,
+        );
+      } else {
         console.error(JSON.stringify({ at: "jobs.turn", job: job.id, error: out.error }));
         await this.h.watch(job.id, Date.now() + 10 * 60_000);
       }
       this.h.changed();
       return;
     }
-    current = { ...current, transcript: tidy(out.messages), progress_at: Date.now() };
+    current = { ...current, transcript: tidy(out.messages), progress_at: Date.now(), stalled: 0 };
     if (out.interrupted) {
       // The owner spoke mid-turn: the work so far is kept, and the next turn starts now with their words.
       saveOwned(this.h.sql, current);
@@ -726,8 +749,20 @@ export class JobDesk {
     let cut = Math.floor(t.length / 2);
     while (cut < t.length - 1 && t[cut]!.role !== "user") cut++;
     if (cut >= t.length - 1) return t;
-    const summary = await this.h.summarize(job, t.slice(0, cut)).catch(() => "");
-    if (!summary) return t.slice(cut);
+    const summary = await this.h.summarize(job, t.slice(0, cut)).catch((err: unknown) => {
+      console.error(JSON.stringify({ at: "jobs.compact", job: job.id, error: err instanceof Error ? err.message : String(err) }));
+      return "";
+    });
+    // Without a summary the older half still goes, so the turn is told: its notes hold what it decided.
+    if (!summary)
+      return [
+        {
+          role: "user",
+          content:
+            "[The work before this point was cut to fit, and summarizing it failed. Your notes have what you decided; recall has the rest.]",
+        },
+        ...t.slice(cut),
+      ];
     return [{ role: "user", content: `[Your own summary of the work before this point]\n${summary}` }, ...t.slice(cut)];
   }
 
@@ -751,6 +786,7 @@ export class JobDesk {
       actor: "atlas",
       kind,
       run_id: job.asked_in,
+      areas: job.areas ?? [],
       body: { job: job.id, title: job.title, ...body } as never,
     });
     this.h.rows([row]);
@@ -788,7 +824,11 @@ export class JobDesk {
         until: null,
         news: [
           ...job.news,
-          { kind: "clock", text: `Your brain ran out partway (${clip(why, 300)}); you're going on with ${next}.`, at: Date.now() },
+          {
+            kind: "clock",
+            text: `Your brain ${ranOut(why) ? "ran out partway" : "kept failing"} (${clip(why, 300)}); you're going on with ${next}.`,
+            at: Date.now(),
+          },
         ],
       });
       await this.h.watch(job.id, Date.now() + 1_000);
@@ -805,13 +845,40 @@ export class JobDesk {
     await this.#ask(
       { ...job, phase: "paused" },
       {
-        text: `I paused ${job.title}: ${job.brain === "Main" ? "my main brain" : job.brain} ran out partway (${clip(why, 300)}). ${
+        text: `I paused ${job.title}: ${job.brain === "Main" ? "my main brain" : job.brain} ${ranOut(why) ? "ran out partway" : "kept failing"} (${clip(why, 300)}). ${
           until ? `It resets ${this.h.when?.(until) ?? new Date(until).toISOString()}.` : "Its provider didn't say when it resets."
         } Wait until then, or go on with another brain?`,
         options: [wait, ...Object.keys(brains)],
         pause: { wait, brains, until },
       },
     );
+  }
+
+  /**
+   * Puts a job in areas (§6): the owner's move ("owner") stands; Atlas's ("atlas", from its asking message's tag) only
+   * fills a job nobody has placed. Its rows in the log move with it, so History and the area's page find them.
+   */
+  setAreas(id: string, areas: string[], by: "atlas" | "owner"): Job | null {
+    const job = getOwned(this.h.sql, id);
+    if (!job) return null;
+    if (by === "atlas" && (job.areas_by === "owner" || (job.areas ?? []).length)) return job;
+    const next = { ...job, areas: [...new Set(areas)], areas_by: by };
+    saveOwned(this.h.sql, next);
+    this.h.sql.exec(
+      `UPDATE log SET areas = ? WHERE json_extract(body, '$.job') = ? AND kind IN ('job.update', 'job.question', 'job.result')`,
+      JSON.stringify(next.areas),
+      id,
+    );
+    this.h.changed();
+    return next;
+  }
+
+  /** An area merged into another (§6.3): jobs in it move with it. */
+  remapArea(from: string, into: string): void {
+    for (const j of ownedJobs(this.h.sql, 0)) {
+      if (!(j.areas ?? []).includes(from)) continue;
+      saveOwned(this.h.sql, { ...j, areas: [...new Set(j.areas!.map((a) => (a === from ? into : a)))] });
+    }
   }
 
   // --- the owner -----------------------------------------------------------------------
@@ -1190,6 +1257,7 @@ export class JobDesk {
     return {
       id: j.id,
       title: j.title,
+      areas: j.areas ?? [],
       state: j.phase === "done" ? "done" : j.phase === "failed" ? "failed" : j.phase === "cancelled" ? "cancelled" : "running",
       ...(activity ? { activity } : {}),
       moved_at: j.progress_at,
@@ -1289,7 +1357,8 @@ export function ownedLines(sql: Sql, live: (j: Job) => boolean): string[] {
               : Date.now() - j.progress_at > 10 * 60_000
                 ? `not moving: nothing at work on it, last moved ${ago(Date.now() - j.progress_at)} ago`
                 : "working";
-      return `- ${j.title} (id ${j.id}): ${where}${j.latest ? `; you last said on it: "${clip(j.latest.text, 200)}"` : ""}`;
+      const areas = (j.areas ?? []).map((id) => getArea(sql, id)?.name).filter(Boolean);
+      return `- ${j.title} (id ${j.id}${areas.length ? `, in ${areas.join(" and ")}` : ""}): ${where}${j.latest ? `; you last said on it: "${clip(j.latest.text, 200)}"` : ""}`;
     });
 }
 

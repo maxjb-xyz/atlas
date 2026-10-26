@@ -220,7 +220,7 @@ export const calendarAdd = defineTool({
     if (input.account && !named)
       return fail(`The owner has no calendar account "${input.account}". Theirs: ${all.map(accountText).join(", ") || "none"}.`);
     // The area's calendar (or the default), unless the owner named an account or a calendar.
-    const target = named ? { account: named } : calendarTargetFor(ctx.sql, hat(ctx.sql));
+    const target = named ? { account: named } : calendarTargetFor(ctx.sql, ctx.areas ?? hat(ctx.sql));
     const on = target?.account ?? null;
     const calendarName = input.calendar ?? (named ? undefined : target?.calendar);
     let made: CalendarEvent & { account?: string };

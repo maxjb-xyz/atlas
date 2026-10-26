@@ -14,6 +14,9 @@ import {
   unfiled,
 } from "../src/agent/areas";
 import { hat, systemPrompt } from "../src/context";
+import { getOwned } from "../src/agent/jobs";
+import { areaPage } from "../src/agent/views";
+import { call } from "./helpers";
 import {
   AreaLook,
   areaByName,
@@ -33,6 +36,7 @@ import { append, get as getRow, recent, thread } from "../src/store/log";
 import { createRecord } from "../src/store/records";
 import { readSettings } from "../src/store/settings";
 import { startRun } from "../src/store/runs";
+import { setState } from "../src/store/state";
 import { env, fakeCalendar, fakeDecider, fakeEmbedder, say, scripted } from "./helpers";
 
 async function withSql<T>(fn: (sql: Sql) => Promise<T> | T): Promise<T> {
@@ -299,7 +303,7 @@ describe("an area's look", () => {
 });
 
 describe("in the agent", () => {
-  it("tags after a run, takes corrections from the app, and uses the area's tone", async () => {
+  it("tags a message as it arrives, so the turn answering it wears its area, and uses the area's tone", async () => {
     const b = scripted([say("Sent."), say("Got it.")], "chatgpt", "gpt-5.6-terra");
     seams.makeBrain = () => b.brain;
     seams.decide = fakeDecider({ Keyframes: ["invoice"] });
@@ -315,9 +319,55 @@ describe("in the agent", () => {
       await agent.apiSettleMemory();
       const asked = sql.exec<{ id: string }>(`SELECT id FROM log WHERE run_id = ? AND kind = 'message.in'`, out.run_id).one().id;
       expect(getRow(sql, asked)!.areas).toEqual([work.id]);
-      // The next run wears that hat.
+      // The turn answering it already wears that hat, and so does the next.
+      expect(JSON.stringify(b.requests[0])).toContain("Tone here: brisk.");
       await agent.apiTurn("and cc Dana");
       expect(b.requests[1]!.system).toContain("Tone here: brisk.");
     });
   });
+
+  it("puts a job in its asking message's area, tags its rows, and lists it on the area's page", async () => {
+    const b = scripted([call("job_own", { title: "Invoice run", goal: "Send every client's invoice." }), say("On it.")]);
+    seams.makeBrain = () => b.brain;
+    seams.decide = fakeDecider({ Keyframes: ["invoice"] });
+    seams.embed = fakeEmbedder();
+    seams.calendar = fakeCalendar([]);
+    const stub = env.PersonAgent.get(env.PersonAgent.idFromName(`aj-${crypto.randomUUID()}`));
+    await runInDurableObject(stub, async (agent: PersonAgent, state) => {
+      const sql = state.storage.sql;
+      migrate(sql);
+      const work = createArea(sql, { name: "Keyframes", by: "owner" });
+      await agent.apiTurn("run the invoices for this month");
+      await agent.apiSettleMemory();
+      const key = sql.exec<{ key: string }>(`SELECT key FROM state WHERE key LIKE 'owned:%'`).one().key;
+      const job = getOwned(sql, key.slice(6))!;
+      expect(job.areas).toEqual([work.id]);
+      const page = areaPage(sql, work.id);
+      expect(page.kind === "area" && page.jobs.map((j) => j.title)).toEqual(["Invoice run"]);
+    });
+  });
+});
+
+describe("names and merging", () => {
+  it("treats names case-insensitively, and a merge carries settings, events and every kind of tag", () =>
+    runInDurableObject(env.PersonAgent.get(env.PersonAgent.idFromName(`am-${crypto.randomUUID()}`)), async (_a, state) => {
+      const sql: Sql = state.storage.sql;
+      migrate(sql);
+      const gym = createArea(sql, { name: "Gym", by: "owner" });
+      expect(createArea(sql, { name: "gym", by: "atlas" }).id).toBe(gym.id);
+      const run = createArea(sql, { name: "Running", by: "owner" });
+      expect(() => updateArea(sql, run.id, { name: "GYM" }, "owner")).toThrow("already an area called Gym");
+      updateArea(sql, gym.id, { settings: { tone: "upbeat", calendars: ["icloud::Gym"] } }, "owner");
+      sql.exec(
+        `INSERT INTO automations (id, name, trigger, steps, made_by, created_at, updated_at, areas) VALUES ('au_1', 'Leg day', '{}', '[]', 'owner', 1, 1, ?)`,
+        JSON.stringify([gym.id]),
+      );
+      setTags(sql, "aut:au_1", [gym.id]);
+      setState(sql, "event_areas", { s1: { areas: [gym.id], by: "owner", at: 1 } });
+      mergeAreas(sql, gym.id, run.id, "owner");
+      expect(tagsOf(sql, "aut:au_1")).toEqual([run.id]);
+      expect(getArea(sql, run.id)!.settings).toMatchObject({ tone: "upbeat", calendars: ["icloud::Gym"] });
+      const events = JSON.parse(sql.exec<{ value: string }>(`SELECT value FROM state WHERE key = 'event_areas'`).one().value);
+      expect(events.s1.areas).toEqual([run.id]);
+    }));
 });

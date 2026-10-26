@@ -17,7 +17,7 @@ import {
   whenText,
 } from "../automations";
 import { findWebhook, webhooks } from "../webhooks";
-import { defineTool, fail } from "./types";
+import { defineTool, fail, placeMade } from "./types";
 
 const names = (sql: Parameters<typeof getAutomation>[0]) => (id: string) => getAutomation(sql, id)?.name ?? null;
 
@@ -78,6 +78,8 @@ export const automationSave = defineTool({
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }
+    // A new one starts in the areas this run acts in (§6.4), so the area's page shows it; the owner moves it by its chip.
+    if (!id) placeMade(ctx, `aut:${saved.id}`);
     await ctx.automations.arm(saved.id);
     return {
       ok: true,

@@ -9,7 +9,7 @@ import type { AutomationInput, Step, Trigger } from "../../../core/src/automatio
 import type { AutomationView } from "../../../core/src/protocol";
 import type { Atlas } from "../connection";
 import { Composer } from "../Shell";
-import { Empty, Icon, type ICONS, Picker, Seg, Sheet, shortDay, Stage, startOfDay } from "../ui";
+import { AreaChip, Empty, Icon, type ICONS, Picker, Seg, Sheet, shortDay, Stage, startOfDay } from "../ui";
 
 type Filter = "all" | "request" | "schedule" | "event" | "watch";
 
@@ -208,6 +208,13 @@ function AutomationCard({ atlas, a, open }: { atlas: Atlas; a: AutomationView; o
       </button>
       <div className="foot">
         <RunStrip a={a} />
+        {atlas.state.areas.length > 0 && (
+          <AreaChip
+            ids={a.areas}
+            areas={atlas.state.areas}
+            onMove={(ids) => atlas.send({ type: "atlas.areas.set", ref: `aut:${a.id}`, areas: ids })}
+          />
+        )}
         <span className="muted small grow">{last ? shortDay(last.at) : a.next_at ? `Next ${shortDay(a.next_at)}` : "Not run yet"}</span>
         {a.when.kind === "request" ? (
           <button className="btn sm" onClick={() => (inputsOf(a).length ? open() : atlas.send({ type: "atlas.automation.run", id: a.id }))}>

@@ -340,7 +340,16 @@ export interface StageMessage {
 /** An area's page, built live from its records and the log (§6.4). */
 export interface AreaPage {
   kind: "area";
-  area: { id: string; name: string; about: string; state: string; color: number; tone: string };
+  area: {
+    id: string;
+    name: string;
+    about: string;
+    state: string;
+    color: number;
+    custom_color: string | null;
+    icon: string | null;
+    tone: string;
+  };
   people: RecordView[];
   /** Goals, tasks, commitments and events. */
   plans: RecordView[];
@@ -350,6 +359,10 @@ export interface AreaPage {
   notes: RecordView[];
   recent: StageMessage[];
   counts: { messages: number; records: number };
+  /** Work in it (§6.4): jobs going and lately ended, its routines, and what was made in it. */
+  jobs: Array<{ id: string; title: string; state: "running" | "done" | "failed" | "cancelled"; at: number }>;
+  routines: Array<{ id: string; name: string; when: string; on: boolean }>;
+  made: Array<{ kind: "file" | "page"; id: string; name: string; type?: string; at: number }>;
 }
 
 /** A person's page: what Atlas knows, where it learned it, and where they come up. */
@@ -368,6 +381,8 @@ export interface PersonPage {
 export interface AutomationView {
   id: string;
   name: string;
+  /** The areas it's in (§6.4), which its chip moves. */
+  areas: string[];
   about: string;
   state: "on" | "paused";
   made_by: import("./automations").Maker;
@@ -451,6 +466,8 @@ export interface WorkspaceStagePage {
 export interface FileRow {
   id: string;
   name: string;
+  /** The areas it's in (§6.4): what made it, until the owner moves it. */
+  areas: string[];
   type: string;
   size: number;
   made_by: "owner" | "atlas";

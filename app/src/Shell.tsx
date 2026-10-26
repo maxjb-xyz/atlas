@@ -270,30 +270,33 @@ export function Toolbar({ atlas, go, onSearch }: { atlas: Atlas; go: (p: Place, 
               <div className="head">
                 <span className="lab">{running.length ? "Running now" : "Lately"}</span>
               </div>
-              {s.jobs.map((j) => (
-                <button
-                  key={j.id}
-                  className="item"
-                  style={{ flexDirection: "column", alignItems: "stretch", gap: 3 }}
-                  onClick={() => {
-                    go("home", `job:${j.id}`);
-                    setJobsOpen(false);
-                  }}
-                >
-                  <span style={{ fontWeight: 500 }}>{j.title}</span>
-                  <span className="row small" style={{ gap: 10 }}>
-                    <span className={`${jobNow(j).tone} mono`}>{jobNow(j).label}</span>
-                    <span className="muted grow clip">
-                      {j.owned && j.activity === "working" && j.owned.now
-                        ? j.owned.now
-                        : j.state === "running"
-                          ? jobNow(j).status
-                          : (j.status ?? `${j.steps} lookups`)}
+              {/* Focused on an area (§21.3), the list is that area's work, and work that has no area. */}
+              {s.jobs
+                .filter((j) => !s.scope || !j.areas?.length || j.areas.includes(s.scope))
+                .map((j) => (
+                  <button
+                    key={j.id}
+                    className="item"
+                    style={{ flexDirection: "column", alignItems: "stretch", gap: 3 }}
+                    onClick={() => {
+                      go("home", `job:${j.id}`);
+                      setJobsOpen(false);
+                    }}
+                  >
+                    <span style={{ fontWeight: 500 }}>{j.title}</span>
+                    <span className="row small" style={{ gap: 10 }}>
+                      <span className={`${jobNow(j).tone} mono`}>{jobNow(j).label}</span>
+                      <span className="muted grow clip">
+                        {j.owned && j.activity === "working" && j.owned.now
+                          ? j.owned.now
+                          : j.state === "running"
+                            ? jobNow(j).status
+                            : (j.status ?? `${j.steps} lookups`)}
+                      </span>
+                      <span className="mono faint">{shortDay(j.started_at)}</span>
                     </span>
-                    <span className="mono faint">{shortDay(j.started_at)}</span>
-                  </span>
-                </button>
-              ))}
+                  </button>
+                ))}
               <div className="foot">Open one for everything I've said and done on it.</div>
             </div>
           )}

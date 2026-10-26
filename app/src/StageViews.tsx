@@ -313,6 +313,62 @@ function AreaView({
         <Group icon="grid" label="Plans and tasks" list={p.plans} empty="No plans yet." />
         <Group icon="place" label="Places and notes" list={[...p.places, ...p.notes]} empty="Nothing yet." />
       </div>
+      {(p.jobs.length > 0 || p.routines.length > 0 || p.made.length > 0) && (
+        <div className="cells" style={{ marginTop: 16 }}>
+          <div className="cell">
+            <span className="lab">
+              <Icon name="jobs" size={13} />
+              Work
+              <span className="count mono">{p.jobs.length}</span>
+            </span>
+            {p.jobs.map((j) => (
+              <a key={j.id} className="li pickable" href={`#/home/${encodeURIComponent(`job:${j.id}`)}`}>
+                {j.state === "running" ? <span className="mono spin" aria-hidden /> : <span className="dot sq" />}
+                <span>
+                  {j.title}
+                  <span className="muted"> · {j.state === "running" ? "going" : j.state === "done" ? "done" : "stopped"}</span>
+                </span>
+              </a>
+            ))}
+            {!p.jobs.length && <p className="faint small">No work in it lately.</p>}
+          </div>
+          <div className="cell">
+            <span className="lab">
+              <Icon name="automations" size={13} />
+              Routines
+              <span className="count mono">{p.routines.length}</span>
+            </span>
+            {p.routines.map((r) => (
+              <a key={r.id} className="li pickable" href={`#/automations/${encodeURIComponent(`a:${r.id}`)}`} title={r.when}>
+                <span className={`dot sq ${r.on ? "" : "off"}`} />
+                <span>
+                  {r.name}
+                  <span className="muted"> · {r.on ? r.when : "off"}</span>
+                </span>
+              </a>
+            ))}
+            {!p.routines.length && <p className="faint small">No routines in it.</p>}
+          </div>
+          <div className="cell">
+            <span className="lab">
+              <Icon name="file" size={13} />
+              Made here
+              <span className="count mono">{p.made.length}</span>
+            </span>
+            {p.made.map((m) => (
+              <div
+                key={m.id}
+                className="li pickable"
+                {...pressable(() => onOpen(m.kind === "file" ? { kind: "file", file: m.id } : { kind: "page", page: m.id }, m.name))}
+              >
+                <Icon name={m.kind === "page" ? "book" : "file"} size={13} />
+                <span>{m.name}</span>
+              </div>
+            ))}
+            {!p.made.length && <p className="faint small">Nothing made in it yet.</p>}
+          </div>
+        </div>
+      )}
       <div className="section-rule">
         <span className="lab">Lately</span>
       </div>

@@ -933,6 +933,15 @@ function Pages({ atlas, go }: { atlas: Atlas; go: (d: string) => void }) {
                     </span>
                   )}
                 </span>
+                {s.areas.length > 0 && (
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <AreaChip
+                      ids={f.areas ?? []}
+                      areas={s.areas}
+                      onMove={(ids) => atlas.send({ type: "atlas.areas.set", ref: `file:${f.id}`, areas: ids })}
+                    />
+                  </span>
+                )}
                 <span className="lab faint hide-phone">{f.made_by === "owner" ? "You" : "Atlas"}</span>
                 <span className="mono faint small" style={{ flex: "none" }}>
                   {sizeOf(f.size)} · {shortDay(f.updated_at)}

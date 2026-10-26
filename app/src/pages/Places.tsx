@@ -240,9 +240,9 @@ export function Agenda({ atlas }: { atlas: Atlas }) {
   const [tab, setTab] = useState<"upcoming" | "week">("upcoming");
   const [day, setDay] = useState<string | null>(null);
   const today = startOfDay(new Date());
-  const cal = useCalendar(atlas, "agenda", today, addDays(today, 14));
+  const cal = useCalendar(atlas, "agenda", today, addDays(today, 14), { scoped: true });
   const start = weekStart(new Date());
-  const week = useCalendar(atlas, "week:0", start, addDays(start, 7));
+  const week = useCalendar(atlas, "week:0", start, addDays(start, 7), { scoped: true });
 
   const entries: AgendaEntry[] = [
     ...(cal?.events ?? [])

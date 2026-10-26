@@ -116,7 +116,7 @@ export const emailSend = defineTool({
       const named = !via && input.from ? accountNamed(all, input.from) : null;
       if (!via && input.from && !named)
         return fail(`The owner has no mail account "${input.from}". Theirs: ${all.map(accountText).join(", ") || "none"}.`);
-      const sender = (via ? getExt(ctx.sql, via) : null) ?? named ?? mailAccountFor(ctx.sql, hat(ctx.sql));
+      const sender = (via ? getExt(ctx.sql, via) : null) ?? named ?? mailAccountFor(ctx.sql, ctx.areas ?? hat(ctx.sql));
       if (!sender || sender.state !== "on")
         return fail("The owner's mail isn't connected, so you can't send as them. They connect Gmail in Abilities → Services.");
       via = sender.id;

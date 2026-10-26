@@ -97,9 +97,11 @@ export function promptParts(opts: {
   extra?: string;
   /** Connected MCP servers, for runs that can use them (§9.2). */
   mcp?: McpServer[];
+  /** False for a job's turns: a job has its own conversation, and the owner's would only cost tokens and break its cache. */
+  conversation?: boolean;
 }): { stable: string; now: string } {
   const { settings, tz, now, surface, sql } = opts;
-  const summary = latestSummary(sql, opts.beforeSeq);
+  const summary = opts.conversation === false ? null : latestSummary(sql, opts.beforeSeq);
   // What changes only when the owner changes something (a page kept, a skill saved, a brain or a server set up) sits in
   // the cached part of the owner's turns, after what never changes; Atlas's own runs and jobs don't carry it there.
   const own = surface !== "none";
@@ -257,7 +259,7 @@ export function hat(sql: Sql, beforeSeq?: number): Area[] {
   if (scope) return [getArea(sql, scope)!];
   const r = sql
     .exec<{ areas: string }>(
-      `SELECT areas FROM log WHERE kind = 'message.in' AND areas != '[]' AND seq <= ? AND at > ? ORDER BY seq DESC LIMIT 1`,
+      `SELECT areas FROM log WHERE kind = 'message.in' AND areas != '[]' AND json_extract(body, '$.job') IS NULL AND seq <= ? AND at > ? ORDER BY seq DESC LIMIT 1`,
       beforeSeq ?? Number.MAX_SAFE_INTEGER,
       Date.now() - 30 * 60_000,
     )
@@ -510,12 +512,15 @@ function reachContext(sql: Sql, settings: Settings): string {
 function areaContext(sql: Sql, beforeSeq?: number): string {
   const all = listAreas(sql).filter((a) => a.state !== "archived");
   if (!all.length) return "";
-  const worn = hat(sql, beforeSeq);
+  return wornLines(sql, hat(sql, beforeSeq), all);
+}
+
+/** The areas a run acts in, with their tone and accounts, and the owner's others (a job's own areas use it too). */
+export function wornLines(sql: Sql, worn: Area[], all = listAreas(sql).filter((a) => a.state !== "archived")): string {
+  if (!all.length) return "";
   const lines: string[] = [];
-  if (worn.length) {
-    for (const a of worn) {
-      lines.push(`You're acting in ${a.name}${a.about ? ` (${a.about})` : ""}.${a.settings.tone ? ` Tone here: ${a.settings.tone}.` : ""}`);
-    }
+  for (const a of worn) {
+    lines.push(`You're acting in ${a.name}${a.about ? ` (${a.about})` : ""}.${a.settings.tone ? ` Tone here: ${a.settings.tone}.` : ""}`);
   }
   lines.push(`The owner's areas: ${all.map((a) => a.name).join(", ")}. You can talk about any of them at any time.`);
   const accounts = accountsLine(sql, worn);

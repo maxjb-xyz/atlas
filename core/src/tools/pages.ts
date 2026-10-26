@@ -6,7 +6,7 @@
 import { z } from "zod";
 import { bodyOf, findPage, listPages, pageVersion, pageVersions, savePage, type Segment, segments } from "../pages";
 import { resolve } from "./show";
-import { defineTool, fail } from "./types";
+import { defineTool, fail, placeMade } from "./types";
 
 export const pageSave = defineTool({
   name: "page_save",
@@ -53,6 +53,7 @@ export const pageSave = defineTool({
       return fail(err instanceof Error ? err.message : String(err));
     }
     if (!out.row) return { ok: true, output: { unchanged: true, page: out.page.id, version: out.version } };
+    if (!old) placeMade(ctx, `page:${out.page.id}`);
     return {
       ok: true,
       output: { page: out.page.id, name: out.page.name, version: out.version },

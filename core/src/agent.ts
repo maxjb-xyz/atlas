@@ -14,7 +14,9 @@ import {
   eventAreas,
   readyToDiscover,
   startDiscovered,
+  placeFiles,
   tagEvents,
+  tagNow,
   tagPending,
   triedDiscovery,
   unfiled,
@@ -23,7 +25,7 @@ import { HelperDesk, helperBrain, RESEARCH_BUDGET } from "./agent/helpers";
 import { CodingDesk, getJob, type JobWorkspace, type PullRequest } from "./agent/coding";
 import { codingTools, type Effort } from "./tools/coding";
 import { settingsTools } from "./tools/settings";
-import { ago, getOwned, inFolder, INTERRUPTED, type Job, JOB_LIMITS, type JobHost, JobDesk, TURN_BUDGET } from "./agent/jobs";
+import { ago, getOwned, inFolder, INTERRUPTED, type Job, JOB_LIMITS, type JobHost, JobDesk, ownedJobs, TURN_BUDGET } from "./agent/jobs";
 import { adoptOldJobs } from "./agent/adopt";
 import { CallDesk } from "./agent/calls";
 import { folderRun, jobOwn, MOVES, READ_TOOLS } from "./tools/jobs";
@@ -33,6 +35,7 @@ import { correctRecord, createRecord, findRecords, forgetRecord, getRecord } fro
 import { type Decider, workersAIDecider } from "./brains/decide";
 import { type Extractor, workersAIExtractor } from "./brains/extract";
 import {
+  type Area,
   createArea,
   getArea,
   getScope,
@@ -42,6 +45,7 @@ import {
   setScope,
   setTags,
   type Tagged,
+  tagsOf,
   updateArea,
 } from "./store/areas";
 import { brainsForModels, ChatGPTSignIn } from "./agent/chatgpt";
@@ -79,7 +83,7 @@ import { type JudgeLine, judgeTranscript, runCharacterCheck, summary as characte
 import { newSessionId, type Session, SESSION_DAYS, SESSION_HEADER } from "./auth";
 import { CHALLENGE_MS, type StoredPasskey } from "./passkeys";
 import { compact, planCompaction } from "./compaction";
-import { CONTEXT_TOKENS, history, latestSummary, promptParts, systemPrompt, tokens, withMessage, withNow } from "./context";
+import { CONTEXT_TOKENS, hat, history, latestSummary, promptParts, systemPrompt, tokens, withMessage, withNow, wornLines } from "./context";
 import { BUDGETS, type LoopEvent, type LoopResult, runLoop, TOOLS_LOAD, type ToolGroup } from "./loop";
 import { askedOn, Outbox, type PushDevice, pushDevices, route, StreamScrubber, type Urgency } from "./outbox";
 import { vapidKeys } from "./push";
@@ -439,6 +443,8 @@ const TEST_TOOLS: Tool[] = [
  * talk, with the summary of what came before. A long prompt slows a model's first words; recall has the rest.
  */
 const TURN_HISTORY_TOKENS = 6_000;
+/** How long a typed turn waits for its message's area before going on without it (§6.2). */
+const TAG_WAIT_MS = 300;
 
 /** The most of a job's question's content that goes on a chat with it; the rest waits in Inbox. */
 const CHAT_CONTENT = 12_000;
@@ -707,12 +713,12 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         return true;
       },
       looking: () => this.#looking(),
-      hold: async (at, note) => {
+      hold: async (at, note, why) => {
         const item = createItem(this.#sql, {
           kind: "notify",
           title: note.text.slice(0, 300),
           due_at: at.getTime(),
-          source: { log_id: note.id, run_id: note.run_id ?? undefined, via: "outbox" },
+          source: { log_id: note.id, run_id: note.run_id ?? undefined, via: why === "scope" ? "scope" : "outbox" },
         });
         await this.#clock.schedule(item);
       },
@@ -1604,10 +1610,20 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       case "atlas.calls.test":
         this.#send(connection, await this.#callsAsk(msg));
         return;
-      case "atlas.scope.set":
-        setScope(this.#sql, msg.area && listAreas(this.#sql).some((a) => a.id === msg.area) ? msg.area : null);
+      case "atlas.scope.set": {
+        const scope = msg.area && listAreas(this.#sql).some((a) => a.id === msg.area) ? msg.area : null;
+        setScope(this.#sql, scope);
         this.#areasChanged();
+        // What waited on the focus goes out now: all of it when the focus is lifted, else what's about the new area.
+        const held = upcoming(this.#sql, 500).filter((i) => i.kind === "notify" && i.state === "scheduled" && i.source.via === "scope");
+        for (const i of held) {
+          const row = i.source.log_id ? getRow(this.#sql, i.source.log_id) : null;
+          if (scope && row?.areas.length && !row.areas.includes(scope)) continue;
+          rearm(this.#sql, i.id, Date.now());
+          await this.#clock.schedule(getItem(this.#sql, i.id)!);
+        }
         return;
+      }
       case "atlas.area.look":
         try {
           await this.#areaLook(msg);
@@ -1654,11 +1670,22 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
             updateArea(this.#sql, msg.id, msg, "owner");
             // An area's calendar account changes which events are its own.
             if (msg.settings?.calendars !== undefined) this.#broadcast({ type: "atlas.calendar.changed" });
-          } else if (msg.type === "atlas.area.merge") mergeAreas(this.#sql, msg.from, msg.into, "owner");
-          else {
+          } else if (msg.type === "atlas.area.merge") {
+            mergeAreas(this.#sql, msg.from, msg.into, "owner");
+            this.#owned.remapArea(msg.from, msg.into);
+            this.#jobsChanged();
+          } else if (msg.ref.startsWith("job:")) {
+            // A job moved by its chip (§6.3): it and its rows follow, and it stays where the owner put it.
+            const id = msg.ref.slice(4);
+            const valid = msg.areas.filter((a) => getArea(this.#sql, a));
+            if (!this.#owned.setAreas(id, valid, "owner")) throw new Error("That job isn't there any more.");
+            this.#jobsChanged();
+          } else {
             const row = correctAreas(this.#sql, msg.ref as Tagged, msg.areas);
             const changed = msg.ref.startsWith("log:") ? [msg.ref.slice(4)] : [];
             this.#broadcast({ type: "atlas.rows", rows: [row, ...changed.map((id) => getRow(this.#sql, id)!).filter(Boolean)] });
+            if (msg.ref.startsWith("aut:")) this.#automationsChanged();
+            if (msg.ref.startsWith("file:")) this.#broadcast({ type: "atlas.files", files: listFiles(this.#sql) });
           }
         } catch (err) {
           this.#send(connection, { type: "atlas.error", message: err instanceof Error ? err.message : String(err) });
@@ -2423,6 +2450,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
       setTags(this.#sql, `log:${inRow.id}`, mail.areas);
       inRow.areas = [...new Set(mail.areas)];
     }
+    this.#tagSoon(inRow);
     this.#broadcast({ type: "atlas.rows", rows: [inRow] });
     this.#broadcast({ type: "atlas.run", run_id: runId, state: "running", surface, client_id: clientId });
     const chat = via ? this.#chatPresence(runId, via) : null;
@@ -2539,6 +2567,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const runId = startRun(this.#sql, { actor: "owner", trigger: "voice", surface: "voice", role: "voice" });
     const inRow = append(this.#sql, { actor: "owner", kind: "message.in", run_id: runId, surface: "voice", body: { text: transcript } });
     this.#broadcast({ type: "atlas.rows", rows: [inRow] });
+    // Voice doesn't wait for it: its tools still pick the area's accounts once it lands.
+    this.#tagSoon(inRow);
     this.#broadcast({ type: "atlas.run", run_id: runId, state: "running", surface: "voice" });
 
     const spoken = new Speech();
@@ -3314,6 +3344,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     // What's shared, and for a member's Atlas whose it is (§7.1). The owner's Atlas being unreachable doesn't stop a run.
     const shared = await this.#sharedNote();
     const extra = [o.extra ?? "", shared].filter(Boolean).join("\n\n") || undefined;
+    // A typed message wears its own area (§6.2) when tagging it is quick; a slow tag lands for the tools instead.
+    if (o.actor === "owner" && o.surface !== "voice") await this.#taggedBy(o.runId, TAG_WAIT_MS);
     // What stays put is the prompt, which brains cache; what's true now rides with this turn's message (§4.1).
     const parts = promptParts({ settings, tz, now, surface: o.surface, sql: this.#sql, beforeSeq: o.beforeSeq, mcp, extra });
     const system = parts.stable;
@@ -3461,7 +3493,10 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         start: async (o) => {
           // A named brain asked for by name must exist (§18); else the owner's pick for a job's work.
           const brain = chainFor(settings, "job_work", o.brain).name;
-          const job = await this.#owned.start({ ...o, brain });
+          // It starts in its asking message's areas, else the ones the conversation wears; a tag landing later fills it.
+          const asked = o.asked_by ? tagsOf(this.#sql, `log:${o.asked_by}`) : [];
+          const areas = asked.length ? asked : hat(this.#sql).map((a) => a.id);
+          const job = await this.#owned.start({ ...o, brain, areas });
           return { id: job.id, folder: job.folder };
         },
       },
@@ -3956,8 +3991,11 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const now = new Date();
     const runId = startRun(sql, { actor: "atlas", trigger: `job:${job.id}`, surface: "none", role: "main" });
     // The prompt stays the same from turn to turn, so it caches: the character, how a job is done, this job's goal.
-    const { stable } = promptParts({ settings, tz, now, surface: "none", sql });
-    const system = `${stable}\n\n---\n\n${jobSystem(settings, job)}`;
+    const { stable } = promptParts({ settings, tz, now, surface: "none", sql, conversation: false });
+    // The job's own areas (§6.2): their tone and accounts, not whatever the main conversation wears now.
+    const worn = (job.areas ?? []).map((id) => getArea(sql, id)).filter((a): a is Area => a != null && a.state !== "archived");
+    const areaNote = wornLines(sql, worn);
+    const system = `${stable}\n\n---\n\n${jobSystem(settings, job)}${areaNote ? `\n\n${areaNote}` : ""}`;
     const messages: BrainMessage[] = [
       ...job.transcript,
       { role: "user", content: `Now: ${longLocal(now, tz)} (${isoLocal(now, tz)}), time zone ${tz}.\n\n${input}` },
@@ -3977,6 +4015,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         chain,
         toolContext: {
           ...this.#toolContext(settings, now, "clock", null),
+          areas: worn,
           workspace: this.#inFolder(job.folder),
           ownedJob: {
             id,
@@ -4282,6 +4321,45 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     return workersAIEmbedder(this.env.AI as never);
   }
 
+  /** Owner's messages being tagged as they arrive, by run (§6.2): the turn answering one waits a moment to wear its area. */
+  #tagging = new Map<string, Promise<void>>();
+
+  /** Starts tagging an owner's message now, beside the run, so the turn and its tools wear its area. */
+  #tagSoon(row: LogRow): void {
+    const decider = this.#decider();
+    if (!decider || !row.run_id || row.areas.length) return;
+    const run = row.run_id;
+    const p = tagNow(this.#sql, decider, row)
+      .then((changed) => {
+        if (!changed) return;
+        this.#broadcast({ type: "atlas.rows", rows: [getRow(this.#sql, row.id)!] });
+        this.#jobsTakeTags();
+      })
+      .catch((err: unknown) => console.error(JSON.stringify({ at: "areas.now", error: err instanceof Error ? err.message : String(err) })))
+      .finally(() => this.#tagging.delete(run));
+    this.#tagging.set(run, p);
+  }
+
+  /** A job nobody has placed takes its asking message's areas once that message is tagged (§6). */
+  #jobsTakeTags(): void {
+    let moved = false;
+    const jobs = ownedJobs(this.#sql, 0);
+    for (const j of jobs) {
+      if ((j.areas ?? []).length || j.areas_by === "owner" || !j.asked_by) continue;
+      const tags = tagsOf(this.#sql, `log:${j.asked_by}`);
+      if (tags.length && this.#owned.setAreas(j.id, tags, "atlas")) moved = true;
+    }
+    // What was made in them follows (a file kept by a job, or made in a turn whose message just got its area).
+    if (placeFiles(this.#sql, ownedJobs(this.#sql, 0))) this.#broadcast({ type: "atlas.files", files: listFiles(this.#sql) });
+    if (moved) this.#jobsChanged();
+  }
+
+  /** Waits at most `ms` for the run's message to get its area. */
+  async #taggedBy(runId: string, ms: number): Promise<void> {
+    const p = this.#tagging.get(runId);
+    if (p) await Promise.race([p, new Promise((r) => setTimeout(r, ms))]);
+  }
+
   #tending: Promise<void> = Promise.resolve();
   #tendQueued = false;
 
@@ -4330,6 +4408,8 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
         if (pass.changed.length) this.#broadcast({ type: "atlas.rows", rows: pass.changed.map((id) => getRow(this.#sql, id)!) });
         if (pass.seen < 50) break;
       }
+      // Jobs and files take the areas of the messages that started them.
+      this.#jobsTakeTags();
       if (await tagEvents(this.#sql, decider, { between: yieldNow })) this.#broadcast({ type: "atlas.calendar.changed" });
       const waiting = unfiled(this.#sql);
       if (readyToDiscover(this.#sql, waiting)) {
@@ -4485,6 +4565,7 @@ export class PersonAgent extends VoiceAgent implements HelperHost {
     const runId = startRun(this.#sql, { actor: "owner", trigger: "api", surface: "api", role: "main" });
     const inRow = append(this.#sql, { actor: "owner", kind: "message.in", run_id: runId, surface: "api", body: { text } });
     this.#broadcast({ type: "atlas.rows", rows: [inRow] });
+    this.#tagSoon(inRow);
     const res = await this.keepAliveWhile(() =>
       this.#inLine(
         async () => {

@@ -13,6 +13,7 @@ import {
   getArea,
   listAreas,
   setTags,
+  tableOf,
   type Tagged,
   tagsOf,
   threadAreas,
@@ -178,6 +179,47 @@ export async function tagPending(
   return { seen, tagged, unfiled, changed };
 }
 
+/**
+ * Tags one owner's message as it arrives, so the turn answering it can wear its area (§6.2) rather than the last
+ * message's. The pass after the run sees it tagged and moves on. Returns whether it got an area.
+ */
+export async function tagNow(sql: Sql, decider: Decider, row: LogRow): Promise<boolean> {
+  const text = typeof row.body.text === "string" ? row.body.text : "";
+  if (row.actor !== "owner" || row.areas.length || !text.trim()) return false;
+  const areas = listAreas(sql).slice(0, MAX_QUESTIONS - 1);
+  if (!areas.length) return false;
+  const questions: Record<string, YesNo> = {};
+  for (const a of areas) questions[a.id] = question(sql, a);
+  const p = await ask(decider, text, questions, row.id);
+  const tags = areas.filter((a) => (p[a.id] ?? 0) >= TAG_AT).map((a) => a.id);
+  // The owner may have moved it by hand meanwhile: theirs stands.
+  if (!tags.length || tagsOf(sql, `log:${row.id}`).length) return false;
+  setTags(sql, `log:${row.id}`, tags);
+  for (const a of areas) if (tags.includes(a.id) && a.state === "dormant") updateArea(sql, a.id, { state: "active" }, "atlas");
+  return true;
+}
+
+/**
+ * Files that have no area yet take the areas of what made them (§6.4): a job's own, or the message its run answered.
+ * Run after tagging, so a file made in a turn lands where the turn's message did.
+ */
+export function placeFiles(sql: Sql, jobs: Array<{ areas?: string[]; files: Array<{ id: string }> }>): number {
+  let n = 0;
+  for (const j of jobs) {
+    if (!j.areas?.length || !j.files.length) continue;
+    for (const f of j.files) {
+      sql.exec(`UPDATE files SET areas = ? WHERE id = ? AND areas = '[]'`, JSON.stringify(j.areas), f.id);
+      n += sql.exec(`SELECT changes() AS c`).one().c as number;
+    }
+  }
+  sql.exec(
+    `UPDATE files SET areas = (SELECT l.areas FROM log l WHERE l.run_id = files.run_id AND l.kind = 'message.in' AND l.areas != '[]' LIMIT 1)
+     WHERE areas = '[]' AND run_id IS NOT NULL
+       AND EXISTS (SELECT 1 FROM log l WHERE l.run_id = files.run_id AND l.kind = 'message.in' AND l.areas != '[]')`,
+  );
+  return n + (sql.exec(`SELECT changes() AS c`).one().c as number);
+}
+
 /** Messages that fit no area yet but seemed to be about something ongoing. */
 export function unfiled(sql: Sql): LogRow[] {
   return (getState<string[]>(sql, "unfiled") ?? []).map((id) => getRow(sql, id)).filter((r): r is LogRow => r != null);
@@ -307,7 +349,7 @@ export function correctAreas(sql: Sql, ref: Tagged, areaIds: string[]): LogRow {
       )
       .toArray())
       related.push(`rec:${r.id}`);
-  } else {
+  } else if (ref.startsWith("rec:")) {
     const links = sql
       .exec<{ id: string }>(
         `SELECT CASE WHEN from_id = ? THEN to_id ELSE from_id END AS id FROM links WHERE from_id = ? OR to_id = ?`,
@@ -335,8 +377,14 @@ function textOf(sql: Sql, ref: Tagged): string {
     const t = getRow(sql, ref.slice(4))?.body.text;
     return typeof t === "string" ? t : "";
   }
-  const r = getRecord(sql, ref.slice(4));
-  return r ? recordText(r) : "";
+  if (ref.startsWith("rec:")) {
+    const r = getRecord(sql, ref.slice(4));
+    return r ? recordText(r) : "";
+  }
+  // An automation, a file or a page: its name and what it's about teach future tagging as well as a message does.
+  const [table, id] = tableOf(ref);
+  const col = table === "automations" ? "name || ' ' || about" : table === "files" ? "name || ' ' || note" : "name";
+  return sql.exec<{ t: string }>(`SELECT ${col} AS t FROM ${table} WHERE id = ?`, id).toArray()[0]?.t ?? "";
 }
 
 // --- calendar events (§6.3) ---------------------------------------------------------------

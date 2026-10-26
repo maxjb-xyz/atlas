@@ -180,6 +180,8 @@ export interface SearchHit {
 export interface JobView {
   id: string;
   title: string;
+  /** The areas it's in (§6), for its chip, the area's page and the scope; empty when it has none. */
+  areas?: string[];
   state: "running" | "done" | "failed" | "cancelled";
   /**
    * While it hasn't ended, whether anything is at work on it right now: a look or a step's helper or coding agent
@@ -539,10 +541,10 @@ export const ClientMessage = z.discriminatedUnion("type", [
       })
       .optional(),
   }),
-  /** Move an item to other areas by tapping its chip (§6.3): a message (`log:<id>`) or a record (`rec:<id>`). */
+  /** Move an item to other areas by tapping its chip (§6.3): a message (`log:<id>`), a record (`rec:<id>`) or a job (`job:<id>`). */
   z.object({
     type: z.literal("atlas.areas.set"),
-    ref: z.string().regex(/^(log|rec):[\w-]+$/),
+    ref: z.string().regex(/^(log|rec|job|aut|file|page):[\w-]+$/),
     areas: z.array(z.string().max(64)).max(10),
   }),
   /** Move a calendar event to other areas: every event in its series follows. */
