@@ -2,6 +2,9 @@
 
 # Atlas
 
+> [!CAUTION]
+> This project is not actively maintained and was created as a proof of concept. If you use in a production environment, you do so at your own risk.
+
 Atlas is a personal AI that feels like Jarvis. You talk to one character by voice or text. It knows your life, sees what's happening around you, does real work, deals with other people for you, and keeps going while you're away.
 
 It's open source, and you deploy your own copy to your own Cloudflare account with one click. Your Atlas is yours: nobody else runs it, and nothing is shared with us.
